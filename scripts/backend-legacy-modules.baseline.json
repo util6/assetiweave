@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "metricVersion": "backend-root-module-paths-v2",
+  "description": "Accepted dirty-worktree baseline for monotonic legacy-module retirement; refresh only by explicit architecture-plan change.",
+  "modules": {
+    "agent_market": {
+      "files": 16,
+      "lines": 6119,
+      "callerFiles": 9,
+      "references": 63
+    },
+    "agents": {
+      "files": 0,
+      "lines": 0,
+      "callerFiles": 0,
+      "references": 0
+    },
+    "ai_execution": {
+      "files": 14,
+      "lines": 6661,
+      "callerFiles": 29,
+      "references": 96
+    },
+    "conversations": {
+      "files": 13,
+      "lines": 8649,
+      "callerFiles": 27,
+      "references": 118
+    },
+    "dto": {
+      "files": 7,
+      "lines": 1431,
+      "callerFiles": 62,
+      "references": 226
+    },
+    "error": {
+      "files": 2,
+      "lines": 351,
+      "callerFiles": 106,
+      "references": 179
+    },
+    "executor": {
+      "files": 0,
+      "lines": 0,
+      "callerFiles": 0,
+      "references": 0
+    },
+    "planner": {
+      "files": 0,
+      "lines": 0,
+      "callerFiles": 0,
+      "references": 0
+    },
+    "projection": {
+      "files": 4,
+      "lines": 960,
+      "callerFiles": 8,
+      "references": 14
+    },
+    "scanner": {
+      "files": 10,
+      "lines": 757,
+      "callerFiles": 2,
+      "references": 4
+    },
+    "search": {
+      "files": 6,
+      "lines": 1175,
+      "callerFiles": 5,
+      "references": 9
+    }
+  }
+}

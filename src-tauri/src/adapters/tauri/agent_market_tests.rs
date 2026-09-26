@@ -1,5 +1,7 @@
 use super::*;
-use crate::backend::{agent_market::types::AgentMarketErrorView, extension_kernel::ExtensionError};
+use crate::backend::infrastructure::{
+    agent_market::AgentMarketErrorView, extensions::ExtensionError,
+};
 
 #[test]
 fn agent_market_error_preserves_structured_extension_details() {
@@ -28,7 +30,7 @@ async fn agent_market_error_parity_asserts_all_five_scenarios() {
         .connect("sqlite::memory:")
         .await
         .expect("in-memory sqlite");
-    let repo = crate::backend::agent_market::AgentInstallationRepository::new(pool);
+    let repo = crate::backend::store::system::AgentInstallationRepository::new(pool);
     let repo_err = repo.get("test_agent").await.unwrap_err();
     let app_err = AppError::from(repo_err);
     assert_eq!(
@@ -127,13 +129,14 @@ async fn agent_market_error_parity_asserts_all_five_scenarios() {
     );
 
     // --- Scenario 5: Process timeout ---
-    let proc_timeout_err =
-        AgentMarketError::Process(crate::backend::host_process::HostProcessError::Timeout {
+    let proc_timeout_err = AgentMarketError::Process(
+        crate::backend::infrastructure::host_process::HostProcessError::Timeout {
             stdout: vec![],
             stderr: vec![],
             stdout_truncated: false,
             stderr_truncated: false,
-        });
+        },
+    );
     let app_err = AppError::from(proc_timeout_err);
     assert_eq!(app_err.code(), "timeout");
     assert!(app_err.retryable());

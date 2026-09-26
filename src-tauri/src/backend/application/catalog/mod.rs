@@ -1,0 +1,11 @@
+pub(crate) mod assets;
+pub(crate) mod builtin_skills;
+pub(crate) mod catalog_ops;
+pub(crate) mod params;
+pub(crate) mod skill_remote;
+pub(crate) mod skill_remote_client;
+pub(crate) mod skill_remote_search;
+pub(crate) mod skills;
+pub(crate) mod skills_groups;
+pub(crate) mod source_scanner;
+pub(crate) mod sources;

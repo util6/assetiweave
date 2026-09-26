@@ -3,9 +3,9 @@
 //! 负责检查应用随包附带的 CLI / Engine 二进制文件状态，
 //! 并提供将其安装（或创建 Shim 脚本）到系统 PATH 路径及更新用户 Shell 配置文件（如 `.zshrc`, `.profile` 等）的功能。
 
+use crate::backend::application::{AppError, AppResult};
 #[cfg(windows)]
-use crate::backend::path_utils::configure_background_process;
-use crate::backend::runtime::{AppError, AppResult};
+use crate::backend::infrastructure::path_utils::configure_background_process;
 use serde::Serialize;
 #[cfg(windows)]
 use std::process::Command;

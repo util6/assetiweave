@@ -51,7 +51,7 @@ pub(crate) fn authorize(spec: &CommandSpec) -> Result<(), PolicyFailure> {
     if DIAGNOSTIC_METHODS.contains(&spec.method) {
         return Ok(());
     }
-    let config = crate::backend::runtime::config::runtime_config()
+    let config = crate::backend::infrastructure::runtime::config::runtime_config()
         .map_err(|error| invalid_policy(Path::new("<runtime_config>"), error.to_string()))?;
 
     let Some(path) = config.policy_path.as_deref() else {

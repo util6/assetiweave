@@ -1,60 +1,74 @@
-mod agent;
-mod agent_market;
-mod assets;
-pub(crate) mod bootstrap;
-mod card_translation;
-mod conversation_adapter_catalog_v2;
-mod conversation_adapter_installer;
-mod conversation_adapters;
-mod conversation_maintenance;
-mod conversation_records;
-mod conversation_script_catalog;
-mod conversation_search;
-mod conversation_usage;
-mod generation_skill;
-mod global_consolidation_pipeline;
-mod global_memory;
-pub(crate) mod memory_agent_session;
-mod memory_generation_tools;
-mod memory_maintenance_coordinator;
-pub(crate) mod memory_projection;
-mod memory_public;
-mod memory_recall_workflow;
-mod memory_search;
-mod params;
-mod prelude;
-mod profiles_navigation;
-mod project_consolidation_pipeline;
-mod project_memory;
-mod recent;
-mod recent_memory_coordinator;
-mod recent_snapshot;
-mod recent_snapshot_pipeline;
-mod recent_snapshot_task_progress;
+pub(crate) mod agents;
+pub(crate) mod catalog;
+pub(crate) mod conversations;
+pub(crate) mod memory;
+pub(crate) mod mounting;
+pub(crate) mod system;
+
+pub(crate) mod error;
+pub(crate) mod prelude;
 mod service;
-mod session_memory;
-mod skill_remote;
-mod skills;
-mod sources;
-mod system;
-mod tasks_public;
-mod tenants;
-mod utils;
+
+pub(crate) use error::{AppError, AppResult};
 
 #[cfg(test)]
 mod bounded_evidence_baseline_tests;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use agent_market::{
+pub(crate) use agents::agent_market::{
     AgentInstallPreview, AgentMarketItemView, AgentMarketRefreshResult, AgentUninstallPreview,
 };
-pub(crate) use assets::{BatchMountWorkflowInput, BatchMountWorkflowOutput};
-pub(crate) use conversation_adapter_catalog_v2::*;
-pub(crate) use conversation_script_catalog::*;
-pub(crate) use params::*;
-pub(crate) use recent::{
-    RecentConversationSession, RecentConversationSessionListParams, RecentConversationView,
+pub(crate) use catalog::params::{
+    AssetIdParams, AssetRefParams, CreateSourceParams, DeleteAssetParams, ImportSkillParams,
+    ListAssetsParams, RequiredAssetIdParams, SkillAcquireParams, SkillBackupTaskParams,
+    SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult, SourceAddParams,
+    SourceRemoveParams, SourceScanParams, UpdateAssetDescriptionParams,
+    UpdateSkillBackupSettingsParams, UpdateSourceParams,
+};
+pub(crate) use conversations::{
+    conversation_adapter_catalog_v2::ConversationAdapterPackageUpdateStatus,
+    conversation_script_catalog::{
+        ConversationAdapterPackageCatalogEntry, ConversationAdapterPackageChangePreflight,
+        ConversationAdapterPackageInspection, ConversationScriptCatalogEntry,
+    },
+    params::{
+        ConversationAdapterCatalogRefreshParams, ConversationAdapterLocalRegisterParams,
+        ConversationAdapterPackageCatalogParams, ConversationAdapterPackageChangeParams,
+        ConversationAdapterPackageInspectParams, ConversationAdapterPackageInstallParams,
+        ConversationAdapterPackageReleaseListParams, ConversationAdapterPackageUninstallParams,
+        ConversationAdapterPackageUpdateCheckParams, ConversationAdapterPackageUpdatePolicyParams,
+        ConversationAdapterPackageVersionChangeParams, ConversationAdapterUnregisterParams,
+        ConversationAdapterWorkspaceUpgradeParams, ConversationBlockGetParams,
+        ConversationBlockListParams, ConversationDataAuditParams, ConversationDataRepairParams,
+        ConversationDataRollbackParams, ConversationIncrementalSearchParams,
+        ConversationPartTranslationUpdateParams, ConversationQuestionGetParams,
+        ConversationQuestionListParams, ConversationQuestionMergeParams,
+        ConversationQuestionSplitParams, ConversationScriptCatalogParams,
+        ConversationScriptInstallParams, ConversationSearchParams, ConversationSearchResult,
+        ConversationSessionExportParams, ConversationSessionGetParams,
+        ConversationSessionListParams, ConversationSourceDisableParams,
+        ConversationSourceUpsertParams, ConversationSyncMode, ConversationSyncParams,
+    },
+};
+pub(crate) use memory::params::{
+    MemoryContextResolveParams, MemoryProjectGetParams, MemoryRecallSearchParams,
+    MemoryRecallSessionCreateParams, MemoryRecallSessionGetParams, MemoryRecallTurnCancelParams,
+    MemoryRecallTurnSendParams, MemoryScopeRebuildParams, MemoryTaskGetParams,
+    MemoryTaskListParams, MemoryTaskRetryParams,
+};
+pub(crate) use mounting::{
+    mounts::BatchMountWorkflowInput,
+    params::{
+        ApplySkillGroupMountParams, AssetProfileParams, CreateProfileParams,
+        CreateSkillGroupParams, ExecutePlanParams, GroupIdParams, IdParams, ProfileIdParams,
+        SetAssetMountParams, SetSkillGroupManualMembersParams, SkillGroupExclusiveMountParams,
+        SkillGroupMountParams, UpdateProfileParams, UpdateSkillGroupParams,
+    },
 };
 pub(crate) use service::AppService;
-pub(crate) use sources::{SourceScanResult, SourceScanWorkflow};
+pub(crate) use system::params::{
+    BackgroundTaskGetParams, InitializeAppLocaleParams, LogsGetSnapshotParams,
+    LogsWriteOperationParams, SaveAppSettingsParams, TenantCreateParams, UpdateAppShortcutsParams,
+    UpdateNavigationModelParams,
+};

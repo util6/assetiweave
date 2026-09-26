@@ -10,12 +10,10 @@ pub(crate) struct AppState {
     /// SQLite 数据库文件的本地绝对路径
     pub(crate) db_path: PathBuf,
     /// 进程级共享资源宿主；请求从该实例绑定 AppService。
-    pub(crate) runtime: Arc<crate::backend::runtime::AppRuntime>,
+    pub(crate) runtime: Arc<crate::backend::infrastructure::runtime::AppRuntime>,
     /// 后台长运行任务（如扫描、备份、目录挂载等）的中央注册表
     pub(crate) background_tasks:
         Arc<crate::adapters::tauri::background_tasks::BackgroundTaskRegistry>,
-    /// 跨命令共享的 Agent 执行 Runtime；并发限制与 Agent Registry 由它统一持有
-    pub(crate) agent_runtime: Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
     /// 是否允许关闭主窗口标记
     pub(crate) allow_close: Arc<AtomicBool>,
     /// 是否允许应用完全退出标记

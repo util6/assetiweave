@@ -1,4 +1,4 @@
-use crate::backend::runtime::AppResult;
+use crate::backend::store::StoreResult;
 use serde::{de::DeserializeOwned, Serialize};
 
 #[derive(Debug, thiserror::Error)]
@@ -45,31 +45,31 @@ pub(crate) fn decode_optional_enum<T: DeserializeOwned>(
     value.map(decode_enum).transpose()
 }
 
-pub(crate) fn encode_json_app<T: Serialize>(value: &T) -> AppResult<String> {
+pub(crate) fn encode_json_app<T: Serialize>(value: &T) -> StoreResult<String> {
     Ok(encode_json(value)?)
 }
 
-pub(crate) fn decode_json_app<T: DeserializeOwned>(value: impl AsRef<str>) -> AppResult<T> {
+pub(crate) fn decode_json_app<T: DeserializeOwned>(value: impl AsRef<str>) -> StoreResult<T> {
     Ok(decode_json(value)?)
 }
 
-pub(crate) fn encode_enum_app<T: Serialize>(value: T) -> AppResult<String> {
+pub(crate) fn encode_enum_app<T: Serialize>(value: T) -> StoreResult<String> {
     Ok(encode_enum(value)?)
 }
 
 pub(crate) fn encode_optional_enum_app<T: Serialize>(
     value: Option<T>,
-) -> AppResult<Option<String>> {
+) -> StoreResult<Option<String>> {
     Ok(encode_optional_enum(value)?)
 }
 
-pub(crate) fn decode_enum_app<T: DeserializeOwned>(value: impl AsRef<str>) -> AppResult<T> {
+pub(crate) fn decode_enum_app<T: DeserializeOwned>(value: impl AsRef<str>) -> StoreResult<T> {
     Ok(decode_enum(value)?)
 }
 
 pub(crate) fn decode_optional_enum_app<T: DeserializeOwned>(
     value: Option<String>,
-) -> AppResult<Option<T>> {
+) -> StoreResult<Option<T>> {
     Ok(decode_optional_enum(value)?)
 }
 

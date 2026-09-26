@@ -1,0 +1,268 @@
+use crate::backend::domain::{
+    AuthMode, Principal, PrincipalKind, RequestContext, Tenant, TenantKind, TenantMembership,
+    TenantRole, TenantStatus,
+};
+use crate::backend::store::{StoreError, StoreResult};
+use chrono::Utc;
+use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+
+use super::{codec::decode_enum_app, sql};
+
+pub(crate) const LOCAL_PRINCIPAL_ID: &str = "local";
+pub(crate) const DEFAULT_TENANT_ID: &str = "default";
+
+pub(crate) async fn ensure_local_identity_sqlx(pool: &SqlitePool) -> StoreResult<()> {
+    let now = Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await?;
+    sqlx::query(sql::UPSERT_LOCAL_PRINCIPAL)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(sql::UPSERT_DEFAULT_TENANT)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(sql::UPSERT_DEFAULT_TENANT_MEMBERSHIP)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(sql::UPSERT_LOCAL_TENANT_STATE)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub(crate) async fn load_principal_sqlx(
+    pool: &SqlitePool,
+    principal_id: &str,
+) -> StoreResult<Option<Principal>> {
+    sqlx::query(sql::LOAD_PRINCIPAL)
+        .bind(principal_id)
+        .fetch_optional(pool)
+        .await?
+        .as_ref()
+        .map(map_principal_row)
+        .transpose()
+}
+
+pub(crate) async fn load_tenant_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> StoreResult<Option<Tenant>> {
+    sqlx::query(sql::LOAD_TENANT)
+        .bind(tenant_id)
+        .fetch_optional(pool)
+        .await?
+        .as_ref()
+        .map(map_tenant_row)
+        .transpose()
+}
+
+pub(crate) async fn load_tenant_membership_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    principal_id: &str,
+) -> StoreResult<Option<TenantMembership>> {
+    sqlx::query(sql::LOAD_TENANT_MEMBERSHIP)
+        .bind(tenant_id)
+        .bind(principal_id)
+        .fetch_optional(pool)
+        .await?
+        .as_ref()
+        .map(map_tenant_membership_row)
+        .transpose()
+}
+
+pub(crate) async fn list_tenants_for_principal_sqlx(
+    pool: &SqlitePool,
+    principal_id: &str,
+) -> StoreResult<Vec<Tenant>> {
+    let rows = sqlx::query(sql::LIST_TENANTS_BY_PRINCIPAL)
+        .bind(principal_id)
+        .fetch_all(pool)
+        .await?;
+    rows.iter().map(map_tenant_row).collect()
+}
+
+pub(crate) async fn load_active_tenant_id_sqlx(
+    pool: &SqlitePool,
+    principal_id: &str,
+) -> StoreResult<Option<String>> {
+    Ok(sqlx::query_scalar::<_, String>(sql::LOAD_ACTIVE_TENANT_ID)
+        .bind(principal_id)
+        .fetch_optional(pool)
+        .await?)
+}
+
+pub(crate) async fn set_active_tenant_sqlx(
+    pool: &SqlitePool,
+    principal_id: &str,
+    tenant_id: &str,
+) -> StoreResult<Tenant> {
+    let tenant = load_tenant_sqlx(pool, tenant_id)
+        .await?
+        .ok_or_else(|| StoreError::NotFound(format!("tenant not found: {tenant_id}")))?;
+    load_tenant_membership_sqlx(pool, tenant_id, principal_id)
+        .await?
+        .ok_or_else(|| {
+            StoreError::Conflict(format!(
+                "principal {principal_id} is not a member of tenant {tenant_id}"
+            ))
+        })?;
+    let now = Utc::now().to_rfc3339();
+    let result = sqlx::query(sql::UPDATE_ACTIVE_TENANT)
+        .bind(principal_id)
+        .bind(tenant_id)
+        .bind(now)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(StoreError::NotFound(format!(
+            "principal not found: {principal_id}"
+        )));
+    }
+    Ok(tenant)
+}
+
+pub(crate) async fn create_local_tenant_sqlx(
+    pool: &SqlitePool,
+    principal_id: &str,
+    name: &str,
+    slug: Option<&str>,
+) -> StoreResult<Tenant> {
+    let name = clean_tenant_name(name)?;
+    let slug = normalize_tenant_slug(slug.unwrap_or(&name))?;
+    if load_tenant_sqlx(pool, &slug).await?.is_some() {
+        return Err(StoreError::Conflict(format!(
+            "tenant already exists: {slug}"
+        )));
+    }
+    load_principal_sqlx(pool, principal_id)
+        .await?
+        .ok_or_else(|| StoreError::NotFound(format!("principal not found: {principal_id}")))?;
+
+    let now = Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await?;
+    sqlx::query(sql::INSERT_TENANT)
+        .bind(&slug)
+        .bind(&slug)
+        .bind(&name)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(sql::INSERT_TENANT_MEMBERSHIP)
+        .bind(&slug)
+        .bind(principal_id)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    load_tenant_sqlx(pool, &slug)
+        .await?
+        .ok_or_else(|| StoreError::NotFound(format!("tenant not found after create: {slug}")))
+}
+
+pub(crate) async fn load_local_request_context_sqlx(
+    pool: &SqlitePool,
+) -> StoreResult<RequestContext> {
+    ensure_local_identity_sqlx(pool).await?;
+    let principal = load_principal_sqlx(pool, LOCAL_PRINCIPAL_ID)
+        .await?
+        .ok_or_else(|| StoreError::NotFound("local principal not found".to_string()))?;
+    let active_tenant_id = load_active_tenant_id_sqlx(pool, &principal.id)
+        .await?
+        .unwrap_or_else(|| DEFAULT_TENANT_ID.to_string());
+    let tenant = load_tenant_sqlx(pool, &active_tenant_id)
+        .await?
+        .ok_or_else(|| {
+            StoreError::NotFound(format!("active tenant not found: {active_tenant_id}"))
+        })?;
+    let membership = load_tenant_membership_sqlx(pool, &tenant.id, &principal.id)
+        .await?
+        .ok_or_else(|| {
+            StoreError::Conflict(format!(
+                "principal {} is not a member of tenant {}",
+                principal.id, tenant.id
+            ))
+        })?;
+    Ok(RequestContext {
+        principal,
+        tenant,
+        membership,
+        auth_mode: AuthMode::Local,
+    })
+}
+
+fn clean_tenant_name(name: &str) -> StoreResult<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(StoreError::Validation(
+            "tenant name is required".to_string(),
+        ));
+    }
+    Ok(name.to_string())
+}
+
+fn normalize_tenant_slug(value: &str) -> StoreResult<String> {
+    let mut slug = value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while slug.contains("--") {
+        slug = slug.replace("--", "-");
+    }
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        return Err(StoreError::Validation(
+            "tenant slug is required".to_string(),
+        ));
+    }
+    Ok(slug)
+}
+
+fn map_principal_row(row: &SqliteRow) -> StoreResult<Principal> {
+    Ok(Principal {
+        id: row.try_get(0)?,
+        kind: decode_enum_app::<PrincipalKind>(row.try_get::<String, _>(1)?)?,
+        display_name: row.try_get(2)?,
+        created_at: row.try_get(3)?,
+        updated_at: row.try_get(4)?,
+    })
+}
+
+fn map_tenant_row(row: &SqliteRow) -> StoreResult<Tenant> {
+    Ok(Tenant {
+        id: row.try_get(0)?,
+        slug: row.try_get(1)?,
+        name: row.try_get(2)?,
+        kind: decode_enum_app::<TenantKind>(row.try_get::<String, _>(3)?)?,
+        status: decode_enum_app::<TenantStatus>(row.try_get::<String, _>(4)?)?,
+        created_at: row.try_get(5)?,
+        updated_at: row.try_get(6)?,
+    })
+}
+
+fn map_tenant_membership_row(row: &SqliteRow) -> StoreResult<TenantMembership> {
+    Ok(TenantMembership {
+        tenant_id: row.try_get(0)?,
+        principal_id: row.try_get(1)?,
+        role: decode_enum_app::<TenantRole>(row.try_get::<String, _>(2)?)?,
+        created_at: row.try_get(3)?,
+        updated_at: row.try_get(4)?,
+    })
+}
+
+#[cfg(test)]
+#[path = "tenant_repo_tests.rs"]
+mod tests;

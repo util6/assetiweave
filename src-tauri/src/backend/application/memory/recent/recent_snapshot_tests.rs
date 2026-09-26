@@ -1,0 +1,577 @@
+use super::*;
+use crate::backend::domain::memory::{
+    RecentMemoryStatus, RecentSnapshotPublicationKind, SourceAvailability,
+};
+use crate::backend::store::memory::recent_snapshot_repo::{
+    save_fixture_recent_snapshot_sqlx, FixtureRecentSnapshotInput, FixtureSessionReferenceInput,
+    FixtureSnapshotItemInput, FixtureSnapshotProjectInput,
+};
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_recent_memory_snapshot_empty_and_fixture_ready() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-memory-snapshot-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).expect("create test root");
+    let db_path = root.join("app.db");
+
+    let service = AppService::open_with_db_path(db_path.clone())
+        .await
+        .expect("open service");
+
+    // 1. Initial state should be empty
+    let initial_state = service
+        .get_recent_memory_snapshot()
+        .await
+        .expect("get initial state");
+    assert_eq!(initial_state.status, RecentMemoryStatus::Empty);
+    assert!(initial_state.snapshot.is_none());
+    assert!(initial_state.latest_attempt_task_id.is_none());
+    assert!(initial_state.latest_attempt_error.is_none());
+
+    // 2. Insert a fixture snapshot
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id().to_string();
+
+    let fixture = FixtureRecentSnapshotInput {
+        tenant_id: tenant_id.clone(),
+        snapshot_id: "snap-001".to_string(),
+        sequence: 1,
+        target_watermark_utc: "2026-09-15T14:00:00Z".to_string(),
+        local_watermark_date: "2026-09-15".to_string(),
+        local_watermark_time: "14:00".to_string(),
+        timezone_offset_minutes: 480,
+        window_hours: 48,
+        window_start_utc: "2026-09-13T14:00:00Z".to_string(),
+        window_end_utc: "2026-09-15T14:00:00Z".to_string(),
+        publication_kind: RecentSnapshotPublicationKind::Generated,
+        reused_from_snapshot_id: None,
+        target_fingerprint: "tfp-001".to_string(),
+        content_fingerprint: "cfp-001".to_string(),
+        generation_skill_asset_id: None,
+        generation_skill_revision: None,
+        generation_skill_content_hash: None,
+        contract_version: "memory.contract.v2".to_string(),
+        budget_policy_version: "budget.v1".to_string(),
+        projection_policy_version: "projection.v1".to_string(),
+        content_generated_at: "2026-09-15T14:01:00Z".to_string(),
+        published_at: "2026-09-15T14:01:05Z".to_string(),
+        projects: vec![FixtureSnapshotProjectInput {
+            project_key: "assetiweave".to_string(),
+            project_title: "AssetIWeave Core".to_string(),
+            project_path: Some("/code/assetiweave".to_string()),
+            summary: "Implemented memory rewrite foundation schema".to_string(),
+            no_material_change: false,
+            latest_activity_at: "2026-09-15T13:50:00Z".to_string(),
+            source_session_count: 2,
+            sort_order: 0,
+            items: vec![FixtureSnapshotItemInput {
+                item_id: "item-001".to_string(),
+                revision_id: "rev-001".to_string(),
+                category: "decision".to_string(),
+                status: "active".to_string(),
+                title: "Adopt expand-migrate-contract for v2 schema".to_string(),
+                summary: "Preserved legacy tables and added clean v2 foundation".to_string(),
+                rationale: "Ensures zero-downtime and compatibility".to_string(),
+                occurred_at: "2026-09-15T13:30:00Z".to_string(),
+                recommendation_rank: Some(1),
+                evidence_fingerprint: "ev-001".to_string(),
+                display_date: "2026-09-15".to_string(),
+                sort_order: 0,
+                session_references: vec![FixtureSessionReferenceInput {
+                    id: "ref-001".to_string(),
+                    source_id: "src-001".to_string(),
+                    session_id: "session-001".to_string(),
+                    session_title: "Memory Architecture Session".to_string(),
+                    source_agent: "codex".to_string(),
+                    last_activity_at: "2026-09-15T13:30:00Z".to_string(),
+                    reference_key: "k-001".to_string(),
+                    source_revision: 1,
+                    availability: SourceAvailability::Available,
+                    unavailable_reason: None,
+                }],
+            }],
+        }],
+    };
+
+    save_fixture_recent_snapshot_sqlx(pool, &fixture)
+        .await
+        .expect("save fixture snapshot");
+
+    // 3. Read state again, should be Ready with full snapshot
+    let ready_state = service
+        .get_recent_memory_snapshot()
+        .await
+        .expect("get ready state");
+    assert_eq!(ready_state.status, RecentMemoryStatus::Ready);
+    let snap = ready_state.snapshot.expect("snapshot exists");
+    assert_eq!(snap.snapshot_id, "snap-001");
+    assert_eq!(snap.sequence, 1);
+    assert_eq!(snap.window_hours, 48);
+    assert_eq!(snap.projects.len(), 1);
+
+    let proj = &snap.projects[0];
+    assert_eq!(proj.project_key, "assetiweave");
+    assert_eq!(proj.project_title, "AssetIWeave Core");
+    assert_eq!(proj.items.len(), 1);
+
+    let item = &proj.items[0];
+    assert_eq!(item.item_id, "item-001");
+    assert_eq!(item.category, "decision");
+    assert_eq!(item.recommendation_rank, Some(1));
+    assert_eq!(item.session_references.len(), 1);
+    assert_eq!(item.session_references[0].session_id, "session-001");
+
+    // 4. Clean up
+    drop(service);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_memory_schema_constraints() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-memory-constraints-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).expect("create test root");
+    let db_path = root.join("app.db");
+
+    let service = AppService::open_with_db_path(db_path.clone())
+        .await
+        .expect("open service");
+
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id().to_string();
+
+    // 1. CHECK constraint: layer on memory_items must be l1, l2, or l3
+    let bad_layer = sqlx::query(
+        "INSERT INTO memory_items (tenant_id, id, layer, lifecycle, first_seen_at, last_seen_at, created_at, updated_at) \
+         VALUES (?1, 'bad-item', 'invalid_layer', 'current', '2026-09-15T00:00:00Z', '2026-09-15T00:00:00Z', '2026-09-15T00:00:00Z', '2026-09-15T00:00:00Z')",
+    )
+    .bind(&tenant_id)
+    .execute(pool)
+    .await;
+    assert!(bad_layer.is_err(), "layer CHECK constraint must fail");
+
+    // 2. CHECK constraint: window_hours on recent_memory_snapshots must be 24, 48, or 72
+    let bad_window = sqlx::query(
+        "INSERT INTO recent_memory_snapshots (\
+            tenant_id, id, sequence, target_watermark_utc, local_watermark_date, local_watermark_time, \
+            timezone_offset_minutes, window_hours, window_start_utc, window_end_utc, publication_kind, \
+            target_fingerprint, content_fingerprint, contract_version, budget_policy_version, \
+            projection_policy_version, content_generated_at, published_at\
+         ) VALUES (?1, 'snap-bad', 1, '2026-09-15T14:00:00Z', '2026-09-15', '14:00', 480, 99, \
+                   '2026-09-13T14:00:00Z', '2026-09-15T14:00:00Z', 'generated', 'tfp', 'cfp', \
+                   'contract.v2', 'budget.v1', 'proj.v1', '2026-09-15T14:00:00Z', '2026-09-15T14:00:00Z')",
+    )
+    .bind(&tenant_id)
+    .execute(pool)
+    .await;
+    assert!(
+        bad_window.is_err(),
+        "window_hours CHECK constraint must fail"
+    );
+
+    // 3. CHECK constraint: category on memory_item_revisions
+    // First insert valid memory_item
+    sqlx::query(
+        "INSERT INTO memory_items (tenant_id, id, layer, lifecycle, first_seen_at, last_seen_at, created_at, updated_at) \
+         VALUES (?1, 'item-valid', 'l1', 'current', '2026-09-15T00:00:00Z', '2026-09-15T00:00:00Z', '2026-09-15T00:00:00Z', '2026-09-15T00:00:00Z')",
+    )
+    .bind(&tenant_id)
+    .execute(pool)
+    .await
+    .expect("insert valid item");
+
+    let bad_cat = sqlx::query(
+        "INSERT INTO memory_item_revisions (\
+            tenant_id, id, item_id, revision_number, category, status, title, summary, \
+            rationale, occurred_at, evidence_fingerprint, created_at, promotion_nomination\
+         ) VALUES (?1, 'rev-bad', 'item-valid', 1, 'unsupported_category', 'active', 'title', 'summary', \
+                   'rationale', '2026-09-15T00:00:00Z', 'ev', '2026-09-15T00:00:00Z', 'none')",
+    )
+    .bind(&tenant_id)
+    .execute(pool)
+    .await;
+    assert!(bad_cat.is_err(), "category CHECK constraint must fail");
+
+    // 4. Source Reference non-cascade:
+    // Creating a conversation session, referencing it in memory_item_source_references,
+    // and deleting the conversation session must NOT delete the source reference.
+    let valid_rev = sqlx::query(
+        "INSERT INTO memory_item_revisions (\
+            tenant_id, id, item_id, revision_number, category, status, title, summary, \
+            rationale, occurred_at, evidence_fingerprint, created_at, promotion_nomination\
+         ) VALUES (?1, 'rev-valid', 'item-valid', 1, 'decision', 'active', 'title', 'summary', \
+                   'rationale', '2026-09-15T00:00:00Z', 'ev', '2026-09-15T00:00:00Z', 'none')",
+    )
+    .bind(&tenant_id)
+    .execute(pool)
+    .await
+    .expect("insert valid revision");
+    assert_eq!(valid_rev.rows_affected(), 1);
+
+    sqlx::query(
+        "INSERT INTO memory_item_source_references (\
+            tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
+            reference_key, source_revision, availability, created_at\
+         ) VALUES (?1, 'ref-non-cascade', 'rev-valid', 'session', 'src-1', 'session-phantom', \
+                   'k-ref', 1, 'available', '2026-09-15T00:00:00Z')",
+    )
+    .bind(&tenant_id)
+    .execute(pool)
+    .await
+    .expect("insert reference with phantom session must succeed (no cascade FK to sessions)");
+
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM memory_item_source_references WHERE tenant_id = ?1 AND id = 'ref-non-cascade'",
+    )
+    .bind(&tenant_id)
+    .fetch_one(pool)
+    .await
+    .expect("count reference");
+    assert_eq!(count, 1, "source reference remains intact");
+
+    // 5. UNIQUE constraint: memory_item_revisions (tenant_id, item_id, revision_number)
+    let dup_rev = sqlx::query(
+        "INSERT INTO memory_item_revisions (\
+            tenant_id, id, item_id, revision_number, category, status, title, summary, \
+            rationale, occurred_at, evidence_fingerprint, created_at, promotion_nomination\
+         ) VALUES (?1, 'rev-dup', 'item-valid', 1, 'decision', 'active', 'title2', 'summary2', \
+                   'rationale2', '2026-09-15T00:00:00Z', 'ev2', '2026-09-15T00:00:00Z', 'none')",
+    )
+    .bind(&tenant_id)
+    .execute(pool)
+    .await;
+    assert!(
+        dup_rev.is_err(),
+        "duplicate revision_number must violate UNIQUE"
+    );
+
+    drop(service);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn test_real_recent_generation() {
+    use crate::backend::store;
+
+    let db_path = crate::backend::infrastructure::path_utils::app_db_path().expect("db path");
+    let service = AppService::open_with_db_path(db_path)
+        .await
+        .expect("open service");
+    let now = chrono::Utc::now();
+    let prep = service
+        .prepare_recent_snapshot_generation_with_options(Some(now), true)
+        .await
+        .expect("prepare");
+    println!("Preparation is_some: {}", prep.is_some());
+    let prep = prep.expect("has preparation");
+    let job_id = service
+        .enqueue_recent_snapshot_generation(&prep, now)
+        .await
+        .expect("enqueue");
+    println!("Job ID: {}", job_id);
+    let _ = sqlx::query(
+        "UPDATE recent_memory_jobs SET status = 'queued', retry_count = 0, ownership_token = NULL, lease_expires_at = NULL WHERE id = ?1",
+    )
+    .bind(&job_id)
+    .execute(service.db.pool())
+    .await;
+    let token = format!("test-owner-{}", uuid::Uuid::new_v4());
+    let claimed = store::claim_recent_memory_job_with_lease_sqlx(
+        service.db.pool(),
+        service.tenant_id(),
+        &job_id,
+        &token,
+        &now.to_rfc3339(),
+    )
+    .await
+    .expect("claim job");
+    assert!(claimed);
+    let job = store::load_recent_memory_job_sqlx(service.db.pool(), service.tenant_id(), &job_id)
+        .await
+        .expect("load job")
+        .expect("job exists");
+    let result = service
+        .run_recent_snapshot_generation_job(
+            &job,
+            tokio_util::sync::CancellationToken::new(),
+            None,
+            None,
+        )
+        .await;
+    match &result {
+        Ok(view) => {
+            println!(
+                "SUCCESS! snapshot_id={}, projects={}",
+                view.snapshot_id,
+                view.projects.len()
+            );
+        }
+        Err(err) => {
+            println!("ERROR: {:?}", err);
+        }
+    }
+    assert!(result.is_ok());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_recent_memory_non_retryable_error_persists_and_reloads_as_false() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-memory-retryable-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).expect("create test root");
+    let db_path = root.join("app.db");
+
+    let service = AppService::open_with_db_path(db_path.clone())
+        .await
+        .expect("open service");
+
+    // 1. 写入不可重试错误 (MEMORY_BUDGET_EXHAUSTED)
+    service
+        .record_recent_memory_failure(
+            "MEMORY_BUDGET_EXHAUSTED",
+            "Memory generation budget exhausted, refusing publication",
+            false,
+        )
+        .await
+        .expect("record failure");
+
+    // 2. 立即读取 API，验证返回 retryable == false
+    let state = service
+        .get_recent_memory_snapshot()
+        .await
+        .expect("get recent memory state");
+    assert_eq!(state.status, RecentMemoryStatus::UpdateFailed);
+    let err = state.latest_attempt_error.expect("error present");
+    assert_eq!(err.code, "MEMORY_BUDGET_EXHAUSTED");
+    assert_eq!(err.retryable, false, "in-memory read must be non-retryable");
+
+    // 3. 模拟应用重启：关闭 service 实例，重新打开数据库
+    drop(service);
+    let reloaded_service = AppService::open_with_db_path(db_path.clone())
+        .await
+        .expect("reopen service");
+
+    let reloaded_state = reloaded_service
+        .get_recent_memory_snapshot()
+        .await
+        .expect("get reloaded state");
+    assert_eq!(reloaded_state.status, RecentMemoryStatus::UpdateFailed);
+    let reloaded_err = reloaded_state
+        .latest_attempt_error
+        .expect("error present after reload");
+    assert_eq!(reloaded_err.code, "MEMORY_BUDGET_EXHAUSTED");
+    assert_eq!(
+        reloaded_err.retryable, false,
+        "reloaded from sqlite must remain non-retryable"
+    );
+
+    // 4. 历史记录兼容性测试：模拟旧版本数据库（latest_attempt_error_retryable 为 NULL）
+    let pool = reloaded_service.db.pool();
+    let tenant_id = reloaded_service.tenant_id();
+
+    // 4a. 历史数据为不可重试错误（如 MEMORY_BUDGET_EXHAUSTED）时，根据语义来源解析为 retryable=false
+    sqlx::query(
+        "UPDATE recent_memory_state SET latest_attempt_error_retryable = NULL, \
+         latest_attempt_error_code = 'MEMORY_BUDGET_EXHAUSTED', \
+         latest_attempt_error_message = 'Budget exhausted in legacy record' \
+         WHERE tenant_id = ?1",
+    )
+    .bind(tenant_id)
+    .execute(pool)
+    .await
+    .expect("update legacy row");
+
+    let legacy_state = reloaded_service
+        .get_recent_memory_snapshot()
+        .await
+        .expect("get legacy state");
+    let legacy_err = legacy_state
+        .latest_attempt_error
+        .expect("legacy error present");
+    assert_eq!(legacy_err.code, "MEMORY_BUDGET_EXHAUSTED");
+    assert_eq!(
+        legacy_err.retryable, false,
+        "legacy row with budget exhausted must be non-retryable"
+    );
+
+    // 4b. 历史数据为已知可重试错误（包括 Agent 执行与系统瞬态错误）时，兼容推断为 retryable=true
+    let retryable_db_cases = [
+        (
+            "MEMORY_COVERAGE_INCOMPLETE",
+            "Temporary incomplete coverage",
+        ),
+        ("TASK_ALREADY_EXISTS", "Task already in progress"),
+        ("timeout", "Execution timed out"),
+        ("storage_error", "Storage operation failed"),
+        ("process_error", "Process crashed"),
+        ("external_error", "External service error"),
+        ("conflict", "Optimistic lock conflict"),
+        ("agent_unavailable", "Agent runtime unavailable"),
+        ("spawn_failed", "Agent process spawn failed"),
+        ("process_output_failed", "Agent stdout read failed"),
+        ("protocol_failed", "ACP protocol error"),
+        ("agent_exited", "Agent exited prematurely"),
+        ("workspace_failed", "Isolated workspace setup failed"),
+        ("cleanup_failed", "Post-execution cleanup failed"),
+    ];
+    for (code, msg) in retryable_db_cases {
+        sqlx::query(
+            "UPDATE recent_memory_state SET latest_attempt_error_retryable = NULL, \
+             latest_attempt_error_code = ?1, latest_attempt_error_message = ?2 \
+             WHERE tenant_id = ?3",
+        )
+        .bind(code)
+        .bind(msg)
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .expect("update legacy retryable row");
+
+        let state = reloaded_service
+            .get_recent_memory_snapshot()
+            .await
+            .expect("get state");
+        let err = state.latest_attempt_error.expect("error present");
+        assert_eq!(err.code, code);
+        assert_eq!(
+            err.retryable, true,
+            "legacy row with {code} must be retryable"
+        );
+    }
+
+    // 4c. 历史数据为不可重试错误（包括 Agent 确定性错误、业务门禁错误、取消错误）及未知错误时，必须解析为 retryable=false
+    let non_retryable_cases = [
+        ("MEMORY_BUDGET_EXHAUSTED", "Budget exhausted"),
+        ("MEMORY_RESULT_STALE", "Stale result from changed skill"),
+        ("VALIDATION_FAILED", "Generation output schema invalid"),
+        ("validation_error", "Validation error occurred"),
+        ("cancelled", "Operation was cancelled"),
+        ("agent_not_found", "Requested agent not registered"),
+        ("unsupported_session_mode", "Session mode not supported"),
+        ("invalid_request", "Invalid execution request parameters"),
+        ("resume_unavailable", "Saved execution session lost"),
+        ("recall_tools_unavailable", "Missing recall capabilities"),
+        (
+            "memory_generation_tools_unavailable",
+            "Missing memory tools",
+        ),
+        ("output_limit", "Output size limit exceeded"),
+        ("empty_output", "Process returned empty output"),
+        ("permission_denied", "Permission was denied"),
+        ("tool_use_denied", "Tool invocation was forbidden"),
+        ("model_selection_failed", "Could not select AI model"),
+        ("model_unavailable", "Selected model is unavailable"),
+        ("not_found", "Entity not found"),
+        ("UNKNOWN_UNRECOGNIZED_ERROR", "Unknown failure code"),
+        ("", "Empty code"),
+    ];
+    for (code, msg) in non_retryable_cases {
+        sqlx::query(
+            "UPDATE recent_memory_state SET latest_attempt_error_retryable = NULL, \
+             latest_attempt_error_code = ?1, latest_attempt_error_message = ?2 \
+             WHERE tenant_id = ?3",
+        )
+        .bind(code)
+        .bind(msg)
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .expect("update legacy non-retryable row");
+
+        let state = reloaded_service
+            .get_recent_memory_snapshot()
+            .await
+            .expect("get state");
+        let err = state.latest_attempt_error.expect("error present");
+        assert_eq!(err.code, code);
+        assert_eq!(
+            err.retryable, false,
+            "legacy row with '{code}' must be non-retryable"
+        );
+    }
+
+    drop(reloaded_service);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn test_infer_recent_memory_error_retryable_matrix() {
+    use super::super::recent_snapshot_view::infer_recent_memory_error_retryable;
+
+    // 1. 明确已知的可重试错误：推断为 true（包括 Agent 基础设施瞬态故障）
+    let retryable_codes = [
+        "MEMORY_COVERAGE_INCOMPLETE",
+        "TASK_ALREADY_EXISTS",
+        "timeout",
+        "storage_error",
+        "process_error",
+        "external_error",
+        "conflict",
+        "agent_unavailable",
+        "spawn_failed",
+        "process_output_failed",
+        "protocol_failed",
+        "agent_exited",
+        "workspace_failed",
+        "cleanup_failed",
+    ];
+    for code in retryable_codes {
+        assert!(
+            infer_recent_memory_error_retryable(code),
+            "expected {code} to be inferred as retryable"
+        );
+    }
+
+    // 2. 明确已知的不可重试错误：必须推断为 false
+    let non_retryable_codes = [
+        "MEMORY_BUDGET_EXHAUSTED",
+        "MEMORY_RESULT_STALE",
+        "MEMORY_WORK_ORDER_INVALID",
+        "VALIDATION_FAILED",
+        "validation_error",
+        "cancelled",
+        "NOT_FOUND",
+        "not_found",
+        "AGENT_DEFINITION_ERROR",
+        "agent_not_found",
+        "unsupported_session_mode",
+        "invalid_request",
+        "resume_unavailable",
+        "recall_tools_unavailable",
+        "memory_generation_tools_unavailable",
+        "output_limit",
+        "empty_output",
+        "permission_denied",
+        "tool_use_denied",
+        "model_selection_failed",
+        "model_unavailable",
+        "SESSION_MEMORY_VALIDATION_FAILED",
+        "session_memory_validation_failed",
+    ];
+    for code in non_retryable_codes {
+        assert!(
+            !infer_recent_memory_error_retryable(code),
+            "expected {code} to be inferred as non-retryable"
+        );
+    }
+
+    // 3. 未知或空错误码：坚决保守推断为 false，严禁误报为可重试
+    let unknown_codes = [
+        "RANDOM_UNKNOWN_CODE",
+        "some_future_unrecognized_error",
+        "INTERNAL_UNEXPECTED",
+        "",
+    ];
+    for code in unknown_codes {
+        assert!(
+            !infer_recent_memory_error_retryable(code),
+            "expected unknown code '{code}' to be inferred as non-retryable"
+        );
+    }
+}

@@ -2,7 +2,7 @@
 //!
 //! 负责将带有文本及图片附件的 Prompt 卡片写回系统剪贴板（如 macOS `pbcopy` / AppleScript 等）。
 
-use crate::backend::runtime::{AppError, AppResult};
+use crate::backend::application::{AppError, AppResult};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use std::{

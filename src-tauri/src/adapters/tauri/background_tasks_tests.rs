@@ -1,4 +1,5 @@
 use super::*;
+use crate::backend::domain::agents::AgentId;
 
 fn params(record_kind: Option<&str>) -> ConversationSyncParams {
     ConversationSyncParams {
@@ -108,7 +109,7 @@ fn conversation_data_maintenance_tracks_progress_failure_and_cancellation() {
     let failed = registry
         .finish_conversation_data_maintenance(
             &first.id,
-            Err(crate::backend::runtime::AppError::Validation(
+            Err(crate::backend::application::AppError::Validation(
                 "maintenance failed".to_string(),
             )),
         )
@@ -129,7 +130,7 @@ fn conversation_data_maintenance_tracks_progress_failure_and_cancellation() {
     let cancelled = registry
         .finish_conversation_data_maintenance(
             &second.id,
-            Err(crate::backend::runtime::AppError::Cancelled(
+            Err(crate::backend::application::AppError::Cancelled(
                 "cancelled".to_string(),
             )),
         )
@@ -331,7 +332,7 @@ async fn conversation_and_agent_lifecycle_use_one_kernel_task_runtime() {
             Box::new(move |_| {
                 agent_wait
                     .recv_timeout(Duration::from_secs(1))
-                    .map_err(|error| crate::backend::runtime::AppError::external(error))?;
+                    .map_err(|error| crate::backend::application::AppError::external(error))?;
                 Ok(serde_json::json!({ "domain": "agent" }))
             }),
         )
@@ -342,7 +343,7 @@ async fn conversation_and_agent_lifecycle_use_one_kernel_task_runtime() {
             Box::new(move |_| {
                 adapter_wait
                     .recv_timeout(Duration::from_secs(1))
-                    .map_err(|error| crate::backend::runtime::AppError::external(error))?;
+                    .map_err(|error| crate::backend::application::AppError::external(error))?;
                 Ok(serde_json::json!({ "domain": "conversation" }))
             }),
         )
@@ -350,16 +351,16 @@ async fn conversation_and_agent_lifecycle_use_one_kernel_task_runtime() {
 
     assert_eq!(
         agent_task.kind,
-        crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle
+        crate::backend::infrastructure::tasks::TaskKind::ExtensionLifecycle
     );
     assert_eq!(
         adapter_task.kind,
-        crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle
+        crate::backend::infrastructure::tasks::TaskKind::ExtensionLifecycle
     );
     assert_eq!(
         runtime
-            .list(crate::backend::runtime::tasks::TaskFilter {
-                kind: Some(crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle),
+            .list(crate::backend::infrastructure::tasks::TaskFilter {
+                kind: Some(crate::backend::infrastructure::tasks::TaskKind::ExtensionLifecycle),
                 active_only: true,
                 ..Default::default()
             })
@@ -371,8 +372,8 @@ async fn conversation_and_agent_lifecycle_use_one_kernel_task_runtime() {
     adapter_release.send(()).unwrap();
     for _ in 0..100 {
         if runtime
-            .list(crate::backend::runtime::tasks::TaskFilter {
-                kind: Some(crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle),
+            .list(crate::backend::infrastructure::tasks::TaskFilter {
+                kind: Some(crate::backend::infrastructure::tasks::TaskKind::ExtensionLifecycle),
                 active_only: true,
                 ..Default::default()
             })
@@ -383,8 +384,8 @@ async fn conversation_and_agent_lifecycle_use_one_kernel_task_runtime() {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(runtime
-        .list(crate::backend::runtime::tasks::TaskFilter {
-            kind: Some(crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle),
+        .list(crate::backend::infrastructure::tasks::TaskFilter {
+            kind: Some(crate::backend::infrastructure::tasks::TaskKind::ExtensionLifecycle),
             active_only: true,
             ..Default::default()
         })
@@ -478,7 +479,7 @@ fn finishing_sync_records_success_or_failure() {
     let failed = registry
         .finish_conversation_sync(
             &running.id,
-            Err(crate::backend::runtime::AppError::Domain {
+            Err(crate::backend::application::AppError::Domain {
                 code: "sync_failed".to_string(),
                 message: "sync failed".to_string(),
                 retryable: true,
@@ -504,7 +505,7 @@ fn sync_projection_uses_task_runtime_cancellation_before_domain_result() {
     let runtime = registry.task_runtime().expect("shared task runtime");
     assert!(matches!(
         runtime.cancel(&running.id),
-        crate::backend::runtime::tasks::CancelOutcome::Requested(_)
+        crate::backend::infrastructure::tasks::CancelOutcome::Requested(_)
     ));
 
     let finished = registry
@@ -514,7 +515,7 @@ fn sync_projection_uses_task_runtime_cancellation_before_domain_result() {
     assert_eq!(finished.status, BackgroundTaskStatus::Cancelled);
     assert_eq!(
         runtime.get(&running.id).unwrap().state,
-        crate::backend::runtime::tasks::TaskState::Canceled
+        crate::backend::infrastructure::tasks::TaskState::Canceled
     );
 }
 
@@ -535,7 +536,7 @@ fn lifecycle_projection_does_not_resume_after_runtime_cancellation() {
     let runtime = registry.task_runtime().expect("shared task runtime");
     assert!(matches!(
         runtime.cancel(&running.id),
-        crate::backend::runtime::tasks::CancelOutcome::Requested(_)
+        crate::backend::infrastructure::tasks::CancelOutcome::Requested(_)
     ));
 
     let projected = registry
@@ -587,7 +588,7 @@ fn skill_backup_tracks_progress_and_blocks_duplicate_start() {
     let failed = registry
         .finish_skill_backup(
             &running.id,
-            Err(crate::backend::runtime::AppError::External(
+            Err(crate::backend::application::AppError::External(
                 "copy failed".to_string(),
             )),
         )
@@ -607,7 +608,7 @@ fn skill_backup_tracks_progress_and_blocks_duplicate_start() {
     let refresh_failed = completed_copy_registry
         .finish_skill_backup(
             &running.id,
-            Err(crate::backend::runtime::AppError::External(
+            Err(crate::backend::application::AppError::External(
                 "catalog refresh failed".to_string(),
             )),
         )
@@ -848,7 +849,7 @@ fn task_10_time_retention_prunes_expired_terminal_tasks() {
             &task.id,
             (Utc::now()
                 - chrono::Duration::from_std(
-                    crate::backend::runtime::tasks::TASK_TERMINAL_RETENTION,
+                    crate::backend::infrastructure::tasks::TASK_TERMINAL_RETENTION,
                 )
                 .unwrap()
                 - chrono::Duration::seconds(1))
@@ -880,7 +881,7 @@ fn task_11_12_count_retention_keeps_50_terminal_tasks_and_all_running_tasks() {
             .iter()
             .filter(|snapshot| snapshot.state.is_terminal())
             .count(),
-        crate::backend::runtime::tasks::TASK_TERMINAL_LIMIT
+        crate::backend::infrastructure::tasks::TASK_TERMINAL_LIMIT
     );
     assert!(snapshots.iter().any(|snapshot| snapshot.id == running.id));
 }
@@ -1332,12 +1333,13 @@ fn ai_result(text: &str) -> AiExecutionResult {
     AiExecutionResult {
         text: text.to_string(),
         agent_id: opencode_id(),
-        protocol: crate::backend::agents::types::AgentProtocol::Acp,
+        protocol: crate::backend::domain::agents::AgentProtocol::Acp,
         requested_model: None,
         elapsed_ms: 1,
         persistent_binding: None,
         replay_text: None,
-        session_cleanup: crate::backend::ai_execution::SessionCleanupStatus::Deleted,
+        session_cleanup:
+            crate::backend::infrastructure::agent_execution::SessionCleanupStatus::Deleted,
     }
 }
 
@@ -1356,8 +1358,8 @@ impl BackgroundTaskRegistry {
         catalog_version: Option<String>,
         agent_version: Option<String>,
         distribution_id: Option<String>,
-        distribution_type: Option<crate::backend::agent_market::types::DistributionType>,
-        ownership: Option<crate::backend::agent_market::types::Ownership>,
+        distribution_type: Option<crate::backend::domain::agents::DistributionType>,
+        ownership: Option<crate::backend::domain::agents::Ownership>,
     ) -> AppResult<(
         AgentLifecycleTaskSnapshot,
         tokio_util::sync::CancellationToken,

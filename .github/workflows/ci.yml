@@ -111,7 +111,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Check module boundaries
-        run: bash scripts/check-module-boundaries.sh
+        run: BOUNDARY_REQUIRE_FOUR_BACKEND_ROOTS=1 bash scripts/check-module-boundaries.sh
 
       - name: Test module boundary guards
         run: bash scripts/check-module-boundaries.test.sh

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "maxProductionReferences": {
+    "storeToApplication": 0,
+    "storeToInfrastructure": 0,
+    "infrastructureToApplication": 0
+  }
+}

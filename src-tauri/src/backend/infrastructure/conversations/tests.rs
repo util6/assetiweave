@@ -1,0 +1,3950 @@
+use super::external::{discover_external_adapter_sessions, resolve_source_location_for_adapter};
+use super::prelude::*;
+use super::{
+    project_external_adapter_command_parts_with_settings,
+    read_source_sessions_incrementally_with_adapter, read_source_sessions_with_adapter,
+    register_external_adapter, scaffold_external_adapter, try_run_external_adapter,
+    validate_external_adapter,
+};
+use crate::backend::domain::{ConversationPartKind, ConversationPartRole};
+use std::collections::BTreeMap;
+
+struct TempFixture {
+    path: PathBuf,
+}
+
+impl TempFixture {
+    fn new(prefix: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&path).unwrap();
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn card_contract_manifest(card_kinds: Value) -> ConversationAdapterManifest {
+    serde_json::from_value(json!({
+        "schema_version": 1,
+        "id": "fixture",
+        "name": "Fixture",
+        "version": "0.1.0",
+        "protocol_version": 1,
+        "command": ["adapter.sh"],
+        "capabilities": ["read_session"],
+        "input_kinds": ["directory"],
+        "card_contract_version": 1,
+        "card_kinds": card_kinds
+    }))
+    .unwrap()
+}
+
+fn structured_card_adapter_output(kind: &str, renderer: &str) -> Vec<u8> {
+    format!(
+        "{}\n{}\n",
+        json!({
+            "type": "item",
+            "item": {
+                "kind": "session",
+                "session": {
+                    "external_id": "session-1",
+                    "title": "Fixture",
+                    "project_path": null,
+                    "started_at": null,
+                    "updated_at": null,
+                    "source_locator": null,
+                    "source_fingerprint": null,
+                    "turns": [{
+                        "external_id": "turn-1",
+                        "turn_index": 0,
+                        "user_text": "Question",
+                        "title": null,
+                        "started_at": null,
+                        "ended_at": null,
+                        "parts": [{
+                            "role": "assistant",
+                            "kind": "text",
+                            "text": "Thinking",
+                            "language": null,
+                            "command": null,
+                            "cwd": null,
+                            "status": null,
+                            "exit_code": null,
+                            "content_card": {
+                                "schema_version": 1,
+                                "kind": kind,
+                                "renderer": renderer
+                            }
+                        }]
+                    }]
+                }
+            }
+        }),
+        json!({ "type": "complete", "item": { "session_count": 1 } })
+    )
+    .into_bytes()
+}
+
+fn adapter_with_manifest_runtime(
+    root: &Path,
+    id: &str,
+    kind: ConversationAdapterRuntimeKind,
+    version: &str,
+) -> ConversationAdapter {
+    let adapter_dir = root.join(id);
+    fs::create_dir_all(&adapter_dir).unwrap();
+    let manifest_path = adapter_dir.join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": id,
+            "name": id,
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "runtime": {
+                "type": kind,
+                "entry": "adapter",
+                "version": version
+            },
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    ConversationAdapter {
+        id: id.to_string(),
+        name: id.to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest_path.to_string_lossy().to_string()),
+        executable_path: Some(adapter_dir.join("adapter").to_string_lossy().to_string()),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["probe".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    }
+}
+
+#[test]
+fn adapter_output_rejects_oversized_line() {
+    let line = format!(
+        "{{\"type\":\"warning\",\"message\":\"{}\"}}\n{{\"type\":\"complete\",\"item\":{{}}}}\n",
+        "x".repeat(DEFAULT_MAX_CONTROL_LINE_BYTES + 1)
+    );
+    let error = parse_external_adapter_output("probe", line.into_bytes(), Vec::new()).unwrap_err();
+
+    assert!(error.contains("exceeds max control line size"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn conversation_sync_cancels_an_in_flight_adapter_read() {
+    let fixture = TempFixture::new("assetiweave-sync-cancellation");
+    let adapter = adapter_with_manifest_runtime(
+        fixture.path(),
+        "slow",
+        ConversationAdapterRuntimeKind::Executable,
+        ">=1",
+    );
+    let dir = fixture.path().join("slow");
+    write_executable_script(&dir, "adapter", "#!/bin/sh\ncat >/dev/null\ntouch \"$(dirname \"$0\")/started\"\nsleep 4\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"session_count\":0}}'\n");
+    let source = source_fixture(
+        "slow",
+        ConversationSourceKind::Directory,
+        &dir.to_string_lossy(),
+    );
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let token = cancellation.clone();
+    let worker = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !dir.join("started").exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        token.cancel();
+    });
+    let started = std::time::Instant::now();
+    let result = super::readers::read_source_sessions_with_control(
+        Some(&adapter),
+        &source,
+        &BTreeMap::new(),
+        &json!({}),
+        Some(&cancellation),
+        &mut |_, _| {},
+    )
+    .await;
+    worker.join().unwrap();
+    assert!(
+        matches!(result, Err(InfraError::Cancelled(_))),
+        "{result:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "cancellation waited for the adapter timeout"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn conversation_sync_probes_runtime_once_per_source() {
+    let fixture = TempFixture::new("assetiweave-sync-runtime-reuse");
+    let mut adapter = adapter_with_manifest_runtime(
+        fixture.path(),
+        "runtime-reuse",
+        ConversationAdapterRuntimeKind::Node,
+        ">=18",
+    );
+    adapter.capabilities.push("list_sessions".to_string());
+    let manifest_path = adapter.manifest_path.as_ref().unwrap();
+    let mut manifest: Value =
+        serde_json::from_str(&fs::read_to_string(manifest_path).unwrap()).unwrap();
+    manifest["capabilities"] = json!(adapter.capabilities);
+    fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    fs::write(fixture.path().join("runtime-reuse/adapter"), "fixture").unwrap();
+    let runner = write_executable_script(
+        fixture.path(),
+        "node",
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo probe >> "$(dirname "$0")/probes"
+  echo v22.0.0
+  exit 0
+fi
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"one","version_token":"1"}}'
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"two","version_token":"1"}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":2,"snapshot_complete":true}}'
+    ;;
+  *) printf '%s\n' '{"type":"complete","item":{"session_count":0}}' ;;
+esac
+"#,
+    );
+    let source = source_fixture(
+        "runtime-reuse",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+    let result = super::readers::read_source_sessions_with_control(
+        Some(&adapter),
+        &source,
+        &BTreeMap::new(),
+        &json!({"conversationRuntimeOverrides": {"node": runner}}),
+        None,
+        &mut |_, _| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.discovered_session_count, 2);
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("probes"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn conversation_sync_cancels_web_harvesting_before_its_ten_minute_timeout() {
+    let fixture = TempFixture::new("assetiweave-harvester-cancellation");
+    write_executable_script(
+        fixture.path(),
+        "harvest.sh",
+        "#!/bin/sh\ntouch started\nsleep 4\n",
+    );
+    fs::write(
+        fixture.path().join("harvester.json"),
+        json!({"id": "fixture", "entrypoint": ["harvest.sh"]}).to_string(),
+    )
+    .unwrap();
+    let source = source_fixture(
+        "fixture",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let token = cancellation.clone();
+    let marker = fixture.path().join("started");
+    let worker = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !marker.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        token.cancel();
+    });
+    let started = std::time::Instant::now();
+    let result = super::harvester::run_conversation_harvester_with_control(
+        None,
+        &source,
+        true,
+        &json!({}),
+        Some(&cancellation),
+    )
+    .await;
+    worker.join().unwrap();
+    assert!(
+        matches!(result, Err(InfraError::Cancelled(_))),
+        "{result:?}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(3));
+}
+
+#[test]
+fn adapter_output_accepts_large_atomic_session_item() {
+    let output = format!(
+        "{}\n{}\n",
+        json!({
+            "type": "item",
+            "item": {
+                "kind": "session",
+                "session": {
+                    "external_id": "large-session",
+                    "title": null,
+                    "project_path": null,
+                    "started_at": null,
+                    "updated_at": null,
+                    "source_locator": null,
+                    "source_fingerprint": null,
+                    "turns": [{
+                        "external_id": "turn-1",
+                        "turn_index": 0,
+                        "user_text": "x".repeat(DEFAULT_MAX_CONTROL_LINE_BYTES + 1),
+                        "title": null,
+                        "started_at": null,
+                        "ended_at": null,
+                        "parts": []
+                    }]
+                }
+            }
+        }),
+        json!({ "type": "complete", "item": { "session_count": 1 } })
+    );
+
+    let result = parse_external_adapter_output("read_session", output.into_bytes(), Vec::new())
+        .expect("an atomic session item may exceed the generic control-line budget");
+
+    assert_eq!(result.sessions.len(), 1);
+    assert_eq!(result.sessions[0].external_id, "large-session");
+}
+
+#[test]
+fn adapter_output_accepts_declared_structured_content_card() {
+    let manifest = card_contract_manifest(json!([{
+        "id": "fixture.reasoning",
+        "semantic_role": "reasoning",
+        "label": "Reasoning",
+        "default_renderer": "markdown",
+        "allowed_renderers": ["markdown"]
+    }]));
+
+    let result = parse_external_adapter_output_with_manifest(
+        "read_session",
+        structured_card_adapter_output("fixture.reasoning", "markdown"),
+        Vec::new(),
+        &manifest,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.sessions[0].turns[0].parts[0]
+            .content_card
+            .as_ref()
+            .map(|card| card.kind.as_str()),
+        Some("fixture.reasoning")
+    );
+    assert_eq!(result.legacy_cards_upgraded, 0);
+}
+
+#[test]
+fn adapter_output_aggregates_legacy_card_upgrades_once_per_run() {
+    let manifest = card_contract_manifest(json!([{
+        "id": "fixture.answer",
+        "semantic_role": "answer",
+        "label": "Answer",
+        "default_renderer": "markdown",
+        "allowed_renderers": ["markdown"]
+    }]));
+    let output = format!(
+        "{}\n{}\n",
+        json!({
+            "type": "item",
+            "item": {"kind": "session", "session": {
+                "external_id": "legacy-session", "title": null, "project_path": null,
+                "started_at": null, "updated_at": null, "source_locator": null,
+                "source_fingerprint": null, "turns": [{
+                    "external_id": "turn-1", "turn_index": 0, "user_text": "Question",
+                    "title": null, "started_at": null, "ended_at": null, "parts": [{
+                        "role": "assistant", "kind": "text", "text": "Answer",
+                        "language": null, "command": null, "cwd": null, "status": null,
+                        "exit_code": null,
+                        "metadata_json": {"content_card": {"type": "answer", "format": "markdown"}}
+                    }]
+                }]
+            }}
+        }),
+        json!({"type": "complete", "item": {"session_count": 1}}),
+    );
+
+    let result = parse_external_adapter_output_with_manifest(
+        "read_session",
+        output.into_bytes(),
+        Vec::new(),
+        &manifest,
+    )
+    .expect("legacy Card is upgraded during the observation window");
+
+    assert_eq!(result.legacy_cards_upgraded, 1);
+    assert_eq!(
+        result.sessions[0].turns[0].parts[0]
+            .content_card
+            .as_ref()
+            .map(|card| card.kind.as_str()),
+        Some("fixture.answer")
+    );
+}
+
+#[test]
+fn adapter_output_rejects_undeclared_structured_content_card() {
+    let manifest = card_contract_manifest(json!([]));
+
+    let error = parse_external_adapter_output_with_manifest(
+        "read_session",
+        structured_card_adapter_output("fixture.reasoning", "markdown"),
+        Vec::new(),
+        &manifest,
+    )
+    .expect_err("undeclared kind must fail at the adapter boundary");
+
+    assert!(error.contains("undeclared conversation card kind"));
+}
+
+#[test]
+fn conversation_incremental_adapter_output_parses_complete_session_discovery() {
+    let output = br#"{"type":"item","item":{"kind":"session_descriptor","external_id":"old-session","updated_at":"2026-07-16T01:02:03Z","source_locator":"/tmp/old.jsonl","version_token":"version-2"}}
+{"type":"complete","item":{"snapshot_complete":true,"session_count":1}}"#;
+
+    let result = parse_external_adapter_output("list_sessions", output.to_vec(), Vec::new())
+        .expect("parse session discovery output");
+
+    assert!(result.snapshot_complete);
+    assert_eq!(result.session_descriptors.len(), 1);
+    assert_eq!(result.session_descriptors[0].external_id, "old-session");
+    assert_eq!(result.session_descriptors[0].version_token, "version-2");
+    assert_eq!(
+        result.session_descriptors[0].source_locator.as_deref(),
+        Some("/tmp/old.jsonl")
+    );
+}
+
+#[test]
+fn adapter_line_size_rejects_item_above_atomic_limit() {
+    let error = validate_external_adapter_line_size(1, DEFAULT_MAX_ITEM_LINE_BYTES + 1, true)
+        .expect_err("session items must still respect the atomic line safety cap");
+
+    assert!(error.contains("exceeds max item line size"));
+}
+
+#[test]
+fn adapter_output_requires_complete_line() {
+    let output =
+        br#"{"type":"item","item":{"kind":"session","session":{"external_id":"s","title":null,"project_path":null,"started_at":null,"updated_at":null,"source_locator":null,"source_fingerprint":null,"turns":[]}}}"#;
+    let error = parse_external_adapter_output("read_session", output.to_vec(), Vec::new())
+        .expect_err("missing complete line should fail");
+
+    assert!(error.contains("complete"));
+}
+
+#[test]
+fn adapter_output_parses_markdown_export_item() {
+    let output = br##"{"type":"item","item":{"kind":"markdown_export","content":"# Exported","relative_path":"codex/project/session.md"}}
+{"type":"complete","item":{"export_count":1}}"##;
+
+    let result =
+        parse_external_adapter_output("export_markdown", output.to_vec(), Vec::new()).unwrap();
+
+    let export = result.markdown_export.expect("markdown export item");
+    assert_eq!(result.item_count, 1);
+    assert_eq!(export.content, "# Exported");
+    assert_eq!(export.relative_path, "codex/project/session.md");
+}
+
+#[test]
+fn adapter_output_parses_batch_command_display_projections() {
+    let output = br#"{"type":"item","item":{"kind":"command_projection","projection":{"part_id":"conversation-part-raw","schema_version":1,"projector_version":"shell-projector-v1","nodes":[{"display_order":0,"command":"git status --short","command_label":"status"},{"display_order":1,"command":"git diff","command_label":null}]}}}
+{"type":"complete","item":{"projection_count":1}}"#;
+
+    let result =
+        parse_external_adapter_output("project_command_parts", output.to_vec(), Vec::new())
+            .expect("parse command display projection output");
+
+    assert_eq!(result.command_projections.len(), 1);
+    let projection = &result.command_projections[0];
+    assert_eq!(projection.part_id, "conversation-part-raw");
+    assert_eq!(projection.schema_version, 1);
+    assert_eq!(projection.projector_version, "shell-projector-v1");
+    assert_eq!(projection.nodes.len(), 2);
+    assert_eq!(projection.nodes[0].display_order, 0);
+    assert_eq!(projection.nodes[0].command, "git status --short");
+    assert_eq!(projection.nodes[0].command_label.as_deref(), Some("status"));
+    assert_eq!(projection.nodes[1].display_order, 1);
+    assert_eq!(projection.nodes[1].command, "git diff");
+}
+
+#[test]
+fn adapter_output_removes_persisted_shell_display_projection_metadata() {
+    let output = format!(
+        "{}\n{}",
+        json!({
+            "type": "item",
+            "item": {
+                "kind": "session",
+                "session": {
+                    "external_id": "session-1",
+                    "turns": [{
+                        "external_id": "turn-1",
+                        "turn_index": 0,
+                        "user_text": "Question",
+                        "parts": [{
+                            "role": "tool",
+                            "kind": "command",
+                            "command": "git status --short",
+                            "metadata_json": {
+                                "keep": "raw",
+                                "shell_execution_projection": {
+                                    "schema_version": 1,
+                                    "nodes": [{ "command": "git status --short" }]
+                                }
+                            }
+                        }]
+                    }]
+                }
+            }
+        }),
+        json!({ "type": "complete", "item": { "session_count": 1 } })
+    );
+
+    let result = parse_external_adapter_output("read_session", output.into_bytes(), Vec::new())
+        .expect("parse raw command Part");
+    let metadata = result.sessions[0].turns[0].parts[0]
+        .metadata_json
+        .as_deref()
+        .expect("retained source metadata");
+
+    assert_eq!(
+        serde_json::from_str::<Value>(metadata).unwrap(),
+        json!({ "keep": "raw" })
+    );
+}
+
+#[test]
+fn adapter_protocol_progress_parsing_and_sanitization() {
+    use super::external::sanitize_adapter_progress;
+    use super::types::ExternalAdapterLine;
+
+    // 1. Progress mixed with item, warning, and complete lines
+    let mixed_output = format!(
+        "{}\n{}\n{}\n{}\n{}",
+        json!({ "type": "progress", "stage": "scan", "operation": "scanning dir", "path": "/test/a", "current": 1, "total": 10, "worker": "worker-1" }),
+        json!({ "type": "warning", "message": "sample warning" }),
+        json!({ "type": "progress", "stage": "read", "operation": "reading file", "path": "/test/b.json", "current": 2, "total": 10 }),
+        json!({ "type": "item", "item": { "kind": "session_descriptor", "external_id": "sess-1", "version_token": "v1", "updated_at": "2026-01-01T00:00:00Z" } }),
+        json!({ "type": "complete", "item": { "session_count": 1, "snapshot_complete": true } })
+    );
+    let result =
+        parse_external_adapter_output("list_sessions", mixed_output.into_bytes(), Vec::new())
+            .expect("progress lines must be accepted without error");
+    assert_eq!(result.session_descriptors.len(), 1);
+    assert_eq!(result.warnings.len(), 1);
+    assert!(result.snapshot_complete);
+
+    // 2. Unknown progress fields are ignored / tolerated by serde
+    let unknown_fields = json!({
+        "type": "progress",
+        "stage": "scan",
+        "unknown_extra": 12345,
+        "unexpected_object": { "foo": "bar" }
+    });
+    let line: ExternalAdapterLine =
+        serde_json::from_value(unknown_fields).expect("deserialize with unknown fields");
+    let sanitized = sanitize_adapter_progress(&line);
+    assert_eq!(sanitized.stage.as_deref(), Some("scan"));
+    assert!(sanitized.operation.is_none());
+    assert!(sanitized.path.is_none());
+
+    // 3. Ultra-long path is truncated to 512 chars and backslashes normalized
+    let long_path = format!(
+        "C:\\Users\\test\\{}\\{}.json",
+        "a".repeat(300),
+        "b".repeat(300)
+    );
+    let long_line: ExternalAdapterLine = serde_json::from_value(json!({
+        "type": "progress",
+        "path": long_path,
+    }))
+    .unwrap();
+    let sanitized_long = sanitize_adapter_progress(&long_line);
+    let path = sanitized_long.path.expect("path exists");
+    assert!(path.len() <= 512);
+    assert!(!path.contains('\\'));
+    assert!(path.contains('/'));
+
+    // 4. HTML / script tags and control characters stripped
+    let injection_line: ExternalAdapterLine = serde_json::from_value(json!({
+        "type": "progress",
+        "operation": "reading <script>alert(1)</script>\x00\x07file",
+        "worker": "worker<img src=x onerror=alert(1)>"
+    }))
+    .unwrap();
+    let sanitized_injection = sanitize_adapter_progress(&injection_line);
+    assert!(!sanitized_injection
+        .operation
+        .as_ref()
+        .unwrap()
+        .contains('<'));
+    assert!(!sanitized_injection
+        .operation
+        .as_ref()
+        .unwrap()
+        .contains('>'));
+    assert!(!sanitized_injection
+        .operation
+        .as_ref()
+        .unwrap()
+        .contains('\0'));
+    assert!(!sanitized_injection.worker.as_ref().unwrap().contains('<'));
+
+    // 5. Nested progress payload is correctly extracted and sanitized
+    let nested_line: ExternalAdapterLine = serde_json::from_value(json!({
+        "type": "progress",
+        "progress": {
+            "stage": "parse",
+            "operation": "parsing_session_file",
+            "path": "rollout.jsonl",
+            "current": 5,
+            "total": 10,
+            "worker": "worker-1"
+        }
+    }))
+    .expect("deserialize nested progress");
+    let sanitized_nested = sanitize_adapter_progress(&nested_line);
+    assert_eq!(sanitized_nested.stage.as_deref(), Some("parse"));
+    assert_eq!(
+        sanitized_nested.operation.as_deref(),
+        Some("parsing_session_file")
+    );
+    assert_eq!(sanitized_nested.path.as_deref(), Some("rollout.jsonl"));
+    assert_eq!(sanitized_nested.current, Some(5));
+    assert_eq!(sanitized_nested.total, Some(10));
+    assert_eq!(sanitized_nested.worker.as_deref(), Some("worker-1"));
+
+    // 6. Legacy adapter with NO progress lines works 100% identically
+    let legacy_output = format!(
+        "{}\n{}",
+        json!({ "type": "item", "item": { "kind": "session_descriptor", "external_id": "sess-legacy", "version_token": "v0", "updated_at": "2026-01-01T00:00:00Z" } }),
+        json!({ "type": "complete", "item": { "session_count": 1 } })
+    );
+    let legacy_result =
+        parse_external_adapter_output("list_sessions", legacy_output.into_bytes(), Vec::new())
+            .expect("legacy output parses cleanly");
+    assert_eq!(legacy_result.session_descriptors.len(), 1);
+}
+
+#[test]
+fn test_parse_external_adapter_output_usage_events() {
+    let output = format!(
+        "{}\n{}\n{}\n{}",
+        json!({
+            "type": "usage_event",
+            "usage_event": {
+                "external_event_id": "evt-1",
+                "session_id": "sess-1",
+                "timestamp": "2026-09-14T00:00:00Z",
+                "model": "gpt-5.6-sol",
+                "total_tokens": 100
+            }
+        }),
+        json!({
+            "type": "usage_event",
+            "event": {
+                "external_event_id": "evt-2",
+                "session_id": "sess-1",
+                "timestamp": "2026-09-14T00:01:00Z",
+                "model": "gpt-5.6-sol",
+                "total_tokens": 200
+            }
+        }),
+        json!({
+            "type": "item",
+            "item": {
+                "kind": "usage_event",
+                "event": {
+                    "external_event_id": "evt-3",
+                    "session_id": "sess-2",
+                    "timestamp": "2026-09-14T00:02:00Z",
+                    "model": "claude-3-7-sonnet",
+                    "total_tokens": 300
+                }
+            }
+        }),
+        json!({
+            "type": "complete",
+            "item": { "snapshot_complete": true, "usage_event_count": 3 }
+        })
+    );
+
+    let result = parse_external_adapter_output("read_usage", output.into_bytes(), Vec::new())
+        .expect("usage_events parsed cleanly");
+    assert_eq!(result.usage_events.len(), 3);
+    assert_eq!(result.usage_events[0].external_event_id, "evt-1");
+    assert_eq!(result.usage_events[1].external_event_id, "evt-2");
+    assert_eq!(result.usage_events[2].external_event_id, "evt-3");
+}
+
+#[test]
+fn adapter_output_rejects_empty_markdown_export_content() {
+    let output = br#"{"type":"item","item":{"kind":"markdown_export","content":"","relative_path":"codex/project/session.md"}}
+{"type":"complete","item":{"export_count":1}}"#;
+
+    let error = parse_external_adapter_output("export_markdown", output.to_vec(), Vec::new())
+        .expect_err("empty export content should fail");
+
+    assert!(error.contains("content"));
+}
+
+#[test]
+fn adapter_output_rejects_missing_markdown_export_fields() {
+    let missing_content = br#"{"type":"item","item":{"kind":"markdown_export","relative_path":"codex/project/session.md"}}
+{"type":"complete","item":{"export_count":1}}"#;
+    let error =
+        parse_external_adapter_output("export_markdown", missing_content.to_vec(), Vec::new())
+            .expect_err("missing export content should fail");
+    assert!(error.contains("content"));
+
+    let missing_relative_path =
+        br##"{"type":"item","item":{"kind":"markdown_export","content":"# Exported"}}
+{"type":"complete","item":{"export_count":1}}"##;
+    let error = parse_external_adapter_output(
+        "export_markdown",
+        missing_relative_path.to_vec(),
+        Vec::new(),
+    )
+    .expect_err("missing export relative_path should fail");
+    assert!(error.contains("relative_path"));
+}
+
+#[test]
+fn adapter_command_invocation_runs_javascript_adapters_through_node() {
+    let manifest_dir = Path::new("/tmp/adapter");
+    let invocation =
+        build_adapter_command_invocation(manifest_dir, "adapter.mjs", &["--probe".to_string()]);
+
+    assert_eq!(invocation.program, PathBuf::from("node"));
+    assert_eq!(
+        invocation.args,
+        vec![
+            manifest_dir
+                .join("adapter.mjs")
+                .to_string_lossy()
+                .to_string(),
+            "--probe".to_string()
+        ]
+    );
+    assert_eq!(invocation.display_path, manifest_dir.join("adapter.mjs"));
+}
+
+#[test]
+fn adapter_command_invocation_treats_javascript_extensions_case_insensitively() {
+    let manifest_dir = Path::new("/tmp/adapter");
+    let invocation = build_adapter_command_invocation(manifest_dir, "adapter.MJS", &[]);
+
+    assert_eq!(invocation.program, PathBuf::from("node"));
+    assert_eq!(
+        invocation.args,
+        vec![manifest_dir
+            .join("adapter.MJS")
+            .to_string_lossy()
+            .to_string()]
+    );
+}
+
+#[test]
+fn legacy_javascript_command_is_promoted_to_node_runtime() {
+    let manifest = ConversationAdapterManifest {
+        schema_version: 1,
+        id: "legacy-js".to_string(),
+        name: "Legacy JS".to_string(),
+        version: "0.1.0".to_string(),
+        protocol_version: EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+        command: vec!["adapter.mjs".to_string(), "--mode".to_string()],
+        runtime: None,
+        capabilities: vec!["probe".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+    };
+
+    let runtime = adapter_execution_runtime(&manifest).expect("legacy js runtime");
+
+    assert_eq!(runtime.kind, ConversationAdapterRuntimeKind::Node);
+    assert_eq!(runtime.entry, "adapter.mjs");
+    assert_eq!(runtime.args, vec!["--mode".to_string()]);
+    assert_eq!(
+        runtime.version.as_deref(),
+        Some(LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION)
+    );
+}
+
+#[test]
+fn adapter_runtime_invocation_uses_declared_node_runtime() {
+    let manifest_dir = Path::new("/tmp/adapter");
+    let runtime = ConversationAdapterRuntime {
+        kind: ConversationAdapterRuntimeKind::Node,
+        entry: "adapter.mjs".to_string(),
+        args: vec!["--mode".to_string(), "probe".to_string()],
+        version: Some(">=20".to_string()),
+    };
+
+    let invocation =
+        build_adapter_runtime_invocation(manifest_dir, &runtime, &["--source".to_string()]);
+
+    assert_eq!(invocation.program, PathBuf::from("node"));
+    assert_eq!(
+        invocation.args,
+        vec![
+            manifest_dir
+                .join("adapter.mjs")
+                .to_string_lossy()
+                .to_string(),
+            "--mode".to_string(),
+            "probe".to_string(),
+            "--source".to_string()
+        ]
+    );
+    assert_eq!(invocation.display_path, manifest_dir.join("adapter.mjs"));
+}
+
+#[test]
+fn adapter_runtime_invocation_supports_python_and_bash() {
+    let manifest_dir = Path::new("/tmp/adapter");
+    let python = ConversationAdapterRuntime {
+        kind: ConversationAdapterRuntimeKind::Python,
+        entry: "adapter.py".to_string(),
+        args: Vec::new(),
+        version: Some(">=3.10".to_string()),
+    };
+    let bash = ConversationAdapterRuntime {
+        kind: ConversationAdapterRuntimeKind::Bash,
+        entry: "adapter.sh".to_string(),
+        args: Vec::new(),
+        version: None,
+    };
+
+    let python_invocation = build_adapter_runtime_invocation(manifest_dir, &python, &[]);
+    let bash_invocation = build_adapter_runtime_invocation(manifest_dir, &bash, &[]);
+
+    #[cfg(windows)]
+    {
+        assert_eq!(python_invocation.program, PathBuf::from("py"));
+        assert_eq!(python_invocation.args[0], "-3");
+        assert_eq!(
+            python_invocation.args[1],
+            manifest_dir
+                .join("adapter.py")
+                .to_string_lossy()
+                .to_string()
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        assert_eq!(python_invocation.program, PathBuf::from("python3"));
+        assert_eq!(
+            python_invocation.args[0],
+            manifest_dir
+                .join("adapter.py")
+                .to_string_lossy()
+                .to_string()
+        );
+    }
+    assert_eq!(bash_invocation.program, PathBuf::from("bash"));
+    assert_eq!(
+        bash_invocation.args[0],
+        manifest_dir
+            .join("adapter.sh")
+            .to_string_lossy()
+            .to_string()
+    );
+}
+
+#[tokio::test]
+async fn adapter_runtime_probe_reports_missing_system_runtime() {
+    let runtime = ConversationAdapterRuntime {
+        kind: ConversationAdapterRuntimeKind::Node,
+        entry: "adapter.mjs".to_string(),
+        args: Vec::new(),
+        version: Some(">=20".to_string()),
+    };
+    let invocation = AdapterCommandInvocation {
+        program: PathBuf::from("assetiweave-missing-node-runtime"),
+        args: Vec::new(),
+        display_path: PathBuf::from("adapter.mjs"),
+    };
+
+    let error = ensure_adapter_runtime_available(&runtime, &invocation)
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("node >=20"));
+    assert!(error.contains("PATH"));
+    assert!(error.contains("assetiweave-missing-node-runtime"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn adapter_runtime_probe_rejects_detected_version_below_requirement() {
+    let fixture = TempFixture::new("assetiweave-runtime-version-fixture");
+    let runtime_program = write_executable_script(
+        fixture.path(),
+        "node18.sh",
+        r#"#!/bin/sh
+printf '%s\n' 'v18.19.0'
+"#,
+    );
+    let runtime = ConversationAdapterRuntime {
+        kind: ConversationAdapterRuntimeKind::Node,
+        entry: "adapter.mjs".to_string(),
+        args: Vec::new(),
+        version: Some(">=20".to_string()),
+    };
+    let invocation = AdapterCommandInvocation {
+        program: runtime_program,
+        args: Vec::new(),
+        display_path: PathBuf::from("adapter.mjs"),
+    };
+
+    let error = ensure_adapter_runtime_available(&runtime, &invocation)
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("requires >=20"));
+    assert!(error.contains("v18.19.0"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn adapter_runtime_status_reports_version_requirement_mismatch() {
+    let fixture = TempFixture::new("assetiweave-runtime-status-version-fixture");
+    let runtime_program = write_executable_script(
+        fixture.path(),
+        "node18.sh",
+        r#"#!/bin/sh
+printf '%s\n' 'v18.19.0'
+"#,
+    );
+
+    let status = probe_adapter_runtime_status_with_requirement(
+        &ConversationAdapterRuntimeKind::Node,
+        runtime_program,
+        Some(">=20"),
+    )
+    .await;
+
+    assert!(!status.available);
+    assert_eq!(status.version.as_deref(), Some("v18.19.0"));
+    assert_eq!(status.required_version.as_deref(), Some(">=20"));
+    assert!(status
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("requires >=20"));
+}
+
+#[tokio::test]
+async fn adapter_runtime_probe_returns_remediation_hint() {
+    let status = probe_adapter_runtime_status(
+        &ConversationAdapterRuntimeKind::Node,
+        PathBuf::from("assetiweave-missing-node-runtime"),
+    )
+    .await;
+
+    assert!(!status.available);
+    assert!(status
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("not found"));
+    assert!(status
+        .hint
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Node.js 20"));
+    assert!(status.hint.as_deref().unwrap_or_default().contains("PATH"));
+}
+
+#[test]
+fn adapter_runtime_version_constraints_compare_detected_versions() {
+    assert!(runtime_version_satisfies_constraint("v20.11.1", ">=20").unwrap());
+    assert!(runtime_version_satisfies_constraint("Python 3.11.6", ">=3.10").unwrap());
+    assert!(
+        runtime_version_satisfies_constraint("GNU bash, version 5.2.37(1)-release", ">=5.2")
+            .unwrap()
+    );
+    assert!(!runtime_version_satisfies_constraint("v18.19.0", ">=20").unwrap());
+    assert!(!runtime_version_satisfies_constraint("Python 3.9.18", ">=3.10").unwrap());
+}
+
+#[test]
+fn adapter_runtime_version_constraints_reject_unsupported_shapes() {
+    assert!(runtime_version_satisfies_constraint("v20.11.1", "^20").is_err());
+    assert!(runtime_version_satisfies_constraint("v20.11.1", ">=20.x").is_err());
+    assert!(runtime_version_satisfies_constraint("node version unknown", ">=20").is_err());
+}
+
+#[tokio::test]
+async fn adapter_runtime_status_lists_supported_system_runtimes() {
+    let statuses = list_adapter_runtime_statuses(&[]).await;
+    let kinds = statuses
+        .iter()
+        .map(|status| status.kind.clone())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        kinds,
+        vec![
+            ConversationAdapterRuntimeKind::Node,
+            ConversationAdapterRuntimeKind::Python,
+            ConversationAdapterRuntimeKind::Bash
+        ]
+    );
+    assert!(statuses.iter().all(|status| !status.program.is_empty()));
+    assert!(statuses
+        .iter()
+        .all(|status| status.required_version.is_none()));
+}
+
+#[tokio::test]
+async fn adapter_runtime_status_uses_declared_runtime_requirements() {
+    let statuses = list_adapter_runtime_statuses(&[(
+        ConversationAdapterRuntimeKind::Node,
+        ">=20".to_string(),
+    )])
+    .await;
+
+    assert_eq!(
+        statuses
+            .iter()
+            .find(|status| status.kind == ConversationAdapterRuntimeKind::Node)
+            .and_then(|status| status.required_version.as_deref()),
+        Some(">=20")
+    );
+}
+
+#[test]
+fn adapter_runtime_requirements_keep_highest_minimum_per_runtime() {
+    let fixture = TempFixture::new("assetiweave-runtime-requirements-fixture");
+    let adapters = vec![
+        adapter_with_manifest_runtime(
+            fixture.path(),
+            "node18",
+            ConversationAdapterRuntimeKind::Node,
+            ">=18",
+        ),
+        adapter_with_manifest_runtime(
+            fixture.path(),
+            "node20",
+            ConversationAdapterRuntimeKind::Node,
+            ">=20",
+        ),
+        adapter_with_manifest_runtime(
+            fixture.path(),
+            "python311",
+            ConversationAdapterRuntimeKind::Python,
+            ">=3.11",
+        ),
+    ];
+
+    let requirements = adapter_runtime_requirements(&adapters);
+
+    assert_eq!(
+        requirements,
+        vec![
+            (ConversationAdapterRuntimeKind::Node, ">=20".to_string()),
+            (ConversationAdapterRuntimeKind::Python, ">=3.11".to_string())
+        ]
+    );
+}
+
+#[test]
+fn adapter_runtime_requirements_include_legacy_javascript_commands() {
+    let fixture = TempFixture::new("assetiweave-runtime-legacy-js-fixture");
+    let adapter_dir = fixture.path().join("legacy-js");
+    fs::create_dir_all(&adapter_dir).unwrap();
+    let manifest_path = adapter_dir.join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "legacy-js",
+            "name": "Legacy JS",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "command": ["adapter.mjs"],
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let adapter = ConversationAdapter {
+        id: "legacy-js".to_string(),
+        name: "Legacy JS".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest_path.to_string_lossy().to_string()),
+        executable_path: Some(
+            adapter_dir
+                .join("adapter.mjs")
+                .to_string_lossy()
+                .to_string(),
+        ),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["probe".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+
+    let requirements = adapter_runtime_requirements(&[adapter]);
+
+    assert_eq!(
+        requirements,
+        vec![(ConversationAdapterRuntimeKind::Node, ">=20".to_string())]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn adapter_runtime_overrides_read_configured_programs() {
+    let settings = json!({
+        "conversationRuntimeOverrides": {
+            "node": "/opt/node/bin/node",
+            "python": "  /opt/python/bin/python3  ",
+            "bash": "",
+            "ignored": "/tmp/ignored"
+        }
+    });
+
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Node, &settings),
+        Some(PathBuf::from("/opt/node/bin/node"))
+    );
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Python, &settings),
+        Some(PathBuf::from("/opt/python/bin/python3"))
+    );
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Bash, &settings),
+        None
+    );
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Executable, &settings),
+        None
+    );
+}
+
+#[test]
+fn adapter_runtime_overrides_resolve_portable_home_paths_for_io() {
+    let settings = json!({
+        "conversationRuntimeOverrides": {
+            "node": "~/.local/bin/node"
+        }
+    });
+
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Node, &settings),
+        dirs::home_dir().map(|home| home.join(".local/bin/node"))
+    );
+}
+
+#[test]
+fn external_adapter_source_locations_resolve_portable_paths_for_io() {
+    let source = source_fixture("portable", ConversationSourceKind::Directory, "~/.codex");
+
+    assert_eq!(
+        resolve_source_location_for_adapter(&source).expect("resolve source location"),
+        dirs::home_dir()
+            .expect("home directory")
+            .join(".codex")
+            .to_string_lossy()
+    );
+
+    let url_source = source_fixture(
+        "remote",
+        ConversationSourceKind::Custom,
+        "https://example.test/sessions",
+    );
+    assert_eq!(
+        resolve_source_location_for_adapter(&url_source).expect("preserve URL location"),
+        "https://example.test/sessions"
+    );
+}
+
+#[test]
+fn adapter_runtime_overrides_ignore_relative_programs() {
+    let settings = json!({
+        "conversationRuntimeOverrides": {
+            "node": "node",
+            "python": "./python",
+            "bash": "bin/bash"
+        }
+    });
+
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Node, &settings),
+        None
+    );
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Python, &settings),
+        None
+    );
+    assert_eq!(
+        runtime_program_from_settings(&ConversationAdapterRuntimeKind::Bash, &settings),
+        None
+    );
+}
+
+#[test]
+fn external_adapter_validation_accepts_runtime_without_legacy_command() {
+    let fixture = TempFixture::new("assetiweave-adapter-runtime-fixture");
+    let adapter_path = fixture.path().join("adapter.mjs");
+    fs::write(&adapter_path, "#!/usr/bin/env node\n").unwrap();
+    let manifest_path = fixture.path().join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "fixture-runtime",
+            "name": "Fixture Runtime",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "runtime": {
+                "type": "node",
+                "entry": "adapter.mjs",
+                "version": ">=20"
+            },
+            "capabilities": ["probe", "read_session", "export_markdown"],
+            "input_kinds": ["directory"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let validation =
+        validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref()).unwrap();
+
+    assert_eq!(validation.executable_path, adapter_path.to_string_lossy());
+    assert!(validation.executable_hash.is_some());
+    assert!(validation.manifest.command.is_empty());
+    assert_eq!(
+        validation
+            .manifest
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.entry.as_str()),
+        Some("adapter.mjs")
+    );
+}
+
+#[test]
+fn external_adapter_validation_accepts_namespaced_card_contract() {
+    let fixture = TempFixture::new("assetiweave-adapter-card-contract-fixture");
+    fs::write(fixture.path().join("adapter.mjs"), "#!/usr/bin/env node\n").unwrap();
+    let manifest_path = fixture.path().join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "fixture-runtime",
+            "name": "Fixture Runtime",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "runtime": { "type": "node", "entry": "adapter.mjs", "version": ">=20" },
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"],
+            "card_contract_version": 1,
+            "card_kinds": [{
+                "id": "fixture-runtime.reasoning",
+                "semantic_role": "reasoning",
+                "label": "Reasoning",
+                "default_renderer": "markdown",
+                "allowed_renderers": ["markdown"],
+                "icon_hint": "brain"
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let validation =
+        validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref()).unwrap();
+
+    assert_eq!(validation.manifest.card_contract_version, Some(1));
+    assert_eq!(
+        validation.manifest.card_kinds[0].id,
+        "fixture-runtime.reasoning"
+    );
+}
+
+#[test]
+fn external_adapter_validation_rejects_card_kind_owned_by_another_namespace() {
+    let fixture = TempFixture::new("assetiweave-adapter-card-namespace-fixture");
+    fs::write(fixture.path().join("adapter.mjs"), "#!/usr/bin/env node\n").unwrap();
+    let manifest_path = fixture.path().join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "fixture-runtime",
+            "name": "Fixture Runtime",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "runtime": { "type": "node", "entry": "adapter.mjs", "version": ">=20" },
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"],
+            "card_contract_version": 1,
+            "card_kinds": [{
+                "id": "other.reasoning",
+                "semantic_role": "reasoning",
+                "label": "Reasoning",
+                "default_renderer": "markdown",
+                "allowed_renderers": ["markdown"]
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error = validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref())
+        .expect_err("cross-namespace kind must be rejected");
+
+    assert!(error.contains("fixture-runtime."));
+}
+
+#[test]
+fn external_adapter_validation_rejects_runtime_mixed_with_legacy_command() {
+    let fixture = TempFixture::new("assetiweave-adapter-runtime-command-fixture");
+    fs::write(fixture.path().join("adapter.mjs"), "#!/usr/bin/env node\n").unwrap();
+    fs::write(fixture.path().join("ignored.sh"), "#!/bin/sh\n").unwrap();
+    let manifest_path = fixture.path().join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "fixture-runtime-command",
+            "name": "Fixture Runtime Command",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "runtime": {
+                "type": "node",
+                "entry": "adapter.mjs",
+                "version": ">=20"
+            },
+            "command": ["ignored.sh"],
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error = validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref())
+        .expect_err("manifest should not mix runtime and legacy command");
+
+    assert!(error.contains("must not declare both runtime and command"));
+}
+
+#[test]
+fn external_adapter_validation_rejects_unsupported_runtime_version_constraint() {
+    let fixture = TempFixture::new("assetiweave-adapter-runtime-version-fixture");
+    let adapter_path = fixture.path().join("adapter.mjs");
+    fs::write(&adapter_path, "#!/usr/bin/env node\n").unwrap();
+    let manifest_path = fixture.path().join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "fixture-runtime-version",
+            "name": "Fixture Runtime Version",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "runtime": {
+                "type": "node",
+                "entry": "adapter.mjs",
+                "version": "^20"
+            },
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error = validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref())
+        .expect_err("unsupported runtime version constraint should fail validation");
+
+    assert!(error.contains("runtime version constraint"));
+    assert!(error.contains(">=x"));
+}
+
+#[test]
+fn external_adapter_validation_rejects_runtime_entry_outside_adapter_directory() {
+    for entry in [
+        "../adapter.mjs",
+        r"..\adapter.mjs",
+        "/tmp/adapter.mjs",
+        r"C:\tmp\adapter.mjs",
+    ] {
+        let fixture = TempFixture::new("assetiweave-adapter-runtime-escape-fixture");
+        let manifest_path = fixture.path().join("conversation-adapter.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "schema_version": 1,
+                "id": "fixture-runtime-escape",
+                "name": "Fixture Runtime Escape",
+                "version": "0.1.0",
+                "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+                "runtime": {
+                    "type": "node",
+                    "entry": entry,
+                    "version": ">=20"
+                },
+                "capabilities": ["probe", "read_session"],
+                "input_kinds": ["directory"]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let error = validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref())
+            .expect_err("unsafe runtime entry should fail validation");
+
+        assert!(
+            error.contains("adapter runtime entry"),
+            "entry {entry:?} produced error {error:?}"
+        );
+    }
+}
+
+#[test]
+fn external_adapter_validation_rejects_legacy_command_outside_adapter_directory() {
+    let fixture = TempFixture::new("assetiweave-adapter-command-escape-fixture");
+    let manifest_path = fixture.path().join("conversation-adapter.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "id": "fixture-command-escape",
+            "name": "Fixture Command Escape",
+            "version": "0.1.0",
+            "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+            "command": ["../adapter.sh"],
+            "capabilities": ["probe", "read_session"],
+            "input_kinds": ["directory"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error = validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref())
+        .expect_err("unsafe legacy command should fail validation");
+
+    assert!(error.contains("adapter command"));
+    assert!(error.contains("escape"));
+}
+
+#[tokio::test]
+async fn external_adapter_scaffold_generates_export_markdown_fixtures() {
+    let fixture = TempFixture::new("assetiweave-adapter-scaffold-fixture");
+
+    let result = scaffold_external_adapter(ExternalAdapterScaffoldParams {
+        directory: fixture.path().to_string_lossy().to_string(),
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        runtime_type: None,
+        runtime_entry: None,
+        runtime_version: None,
+        dry_run: false,
+    })
+    .unwrap();
+
+    let manifest: ConversationAdapterManifest =
+        serde_json::from_str(&fs::read_to_string(&result.manifest_path).unwrap()).unwrap();
+    let runtime = manifest.runtime.as_ref().expect("scaffold runtime");
+    assert_eq!(runtime.kind, ConversationAdapterRuntimeKind::Node);
+    assert_eq!(runtime.entry, "adapter.mjs");
+    assert_eq!(runtime.version.as_deref(), Some(">=20"));
+    assert_eq!(runtime.args, Vec::<String>::new());
+    let entry_path = fixture.path().join("adapter.mjs");
+    assert!(entry_path.is_file());
+    let entry_text = fs::read_to_string(entry_path).unwrap();
+    assert!(entry_text.contains("process.stdin"));
+    assert!(!validate_external_adapter_manifest(&result.manifest_path)
+        .unwrap()
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("does not exist")));
+    validate_external_adapter_manifest(&result.manifest_path).unwrap();
+    assert!(manifest
+        .capabilities
+        .contains(&"export_markdown".to_string()));
+
+    let request: Value =
+        serde_json::from_str(&fs::read_to_string(&result.export_request_fixture_path).unwrap())
+            .unwrap();
+    assert_eq!(request["method"], "export_markdown");
+    assert_eq!(
+        request["params"]["default_relative_path"],
+        "example/Example-session.md"
+    );
+    assert!(request["params"]["session_detail"].is_object());
+
+    let response = fs::read(&result.export_response_fixture_path).unwrap();
+    let parsed = parse_external_adapter_output("export_markdown", response, Vec::new()).unwrap();
+    let export = parsed.markdown_export.expect("markdown export fixture");
+    assert_eq!(export.relative_path, "example/Example-session.md");
+    assert!(export.content.contains("## 1. Example question"));
+
+    let starter_run = try_run_external_adapter(ExternalAdapterTryRunParams {
+        manifest_path: result.manifest_path.clone(),
+        method: "export_markdown".to_string(),
+        location: Some("/path/to/source".to_string()),
+        session_id: None,
+        yes: true,
+    })
+    .await
+    .unwrap();
+    let starter_export = starter_run.markdown_export.expect("starter export");
+    assert_eq!(
+        starter_export.relative_path,
+        "fixture-external/fixture-project/example-session.md"
+    );
+}
+
+#[test]
+fn external_adapter_scaffold_allows_explicit_runtime() {
+    let fixture = TempFixture::new("assetiweave-adapter-scaffold-runtime-fixture");
+
+    let result = scaffold_external_adapter(ExternalAdapterScaffoldParams {
+        directory: fixture.path().to_string_lossy().to_string(),
+        id: "fixture-python".to_string(),
+        name: "Fixture Python".to_string(),
+        runtime_type: Some(ConversationAdapterRuntimeKind::Python),
+        runtime_entry: Some("parser.py".to_string()),
+        runtime_version: Some(">=3.11".to_string()),
+        dry_run: false,
+    })
+    .unwrap();
+
+    let manifest: ConversationAdapterManifest =
+        serde_json::from_str(&fs::read_to_string(&result.manifest_path).unwrap()).unwrap();
+    let runtime = manifest.runtime.as_ref().expect("scaffold runtime");
+    assert_eq!(runtime.kind, ConversationAdapterRuntimeKind::Python);
+    assert_eq!(runtime.entry, "parser.py");
+    assert_eq!(runtime.version.as_deref(), Some(">=3.11"));
+    let entry_text = fs::read_to_string(fixture.path().join("parser.py")).unwrap();
+    assert!(entry_text.contains("sys.stdin"));
+    validate_external_adapter_manifest(&result.manifest_path).unwrap();
+}
+
+#[test]
+fn external_adapter_scaffold_preserves_existing_entrypoint() {
+    let fixture = TempFixture::new("assetiweave-adapter-scaffold-existing-entry-fixture");
+    let entry_path = fixture.path().join("adapter.mjs");
+    fs::write(&entry_path, "console.log('custom adapter');\n").unwrap();
+
+    scaffold_external_adapter(ExternalAdapterScaffoldParams {
+        directory: fixture.path().to_string_lossy().to_string(),
+        id: "fixture-existing-entry".to_string(),
+        name: "Fixture Existing Entry".to_string(),
+        runtime_type: None,
+        runtime_entry: None,
+        runtime_version: None,
+        dry_run: false,
+    })
+    .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(entry_path).unwrap(),
+        "console.log('custom adapter');\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn external_adapter_validation_hash_changes_when_executable_changes() {
+    let fixture = TempFixture::new("assetiweave-adapter-validation-fixture");
+    let script = write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"complete","item":{}}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let before = validate_external_adapter(ExternalAdapterValidateParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+    })
+    .unwrap();
+
+    fs::write(
+        &script,
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"warning","message":"changed"}'
+printf '%s\n' '{"type":"complete","item":{}}'
+"#,
+    )
+    .unwrap();
+    let after = validate_external_adapter(ExternalAdapterValidateParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+    })
+    .unwrap();
+
+    assert_eq!(before.executable_path, script.to_string_lossy());
+    assert_ne!(before.executable_hash, after.executable_hash);
+}
+
+#[cfg(unix)]
+#[test]
+fn external_adapter_validation_content_hash_changes_when_manifest_changes() {
+    let fixture = TempFixture::new("assetiweave-adapter-manifest-hash-fixture");
+    let script = write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"complete","item":{}}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let before = validate_external_adapter(ExternalAdapterValidateParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+    })
+    .unwrap();
+
+    let relative_script = script
+        .strip_prefix(fixture.path())
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let changed_manifest = ConversationAdapterManifest {
+        schema_version: 1,
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        version: "0.1.0".to_string(),
+        protocol_version: EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+        command: vec![relative_script, "--changed".to_string()],
+        runtime: None,
+        capabilities: vec![
+            "probe".to_string(),
+            "list_sessions".to_string(),
+            "read_session".to_string(),
+            "export_markdown".to_string(),
+            "project_command_parts".to_string(),
+        ],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+    };
+    fs::write(
+        &manifest,
+        serde_json::to_string_pretty(&changed_manifest).unwrap(),
+    )
+    .unwrap();
+    let after = validate_external_adapter(ExternalAdapterValidateParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+    })
+    .unwrap();
+
+    assert_eq!(before.executable_hash, after.executable_hash);
+    assert_ne!(before.content_hash, after.content_hash);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn external_adapter_register_runs_probe_before_trusting() {
+    let fixture = TempFixture::new("assetiweave-adapter-register-probe-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"complete","item":{"ok":true}}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+
+    let result = register_external_adapter(ExternalAdapterRegisterParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+        dry_run: false,
+        yes: true,
+    })
+    .await
+    .expect("register should probe and trust adapter");
+
+    assert_eq!(result["adapter"]["trust_state"], "trusted");
+    assert_eq!(
+        result["adapter"]["trusted_hash"],
+        result["validation"]["content_hash"]
+    );
+    assert_eq!(result["probe"]["item_count"], 0);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn external_adapter_register_rejects_failed_probe_before_trusting() {
+    let fixture = TempFixture::new("assetiweave-adapter-register-failed-probe-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"error","message":"probe failed"}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+
+    let error = register_external_adapter(ExternalAdapterRegisterParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+        dry_run: false,
+        yes: true,
+    })
+    .await
+    .expect_err("register should reject adapter when probe fails");
+
+    assert!(error.contains("probe failed"), "error = {error}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn external_adapter_try_run_requires_explicit_confirmation() {
+    let fixture = TempFixture::new("assetiweave-adapter-confirmation-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"complete","item":{}}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+
+    let error = try_run_external_adapter(ExternalAdapterTryRunParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+        method: "probe".to_string(),
+        location: Some(fixture.path().to_string_lossy().to_string()),
+        session_id: None,
+        yes: false,
+    })
+    .await
+    .expect_err("try-run should require confirmation");
+
+    assert!(error.contains("requires --yes"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn external_adapter_try_run_parses_sessions_without_shell_joining_args() {
+    let fixture = TempFixture::new("assetiweave-adapter-run-fixture");
+    let hacked_path = fixture.path().join("hacked");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+printf '%s\n' "$1" >&2
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"external-session-1","title":"External Fixture","project_path":null,"started_at":null,"updated_at":null,"source_locator":null,"source_fingerprint":null,"turns":[{"external_id":"turn-1","turn_index":0,"user_text":"External question","title":null,"started_at":null,"ended_at":null,"parts":[{"role":"assistant","kind":"text","text":"External answer","language":null,"command":null,"cwd":null,"status":null,"exit_code":null,"metadata_json":{"content_card":{"type":"answer","format":"markdown"}}}]}]}}}'
+printf '%s\n' '{"type":"warning","message":"fixture warning"}'
+printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+"#,
+    );
+    let injection_arg = format!("literal; touch {}", hacked_path.display());
+    let manifest = write_manifest(
+        fixture.path(),
+        vec!["adapter.sh".to_string(), injection_arg.clone()],
+    );
+
+    let result = try_run_external_adapter(ExternalAdapterTryRunParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+        method: "read_session".to_string(),
+        location: Some(fixture.path().to_string_lossy().to_string()),
+        session_id: Some("external-session-1".to_string()),
+        yes: true,
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(result.item_count, 1);
+    assert_eq!(result.warning_count, 1);
+    assert_eq!(result.sessions[0].turns[0].user_text, "External question");
+    assert!(result.stderr.contains(&injection_arg));
+    assert!(!hacked_path.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn external_adapter_try_run_parses_markdown_export() {
+    let fixture = TempFixture::new("assetiweave-adapter-export-run-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r##"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"markdown_export","content":"# Exported from adapter","relative_path":"fixture/export.md"}}'
+printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
+"##,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+
+    let result = try_run_external_adapter(ExternalAdapterTryRunParams {
+        manifest_path: manifest.to_string_lossy().to_string(),
+        method: "export_markdown".to_string(),
+        location: Some(fixture.path().to_string_lossy().to_string()),
+        session_id: None,
+        yes: true,
+    })
+    .await
+    .unwrap();
+
+    let export = result.markdown_export.expect("markdown export");
+    assert_eq!(result.item_count, 1);
+    assert_eq!(export.content, "# Exported from adapter");
+    assert_eq!(export.relative_path, "fixture/export.md");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn external_adapter_projects_a_validated_batch_without_persistence() {
+    let fixture = TempFixture::new("assetiweave-adapter-project-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"command_projection","part_id":"part-1","schema_version":1,"projector_version":"fixture-v1","nodes":[{"display_order":0,"command":"git status --short","command_label":"status"}]}}'
+printf '%s\n' '{"type":"complete","item":{"projection_count":1}}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let adapter = ConversationAdapter {
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest.to_string_lossy().to_string()),
+        executable_path: None,
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["project_command_parts".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+
+    let projections = project_external_adapter_command_parts_with_settings(
+        &adapter,
+        &[ConversationCommandProjectionPart {
+            part_id: "part-1".to_string(),
+            command: "printf '%s\\n' '--- status ---'; git status --short".to_string(),
+            command_label: None,
+        }],
+        &json!({}),
+    )
+    .await
+    .expect("project batch");
+
+    assert_eq!(projections.len(), 1);
+    assert_eq!(projections[0].part_id, "part-1");
+    assert_eq!(projections[0].nodes[0].command, "git status --short");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn external_adapter_sync_reads_registered_adapter_sessions() {
+    let fixture = TempFixture::new("assetiweave-adapter-sync-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"web-session-1","title":"Web Fixture","project_path":null,"started_at":null,"updated_at":null,"source_locator":"fixture://web-session-1","source_fingerprint":"fixture-hash","turns":[{"external_id":"turn-1","turn_index":0,"user_text":"Web question","title":null,"started_at":null,"ended_at":null,"parts":[{"role":"assistant","kind":"text","text":"Web answer","language":null,"command":null,"cwd":null,"status":null,"exit_code":null,"metadata_json":{"content_card":{"type":"answer","format":"markdown"}}}]}]}}}'
+printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let adapter = ConversationAdapter {
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest.to_string_lossy().to_string()),
+        executable_path: Some(
+            fixture
+                .path()
+                .join("adapter.sh")
+                .to_string_lossy()
+                .to_string(),
+        ),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let source = source_fixture(
+        "fixture-external",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].external_id, "web-session-1");
+    assert_eq!(sessions[0].turns[0].user_text, "Web question");
+    assert_eq!(
+        sessions[0].turns[0].parts[0].text.as_deref(),
+        Some("Web answer")
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn conversation_incremental_incomplete_discovery_falls_back_without_advancing_versions() {
+    let fixture = TempFixture::new("assetiweave-incomplete-discovery-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"session-1","updated_at":null,"source_locator":null,"version_token":"version-2"}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1,"snapshot_complete":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"session-1","title":"Retained","project_path":null,"started_at":null,"updated_at":null,"source_locator":null,"source_fingerprint":"version-2","turns":[]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+    ;;
+esac
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let adapter = ConversationAdapter {
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest.to_string_lossy().to_string()),
+        executable_path: Some(
+            fixture
+                .path()
+                .join("adapter.sh")
+                .to_string_lossy()
+                .to_string(),
+        ),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["list_sessions".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let source = source_fixture(
+        "fixture-external",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let result = read_source_sessions_incrementally_with_adapter(
+        Some(&adapter),
+        &source,
+        &BTreeMap::from([("session-1".to_string(), "version-1".to_string())]),
+    )
+    .await
+    .expect("fallback to safe retained full read");
+
+    assert!(!result.incremental);
+    assert_eq!(result.sessions.len(), 1);
+    assert!(result.session_descriptors.is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn conversation_incremental_discovery_bounds_initial_hydration_by_session() {
+    let fixture = TempFixture::new("assetiweave-bounded-initial-hydration");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"session-1","updated_at":null,"source_locator":"fixture://session-1","version_token":"version-1"}}'
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"session-2","updated_at":null,"source_locator":"fixture://session-2","version_token":"version-2"}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":2,"snapshot_complete":true}}'
+    ;;
+  *'"session_id":null'*)
+    printf '%s\n' '{"type":"error","message":"unbounded full read"}'
+    printf '%s\n' '{"type":"complete","item":{}}'
+    ;;
+  *session-1*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"session-1","title":"One","project_path":null,"started_at":null,"updated_at":null,"source_locator":"fixture://session-1","source_fingerprint":"version-1","turns":[]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+    ;;
+  *session-2*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"session-2","title":"Two","project_path":null,"started_at":null,"updated_at":null,"source_locator":"fixture://session-2","source_fingerprint":"version-2","turns":[]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+    ;;
+esac
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let adapter = ConversationAdapter {
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest.to_string_lossy().to_string()),
+        executable_path: Some(
+            fixture
+                .path()
+                .join("adapter.sh")
+                .to_string_lossy()
+                .to_string(),
+        ),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["list_sessions".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let source = source_fixture(
+        "fixture-external",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let mut progress = Vec::new();
+    let result = super::readers::read_source_sessions_with_control(
+        Some(&adapter),
+        &source,
+        &BTreeMap::new(),
+        &json!({}),
+        None,
+        &mut |done, total| progress.push((done, total)),
+    )
+    .await
+    .expect("hydrate discovered sessions through bounded reads");
+
+    assert!(result.incremental);
+    assert_eq!(result.discovered_session_count, 2);
+    assert_eq!(result.active_session_count, 2);
+    assert_eq!(result.sessions.len(), 2);
+    assert_eq!(progress, vec![(0, 2), (1, 2), (2, 2)]);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn conversation_incremental_skips_a_session_that_changes_after_discovery() {
+    let fixture = TempFixture::new("assetiweave-changing-session-hydration");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"session-1","updated_at":null,"source_locator":"fixture://session-1","version_token":"version-1"}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1,"snapshot_complete":true}}'
+    ;;
+  *)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"session-1","title":"Changing","project_path":null,"started_at":null,"updated_at":null,"source_locator":"fixture://session-1","source_fingerprint":"version-2","turns":[]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+    ;;
+esac
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let adapter = ConversationAdapter {
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest.to_string_lossy().to_string()),
+        executable_path: Some(
+            fixture
+                .path()
+                .join("adapter.sh")
+                .to_string_lossy()
+                .to_string(),
+        ),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["list_sessions".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let source = source_fixture(
+        "fixture-external",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let result =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &BTreeMap::new())
+            .await
+            .expect("defer a session whose descriptor became stale");
+
+    assert!(result.incremental);
+    assert_eq!(result.discovered_session_count, 1);
+    assert_eq!(result.active_session_count, 0);
+    assert_eq!(result.skipped_session_count, 1);
+    assert!(result.sessions.is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn conversation_incremental_web_adapter_skips_unchanged_and_reactivates_old_session() {
+    if !command_available("node").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-chatgpt-web-incremental-fixture");
+    let write_sessions = |updated_at: &str| {
+        fs::write(
+            fixture.path().join("sessions.json"),
+            serde_json::to_string_pretty(&json!({
+                "sessions": [{
+                    "external_id": "old-web-session",
+                    "title": "Old web session",
+                    "project_path": null,
+                    "started_at": updated_at,
+                    "updated_at": updated_at,
+                    "source_locator": "fixture://old-web-session",
+                    "source_fingerprint": "fixture-source",
+                    "turns": [{
+                        "external_id": "turn-1",
+                        "turn_index": 0,
+                        "user_text": "continue this",
+                        "title": null,
+                        "started_at": updated_at,
+                        "ended_at": updated_at,
+                        "parts": [{
+                            "role": "assistant",
+                            "kind": "text",
+                            "text": "answer",
+                            "metadata_json": "{\"content_card\":{\"type\":\"answer\"}}"
+                        }]
+                    }]
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    };
+    write_sessions("2026-07-01T00:00:00Z");
+    let adapter = official_adapter_fixture(
+        "chatgpt-web",
+        "ChatGPT Web",
+        "../builtin-assets/adapters/chatgpt-web/conversation-adapter.json",
+        vec![ConversationSourceKind::Directory],
+    );
+    let source = source_fixture(
+        "chatgpt-web",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let first =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &BTreeMap::new())
+            .await
+            .expect("initial web sync");
+    assert_eq!(first.active_session_count, 1);
+    let known = BTreeMap::from([(
+        first.sessions[0].external_id.clone(),
+        first.sessions[0]
+            .source_fingerprint
+            .clone()
+            .expect("web session version"),
+    )]);
+
+    let unchanged =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &known)
+            .await
+            .expect("unchanged web sync");
+    assert_eq!(unchanged.active_session_count, 0);
+    assert!(unchanged.sessions.is_empty());
+
+    write_sessions("2026-07-16T00:00:00Z");
+    let reactivated =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &known)
+            .await
+            .expect("reactivated web sync");
+    assert_eq!(reactivated.active_session_count, 1);
+    assert_eq!(reactivated.sessions[0].external_id, "old-web-session");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_web_adapters_expose_incremental_session_discovery() {
+    if !command_available("node").await {
+        return;
+    }
+    for adapter_id in ["chatgpt-web", "gemini-web", "qwen-web"] {
+        let fixture = TempFixture::new(&format!("assetiweave-{adapter_id}-discovery-fixture"));
+        fs::write(
+            fixture.path().join("sessions.json"),
+            serde_json::to_string_pretty(&json!({
+                "sessions": [{
+                    "external_id": "web-session",
+                    "title": "Web session",
+                    "project_path": null,
+                    "started_at": "2026-07-16T00:00:00Z",
+                    "updated_at": "2026-07-16T00:00:00Z",
+                    "source_locator": "fixture://web-session",
+                    "source_fingerprint": "fixture-source",
+                    "turns": [{
+                        "external_id": "turn-1",
+                        "turn_index": 0,
+                        "user_text": "question",
+                        "parts": [{
+                            "role": "assistant",
+                            "kind": "text",
+                            "text": "answer",
+                            "metadata_json": "{\"content_card\":{\"type\":\"answer\"}}"
+                        }, {
+                            "role": "tool",
+                            "kind": "command",
+                            "command": "pwd",
+                            "source_execution_id": "web-simple",
+                            "metadata_json": "{\"content_card\":{\"type\":\"command\"}}"
+                        }, {
+                            "role": "tool",
+                            "kind": "tool",
+                            "text": "simple output",
+                            "status": "completed",
+                            "exit_code": 0,
+                            "source_execution_id": "web-simple",
+                            "metadata_json": "{\"content_card\":{\"type\":\"result\",\"format\":\"plain\"}}"
+                        }, {
+                            "role": "tool",
+                            "kind": "command",
+                            "command": "printf '%s\\n' '--- inspect ---' && git status --short",
+                            "source_execution_id": "web-shell",
+                            "metadata_json": "{\"content_card\":{\"type\":\"command\"}}"
+                        }, {
+                            "role": "tool",
+                            "kind": "tool",
+                            "text": "\"Script completed\\nWall time 0.1 seconds\\nOutput:\\n\\u001b[32mok\\u001b[0m\"",
+                            "status": "completed",
+                            "exit_code": 0,
+                            "source_execution_id": "web-shell",
+                            "metadata_json": "{\"content_card\":{\"type\":\"result\",\"format\":\"plain\"}}"
+                        }]
+                    }]
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let adapter = official_adapter_fixture(
+            adapter_id,
+            adapter_id,
+            &format!("../builtin-assets/adapters/{adapter_id}/conversation-adapter.json"),
+            vec![ConversationSourceKind::Directory],
+        );
+        let source = source_fixture(
+            adapter_id,
+            ConversationSourceKind::Directory,
+            &fixture.path().to_string_lossy(),
+        );
+
+        let result = read_source_sessions_incrementally_with_adapter(
+            Some(&adapter),
+            &source,
+            &BTreeMap::new(),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{adapter_id} incremental discovery failed: {error}"));
+
+        assert!(result.incremental, "{adapter_id}");
+        assert_eq!(result.discovered_session_count, 1, "{adapter_id}");
+        assert_eq!(result.active_session_count, 1, "{adapter_id}");
+        let part = &result.sessions[0].turns[0].parts[0];
+        assert_eq!(
+            part.content_card.as_ref().map(|card| card.kind.as_str()),
+            Some(format!("{adapter_id}.answer").as_str()),
+            "{adapter_id}"
+        );
+        assert!(
+            part.metadata_json
+                .as_deref()
+                .is_none_or(|metadata| !metadata.contains("content_card")),
+            "{adapter_id}"
+        );
+        let simple_command = &result.sessions[0].turns[0].parts[1];
+        assert_eq!(
+            simple_command.command.as_deref(),
+            Some("pwd"),
+            "{adapter_id}"
+        );
+        assert_eq!(
+            simple_command.source_execution_id.as_deref(),
+            Some("web-simple"),
+            "{adapter_id}"
+        );
+        assert!(
+            simple_command
+                .metadata_json
+                .as_deref()
+                .is_none_or(|metadata| { !metadata.contains("shell_execution_projection") }),
+            "{adapter_id}"
+        );
+        let command = &result.sessions[0].turns[0].parts[3];
+        assert_eq!(
+            command.command.as_deref(),
+            Some("printf '%s\\n' '--- inspect ---' && git status --short"),
+            "{adapter_id}"
+        );
+        assert_eq!(
+            command.source_execution_id.as_deref(),
+            Some("web-shell"),
+            "{adapter_id}"
+        );
+        assert!(
+            command
+                .metadata_json
+                .as_deref()
+                .is_none_or(|metadata| { !metadata.contains("shell_execution_projection") }),
+            "{adapter_id}"
+        );
+        assert_eq!(
+            command
+                .content_card
+                .as_ref()
+                .and_then(|card| card.renderer.as_deref()),
+            Some("command"),
+            "{adapter_id}"
+        );
+        let execution_result = &result.sessions[0].turns[0].parts[4];
+        assert_eq!(execution_result.text.as_deref(), Some("ok"), "{adapter_id}");
+        assert_eq!(
+            execution_result.source_execution_id.as_deref(),
+            Some("web-shell"),
+            "{adapter_id}"
+        );
+        assert_eq!(
+            execution_result
+                .content_card
+                .as_ref()
+                .and_then(|card| card.renderer.as_deref()),
+            Some("terminal_output"),
+            "{adapter_id}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
+    if !command_available("node").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-zcode-card-contract-fixture");
+    let db_path = fixture.path().join("db.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, path TEXT, time_updated INTEGER);
+        CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);
+        CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+        INSERT INTO session VALUES ('session-1', 'ZCode fixture', '/tmp/project', 2);
+        INSERT INTO message VALUES ('user-1', 'session-1', 1, '{"role":"user"}');
+        INSERT INTO part VALUES ('user-part', 'user-1', 'session-1', 1, '{"type":"text","text":"Explain it"}');
+        INSERT INTO message VALUES ('assistant-1', 'session-1', 2, '{"role":"assistant"}');
+        INSERT INTO part VALUES ('assistant-part', 'assistant-1', 'session-1', 2, '{"type":"text","text":"Structured answer"}');
+        INSERT INTO part VALUES ('tool-part', 'assistant-1', 'session-1', 3, '{"type":"tool","tool":"Bash","callID":"zcode-shell","command":"printf ''%s\\n'' ''\u002D\u002D\u002D inspect \u002D\u002D\u002D'' && git status --short","output":"[{\"type\":\"input_text\",\"text\":\"Script completed\\nWall time 0.1 seconds\\nOutput:\\n\"},{\"type\":\"input_text\",\"text\":\"\\u001b[32mok\\u001b[0m\"}]"}');
+        INSERT INTO part VALUES ('patch-part', 'assistant-1', 'session-1', 4, '{"type":"patch","patch":"diff --git a/src/main.ts b/src/main.ts\n--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1 +1 @@\n-old\n+new\ndiff --git a/src/other.ts b/src/other.ts\n--- a/src/other.ts\n+++ b/src/other.ts\n@@ -1 +1 @@\n-before\n+after"}');
+        "#,
+    )
+    .unwrap();
+    drop(conn);
+    let adapter = official_adapter_fixture(
+        "zcode",
+        "ZCode",
+        "../builtin-assets/adapters/zcode/conversation-adapter.json",
+        vec![ConversationSourceKind::Sqlite],
+    );
+    let source = source_fixture(
+        "zcode",
+        ConversationSourceKind::Sqlite,
+        &db_path.to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+    let parts = &sessions[0].turns[0].parts;
+    assert_content_card_types(
+        parts,
+        &["answer", "command", "result", "file-change", "file-change"],
+    );
+    assert_eq!(
+        parts[1].command.as_deref(),
+        Some("printf '%s\\n' '--- inspect ---' && git status --short")
+    );
+    assert_eq!(parts[1].source_execution_id.as_deref(), Some("zcode-shell"));
+    assert!(parts[1]
+        .metadata_json
+        .as_deref()
+        .is_none_or(|metadata| !metadata.contains("shell_execution_projection")));
+    assert_eq!(parts[2].text.as_deref(), Some("ok"));
+    assert_eq!(parts[2].source_execution_id.as_deref(), Some("zcode-shell"));
+    assert_eq!(
+        parts[2]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("terminal_output")
+    );
+    assert!(parts[0]
+        .metadata_json
+        .as_deref()
+        .is_none_or(|metadata| !metadata.contains("content_card")));
+    assert_eq!(parts[3].kind, ConversationPartKind::FileChange);
+    assert!(parts[3]
+        .text
+        .as_deref()
+        .is_some_and(|text| text.contains("@@ -1 +1 @@")));
+    assert!(!parts[3]
+        .text
+        .as_deref()
+        .is_some_and(|text| text.contains("src/other.ts")));
+    assert_eq!(parts[4].kind, ConversationPartKind::FileChange);
+    assert!(parts[4]
+        .text
+        .as_deref()
+        .is_some_and(|text| text.contains("src/other.ts")));
+    assert_eq!(
+        parts[3]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("diff")
+    );
+}
+
+#[test]
+fn official_adapter_manifests_use_runtime_without_legacy_command() {
+    for manifest_relative_path in [
+        "../builtin-assets/adapters/antigravity/conversation-adapter.json",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        "../builtin-assets/adapters/opencode/conversation-adapter.json",
+        "../builtin-assets/adapters/claude-code/conversation-adapter.json",
+        "../builtin-assets/adapters/zcode/conversation-adapter.json",
+    ] {
+        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative_path);
+        let manifest: Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+
+        assert!(
+            manifest.get("runtime").is_some(),
+            "{manifest_relative_path} missing runtime"
+        );
+        assert!(
+            manifest.get("command").is_none(),
+            "{manifest_relative_path} still declares legacy command"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_codex_session_discovery_does_not_buffer_titles() {
+    if !command_available("node").await || !command_available("sqlite3").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-codex-large-title-discovery");
+    let rollout = fixture.path().join("rollout.jsonl");
+    fs::write(&rollout, "{}\n").unwrap();
+    let db_path = fixture.path().join("state_5.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT, updated_at INTEGER)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                "codex-session-large-title",
+                rollout.to_string_lossy().to_string(),
+                "x".repeat(2 * 1024 * 1024),
+                1_i64,
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "codex",
+        "Codex",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+    );
+    let source = source_fixture(
+        "codex",
+        ConversationSourceKind::Live,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let discovery = discover_external_adapter_sessions(&adapter, &source, &json!({}))
+        .await
+        .expect("discover Codex sessions")
+        .expect("Codex declares snapshot discovery");
+
+    assert_eq!(discovery.session_descriptors.len(), 1);
+    assert_eq!(
+        discovery.session_descriptors[0].external_id,
+        "codex-session-large-title"
+    );
+}
+
+#[test]
+fn first_party_adapter_manifests_declare_namespaced_card_contracts() {
+    for manifest_relative_path in [
+        "../builtin-assets/adapters/antigravity/conversation-adapter.json",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        "../builtin-assets/adapters/opencode/conversation-adapter.json",
+        "../builtin-assets/adapters/claude-code/conversation-adapter.json",
+        "../builtin-assets/adapters/chatgpt-web/conversation-adapter.json",
+        "../builtin-assets/adapters/gemini-web/conversation-adapter.json",
+        "../builtin-assets/adapters/qwen-web/conversation-adapter.json",
+        "../builtin-assets/adapters/zcode/conversation-adapter.json",
+    ] {
+        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative_path);
+        let validation =
+            validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref())
+                .unwrap_or_else(|error| panic!("{manifest_relative_path}: {error}"));
+        let manifest = validation.manifest;
+        assert_eq!(
+            manifest.card_contract_version,
+            Some(1),
+            "{manifest_relative_path}"
+        );
+        assert!(!manifest.card_kinds.is_empty(), "{manifest_relative_path}");
+        assert!(
+            manifest
+                .card_kinds
+                .iter()
+                .all(|kind| kind.id.starts_with(&format!("{}.", manifest.id))),
+            "{manifest_relative_path}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_codex_adapter_separates_skill_context_and_projects_aggregated_commands() {
+    if !command_available("node").await || !command_available("sqlite3").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-codex-fixture");
+    let rollout = fixture.path().join("rollout.jsonl");
+    fs::write(
+        &rollout,
+        [
+            r#"{"payload":{"type":"message","role":"user","id":"turn-context","content":"Repository context only"}}"#,
+            r#"{"payload":{"type":"message","role":"user","id":"turn-1","content":"[$test-skill](/tmp/test-skill/SKILL.md) Run tests"}}"#,
+            r#"{"payload":{"type":"message","role":"user","content":"<skill>\n<name>test-skill</name>\n<path>/tmp/test-skill/SKILL.md</path>\n---\nname: test-skill\n</skill>"}}"#,
+            r#"{"payload":{"type":"message","role":"assistant","content":"Use this:\n```sh\ncargo test\n```"}}"#,
+            r#"{"payload":{"type":"function_call","name":"update_plan","arguments":"{\"plan\":[]}"}}"#,
+            r#"{"payload":{"type":"exec","command":"cargo fmt --check && cargo test","output":"tests passed","status":"completed","exit_code":0}}"#,
+            r#"{"payload":{"type":"custom_tool_call","name":"exec","call_id":"call-skill-read","input":"const r = await tools.exec_command({\"cmd\":\"cat /tmp/test-skill/SKILL.md\",\"workdir\":\"/tmp\"});\ntext(r.output);"}}"#,
+            r#"{"payload":{"type":"custom_tool_call_output","call_id":"call-skill-read","output":[{"type":"input_text","text":"Script completed\nWall time 0.1 seconds\nOutput:\n"},{"type":"input_text","text":"---\nname: test-skill\ndescription: Fixture Skill content.\n---\n\n# Test Skill"}]}}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let db_path = fixture.path().join("state_5.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "codex-session-1",
+                rollout.to_string_lossy().to_string(),
+                "Codex fixture"
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "codex",
+        "Codex",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+    );
+    let source = source_fixture(
+        "codex",
+        ConversationSourceKind::Live,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].turns.len(), 1);
+    assert_eq!(sessions[0].turns[0].turn_index, 0);
+    assert_eq!(sessions[0].turns[0].user_text, "Run tests");
+    let parts = &sessions[0].turns[0].parts;
+    let card_types = parts
+        .iter()
+        .filter_map(content_card_type)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        card_types,
+        vec![
+            "skill".to_string(),
+            "answer".to_string(),
+            "plan".to_string(),
+            "command".to_string(),
+            "command".to_string(),
+            "skill".to_string(),
+        ]
+    );
+    assert_eq!(parts[0].role, ConversationPartRole::System);
+    assert_eq!(parts[0].text.as_deref(), Some("/tmp/test-skill/SKILL.md"));
+    assert_eq!(
+        parts[0]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("path")
+    );
+    assert!(parts[1]
+        .text
+        .as_deref()
+        .is_some_and(|text| text.contains("```sh\ncargo test\n```")));
+    assert_eq!(parts[2].text.as_deref(), Some("*(任务列表已初始化)*"));
+    assert_eq!(
+        parts[2]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("markdown")
+    );
+    assert_eq!(
+        parts[3].command.as_deref(),
+        Some("cargo fmt --check && cargo test")
+    );
+    assert!(parts[3]
+        .metadata_json
+        .as_deref()
+        .is_none_or(|metadata| !metadata.contains("shell_execution_projection")));
+    assert_eq!(
+        parts[4].command.as_deref(),
+        Some("/tmp/test-skill/SKILL.md")
+    );
+    assert_eq!(parts[4].cwd.as_deref(), Some("/tmp"));
+    assert_eq!(parts[5].role, ConversationPartRole::System);
+    assert_eq!(parts[5].text.as_deref(), Some("/tmp/test-skill/SKILL.md"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_codex_adapter_preserves_patch_apply_end_as_diff_card() {
+    if !command_available("node").await || !command_available("sqlite3").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-codex-diff-fixture");
+    let rollout = fixture.path().join("rollout.jsonl");
+    let project_path = fixture.path().join("project");
+    fs::create_dir_all(&project_path).unwrap();
+    let patch_input = r#"*** Begin Patch
+*** Update File: src/lib.rs
+@@
+-const VALUE: &str = "old";
++const VALUE: &str = "command = npm test";
+*** End Patch"#;
+    let rollout_lines = [
+        json!({
+            "type": "session_meta",
+            "payload": { "cwd": project_path }
+        }),
+        json!({
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "id": "turn-1",
+                "content": "Update the fixture"
+            }
+        }),
+        json!({
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "call_id": "patch-outer",
+                "input": format!("const patch = {patch_input:?}; text(await tools.apply_patch(patch));"),
+                "internal_chat_message_metadata_passthrough": { "turn_id": "turn-runtime" }
+            }
+        }),
+        json!({
+            "payload": {
+                "type": "patch_apply_end",
+                "call_id": "patch-inner",
+                "turn_id": "turn-runtime",
+                "success": true,
+                "changes": {
+                    "src/lib.rs": {
+                        "type": "update",
+                        "unified_diff": "@@ -1 +1 @@\n-const VALUE: &str = \"old\";\n+const VALUE: &str = \"command = npm test\";"
+                    }
+                }
+            }
+        }),
+        json!({
+            "payload": {
+                "type": "custom_tool_call_output",
+                "call_id": "patch-outer",
+                "output": "Success. Updated the following files:\nM src/lib.rs"
+            }
+        }),
+    ];
+    fs::write(
+        &rollout,
+        rollout_lines
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    let db_path = fixture.path().join("state_5.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "codex-session-diff",
+                rollout.to_string_lossy().to_string(),
+                "Codex diff fixture"
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "codex",
+        "Codex",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+    );
+    let source = source_fixture(
+        "codex",
+        ConversationSourceKind::Live,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    let parts = &sessions[0].turns[0].parts;
+    assert_content_card_types(parts, &["command", "file-change"]);
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0].command.as_deref(), Some("src/lib.rs"));
+    assert_eq!(parts[0].command_label.as_deref(), Some("Edit"));
+    assert_eq!(parts[0].source_execution_id.as_deref(), Some("patch-outer"));
+    assert_eq!(
+        parts[1].kind,
+        crate::backend::domain::ConversationPartKind::FileChange
+    );
+    assert_eq!(parts[1].source_execution_id.as_deref(), Some("patch-outer"));
+    assert_eq!(parts[1].status.as_deref(), Some("completed"));
+    assert_eq!(parts[1].exit_code, Some(0));
+    assert!(parts[1]
+        .text
+        .as_deref()
+        .is_some_and(|text| text.starts_with("diff --git a/src/lib.rs b/src/lib.rs\n")));
+    assert_eq!(
+        parts[1]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("diff")
+    );
+}
+
+#[test]
+fn current_first_party_v1_adapters_do_not_ship_legacy_exporters() {
+    for manifest_relative_path in [
+        "../builtin-assets/adapters/antigravity/conversation-adapter.json",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        "../builtin-assets/adapters/opencode/conversation-adapter.json",
+        "../builtin-assets/adapters/claude-code/conversation-adapter.json",
+    ] {
+        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative_path);
+        let validation =
+            validate_external_adapter_manifest(manifest_path.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(validation.manifest.card_contract_version, Some(1));
+        assert!(!validation
+            .manifest
+            .capabilities
+            .iter()
+            .any(|value| value == "export_markdown"));
+        let entry = validation.manifest.runtime.as_ref().unwrap().entry.as_str();
+        let runtime = fs::read_to_string(manifest_path.parent().unwrap().join(entry)).unwrap();
+        assert!(!runtime.contains("method === \"export_markdown\""));
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_codex_adapter_does_not_embed_raw_tool_payload_metadata() {
+    if !command_available("node").await || !command_available("sqlite3").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-codex-large-fixture");
+    let rollout = fixture.path().join("rollout.jsonl");
+    let large_payload = format!("hidden-codex-payload-{}", "x".repeat(32 * 1024));
+    fs::write(
+        &rollout,
+        [
+            r#"{"payload":{"type":"message","role":"user","id":"turn-1","content":"Run tests"}}"#
+                .to_string(),
+            r#"{"payload":{"type":"exec","command":"cargo test","output":"tests passed","status":"completed","exit_code":0,"debug":{"blob":""#.to_string()
+                + &large_payload
+                + r#""}}}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let db_path = fixture.path().join("state_5.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "codex-session-1",
+                rollout.to_string_lossy().to_string(),
+                "Codex large fixture"
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "codex",
+        "Codex",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+    );
+    let source = source_fixture(
+        "codex",
+        ConversationSourceKind::Live,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    let parts = &sessions[0].turns[0].parts;
+    assert_content_card_types(parts, &["command"]);
+    assert_eq!(parts[0].command.as_deref(), Some("cargo test"));
+    let metadata = parts
+        .iter()
+        .filter_map(|part| part.metadata_json.as_deref())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!metadata.contains("hidden-codex-payload"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_codex_adapter_omits_large_success_payload_after_browse_policy() {
+    if !command_available("node").await || !command_available("sqlite3").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-codex-truncate-fixture");
+    let rollout = fixture.path().join("rollout.jsonl");
+    let large_output = format!("large-output-start\n{}", "z".repeat(512 * 1024));
+    fs::write(
+        &rollout,
+        [
+            r#"{"payload":{"type":"message","role":"user","id":"turn-1","content":"Run tests"}}"#
+                .to_string(),
+            json!({
+                "payload": {
+                    "type": "exec",
+                    "command": "cargo test",
+                    "output": large_output,
+                    "status": "completed",
+                    "exit_code": 0
+                }
+            })
+            .to_string(),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let db_path = fixture.path().join("state_5.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "codex-session-1",
+                rollout.to_string_lossy().to_string(),
+                "Codex truncate fixture"
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "codex",
+        "Codex",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+    );
+    let source = source_fixture(
+        "codex",
+        ConversationSourceKind::Live,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+
+    let parts = &sessions[0].turns[0].parts;
+    assert_content_card_types(parts, &["command"]);
+    assert_eq!(parts[0].command.as_deref(), Some("cargo test"));
+    assert_eq!(parts[0].status.as_deref(), Some("completed"));
+    assert_eq!(parts[0].exit_code, Some(0));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_codex_adapter_preserves_useful_browse_cards_after_large_tool_output() {
+    if !command_available("node").await || !command_available("sqlite3").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-codex-useful-browse-fixture");
+    let rollout = fixture.path().join("rollout.jsonl");
+    let large_outputs = (0..5)
+        .map(|index| {
+            json!({
+                "payload": {
+                    "type": "exec",
+                    "command": format!("pnpm test -- shard-{index}"),
+                    "output": format!(
+                        "shard-{index}-start\n{}\nerror[E0425]: cannot find value `useful_signal_{index}` in this scope\n  --> src/lib.rs:42:13\n{}\nshard-{index}-end",
+                        "noise\n".repeat(80 * 1024),
+                        "more-noise\n".repeat(80 * 1024)
+                    ),
+                    "status": "failed",
+                    "exit_code": 1
+                }
+            })
+            .to_string()
+        })
+        .collect::<Vec<_>>();
+    let final_answer = format!(
+        "Final useful answer: {}\n\n{}",
+        "keep this diagnostic summary",
+        "answer body ".repeat(180)
+    );
+    let mut lines = vec![
+        r#"{"payload":{"type":"message","role":"user","id":"turn-1","content":"Diagnose the failures"}}"#
+            .to_string(),
+    ];
+    lines.extend(large_outputs);
+    lines.push(
+        json!({
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": final_answer
+            }
+        })
+        .to_string(),
+    );
+    fs::write(&rollout, lines.join("\n")).unwrap();
+    let db_path = fixture.path().join("state_5.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "codex-session-1",
+                rollout.to_string_lossy().to_string(),
+                "Codex useful browse fixture"
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "codex",
+        "Codex",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+    );
+    let source = source_fixture(
+        "codex",
+        ConversationSourceKind::Live,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+
+    let parts = &sessions[0].turns[0].parts;
+    assert!(parts
+        .iter()
+        .filter_map(|part| part.text.as_deref())
+        .any(|text| text.contains("Final useful answer: keep this diagnostic summary")));
+    assert!(parts
+        .iter()
+        .filter_map(|part| part.text.as_deref())
+        .any(|text| text.contains("error[E0425]: cannot find value `useful_signal_3`")));
+    let answer_part = parts
+        .iter()
+        .find(|part| {
+            part.text.as_deref().is_some_and(|text| {
+                text.contains("Final useful answer: keep this diagnostic summary")
+            })
+        })
+        .expect("final answer part");
+    assert!(!answer_part
+        .text
+        .as_deref()
+        .unwrap()
+        .contains("AssetIWeave adapter truncated"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_codex_adapter_does_not_emit_internal_truncation_markers_as_card_text() {
+    if !command_available("node").await || !command_available("sqlite3").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-codex-no-marker-fixture");
+    let rollout = fixture.path().join("rollout.jsonl");
+    let huge_answer = format!("answer-start\n{}", "answer noise\n".repeat(140 * 1024));
+    let useful_result = format!(
+        "result-start\n{}\nerror[E0425]: critical_result_signal is missing\n  --> src/lib.rs:9:5\n{}",
+        "result noise\n".repeat(8 * 1024),
+        "result tail\n".repeat(8 * 1024)
+    );
+    fs::write(
+        &rollout,
+        [
+            r#"{"payload":{"type":"message","role":"user","id":"turn-1","content":"Summarize everything useful"}}"#
+                .to_string(),
+            json!({
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": huge_answer
+                }
+            })
+            .to_string(),
+            json!({
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": format!("```rs\n{}\n```", "fn noisy() {}\n".repeat(140 * 1024))
+                }
+            })
+            .to_string(),
+            json!({
+                "payload": {
+                    "type": "exec",
+                    "command": "cargo test",
+                    "output": useful_result,
+                    "status": "failed",
+                    "exit_code": 1
+                }
+            })
+            .to_string(),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let db_path = fixture.path().join("state_5.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "codex-session-1",
+                rollout.to_string_lossy().to_string(),
+                "Codex no marker fixture"
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "codex",
+        "Codex",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+    );
+    let source = source_fixture(
+        "codex",
+        ConversationSourceKind::Live,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+
+    let text = sessions[0].turns[0]
+        .parts
+        .iter()
+        .filter_map(|part| part.text.as_deref())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!text.contains("AssetIWeave adapter truncated"));
+    assert!(text.contains("answer-start"));
+    assert!(text.contains("fn noisy()"));
+    assert!(text.contains("critical_result_signal"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_opencode_adapter_splits_command_and_result_cards() {
+    if !command_available("node").await || !command_available("sqlite3").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-opencode-fixture");
+    let db_path = fixture.path().join("opencode.db");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, project TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, role TEXT, data TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE part (message_id TEXT, session_id TEXT, kind TEXT, text TEXT, data TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, title, project) VALUES ('opencode-session-1', 'OpenCode fixture', '/tmp/project')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO message (id, session_id, role, data) VALUES ('m0', 'opencode-session-1', 'user', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO part (message_id, session_id, kind, text, data) VALUES ('m0', 'opencode-session-1', 'text', 'Repository context only', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO message (id, session_id, role, data) VALUES ('m1', 'opencode-session-1', 'user', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO part (message_id, session_id, kind, text, data) VALUES ('m1', 'opencode-session-1', 'text', 'Run tests', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO message (id, session_id, role, data) VALUES ('m2', 'opencode-session-1', 'assistant', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO part (message_id, session_id, kind, text, data) VALUES ('m2', 'opencode-session-1', 'text', 'Use this:\n```sh\ncargo test\n```', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO message (id, session_id, role, data) VALUES ('m3', 'opencode-session-1', 'assistant', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO part (message_id, session_id, kind, text, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                "m3",
+                "opencode-session-1",
+                "command",
+                "tests passed",
+                r#"{"command":"cargo test","status":"completed","exit_code":0}"#,
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "opencode",
+        "OpenCode",
+        "../builtin-assets/adapters/opencode/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::Sqlite],
+    );
+    let source = source_fixture(
+        "opencode",
+        ConversationSourceKind::Sqlite,
+        &db_path.to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].turns.len(), 1);
+    assert_eq!(sessions[0].turns[0].turn_index, 0);
+    assert_eq!(sessions[0].turns[0].user_text, "Run tests");
+    assert_content_card_types(
+        &sessions[0].turns[0].parts,
+        &["answer", "code", "command", "result"],
+    );
+    assert_eq!(
+        sessions[0].turns[0].parts[2].command.as_deref(),
+        Some("cargo test")
+    );
+    assert_eq!(sessions[0].turns[0].parts[3].text, None);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn conversation_incremental_opencode_detects_reactivated_old_session() {
+    if !command_available("node").await || !command_available("sqlite3").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-opencode-incremental-fixture");
+    let db_path = fixture.path().join("opencode.db");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, project TEXT, time_updated INTEGER)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, role TEXT, data TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE part (message_id TEXT, session_id TEXT, kind TEXT, text TEXT, data TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, title, project, time_updated) VALUES ('old-session', 'Old session', '/tmp/project', 1)",
+            [],
+        )
+        .unwrap();
+        insert_opencode_text_message(&conn, "m1", "old-session", "user", "First question");
+        insert_opencode_text_message(&conn, "m2", "old-session", "assistant", "First answer");
+    }
+    let adapter = official_adapter_fixture(
+        "opencode",
+        "OpenCode",
+        "../builtin-assets/adapters/opencode/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::Sqlite],
+    );
+    let source = source_fixture(
+        "opencode",
+        ConversationSourceKind::Sqlite,
+        &db_path.to_string_lossy(),
+    );
+
+    let first =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &BTreeMap::new())
+            .await
+            .expect("initial incremental import");
+    assert!(first.incremental);
+    assert_eq!(first.active_session_count, 1);
+    assert_eq!(first.sessions[0].turns.len(), 1);
+    let known_versions = BTreeMap::from([(
+        "old-session".to_string(),
+        first.sessions[0]
+            .source_fingerprint
+            .clone()
+            .expect("session version"),
+    )]);
+
+    let unchanged =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &known_versions)
+            .await
+            .expect("skip unchanged session");
+    assert_eq!(unchanged.active_session_count, 0);
+    assert_eq!(unchanged.skipped_session_count, 1);
+    assert!(unchanged.sessions.is_empty());
+
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "UPDATE session SET time_updated = 2 WHERE id = 'old-session'",
+            [],
+        )
+        .unwrap();
+        insert_opencode_text_message(&conn, "m3", "old-session", "user", "Continued question");
+        insert_opencode_text_message(&conn, "m4", "old-session", "assistant", "Continued answer");
+    }
+
+    let reactivated =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &known_versions)
+            .await
+            .expect("read reactivated old session");
+    assert_eq!(reactivated.discovered_session_count, 1);
+    assert_eq!(reactivated.active_session_count, 1);
+    assert_eq!(reactivated.sessions.len(), 1);
+    assert_eq!(reactivated.sessions[0].external_id, "old-session");
+    assert_eq!(reactivated.sessions[0].turns.len(), 2);
+    assert_eq!(
+        reactivated.sessions[0].turns[1].user_text,
+        "Continued question"
+    );
+}
+
+fn insert_opencode_text_message(
+    conn: &rusqlite::Connection,
+    message_id: &str,
+    session_id: &str,
+    role: &str,
+    text: &str,
+) {
+    conn.execute(
+        "INSERT INTO message (id, session_id, role, data) VALUES (?1, ?2, ?3, NULL)",
+        rusqlite::params![message_id, session_id, role],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO part (message_id, session_id, kind, text, data) VALUES (?1, ?2, 'text', ?3, NULL)",
+        rusqlite::params![message_id, session_id, text],
+    )
+    .unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_opencode_adapter_extracts_json_fields_without_raw_metadata() {
+    if !command_available("node").await || !command_available("sqlite3").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-opencode-json-fixture");
+    let db_path = fixture.path().join("opencode.db");
+    let large_diff = format!("hidden-large-diff-{}", "x".repeat(32 * 1024));
+    let large_attachment = format!("hidden-large-attachment-{}", "y".repeat(32 * 1024));
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT, time_updated INTEGER)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE part (message_id TEXT, session_id TEXT, data TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, title, directory, time_updated) VALUES ('opencode-session-1', 'OpenCode JSON fixture', '/tmp/project', 4)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                "m1",
+                "opencode-session-1",
+                1,
+                json!({
+                    "role": "user",
+                    "time": { "created": 1 },
+                    "summary": { "diffs": [{ "before": large_diff, "after": "small" }] }
+                })
+                .to_string()
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO part (message_id, session_id, data) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "m1",
+                "opencode-session-1",
+                json!({ "type": "text", "text": "Run tests" }).to_string()
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                "m2",
+                "opencode-session-1",
+                2,
+                json!({ "role": "assistant", "time": { "created": 2 } }).to_string()
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO part (message_id, session_id, data) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "m2",
+                "opencode-session-1",
+                json!({ "type": "text", "text": "Use this:\n```sh\ncargo test\n```" }).to_string()
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                "m3",
+                "opencode-session-1",
+                3,
+                json!({ "role": "assistant", "time": { "created": 3 } }).to_string()
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO part (message_id, session_id, data) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                "m3",
+                "opencode-session-1",
+                json!({
+                    "type": "tool",
+                    "callID": "call-opencode-tests",
+                    "tool": "bash",
+                    "state": {
+                        "status": "completed",
+                        "input": {
+                            "command": "cargo test",
+                            "cwd": "/tmp/project",
+                            "description": "Run Rust tests"
+                        },
+                    "output": "[{\"type\":\"input_text\",\"text\":\"Script completed\\nWall time 0.1 seconds\\nOutput:\\n\"},{\"type\":\"input_text\",\"text\":\"\\u001b[32mtests passed\\u001b[0m\"}]",
+                        "metadata": {
+                            "output": "tests passed",
+                            "exit": 0,
+                            "description": "Run Rust tests"
+                        },
+                        "title": "Run Rust tests"
+                    },
+                    "attachments": [{ "url": large_attachment }]
+                })
+                .to_string()
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "opencode",
+        "OpenCode",
+        "../builtin-assets/adapters/opencode/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::Sqlite],
+    );
+    let source = source_fixture(
+        "opencode",
+        ConversationSourceKind::Sqlite,
+        &db_path.to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    let parts = &sessions[0].turns[0].parts;
+    assert_content_card_types(parts, &["answer", "code", "command", "result"]);
+    assert_eq!(parts[2].command.as_deref(), Some("cargo test"));
+    assert_eq!(parts[3].text, None);
+    assert_eq!(
+        parts[3]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("terminal_output")
+    );
+    assert_eq!(
+        parts[2].source_execution_id.as_deref(),
+        Some("call-opencode-tests")
+    );
+    assert_eq!(
+        parts[3].source_execution_id.as_deref(),
+        Some("call-opencode-tests")
+    );
+    let metadata = parts
+        .iter()
+        .filter_map(|part| part.metadata_json.as_deref())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!metadata.contains("hidden-large-attachment"));
+    assert!(!metadata.contains("hidden-large-diff"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_claude_code_adapter_splits_command_and_result_cards() {
+    if !command_available("node").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-claude-fixture");
+    let jsonl = fixture.path().join("session.jsonl");
+    fs::write(
+        &jsonl,
+        [
+            r#"{"type":"message","role":"user","uuid":"turn-context","content":"Repository context only"}"#,
+            r#"{"type":"message","role":"user","uuid":"turn-1","content":"Run tests"}"#,
+            r#"{"type":"message","role":"assistant","content":"Use this:\n```sh\ncargo test\n```"}"#,
+            r#"{"type":"shell","command":"cargo test","output":"tests passed","status":"completed","exit_code":0}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let adapter = official_adapter_fixture(
+        "claude-code",
+        "Claude Code",
+        "../builtin-assets/adapters/claude-code/conversation-adapter.json",
+        vec![
+            ConversationSourceKind::Live,
+            ConversationSourceKind::Directory,
+            ConversationSourceKind::File,
+        ],
+    );
+    let source = source_fixture(
+        "claude-code",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].turns.len(), 1);
+    assert_eq!(sessions[0].turns[0].turn_index, 0);
+    assert_eq!(sessions[0].turns[0].user_text, "Run tests");
+    assert_content_card_types(
+        &sessions[0].turns[0].parts,
+        &["answer", "code", "command", "result"],
+    );
+    assert_eq!(
+        sessions[0].turns[0].parts[2].command.as_deref(),
+        Some("cargo test")
+    );
+    assert_eq!(sessions[0].turns[0].parts[3].text, None);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_claude_code_adapter_reads_content_array_tool_use_and_result_cards() {
+    if !command_available("node").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-claude-array-fixture");
+    let jsonl = fixture.path().join("session.jsonl");
+    fs::write(
+        &jsonl,
+        [
+            r#"{"type":"user","message":{"role":"user","content":"Run tests"},"uuid":"turn-1","timestamp":"2026-06-26T00:00:00Z"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will run the test suite."},{"type":"tool_use","id":"call-1","name":"Bash","input":{"command":"cargo test","description":"Run Rust tests"}}]},"timestamp":"2026-06-26T00:00:01Z"}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call-1","content":"[{\"type\":\"input_text\",\"text\":\"Script completed\\nWall time 0.1 seconds\\nOutput:\\n\"},{\"type\":\"input_text\",\"text\":\"\\u001b[32mtests passed\\u001b[0m\"}]"}]},"toolUseResult":{"stdout":"tests passed","stderr":"","interrupted":false,"isImage":false},"timestamp":"2026-06-26T00:00:02Z"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"All tests passed."}]},"timestamp":"2026-06-26T00:00:03Z"}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let adapter = official_adapter_fixture(
+        "claude-code",
+        "Claude Code",
+        "../builtin-assets/adapters/claude-code/conversation-adapter.json",
+        vec![
+            ConversationSourceKind::Live,
+            ConversationSourceKind::Directory,
+            ConversationSourceKind::File,
+        ],
+    );
+    let source = source_fixture(
+        "claude-code",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].turns.len(), 1);
+    assert_eq!(sessions[0].turns[0].user_text, "Run tests");
+    assert_content_card_types(
+        &sessions[0].turns[0].parts,
+        &["answer", "command", "result", "answer"],
+    );
+    assert_eq!(
+        sessions[0].turns[0].parts[1].command.as_deref(),
+        Some("cargo test")
+    );
+    assert_eq!(sessions[0].turns[0].parts[2].text, None);
+    assert_eq!(
+        sessions[0].turns[0].parts[2]
+            .content_card
+            .as_ref()
+            .and_then(|card| card.renderer.as_deref()),
+        Some("terminal_output")
+    );
+    assert_eq!(
+        sessions[0].turns[0].parts[1].source_execution_id.as_deref(),
+        Some("call-1")
+    );
+    assert_eq!(
+        sessions[0].turns[0].parts[2].source_execution_id.as_deref(),
+        Some("call-1")
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn official_claude_code_adapter_emits_namespaced_reasoning_without_core_kind_changes() {
+    if !command_available("node").await {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-official-claude-reasoning-fixture");
+    fs::write(
+        fixture.path().join("session.jsonl"),
+        [
+            r#"{"type":"user","message":{"role":"user","content":"Explain the choice"},"uuid":"turn-1"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Compare the two execution paths."},{"type":"text","text":"Use the background task path."}]}}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let adapter = official_adapter_fixture(
+        "claude-code",
+        "Claude Code",
+        "../builtin-assets/adapters/claude-code/conversation-adapter.json",
+        vec![ConversationSourceKind::Directory],
+    );
+    let source = source_fixture(
+        "claude-code",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
+    let parts = &sessions[0].turns[0].parts;
+
+    assert_eq!(parts.len(), 2);
+    assert_eq!(
+        parts[0]
+            .content_card
+            .as_ref()
+            .map(|card| card.kind.as_str()),
+        Some("claude-code.reasoning")
+    );
+    assert_eq!(
+        parts[0].text.as_deref(),
+        Some("Compare the two execution paths.")
+    );
+    assert_eq!(
+        parts[1]
+            .content_card
+            .as_ref()
+            .map(|card| card.kind.as_str()),
+        Some("claude-code.answer")
+    );
+    assert_content_card_types(parts, &["reasoning", "answer"]);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn external_adapter_run_times_out() {
+    let fixture = TempFixture::new("assetiweave-adapter-timeout-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+sleep 1
+printf '%s\n' '{"type":"complete","item":{}}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let validation =
+        validate_external_adapter_manifest(manifest.to_string_lossy().as_ref()).unwrap();
+
+    let error = run_external_adapter(
+        &validation,
+        "probe",
+        json!({"method":"probe"}),
+        Duration::from_millis(50),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.contains("timed out"));
+}
+
+#[cfg(unix)]
+fn official_adapter_fixture(
+    id: &str,
+    name: &str,
+    manifest_relative_path: &str,
+    input_kinds: Vec<ConversationSourceKind>,
+) -> ConversationAdapter {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative_path);
+    ConversationAdapter {
+        id: id.to_string(),
+        name: name.to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "1.0.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest_path.to_string_lossy().to_string()),
+        executable_path: None,
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::BuiltIn,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec![
+            "probe".to_string(),
+            "list_sessions".to_string(),
+            "read_session".to_string(),
+            "export_markdown".to_string(),
+        ],
+        input_kinds,
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    }
+}
+
+#[cfg(unix)]
+fn content_card_type(part: &crate::backend::domain::NormalizedConversationPart) -> Option<String> {
+    part.content_card
+        .as_ref()?
+        .kind
+        .rsplit_once('.')
+        .map(|(_, kind)| kind.to_string())
+}
+
+#[cfg(unix)]
+fn assert_content_card_types(
+    parts: &[crate::backend::domain::NormalizedConversationPart],
+    expected: &[&str],
+) {
+    let card_types = parts
+        .iter()
+        .filter_map(content_card_type)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        card_types,
+        expected
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+    );
+    assert!(parts.iter().all(|part| {
+        part.metadata_json.as_deref().is_none_or(|metadata| {
+            !metadata.contains("\"content_card\"") && !metadata.contains("\"contentCard\"")
+        })
+    }));
+}
+
+#[cfg(unix)]
+async fn command_available(command: &str) -> bool {
+    let Some(program) =
+        crate::backend::infrastructure::host_process::resolve_host_executable(command)
+    else {
+        return false;
+    };
+    crate::backend::infrastructure::host_process::run_host_command_async(
+        crate::backend::infrastructure::host_process::HostCommandSpec {
+            program,
+            args: vec!["--version".to_string()],
+            env: Vec::new(),
+            working_dir: None,
+            stdin: crate::backend::infrastructure::host_process::HostInput::Null,
+            timeout: std::time::Duration::from_secs(5),
+            stdout_limit: 8 * 1024,
+            stderr_limit: 8 * 1024,
+        },
+        None,
+    )
+    .await
+    .is_ok_and(|output| output.status.success())
+}
+
+fn source_fixture(
+    adapter_id: &str,
+    kind: ConversationSourceKind,
+    location: &str,
+) -> ConversationSource {
+    ConversationSource {
+        id: format!("{adapter_id}-fixture"),
+        adapter_id: adapter_id.to_string(),
+        name: format!("{adapter_id} fixture"),
+        kind,
+        location: location.to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    }
+}
+
+#[cfg(unix)]
+fn write_executable_script(dir: &Path, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = dir.join(name);
+    fs::write(&path, body).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).unwrap();
+    path
+}
+
+#[cfg(unix)]
+fn write_manifest(dir: &Path, command: Vec<String>) -> PathBuf {
+    let manifest = ConversationAdapterManifest {
+        schema_version: 1,
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        version: "0.1.0".to_string(),
+        protocol_version: EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+        command,
+        runtime: None,
+        capabilities: vec![
+            "probe".to_string(),
+            "list_sessions".to_string(),
+            "read_session".to_string(),
+            "export_markdown".to_string(),
+            "project_command_parts".to_string(),
+        ],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+    };
+    let path = dir.join("conversation-adapter.json");
+    fs::write(&path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+    path
+}

@@ -1,0 +1,421 @@
+use crate::backend::domain::{
+    AppKind, ConversationAdapter, ConversationAdapterPackage, ConversationAdapterPackageVersion,
+    GitRepositoryInfo,
+};
+use crate::backend::infrastructure::host_paths::HostPathResolver;
+use crate::backend::infrastructure::target_catalog::TargetCatalog;
+use crate::backend::infrastructure::{InfraError, InfraResult};
+use sha2::{Digest, Sha256};
+use std::{fs, path::Path, path::PathBuf, process::Command};
+use walkdir::WalkDir;
+
+#[cfg(windows)]
+pub(crate) fn configure_background_process(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(WINDOWS_CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+pub(crate) fn configure_background_process(_command: &mut Command) {}
+
+pub(crate) fn app_db_path() -> InfraResult<PathBuf> {
+    let path = crate::backend::infrastructure::runtime::config::runtime_config()?
+        .db_path
+        .clone();
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    Ok(path)
+}
+
+pub(crate) fn ensure_app_library_dirs() -> InfraResult<()> {
+    fs::create_dir_all(default_skill_backup_root()?)?;
+    fs::create_dir_all(default_database_backup_root()?)?;
+    Ok(())
+}
+
+pub(crate) fn default_skill_backup_root() -> InfraResult<PathBuf> {
+    default_skill_backup_root_for_tenant("default")
+}
+
+pub(crate) fn default_skill_backup_root_for_tenant(tenant_id: &str) -> InfraResult<PathBuf> {
+    let home =
+        dirs::home_dir().ok_or_else(|| InfraError::NotFound("无法确定用户主目录".to_string()))?;
+    Ok(home
+        .join(".assetiweave")
+        .join("tenants")
+        .join(safe_tenant_path_segment(tenant_id))
+        .join("library")
+        .join("skills"))
+}
+
+pub(crate) fn legacy_skill_backup_root() -> InfraResult<PathBuf> {
+    let home =
+        dirs::home_dir().ok_or_else(|| InfraError::NotFound("无法确定用户主目录".to_string()))?;
+    Ok(home.join(".assetiweave").join("library").join("skills"))
+}
+
+pub(crate) fn memory_legacy_archive_root() -> InfraResult<PathBuf> {
+    let home = crate::backend::infrastructure::runtime::config::runtime_config()?
+        .home_dir
+        .clone();
+    Ok(home.join("library").join("memory-legacy"))
+}
+
+pub(crate) fn default_database_backup_root() -> InfraResult<PathBuf> {
+    let home =
+        dirs::home_dir().ok_or_else(|| InfraError::NotFound("无法确定用户主目录".to_string()))?;
+    Ok(home
+        .join(".assetiweave")
+        .join("library")
+        .join("database-backups"))
+}
+
+pub(crate) fn expand_path(path: &str) -> InfraResult<PathBuf> {
+    let resolver = HostPathResolver::current()?;
+    let stored = resolver.normalize_input(path)?;
+    Ok(resolver.resolve(&stored)?.into_path_buf())
+}
+
+pub(crate) fn normalize_path_for_storage(path: &str) -> InfraResult<String> {
+    let resolver = HostPathResolver::current()?;
+    Ok(resolver.normalize_input(path)?.as_str().to_string())
+}
+
+pub(crate) fn normalize_conversation_adapter_paths(
+    adapter: &mut ConversationAdapter,
+) -> InfraResult<()> {
+    adapter.manifest_path = adapter
+        .manifest_path
+        .as_deref()
+        .map(normalize_path_for_storage)
+        .transpose()?;
+    adapter.executable_path = adapter
+        .executable_path
+        .as_deref()
+        .map(normalize_path_for_storage)
+        .transpose()?;
+    Ok(())
+}
+
+pub(crate) fn normalize_conversation_adapter_package_paths(
+    package: &mut ConversationAdapterPackage,
+) -> InfraResult<()> {
+    package.install_dir = normalize_path_for_storage(&package.install_dir)?;
+    package.manifest_path = normalize_path_for_storage(&package.manifest_path)?;
+    package.adapter_manifest_path = normalize_path_for_storage(&package.adapter_manifest_path)?;
+    Ok(())
+}
+
+pub(crate) fn normalize_conversation_adapter_version_paths(
+    version: &mut ConversationAdapterPackageVersion,
+) -> InfraResult<()> {
+    version.install_dir = normalize_path_for_storage(&version.install_dir)?;
+    Ok(())
+}
+
+pub(crate) fn normalize_std_path_for_storage(path: &Path) -> InfraResult<String> {
+    let path_str = path.to_str().ok_or_else(|| {
+        InfraError::Validation(format!(
+            "path contains invalid UTF-8 characters and cannot be stored: {path:?}"
+        ))
+    })?;
+    normalize_path_for_storage(path_str)
+}
+
+pub(crate) fn display_path(path: &str) -> InfraResult<String> {
+    let resolver = HostPathResolver::current()?;
+    let stored = resolver.normalize_input(path)?;
+    Ok(resolver.display(&stored)?.as_str().to_string())
+}
+
+pub(crate) fn display_path_or_original(path: &str) -> String {
+    display_path(path).unwrap_or_else(|_| path.to_string())
+}
+
+pub(crate) fn find_git_root(path: &Path) -> Option<PathBuf> {
+    let mut current = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()?.to_path_buf()
+    };
+
+    loop {
+        if current.join(".git").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+pub(crate) fn git_repository_for_path(path: &Path) -> Option<GitRepositoryInfo> {
+    let root = find_git_root(path)?;
+    let remote_url = git_remote_url(&root);
+    let web_url = remote_url
+        .as_deref()
+        .and_then(|remote| git_browser_url(remote, &root, path));
+    let root_path = camino::Utf8Path::from_path(&root)?.as_str().to_string();
+    let display_root_path = display_path(&root_path).unwrap_or_else(|_| root_path.clone());
+    Some(GitRepositoryInfo {
+        root_path,
+        display_root_path,
+        remote_url,
+        web_url,
+    })
+}
+
+#[cfg(test)]
+#[path = "conversations/path_normalization_tests.rs"]
+mod path_normalization_tests;
+
+fn git_remote_url(root: &Path) -> Option<String> {
+    git_output(root, &["remote", "get-url", "origin"])
+        .or_else(|| {
+            let first_remote = git_output(root, &["remote"])?
+                .lines()
+                .map(str::trim)
+                .find(|remote| !remote.is_empty())?
+                .to_string();
+            git_output(root, &["remote", "get-url", &first_remote])
+        })
+        .map(|remote| sanitize_git_remote(&remote))
+}
+
+fn sanitize_git_remote(remote: &str) -> String {
+    let Some(scheme_end) = remote.find("://") else {
+        return remote.to_string();
+    };
+    let authority_start = scheme_end + 3;
+    let suffix = &remote[authority_start..];
+    let authority_end = suffix.find(['/', '?', '#']).unwrap_or(suffix.len());
+    let authority = &suffix[..authority_end];
+    let Some(userinfo_end) = authority.rfind('@') else {
+        return remote.to_string();
+    };
+
+    format!(
+        "{}://{}{}",
+        &remote[..scheme_end],
+        &authority[userinfo_end + 1..],
+        &suffix[authority_end..]
+    )
+}
+
+pub(crate) fn git_browser_url(remote: &str, root: &Path, path: &Path) -> Option<String> {
+    let repo_base = github_repo_base(remote)?;
+    let branch = git_current_branch(root).unwrap_or_else(|| "HEAD".to_string());
+    let relative = path.strip_prefix(root).ok()?;
+    let relative = normalize_relative_path(relative);
+    let branch = encode_url_component(&branch);
+    if relative.is_empty() {
+        Some(format!("{repo_base}/tree/{branch}"))
+    } else {
+        Some(format!(
+            "{repo_base}/tree/{branch}/{}",
+            encode_url_path(&relative)
+        ))
+    }
+}
+
+fn github_repo_base(remote: &str) -> Option<String> {
+    let trimmed = remote.trim().trim_end_matches(".git");
+    if let Some(path) = trimmed.strip_prefix("git@github.com:") {
+        return Some(format!("https://github.com/{path}"));
+    }
+    if let Some(path) = trimmed.strip_prefix("ssh://git@github.com/") {
+        return Some(format!("https://github.com/{path}"));
+    }
+    trimmed
+        .strip_prefix("https://github.com/")
+        .map(|path| format!("https://github.com/{path}"))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("http://github.com/")
+                .map(|path| format!("https://github.com/{path}"))
+        })
+}
+
+fn git_current_branch(root: &Path) -> Option<String> {
+    git_output(root, &["branch", "--show-current"])
+        .or_else(|| {
+            git_output(root, &["rev-parse", "--abbrev-ref", "HEAD"])
+                .filter(|branch| branch != "HEAD")
+        })
+        .or_else(|| {
+            git_output(
+                root,
+                &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            )
+            .and_then(|branch| branch.strip_prefix("origin/").map(str::to_string))
+        })
+}
+
+fn git_output(root: &Path, args: &[&str]) -> Option<String> {
+    let mut command = Command::new("git");
+    command
+        .args(args)
+        .current_dir(root)
+        .env("GIT_OPTIONAL_LOCKS", "0");
+    configure_background_process(&mut command);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn encode_url_path(path: &str) -> String {
+    path.split('/')
+        .map(encode_url_component)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn encode_url_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(*byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+pub(crate) fn detect_target_provider(
+    path: &Path,
+    catalog: &TargetCatalog,
+) -> Option<(String, Option<AppKind>)> {
+    let filesystem = crate::backend::infrastructure::host_filesystem::HostFilesystem::current();
+    let mut matches = catalog
+        .descriptors()
+        .iter()
+        .flat_map(|descriptor| {
+            descriptor.default_targets.iter().filter_map(|target| {
+                let target_path = expand_path(&target.path).ok()?;
+                filesystem.is_within(path, &target_path).then(|| {
+                    (
+                        target_path.components().count(),
+                        descriptor.id.clone(),
+                        descriptor.app_kind_compat,
+                    )
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    let max_depth = matches.iter().map(|candidate| candidate.0).max()?;
+    matches.retain(|candidate| candidate.0 == max_depth);
+    let provider_ids = matches
+        .iter()
+        .map(|candidate| candidate.1.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    if provider_ids.len() > 1 {
+        return None;
+    }
+    matches
+        .into_iter()
+        .next()
+        .map(|(_, provider_id, app_kind)| (provider_id, app_kind))
+}
+
+pub(crate) fn is_app_library_path(path: &Path) -> bool {
+    let filesystem = crate::backend::infrastructure::host_filesystem::HostFilesystem::current();
+    if let Some(home) = dirs::home_dir() {
+        let tenants_root = home.join(".assetiweave").join("tenants");
+        if let Some(parts) = filesystem.relative_components(path, &tenants_root) {
+            if parts.len() >= 3 && parts[1] == "library" && parts[2] == "skills" {
+                return true;
+            }
+        }
+    }
+
+    legacy_skill_backup_root()
+        .map(|library_root| filesystem.is_within(path, &library_root))
+        .unwrap_or(false)
+}
+
+pub(crate) fn normalize_relative_path(path: &Path) -> String {
+    if let Some(utf8_path) = camino::Utf8Path::from_path(path) {
+        return utf8_path
+            .components()
+            .map(|component| component.as_str())
+            .collect::<Vec<_>>()
+            .join("/");
+    }
+    path.display().to_string().replace('\\', "/")
+}
+
+fn safe_tenant_path_segment(tenant_id: &str) -> String {
+    let mut segment = tenant_id
+        .trim()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while segment.contains("--") {
+        segment = segment.replace("--", "-");
+    }
+    let segment = segment.trim_matches('-');
+    if segment.is_empty() {
+        "default".to_string()
+    } else {
+        segment.to_string()
+    }
+}
+
+pub(crate) fn hash_file(path: &Path) -> InfraResult<String> {
+    let bytes = fs::read(path)?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub(crate) fn hash_path(path: &Path) -> InfraResult<String> {
+    if path.is_dir() {
+        hash_dir(path)
+    } else {
+        hash_file(path)
+    }
+}
+
+fn hash_dir(path: &Path) -> InfraResult<String> {
+    let mut files = Vec::new();
+    for entry in WalkDir::new(path).follow_links(false) {
+        let entry = entry.map_err(|error| InfraError::External(error.to_string()))?;
+        if entry.file_type().is_file() {
+            files.push(entry.path().to_path_buf());
+        }
+    }
+    files.sort();
+
+    let mut hasher = Sha256::new();
+    for file in files {
+        let relative = file
+            .strip_prefix(path)
+            .map_err(|error| InfraError::External(error.to_string()))?;
+        hasher.update(normalize_relative_path(relative).as_bytes());
+        hasher.update(b"\0");
+        hasher.update(fs::read(file)?);
+        hasher.update(b"\0");
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[cfg(test)]
+#[path = "path_utils_tests.rs"]
+mod tests;

@@ -1,0 +1,631 @@
+use super::*;
+use crate::backend::infrastructure::tasks;
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    thread,
+    time::{Duration, Instant},
+};
+
+#[test]
+fn task_runtime_deduplicates_and_cancels_cooperatively() {
+    let tasks = tasks::TaskRuntime::new();
+    let outcome = tasks
+        .spawn(
+            tasks::TaskSpec::new(tasks::TaskKind::Scan, Some("source-1".to_string()))
+                .with_task_id("scan-task"),
+            Box::new(|context| {
+                while !context.is_cancelled() {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(InfraError::Cancelled("cancelled".to_string()).into())
+            }),
+        )
+        .expect("spawn");
+    let id = match outcome {
+        tasks::SpawnOutcome::Started => "scan-task".to_string(),
+        tasks::SpawnOutcome::Existing => panic!("first task deduplicated"),
+    };
+    let second = tasks
+        .spawn(
+            tasks::TaskSpec::new(tasks::TaskKind::Scan, Some("source-1".to_string())),
+            Box::new(|_| Ok(serde_json::Value::Null)),
+        )
+        .expect("dedup");
+    assert!(matches!(second, tasks::SpawnOutcome::Existing));
+    assert!(matches!(
+        tasks.cancel(&id),
+        tasks::CancelOutcome::Requested(_)
+    ));
+}
+
+#[test]
+fn external_task_runtime_owns_id_deduplication_and_terminal_state() {
+    let tasks = tasks::TaskRuntime::new();
+    let first = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::Other, Some("same-key".to_string()))
+                .with_task_id("same-task"),
+        )
+        .expect("register external task");
+    let first = match first {
+        tasks::ExternalRegistrationOutcome::Started(snapshot) => snapshot,
+        tasks::ExternalRegistrationOutcome::Existing(_) => panic!("first task deduplicated"),
+        tasks::ExternalRegistrationOutcome::Conflict(_) => panic!("first task conflicted"),
+    };
+    let duplicate = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::Other, Some("same-key".to_string()))
+                .with_task_id("different-task"),
+        )
+        .expect("deduplicate external task");
+    assert_eq!(
+        match duplicate {
+            tasks::ExternalRegistrationOutcome::Existing(snapshot) => snapshot.task_id,
+            _ => panic!("deduplication must return existing task"),
+        },
+        "same-task"
+    );
+
+    let same_id = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::Scan, None).with_task_id("same-task"),
+        )
+        .expect("same id check");
+    assert_eq!(
+        match same_id {
+            tasks::ExternalRegistrationOutcome::Existing(snapshot) => snapshot.task_id,
+            _ => panic!("task ids must never be replaced"),
+        },
+        first.task_id
+    );
+
+    tasks
+        .start_external("same-task")
+        .expect("start external task");
+    assert!(tasks
+        .list(tasks::TaskFilter {
+            kind: None,
+            active_only: true,
+            ..Default::default()
+        })
+        .iter()
+        .any(|snapshot| snapshot.task_id == "same-task"));
+    tasks.cancel("same-task");
+    assert_eq!(
+        tasks.get("same-task").expect("cancelling task").state,
+        tasks::TaskState::Cancelling
+    );
+    let finished = tasks
+        .complete_external("same-task", Ok(serde_json::json!({"done": true})))
+        .expect("complete external task");
+    assert_eq!(finished.state, tasks::TaskState::Canceled);
+    assert!(!tasks.has_active_tasks());
+}
+
+#[test]
+fn task_runtime_prunes_terminal_tasks_globally_and_preserves_active_tasks() {
+    let tasks = tasks::TaskRuntime::new();
+    let active = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::Scan, Some("active-scan".to_string()))
+                .with_task_id("active-scan"),
+        )
+        .expect("register active task");
+    assert!(matches!(
+        active,
+        tasks::ExternalRegistrationOutcome::Started(_)
+    ));
+    tasks
+        .start_external("active-scan")
+        .expect("start active task");
+
+    for index in 0..101 {
+        let task_id = format!("terminal-{index}");
+        let kind = if index % 2 == 0 {
+            tasks::TaskKind::Scan
+        } else {
+            tasks::TaskKind::BatchMount
+        };
+        tasks
+            .register_external(tasks::TaskSpec::new(kind, None).with_task_id(task_id.clone()))
+            .expect("register terminal task");
+        tasks.start_external(&task_id).expect("start terminal task");
+        tasks
+            .complete_external(&task_id, Ok(serde_json::Value::Null))
+            .expect("finish terminal task");
+    }
+
+    let snapshots = tasks.list(tasks::TaskFilter::default());
+    assert_eq!(
+        snapshots
+            .iter()
+            .filter(|snapshot| snapshot.state.is_terminal())
+            .count(),
+        50
+    );
+    assert!(snapshots
+        .iter()
+        .any(|snapshot| snapshot.task_id == "active-scan"));
+    assert!(tasks.get("terminal-0").is_none());
+}
+
+#[test]
+fn task_runtime_get_prunes_expired_terminal_tasks_before_dedup_and_projection_reads() {
+    let tasks = tasks::TaskRuntime::new();
+    tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::SearchIndexRebuild, Some("rebuild".into()))
+                .with_task_id("expired-rebuild")
+                .with_user_visible(false),
+        )
+        .expect("register task");
+    tasks.start_external("expired-rebuild").expect("start task");
+    tasks
+        .complete_external("expired-rebuild", Ok(serde_json::json!({"done": true})))
+        .expect("finish task");
+    tasks
+        .set_finished_at_for_test(
+            "expired-rebuild",
+            (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339(),
+        )
+        .expect("age task");
+
+    assert!(tasks.get("expired-rebuild").is_none());
+    let replacement = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::SearchIndexRebuild, Some("rebuild".into()))
+                .with_task_id("replacement-rebuild"),
+        )
+        .expect("register replacement task");
+    assert!(matches!(
+        replacement,
+        tasks::ExternalRegistrationOutcome::Started(_)
+    ));
+}
+
+#[test]
+fn task_runtime_user_visible_terminal_tasks_preserved_and_cleared() {
+    let tasks = tasks::TaskRuntime::new();
+    tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::Scan, None)
+                .with_task_id("vis-1")
+                .with_user_visible(true),
+        )
+        .expect("register task");
+    tasks.start_external("vis-1").expect("start");
+    tasks
+        .complete_external("vis-1", Ok(serde_json::json!({})))
+        .expect("complete");
+    // Aged 1 hour, but user_visible=true, so it shouldn't be pruned
+    tasks
+        .set_finished_at_for_test(
+            "vis-1",
+            (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339(),
+        )
+        .expect("age");
+    assert!(tasks.get("vis-1").is_some());
+
+    // Clear terminal
+    let cleared = tasks.clear_terminal(None);
+    assert_eq!(cleared, 1);
+    assert!(tasks.get("vis-1").is_none());
+}
+
+#[test]
+fn task_runtime_progress_is_bounded_and_monotonic() {
+    let tasks = tasks::TaskRuntime::new();
+    let registered = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::BatchMount, None).with_task_id("progress-task"),
+        )
+        .expect("register progress task");
+    assert!(matches!(
+        registered,
+        tasks::ExternalRegistrationOutcome::Started(_)
+    ));
+    tasks.start_external("progress-task").expect("start task");
+    tasks
+        .set_progress("progress-task", 1, Some(3), Some("first"))
+        .expect("set initial progress");
+    assert!(tasks
+        .set_progress("progress-task", 0, Some(3), Some("backward"))
+        .is_err());
+    assert!(tasks
+        .set_progress("progress-task", 4, Some(3), Some("overflow"))
+        .is_err());
+}
+
+#[test]
+fn task_runtime_broadcasts_registration_progress_and_terminal_snapshots() {
+    let tasks = tasks::TaskRuntime::new();
+    let mut events = tasks.subscribe();
+    tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::AiExecution, Some("ai-exec-1".into()))
+                .with_task_id("external-task-1"),
+        )
+        .expect("register task");
+    tasks.start_external("external-task-1").expect("start task");
+    tasks
+        .set_progress("external-task-1", 1, Some(2), Some("running"))
+        .expect("progress");
+    tasks
+        .complete_external("external-task-1", Ok(serde_json::json!({"ok": true})))
+        .expect("complete");
+
+    let mut snapshots = Vec::new();
+    while let Ok(snapshot) = events.try_recv() {
+        snapshots.push(snapshot);
+    }
+    assert!(snapshots.iter().any(|snapshot| {
+        snapshot.task_id == "external-task-1" && snapshot.state == tasks::TaskState::Pending
+    }));
+    assert!(snapshots.iter().any(|snapshot| {
+        snapshot.task_id == "external-task-1"
+            && snapshot.state == tasks::TaskState::Running
+            && snapshot.progress.as_ref().map(|p| p.current) == Some(1)
+            && snapshot.progress.as_ref().and_then(|p| p.total) == Some(2)
+            && snapshot.progress.as_ref().and_then(|p| p.note.as_deref()) == Some("running")
+    }));
+    assert!(snapshots.iter().any(|snapshot| {
+        snapshot.task_id == "external-task-1" && snapshot.state == tasks::TaskState::Succeeded
+    }));
+}
+
+#[test]
+fn external_task_runtime_owns_cross_operation_conflicts() {
+    let tasks = tasks::TaskRuntime::new();
+    let first = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::ExtensionLifecycle, Some("install".into()))
+                .with_task_id("install-task")
+                .with_conflict_key("extension:fixture"),
+        )
+        .expect("register first lifecycle task");
+    assert!(matches!(
+        first,
+        tasks::ExternalRegistrationOutcome::Started(_)
+    ));
+
+    let conflict = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::ExtensionLifecycle, Some("remove".into()))
+                .with_task_id("remove-task")
+                .with_conflict_key("extension:fixture"),
+        )
+        .expect("register conflicting lifecycle task");
+    assert!(matches!(
+        conflict,
+        tasks::ExternalRegistrationOutcome::Conflict(snapshot)
+            if snapshot.task_id == "install-task"
+    ));
+}
+
+#[test]
+fn external_task_runtime_starts_a_registered_task_only_once() {
+    let tasks = tasks::TaskRuntime::new();
+    tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::ExtensionLifecycle, None)
+                .with_task_id("once-task"),
+        )
+        .expect("register task");
+    let executions = Arc::new(AtomicUsize::new(0));
+
+    let first_executions = executions.clone();
+    tasks
+        .start_external_with(
+            "once-task",
+            serde_json::Value::Null,
+            Box::new(move |_| {
+                first_executions.fetch_add(1, Ordering::SeqCst);
+                Ok(serde_json::Value::Null)
+            }),
+        )
+        .expect("start task");
+    let second_executions = executions.clone();
+    tasks
+        .start_external_with(
+            "once-task",
+            serde_json::Value::Null,
+            Box::new(move |_| {
+                second_executions.fetch_add(1, Ordering::SeqCst);
+                Ok(serde_json::Value::Null)
+            }),
+        )
+        .expect("reuse started task");
+
+    for _ in 0..100 {
+        if !tasks.has_active_tasks() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
+    let tasks = tasks::TaskRuntime::new();
+    let outcome = tasks
+        .spawn(
+            tasks::TaskSpec::new(tasks::TaskKind::Backup, Some("slow".to_string()))
+                .with_task_id("slow-task"),
+            Box::new(|_| {
+                std::thread::sleep(Duration::from_millis(150));
+                Ok(serde_json::Value::Null)
+            }),
+        )
+        .expect("spawn slow task");
+    let task_id = match outcome {
+        tasks::SpawnOutcome::Started => "slow-task".to_string(),
+        tasks::SpawnOutcome::Existing => panic!("slow task unexpectedly deduplicated"),
+    };
+
+    let started = std::time::Instant::now();
+    let report = tasks.shutdown_with_grace(Duration::from_millis(20)).await;
+    assert!(started.elapsed() < Duration::from_millis(100));
+    assert_eq!(report.unfinished_task_ids, vec![task_id]);
+
+    // Let the untracked test task converge before the registry is dropped.
+    std::thread::sleep(Duration::from_millis(180));
+    assert!(tasks
+        .list(tasks::TaskFilter::default())
+        .iter()
+        .all(|snapshot| {
+            !matches!(
+                snapshot.state,
+                tasks::TaskState::Pending
+                    | tasks::TaskState::Running
+                    | tasks::TaskState::Cancelling
+            )
+        }));
+}
+
+#[test]
+fn shutdown_report_without_resident_services_is_clean() {
+    let report = super::ShutdownReport::default();
+
+    assert!(report.dispatcher_drained);
+    assert_eq!(report.dispatcher_remaining_events, 0);
+    assert!(!report.dispatcher_timed_out);
+    assert!(report.unfinished_task_ids.is_empty());
+}
+
+#[tokio::test]
+async fn runtime_config_db_path_matches_injected_path() {
+    let temp_db = std::env::temp_dir().join(format!(
+        "assetiweave-test-config-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let runtime = crate::backend::application::AppService::bootstrap_runtime(
+        temp_db.clone(),
+        RuntimeRole::OneShot,
+    )
+    .await
+    .expect("bootstrap test runtime");
+    assert_eq!(runtime.config().db_path, temp_db);
+    let _ = std::fs::remove_file(&temp_db);
+}
+
+#[test]
+fn task_runtime_uses_tracker_instead_of_condvar_accounting() {
+    let source = include_str!("../tasks/tasks.rs");
+    assert!(source.contains("TaskTracker"));
+    assert!(!source.contains(concat!("Cond", "var")));
+    assert!(!source.contains(concat!("fn release_active_", "slot(")));
+}
+
+#[tokio::test]
+async fn shutdown_waits_for_external_task_completion() {
+    let tasks = tasks::TaskRuntime::new();
+    let spec =
+        tasks::TaskSpec::new(tasks::TaskKind::Other, None).with_task_id("external-still-running");
+    tasks.register_external(spec).unwrap();
+    let report = tasks.shutdown_with_grace(Duration::from_millis(5)).await;
+    assert_eq!(report.unfinished_task_ids, vec!["external-still-running"]);
+    assert!(tasks
+        .spawn(
+            tasks::TaskSpec::new(tasks::TaskKind::Other, None),
+            Box::new(|_| Ok(serde_json::Value::Null)),
+        )
+        .is_err());
+}
+
+#[tokio::test]
+async fn shutdown_waits_for_external_task_finish_and_recovers_token_on_panic() {
+    let tasks = tasks::TaskRuntime::new();
+    let spec = tasks::TaskSpec::new(tasks::TaskKind::Other, None).with_task_id("ext-completed");
+    tasks.register_external(spec).unwrap();
+    tasks
+        .complete_external("ext-completed", Ok(serde_json::Value::Null))
+        .unwrap();
+
+    let report = tasks.shutdown_with_grace(Duration::from_millis(50)).await;
+    assert!(report.unfinished_task_ids.is_empty());
+}
+
+#[tokio::test]
+async fn bootstrap_oneshot_and_resident_host_share_database_and_differ_in_resident_services() {
+    let temp_db =
+        std::env::temp_dir().join(format!("assetiweave-test-role-{}.db", uuid::Uuid::new_v4()));
+
+    // 1. Bootstrap OneShot
+    let oneshot_runtime = crate::backend::application::AppService::bootstrap_runtime(
+        temp_db.clone(),
+        RuntimeRole::OneShot,
+    )
+    .await
+    .expect("bootstrap OneShot");
+    assert_eq!(oneshot_runtime.config().db_path, temp_db);
+
+    // OneShot does not register background startup refresh tasks
+    let oneshot_tasks = oneshot_runtime.task_runtime().list(tasks::TaskFilter {
+        kind: None,
+        active_only: false,
+        ..Default::default()
+    });
+    assert!(!oneshot_tasks
+        .iter()
+        .any(|t| t.detail["operation"] == "startup_health_refresh"));
+
+    // Observe persistent data through the initialized database
+    let settings_oneshot = oneshot_runtime.app_settings_value();
+    assert!(settings_oneshot.is_object());
+
+    // Cleanly shutdown OneShot
+    let oneshot_report = oneshot_runtime
+        .shutdown_with_grace(Duration::from_millis(200))
+        .await;
+    assert!(oneshot_report.unfinished_task_ids.is_empty());
+
+    // 2. Bootstrap ResidentHost on the exact same database file
+    let resident_runtime = crate::backend::application::AppService::bootstrap_runtime(
+        temp_db.clone(),
+        RuntimeRole::ResidentHost,
+    )
+    .await
+    .expect("bootstrap ResidentHost");
+    assert_eq!(resident_runtime.config().db_path, temp_db);
+
+    // ResidentHost registers resident startup services in task runtime
+    let resident_tasks = resident_runtime.task_runtime().list(tasks::TaskFilter {
+        kind: None,
+        active_only: false,
+        ..Default::default()
+    });
+    assert!(resident_tasks
+        .iter()
+        .any(|t| t.detail["operation"] == "startup_health_refresh"));
+
+    // Observe identical persistent settings through the shared database
+    let settings_resident = resident_runtime.app_settings_value();
+    assert_eq!(settings_oneshot, settings_resident);
+
+    // Cleanly shutdown ResidentHost
+    let resident_report = resident_runtime
+        .shutdown_with_grace(Duration::from_secs(1))
+        .await;
+    assert!(resident_report.unfinished_task_ids.is_empty());
+    assert!(resident_report.dispatcher_drained);
+
+    let _ = std::fs::remove_file(&temp_db);
+}
+
+#[tokio::test]
+async fn shutdown_is_idempotent_when_called_twice() {
+    let temp_db = std::env::temp_dir().join(format!(
+        "assetiweave-test-shutdown-idempotent-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let runtime = crate::backend::application::AppService::bootstrap_runtime(
+        temp_db.clone(),
+        RuntimeRole::ResidentHost,
+    )
+    .await
+    .expect("bootstrap ResidentHost");
+
+    let first_report = runtime.shutdown_with_grace(Duration::from_secs(5)).await;
+    assert!(first_report.is_clean());
+    assert!(first_report.dispatcher_drained);
+    assert!(first_report.unfinished_task_ids.is_empty());
+    assert!(first_report.unfinished_stages.is_empty());
+
+    // Second call to shutdown_with_grace must be idempotent and cleanly return identical stable report
+    let second_report = runtime.shutdown_with_grace(Duration::from_secs(5)).await;
+    assert!(second_report.is_clean());
+    assert!(second_report.dispatcher_drained);
+    assert!(second_report.unfinished_task_ids.is_empty());
+    assert_eq!(second_report.dispatcher_remaining_events, 0);
+    assert_eq!(
+        second_report.unfinished_stages,
+        first_report.unfinished_stages
+    );
+
+    // Task runtime rejects new tasks once stopped
+    let spawn_res = runtime.task_runtime().spawn(
+        tasks::TaskSpec::new(tasks::TaskKind::Other, None),
+        Box::new(|_| Ok(serde_json::Value::Null)),
+    );
+    assert!(spawn_res.is_err());
+
+    let _ = std::fs::remove_file(&temp_db);
+}
+
+#[tokio::test]
+async fn shutdown_deadline_bounds_total_wall_time_across_all_stages() {
+    let temp_db = std::env::temp_dir().join(format!(
+        "assetiweave-test-shutdown-deadline-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let runtime = crate::backend::application::AppService::bootstrap_runtime(
+        temp_db.clone(),
+        RuntimeRole::ResidentHost,
+    )
+    .await
+    .expect("bootstrap ResidentHost");
+
+    // 1. Non-cooperative task: sleeps without observing cancellation
+    let _ = runtime.task_runtime().spawn(
+        tasks::TaskSpec::new(tasks::TaskKind::Other, None).with_task_id("uncooperative-task"),
+        Box::new(|_| {
+            std::thread::sleep(Duration::from_millis(800));
+            Ok(serde_json::Value::Null)
+        }),
+    );
+
+    // 2. Slow coordinator: install a slow coordinator that sleeps for 800ms
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let join = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_millis(800)).await;
+    });
+    runtime.register_session_memory_coordinator(cancel, join);
+
+    // 3. Delayed pool close: hold a connection checkout so pool.close() would block
+    let _held_connection = runtime.pool().acquire().await.expect("acquire connection");
+
+    // Total grace = 150ms.
+    // If each of the 4 stages received a fresh 150ms (or blocked indefinitely),
+    // wall time would be >= 4 * 150ms = 600ms.
+    // With one absolute deadline, wall time is bounded by 150ms + CI tolerance (< 450ms).
+    let grace = Duration::from_millis(150);
+    let start = Instant::now();
+    let report = runtime.shutdown_with_grace(grace).await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_millis(450),
+        "shutdown took {:?}, which exceeds one grace plus tolerance",
+        elapsed
+    );
+    assert!(!report.is_clean());
+    assert!(
+        report.unfinished_stages.contains(&"tasks".to_string())
+            || report
+                .unfinished_task_ids
+                .contains(&"uncooperative-task".to_string())
+    );
+    assert!(report
+        .unfinished_stages
+        .contains(&"session_memory_coordinator".to_string()));
+    assert!(report
+        .unfinished_stages
+        .contains(&"database_pool".to_string()));
+
+    // Idempotency: calling shutdown again immediately returns the same stable report
+    let second_report = runtime
+        .shutdown_with_grace(Duration::from_millis(100))
+        .await;
+    assert_eq!(second_report.unfinished_stages, report.unfinished_stages);
+    assert_eq!(
+        second_report.unfinished_task_ids,
+        report.unfinished_task_ids
+    );
+
+    drop(_held_connection);
+    let _ = std::fs::remove_file(&temp_db);
+}

@@ -5,18 +5,18 @@ use std::{sync::Arc, time::Duration};
 use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
-use crate::backend::agent_market::types::AgentInstallationView;
+use crate::backend::{domain::AppErrorView, infrastructure::agent_market::AgentInstallationView};
 use crate::{
     adapters::app_state::AppState,
     backend::{
-        agent_market::types::{
+        application::{
+            AgentInstallPreview, AgentMarketItemView, AgentUninstallPreview, AppError, AppResult,
+            AppService,
+        },
+        infrastructure::agent_market::{
             AgentInstallPreviewRequest, AgentInstallStartRequest, AgentLifecycleTaskSnapshot,
             AgentMarketError, AgentMarketListRequest, AgentUninstallStartRequest,
         },
-        application::{
-            AgentInstallPreview, AgentMarketItemView, AgentUninstallPreview, AppService,
-        },
-        runtime::{AppError, AppResult},
     },
 };
 
@@ -274,7 +274,7 @@ fn spawn_install_worker(
                 start_cancellation_bridge(&context, cancellation.clone());
             let _ = worker_tasks.update_agent_lifecycle(
                 &task_id_for_runtime,
-                crate::backend::agent_market::types::LifecycleTaskPhase::Preparing,
+                crate::backend::infrastructure::agent_market::LifecycleTaskPhase::Preparing,
                 1,
                 None,
                 Vec::new(),
@@ -329,8 +329,8 @@ fn spawn_install_worker(
             }
             match result {
                 Ok(outcome) => serde_json::to_value(&outcome.installation)
-                    .map_err(|error| AppError::External(error.to_string())),
-                Err(error) => Err(error),
+                    .map_err(|error| AppErrorView::from(AppError::External(error.to_string()))),
+                Err(error) => Err(AppErrorView::from(error)),
             }
         }),
     );
@@ -360,7 +360,7 @@ fn spawn_uninstall_worker(
                 start_cancellation_bridge(&context, cancellation.clone());
             let _ = worker_tasks.update_agent_lifecycle(
                 &task_id_for_runtime,
-                crate::backend::agent_market::types::LifecycleTaskPhase::Preparing,
+                crate::backend::infrastructure::agent_market::LifecycleTaskPhase::Preparing,
                 1,
                 None,
                 Vec::new(),
@@ -410,8 +410,8 @@ fn spawn_uninstall_worker(
             }
             match result {
                 Ok(installation) => serde_json::to_value(installation)
-                    .map_err(|error| AppError::External(error.to_string())),
-                Err(error) => Err(error),
+                    .map_err(|error| AppErrorView::from(AppError::External(error.to_string()))),
+                Err(error) => Err(AppErrorView::from(error)),
             }
         }),
     );
@@ -421,7 +421,7 @@ fn spawn_uninstall_worker(
 }
 
 fn start_cancellation_bridge(
-    context: &crate::backend::runtime::tasks::TaskContext,
+    context: &crate::backend::infrastructure::tasks::TaskContext,
     cancellation: CancellationToken,
 ) -> (
     Arc<std::sync::atomic::AtomicBool>,

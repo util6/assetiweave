@@ -5,10 +5,12 @@ use crate::{
     adapters::{app_state::AppState, tauri::background_tasks::BackgroundTaskRegistry},
     backend::{
         application::AppService,
-        data_backup::backup_database_from_settings_value,
-        logs::write_startup_log,
-        path_utils::app_db_path,
-        runtime::{AppRuntime, RuntimeRole},
+        infrastructure::{
+            backup::backup_database_from_settings_value,
+            logs::write_startup_log,
+            path_utils::app_db_path,
+            runtime::{AppRuntime, RuntimeRole},
+        },
     },
 };
 use std::sync::{
@@ -67,7 +69,7 @@ fn setup_panic_hook() {
         let panic_message =
             format!("Panic occurred at {location}: {payload}\nBacktrace:\n{backtrace}");
         eprintln!("{panic_message}");
-        crate::backend::logs::record_fatal_panic(&panic_message);
+        crate::backend::infrastructure::logs::record_fatal_panic(&panic_message);
         default_hook(info);
     }));
 }
@@ -90,7 +92,7 @@ pub fn has_memory_generation_mcp_stdio_arg() -> bool {
 }
 
 fn run_startup_self_check(_context: tauri::Context<tauri::Wry>) -> Result<(), String> {
-    backend::builtin_skills::install_builtin_skills()
+    backend::application::catalog::builtin_skills::install_builtin_skills()
         .map_err(|error| format!("内置 Skill 校验或安装失败: {error}"))?;
     let db_path = app_db_path().map_err(|error| format!("数据库路径初始化失败: {error}"))?;
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -98,7 +100,7 @@ fn run_startup_self_check(_context: tauri::Context<tauri::Wry>) -> Result<(), St
         .build()
         .map_err(|error| format!("初始化 Tokio 运行时失败: {error}"))?;
     rt.block_on(async {
-        let runtime = AppRuntime::bootstrap(db_path, RuntimeRole::OneShot)
+        let runtime = AppService::bootstrap_runtime(db_path, RuntimeRole::OneShot)
             .await
             .map_err(|error| format!("数据库和运行时初始化失败: {error}"))?;
         let report = runtime
@@ -118,9 +120,9 @@ fn run_startup_self_check(_context: tauri::Context<tauri::Wry>) -> Result<(), St
     })
 }
 
-fn init_app_logging() -> Option<backend::logging::LoggingGuard> {
-    match backend::runtime::config::runtime_config() {
-        Ok(config) => match backend::logging::init_logging(&config) {
+fn init_app_logging() -> Option<backend::infrastructure::logging::LoggingGuard> {
+    match backend::infrastructure::runtime::config::runtime_config() {
+        Ok(config) => match backend::infrastructure::logging::init_logging(&config) {
             Ok(guard) => Some(guard),
             Err(error) => {
                 eprintln!("failed to initialize logging: {error}");
@@ -149,7 +151,7 @@ pub fn run() {
                     error = %error,
                     "启动自检失败"
                 );
-                crate::backend::logs::record_fatal_panic(&message);
+                crate::backend::infrastructure::logs::record_fatal_panic(&message);
                 eprintln!("{message}");
                 drop(_logging_guard);
                 std::process::exit(1);
@@ -157,7 +159,7 @@ pub fn run() {
         }
     }
 
-    if let Err(error) = backend::builtin_skills::install_builtin_skills() {
+    if let Err(error) = backend::application::catalog::builtin_skills::install_builtin_skills() {
         tracing::error!(
             action = "app.startup.skills",
             error = %error,
@@ -176,7 +178,16 @@ pub fn run() {
             panic!("failed to resolve AssetIWeave database path: {error}");
         }
     };
-    let runtime = match tauri::async_runtime::block_on(AppRuntime::bootstrap(
+    if let Err(error) =
+        crate::backend::application::memory::legacy_archive::archive_legacy_memory_once(&db_path)
+    {
+        tracing::warn!(
+            action = "app.startup.memory_legacy_archive",
+            error = %error,
+            "legacy Memory archive was not created"
+        );
+    }
+    let runtime = match tauri::async_runtime::block_on(AppService::bootstrap_runtime(
         db_path.clone(),
         RuntimeRole::ResidentHost,
     )) {
@@ -190,7 +201,7 @@ pub fn run() {
             panic!("failed to initialize AssetIWeave AppRuntime: {error}");
         }
     };
-    if let Err(error) = backend::runtime::install_process_runtime(runtime.clone()) {
+    if let Err(error) = backend::infrastructure::runtime::install_process_runtime(runtime.clone()) {
         tracing::error!(
             action = "app.startup.runtime_install",
             error = %error,
@@ -198,7 +209,6 @@ pub fn run() {
         );
         panic!("failed to install AssetIWeave process AppRuntime: {error}");
     }
-    let agent_runtime = runtime.agent_runtime();
     let conversation_full_sync_on_startup_enabled = match runtime.backend_settings() {
         Ok(settings) => settings.auto_full_sync_on_startup(),
         Err(error) => {
@@ -210,6 +220,24 @@ pub fn run() {
             true
         }
     };
+    let consumers: Vec<std::sync::Arc<dyn backend::infrastructure::events::DomainEventConsumer>> = vec![
+        std::sync::Arc::new(
+            backend::application::conversations::SearchIndexAdvanceConsumer::new(
+                runtime.db().clone(),
+            ),
+        ),
+        std::sync::Arc::new(backend::application::conversations::SessionMemoryConsumer),
+    ];
+    if let Err(error) = tauri::async_runtime::block_on(runtime.start_event_dispatcher(consumers)) {
+        tracing::error!(
+            action = "app.startup.event_dispatcher",
+            error = %error,
+            "failed to start EventDispatcher in resident AppRuntime"
+        );
+    }
+    crate::backend::application::memory::session_coordinator::start_session_memory_coordinator(
+        &runtime,
+    );
     {
         let refresh_runtime = runtime.clone();
         tauri::async_runtime::spawn(async move {
@@ -346,7 +374,6 @@ pub fn run() {
             background_tasks: Arc::new(BackgroundTaskRegistry::with_task_runtime(
                 runtime.task_runtime().clone(),
             )),
-            agent_runtime,
             allow_close: Arc::new(AtomicBool::new(false)),
             allow_exit: Arc::new(AtomicBool::new(false)),
             exit_prompt_open: Arc::new(AtomicBool::new(false)),
@@ -394,12 +421,13 @@ pub fn run() {
                             }
                         };
                         if should_emit {
-                            let view = backend::dto::TaskView::from_snapshot(&snapshot);
+                            let view =
+                                backend::application::system::TaskView::from_snapshot(&snapshot);
                             let _ = task_event_app.emit("task-updated", &view);
                         }
                     }
 
-                    if snapshot.kind == backend::runtime::tasks::TaskKind::Memory {
+                    if snapshot.kind == backend::infrastructure::tasks::TaskKind::Memory {
                         let _ = task_event_app.emit("memory-task-updated", ());
                     }
                 }
@@ -572,7 +600,7 @@ pub(crate) async fn sync_before_close_with_runtime(
 
 pub fn run_engine_stdio() {
     let _logging_guard = init_app_logging();
-    if let Err(error) = backend::builtin_skills::install_builtin_skills() {
+    if let Err(error) = backend::application::catalog::builtin_skills::install_builtin_skills() {
         eprintln!("failed to install AssetIWeave system Skills: {error}");
         drop(_logging_guard);
         std::process::exit(1);
@@ -588,12 +616,15 @@ pub fn run_engine_stdio() {
             std::process::exit(1);
         }
     };
-    let engine_db_path = backend::path_utils::app_db_path();
+    let engine_db_path = backend::infrastructure::path_utils::app_db_path();
     let (_app_runtime, runtime) = match engine_db_path {
-        Ok(path) => match tokio_runtime.block_on(AppRuntime::bootstrap(path, RuntimeRole::OneShot))
+        Ok(path) => match tokio_runtime
+            .block_on(AppService::bootstrap_runtime(path, RuntimeRole::OneShot))
         {
             Ok(runtime) => {
-                if let Err(error) = backend::runtime::install_process_runtime(runtime.clone()) {
+                if let Err(error) =
+                    backend::infrastructure::runtime::install_process_runtime(runtime.clone())
+                {
                     eprintln!("failed to install Engine AppRuntime: {error}");
                     drop(_logging_guard);
                     std::process::exit(1);
@@ -647,33 +678,35 @@ pub fn run_memory_recall_mcp_stdio() {
             std::process::exit(1);
         }
     };
-    let db_path = backend::path_utils::app_db_path();
+    let db_path = backend::infrastructure::path_utils::app_db_path();
     let runtime = match db_path {
-        Ok(path) => match tokio_runtime.block_on(backend::runtime::AppRuntime::bootstrap(
-            path,
-            backend::runtime::RuntimeRole::OneShot,
-        )) {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                eprintln!("failed to initialize Memory Recall MCP runtime: {error}");
-                drop(_logging_guard);
-                std::process::exit(1);
+        Ok(path) => {
+            match tokio_runtime.block_on(backend::application::AppService::bootstrap_runtime(
+                path,
+                backend::infrastructure::runtime::RuntimeRole::OneShot,
+            )) {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    eprintln!("failed to initialize Memory Recall MCP runtime: {error}");
+                    drop(_logging_guard);
+                    std::process::exit(1);
+                }
             }
-        },
+        }
         Err(error) => {
             eprintln!("failed to resolve Memory Recall MCP db path: {error}");
             drop(_logging_guard);
             std::process::exit(1);
         }
     };
+    let service = backend::application::AppService::from_runtime(&runtime);
     if let Ok(tenant_id) = std::env::var("ASSETIWEAVE_MEMORY_RECALL_TENANT_ID") {
-        if let Err(error) = tokio_runtime.block_on(runtime.activate_tenant(&tenant_id)) {
+        if let Err(error) = tokio_runtime.block_on(service.activate_tenant(&tenant_id)) {
             eprintln!("failed to activate Memory Recall MCP tenant: {error}");
             drop(_logging_guard);
             std::process::exit(1);
         }
     }
-    let service = backend::application::AppService::from_runtime(&runtime);
     let session_id = std::env::var("ASSETIWEAVE_MEMORY_RECALL_SESSION_ID").unwrap_or_default();
     if session_id.trim().is_empty() {
         eprintln!("Memory Recall MCP session is missing");
@@ -702,26 +735,28 @@ pub fn run_memory_generation_mcp_stdio() {
             std::process::exit(1);
         }
     };
-    let db_path = backend::path_utils::app_db_path();
+    let db_path = backend::infrastructure::path_utils::app_db_path();
     let runtime = match db_path {
-        Ok(path) => match tokio_runtime.block_on(backend::runtime::AppRuntime::bootstrap(
-            path,
-            backend::runtime::RuntimeRole::OneShot,
-        )) {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                eprintln!("failed to initialize Memory Generation MCP runtime: {error}");
-                drop(_logging_guard);
-                std::process::exit(1);
+        Ok(path) => {
+            match tokio_runtime.block_on(backend::application::AppService::bootstrap_runtime(
+                path,
+                backend::infrastructure::runtime::RuntimeRole::OneShot,
+            )) {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    eprintln!("failed to initialize Memory Generation MCP runtime: {error}");
+                    drop(_logging_guard);
+                    std::process::exit(1);
+                }
             }
-        },
+        }
         Err(error) => {
             eprintln!("failed to resolve Memory Generation MCP db path: {error}");
             drop(_logging_guard);
             std::process::exit(1);
         }
     };
-    let tenant_id = match backend::memory_generation_mcp::required_env(
+    let tenant_id = match crate::adapters::mcp::memory_generation::required_env(
         "ASSETIWEAVE_MEMORY_GENERATION_TENANT_ID",
     ) {
         Ok(id) => id,
@@ -731,7 +766,7 @@ pub fn run_memory_generation_mcp_stdio() {
             std::process::exit(1);
         }
     };
-    let job_id = match backend::memory_generation_mcp::required_env(
+    let job_id = match crate::adapters::mcp::memory_generation::required_env(
         "ASSETIWEAVE_MEMORY_GENERATION_JOB_ID",
     ) {
         Ok(id) => id,
@@ -741,7 +776,7 @@ pub fn run_memory_generation_mcp_stdio() {
             std::process::exit(1);
         }
     };
-    let ownership_token = match backend::memory_generation_mcp::required_env(
+    let ownership_token = match crate::adapters::mcp::memory_generation::required_env(
         "ASSETIWEAVE_MEMORY_GENERATION_OWNERSHIP_TOKEN",
     ) {
         Ok(token) => token,
@@ -751,12 +786,12 @@ pub fn run_memory_generation_mcp_stdio() {
             std::process::exit(1);
         }
     };
-    if let Err(error) = tokio_runtime.block_on(runtime.activate_tenant(&tenant_id)) {
+    let service = backend::application::AppService::from_runtime(&runtime);
+    if let Err(error) = tokio_runtime.block_on(service.activate_tenant(&tenant_id)) {
         eprintln!("failed to activate Memory Generation MCP tenant: {error}");
         drop(_logging_guard);
         std::process::exit(1);
     }
-    let service = backend::application::AppService::from_runtime(&runtime);
     if let Err(error) =
         run_memory_generation_mcp_loop(&tokio_runtime, &service, &job_id, &ownership_token)
     {
@@ -775,7 +810,7 @@ fn run_memory_generation_mcp_loop(
     use std::io::{BufRead, Write};
     let stdin = std::io::stdin();
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
-    let mut budget = backend::memory_generation_mcp::ToolBudget::default();
+    let mut budget = crate::adapters::mcp::memory_generation::ToolBudget::default();
     for line in stdin.lock().lines() {
         let line = line.map_err(|error| error.to_string())?;
         if line.trim().is_empty() {
@@ -792,15 +827,16 @@ fn run_memory_generation_mcp_loop(
             continue;
         }
         let result = match method {
-            "initialize" => Ok(backend::memory_generation_mcp::initialize_result()),
-            "tools/list" => Ok(backend::memory_generation_mcp::tools_result()),
+            "initialize" => Ok(crate::adapters::mcp::memory_generation::initialize_result()),
+            "tools/list" => Ok(crate::adapters::mcp::memory_generation::tools_result()),
             "tools/call" => budget.begin_call().and_then(|()| {
-                let value = tokio_runtime.block_on(backend::memory_generation_mcp::call_tool(
-                    service,
-                    job_id,
-                    ownership_token,
-                    request.get("params").unwrap_or(&serde_json::Value::Null),
-                ))?;
+                let value =
+                    tokio_runtime.block_on(crate::adapters::mcp::memory_generation::call_tool(
+                        service,
+                        job_id,
+                        ownership_token,
+                        request.get("params").unwrap_or(&serde_json::Value::Null),
+                    ))?;
                 budget.record_response(&value)?;
                 Ok(value)
             }),
@@ -970,7 +1006,7 @@ async fn memory_recall_mcp_call(
         )
         .map_err(|error| error.to_string())?,
         "memory_recall_block" => {
-            let record_kind: backend::models::MemoryRecordKind =
+            let record_kind: backend::domain::MemoryRecordKind =
                 serde_json::from_value(serde_json::json!(
                     string("record_kind").ok_or_else(|| "missing record_kind".to_string())?
                 ))
@@ -978,7 +1014,7 @@ async fn memory_recall_mcp_call(
             let question_id =
                 string("question_id").ok_or_else(|| "missing question_id".to_string())?;
             let block_id = string("block_id").ok_or_else(|| "missing block_id".to_string())?;
-            let reference = backend::models::MemoryRecallContentReference {
+            let reference = backend::domain::MemoryRecallContentReference {
                 record_kind,
                 session_id: string("session_id").unwrap_or_default(),
                 question_id,
@@ -1000,7 +1036,7 @@ async fn memory_recall_mcp_call(
 }
 
 fn install_engine_termination_handlers(
-    runtime: Arc<dyn backend::ai_execution::AgentExecutionRuntime>,
+    runtime: Arc<dyn backend::infrastructure::agent_execution::AgentExecutionRuntime>,
 ) -> Result<(), String> {
     #[cfg(unix)]
     {

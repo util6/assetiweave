@@ -1,18 +1,28 @@
-pub(super) use super::params::*;
-pub(super) use super::recent::*;
-pub(super) use super::service::AppService;
-pub(super) use super::utils::slug_path_segment;
-pub(super) use crate::backend::capabilities;
-pub(super) use crate::backend::runtime::{AppError, AppResult};
-pub(super) use crate::backend::{
-    dto::{
-        AppOverview, AppShortcut, ApplyAssetGroupMountResult, ApplySkillGroupExclusiveMountResult,
-        AssetGroupInput, AssetMountStatus, AssetMountUpdateResult, CatalogAsset,
-        ConversationExportFormat, ExecutionResult, MemoryContextReference, MemoryContextResult,
-        NavigationModel, SkillBackupSettings, SkillGroupExclusiveMountInput,
-        SkillGroupExclusiveMountPreview, SkillRemoteSource, SourceInput, TargetProfileInput,
+pub(crate) use super::memory::recent::recent::{
+    RecentConversationSession, RecentConversationSessionListParams, RecentConversationView,
+};
+pub(crate) use super::service::AppService;
+pub(crate) use super::system::utils::slug_path_segment;
+pub(crate) use super::{
+    catalog::params::*, conversations::params::*, memory::params::*, mounting::params::*,
+    system::params::*,
+};
+pub(crate) use crate::backend::application::{AppError, AppResult};
+pub(crate) use crate::backend::{
+    application::{
+        memory::{MemoryContextReference, MemoryContextResult},
+        mounting::{
+            AssetGroupInput, ExecutionResult, SkillGroupExclusiveMountInput, SourceInput,
+            TargetProfileInput,
+        },
+        system::NavigationModel,
     },
-    models::{
+    domain::{
+        AppOverview, AppShortcut, ApplyAssetGroupMountResult, ApplySkillGroupExclusiveMountResult,
+        AssetMountStatus, AssetMountUpdateResult, CatalogAsset, SkillBackupSettings,
+        SkillGroupExclusiveMountPreview, SkillRemoteSource,
+    },
+    domain::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
         ConversationAdapterPackage, ConversationSource, DeploymentPlan, DeploymentStrategy,
         MemoryRecallContentReference, MemoryRecallQuestionRef, MemoryRecallSearchHit,
@@ -22,22 +32,22 @@ pub(super) use crate::backend::{
         SourceOrigin, SourceScannerKind, TargetProfile, Tenant,
     },
 };
-pub(super) use chrono::Utc;
-pub(super) use schemars::JsonSchema;
-pub(super) use serde::{Deserialize, Serialize};
-pub(super) use serde_json::{json, Value};
-pub(super) use std::{
+pub(crate) use chrono::Utc;
+pub(crate) use schemars::JsonSchema;
+pub(crate) use serde::{Deserialize, Serialize};
+pub(crate) use serde_json::{json, Value};
+pub(crate) use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
 };
-pub(super) use uuid::Uuid;
+pub(crate) use uuid::Uuid;
 
 #[cfg(test)]
-pub(super) use crate::backend::dto::PhysicalMountStateDto;
+pub(crate) use crate::backend::domain::mounting::PhysicalMountStateDto;
 
 #[cfg(test)]
-pub(super) use super::skill_remote::{
+pub(crate) use super::catalog::skill_remote::{
     github_code_search_url, github_skill_paths_from_tree_value, github_tree_sha_for_skill_path,
     normalize_skill_search_provider, search_query_terms, skill_candidate_score,
     skill_search_candidate_from_github, skill_search_candidate_from_github_code,
