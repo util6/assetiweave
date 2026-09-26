@@ -559,22 +559,22 @@ async fn initialized_database_seeds_defaults_without_reseeding() {
     let source_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sources")
         .fetch_one(database.pool())
         .await
-        .map_err(AppError::external)
+        .map_err(StoreError::external)
         .expect("query sources");
     let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
         .fetch_one(database.pool())
         .await
-        .map_err(AppError::external)
+        .map_err(StoreError::external)
         .expect("query profiles");
     let navigation_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM navigation_state")
         .fetch_one(database.pool())
         .await
-        .map_err(AppError::external)
+        .map_err(StoreError::external)
         .expect("query navigation_state");
     let shortcut_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_shortcut_items")
         .fetch_one(database.pool())
         .await
-        .map_err(AppError::external)
+        .map_err(StoreError::external)
         .expect("query app_shortcut_items");
 
     assert!(source_count > 0);
@@ -599,7 +599,7 @@ async fn initialized_database_seeds_defaults_without_reseeding() {
     )
     .fetch_one(reopened.pool())
     .await
-    .map_err(AppError::external)
+    .map_err(StoreError::external)
     .expect("query preserved adapter");
 
     assert_eq!(codex_name, "preserved");
@@ -627,43 +627,47 @@ async fn initialized_database_restores_missing_builtin_app_icon_rows() {
     let reopened = Database::open_async(&db_path)
         .await
         .expect("reopen initialized database");
-    seed_tenant_defaults_sqlx(reopened.pool(), "default")
-        .await
-        .expect("seed tenant defaults");
+    crate::backend::application::system::test_support::seed_tenant_defaults_sqlx(
+        reopened.pool(),
+        "default",
+    )
+    .await
+    .expect("seed tenant defaults");
     let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
         .fetch_one(reopened.pool())
         .await
-        .map_err(AppError::external)
+        .map_err(StoreError::external)
         .expect("query profiles");
     let shortcut_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_shortcut_items")
         .fetch_one(reopened.pool())
         .await
-        .map_err(AppError::external)
+        .map_err(StoreError::external)
         .expect("query shortcuts");
     let codex_accent = sqlx::query_scalar::<_, String>(
         "SELECT accent_color FROM app_shortcut_items WHERE profile_id = 'codex'",
     )
     .fetch_one(reopened.pool())
     .await
-    .map_err(AppError::external)
+    .map_err(StoreError::external)
     .expect("query codex accent");
     let hermes_accent = sqlx::query_scalar::<_, String>(
         "SELECT accent_color FROM app_shortcut_items WHERE profile_id = 'hermes'",
     )
     .fetch_one(reopened.pool())
     .await
-    .map_err(AppError::external)
+    .map_err(StoreError::external)
     .expect("query hermes accent");
 
-    let expected_profile_count = crate::backend::defaults::default_profiles_from_catalog(
-        &crate::backend::target_catalog::TargetCatalog::builtin_for_tests()
-            .expect("builtin target descriptors"),
-    )
-    .len() as i64;
+    let expected_profile_count =
+        crate::backend::application::system::default_data::default_profiles_from_catalog(
+            &crate::backend::infrastructure::target_catalog::TargetCatalog::builtin_for_tests()
+                .expect("builtin target descriptors"),
+        )
+        .len() as i64;
     assert_eq!(profile_count, expected_profile_count);
     assert_eq!(
         shortcut_count,
-        crate::backend::defaults::default_app_shortcuts().len() as i64
+        crate::backend::application::system::default_data::default_app_shortcuts().len() as i64
     );
     assert_eq!(codex_accent, "#123456");
     assert_eq!(hermes_accent, "#f97316");
@@ -682,27 +686,27 @@ async fn initialized_database_seeds_local_principal_and_default_tenant() {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM principals WHERE id = 'local'")
             .fetch_one(database.pool())
             .await
-            .map_err(AppError::external)
+            .map_err(StoreError::external)
             .expect("query principal count");
     let tenant_count =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tenants WHERE id = 'default'")
             .fetch_one(database.pool())
             .await
-            .map_err(AppError::external)
+            .map_err(StoreError::external)
             .expect("query tenant count");
     let membership_count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tenant_memberships WHERE principal_id = 'local' AND tenant_id = 'default' AND role = 'owner'",
         )
         .fetch_one(database.pool())
         .await
-        .map_err(AppError::external)
+        .map_err(StoreError::external)
         .expect("query membership count");
     let active_tenant_id = sqlx::query_scalar::<_, String>(
         "SELECT active_tenant_id FROM tenant_state WHERE principal_id = 'local'",
     )
     .fetch_one(database.pool())
     .await
-    .map_err(AppError::external)
+    .map_err(StoreError::external)
     .expect("query active tenant");
 
     assert_eq!(principal_count, 1);

@@ -3,18 +3,21 @@ fn stable_sqlx_repositories_have_zero_positional_try_get() {
     let files = [
         (
             "global_memory_repo.rs",
-            include_str!("global_memory_repo.rs"),
+            include_str!("memory/global_memory_repo.rs"),
         ),
         (
             "project_memory_repo.rs",
-            include_str!("project_memory_repo.rs"),
+            include_str!("memory/project_memory_repo.rs"),
         ),
-        ("search_index_repo.rs", include_str!("search_index_repo.rs")),
+        (
+            "search_index_repo.rs",
+            include_str!("conversations/search_index_repo.rs"),
+        ),
         (
             "memory_recall_repo.rs",
-            include_str!("memory_recall_repo.rs"),
+            include_str!("memory/memory_recall_repo/mod.rs"),
         ),
-        ("menu_repo.rs", include_str!("menu_repo.rs")),
+        ("menu_repo.rs", include_str!("system/menu_repo.rs")),
     ];
     let re = regex::Regex::new(r#"\.try_get(?:::<[^>]+>)?\s*\("#).unwrap();
     let mut violations = Vec::new();

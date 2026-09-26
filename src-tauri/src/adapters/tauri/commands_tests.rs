@@ -1,12 +1,14 @@
 use super::*;
-use crate::backend::ai_execution::{executor::BackendFuture, AiExecutionResult};
-use crate::backend::card_translation::{
+use crate::backend::application::conversations::card_translation::{
     ConversationTranslationCli, ConversationTranslationProvider,
 };
-use crate::backend::dto::{PhysicalMountStateDto, SkillBackupState};
-use crate::backend::models::{
+use crate::backend::domain::{
     AppKind, AssetFormat, AssetGroup, AssetGroupRules, AssetKind, DeploymentStrategy,
     ProfileSafety, RuleSet, SourceKind, SourceOrigin, SourceScannerKind,
+};
+use crate::backend::domain::{PhysicalMountStateDto, SkillBackupState};
+use crate::backend::infrastructure::agent_execution::{
+    executor::BackendFuture, AgentExecutionRuntime, AiExecutionRequest, AiExecutionResult,
 };
 use std::{
     path::{Path, PathBuf},
@@ -44,12 +46,13 @@ impl AgentExecutionRuntime for AdapterFakeRuntime {
             Ok(AiExecutionResult {
                 text: "adapter result".to_string(),
                 agent_id: request.agent_id,
-                protocol: crate::backend::agents::types::AgentProtocol::Acp,
+                protocol: crate::backend::domain::agents::AgentProtocol::Acp,
                 requested_model: request.model,
                 elapsed_ms: 1,
                 persistent_binding: None,
                 replay_text: None,
-                session_cleanup: crate::backend::ai_execution::SessionCleanupStatus::Deleted,
+                session_cleanup:
+                    crate::backend::infrastructure::agent_execution::SessionCleanupStatus::Deleted,
             })
         })
     }
@@ -84,7 +87,7 @@ async fn tauri_01_02_start_preparation_is_fast_and_has_no_global_lock_dependency
     let emitter = Arc::new(RecordingAiTaskEmitter::default());
     let started = Instant::now();
 
-    let (snapshot, request) = prepare_ai_execution_task(
+    let (snapshot, prepared, cancellation, progress) = prepare_ai_execution_task(
         tasks.clone(),
         opencode_translation_request(),
         emitter.clone(),
@@ -96,7 +99,9 @@ async fn tauri_01_02_start_preparation_is_fast_and_has_no_global_lock_dependency
         snapshot.state,
         crate::adapters::tauri::background_tasks::AiExecutionTaskState::Queued
     );
-    assert_eq!(request.prompt, "translate this");
+    assert_eq!(prepared.0.as_str(), "opencode");
+    assert!(!cancellation.is_cancelled());
+    assert!(progress.failure_phase().is_none());
     assert_eq!(emitter.snapshots.lock().unwrap().as_slice(), [snapshot]);
 }
 
@@ -108,18 +113,21 @@ async fn tauri_03_04_phase_and_terminal_events_are_full_snapshots_after_runtime_
     let runtime: Arc<dyn AgentExecutionRuntime> = Arc::new(AdapterFakeRuntime {
         cleaned: cleaned.clone(),
     });
-    let (queued, request) = prepare_ai_execution_task(
+    let (queued, prepared, cancellation, progress) = prepare_ai_execution_task(
         tasks.clone(),
         opencode_translation_request(),
         emitter.clone(),
     )
     .unwrap();
+    let (service, root) = open_test_app_service(runtime).await;
 
     run_ai_execution_task(
         tasks.clone(),
-        runtime,
+        service,
         queued.id.clone(),
-        request,
+        prepared,
+        cancellation,
+        progress,
         emitter.clone(),
     )
     .await;
@@ -154,6 +162,7 @@ async fn tauri_03_04_phase_and_terminal_events_are_full_snapshots_after_runtime_
     ] {
         assert!(serialized.get(field).is_some(), "missing field {field}");
     }
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -161,14 +170,24 @@ async fn tauri_03_04_failure_keeps_execution_phase_separate_from_cleanup_phase()
     let tasks = Arc::new(BackgroundTaskRegistry::default());
     let emitter = Arc::new(RecordingAiTaskEmitter::default());
     let runtime: Arc<dyn AgentExecutionRuntime> = Arc::new(FailingAdapterRuntime);
-    let (queued, request) = prepare_ai_execution_task(
+    let (queued, prepared, cancellation, progress) = prepare_ai_execution_task(
         tasks.clone(),
         opencode_translation_request(),
         emitter.clone(),
     )
     .unwrap();
+    let (service, root) = open_test_app_service(runtime).await;
 
-    run_ai_execution_task(tasks.clone(), runtime, queued.id.clone(), request, emitter).await;
+    run_ai_execution_task(
+        tasks.clone(),
+        service,
+        queued.id.clone(),
+        prepared,
+        cancellation,
+        progress,
+        emitter,
+    )
+    .await;
 
     let failed = tasks.ai_execution_snapshot(&queued.id).unwrap().unwrap();
     assert_eq!(failed.phase, AiExecutionPhase::CleaningUp);
@@ -187,15 +206,15 @@ async fn tauri_03_04_failure_keeps_execution_phase_separate_from_cleanup_phase()
             session_delete_method: None,
         })
     );
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
 fn tauri_05_06_get_list_and_cancel_use_the_central_registry_token() {
     let tasks = Arc::new(BackgroundTaskRegistry::default());
     let emitter = Arc::new(RecordingAiTaskEmitter::default());
-    let (queued, request) =
+    let (queued, _prepared, cancellation, _progress) =
         prepare_ai_execution_task(tasks.clone(), opencode_translation_request(), emitter).unwrap();
-    let cancellation = request.cancellation.clone();
 
     let cancelling = tasks.cancel_ai_execution(&queued.id).unwrap();
 
@@ -323,7 +342,7 @@ async fn replace_test_group_members_async(
 
 async fn load_test_mount_observations_async(
     db: &crate::backend::store::Database,
-) -> Vec<crate::backend::dto::AssetMountObservation> {
+) -> Vec<crate::backend::domain::AssetMountObservation> {
     crate::backend::store::load_asset_mount_observations_sqlx(db.pool(), "default")
         .await
         .expect("load observations")
@@ -375,7 +394,7 @@ async fn source_scan_prunes_missing_sources_without_error_row() {
         database.pool(),
         "default",
         vec![source.clone()],
-        crate::backend::capabilities::scan_source,
+        crate::backend::application::catalog::source_scanner::scan_source,
     )
     .await
     .expect("scan selected sources");
@@ -1641,6 +1660,22 @@ fn prepare_ai_execution_task(
     tasks: Arc<BackgroundTaskRegistry>,
     params: ConversationTranslationRequest,
     emitter: Arc<dyn AiExecutionTaskEmitter>,
-) -> RuntimeAppResult<(AiExecutionTaskSnapshot, AiExecutionRequest)> {
-    prepare_ai_execution_task_for_tenant("default", tasks, params, emitter)
+) -> RuntimeAppResult<(
+    AiExecutionTaskSnapshot,
+    PreparedConversationCardTranslation,
+    AiExecutionCancellation,
+    Arc<dyn AiExecutionProgressSink>,
+)> {
+    let prepared = AppService::prepare_conversation_card_translation(params)?;
+    prepare_ai_execution_task_for_tenant("default", tasks, prepared, emitter)
+}
+
+async fn open_test_app_service(runtime: Arc<dyn AgentExecutionRuntime>) -> (AppService, PathBuf) {
+    let root =
+        std::env::temp_dir().join(format!("assetiweave-tauri-ai-execution-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let service = AppService::open_with_db_path_and_runtime(root.join("app.db"), runtime)
+        .await
+        .unwrap();
+    (service, root)
 }

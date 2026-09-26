@@ -3,30 +3,28 @@
 //! 支持会话同步、扫描索引、备份导入导出以及脚本安装卸载在内的异步后台任务注册、取消控制、状态快照与事件广播。
 
 use crate::backend::{
-    agent_market::types::{
-        AgentLifecycleTaskSnapshot, AgentMarketError, LifecycleTaskPhase, LifecycleTaskState,
-        ProgressSnapshot,
-    },
-    agents::types::AgentId,
-    ai_execution::{
-        AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionError, AiExecutionErrorView,
-        AiExecutionPhase, AiExecutionPurpose, AiExecutionResult,
-    },
     application::{
-        AgentMarketRefreshResult, ConversationAdapterPackageInstallParams,
+        AgentMarketRefreshResult, AppResult, ConversationAdapterPackageInstallParams,
         ConversationAdapterPackageUninstallParams, ConversationScriptInstallParams,
         ConversationSyncMode, ConversationSyncParams, SkillAcquireParams,
     },
-    dto::CatalogAsset,
-    extension_kernel::{
+    domain::{AppErrorView, CatalogAsset},
+    infrastructure::agent_execution::{
+        AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionError, AiExecutionErrorView,
+        AiExecutionPhase, AiExecutionPurpose, AiExecutionResult,
+    },
+    infrastructure::agent_market::{
+        AgentLifecycleTaskSnapshot, AgentMarketError, LifecycleTaskPhase, LifecycleTaskState,
+        ProgressSnapshot,
+    },
+    infrastructure::extensions::{
         LifecycleOp, LifecycleRequestKey, LifecycleReservationOutcome, LifecycleTaskCoordinator,
         PackageIdentity, PackageKind, ResourceKey,
     },
-    runtime::tasks::{
+    infrastructure::tasks::{
         ExternalRegistrationOutcome, TaskFn, TaskKind, TaskRuntime, TaskSnapshot, TaskSpec,
         TaskState,
     },
-    runtime::{AppErrorView, AppResult},
 };
 use chrono::Utc;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -238,7 +236,7 @@ pub(crate) struct SourceScanTaskSnapshot {
     pub(crate) id: String,
     pub(crate) status: BackgroundTaskStatus,
     pub(crate) scope: SourceScanScope,
-    pub(crate) kind: Option<crate::backend::models::AssetKind>,
+    pub(crate) kind: Option<crate::backend::domain::AssetKind>,
     pub(crate) progress: SourceScanTaskProgress,
     pub(crate) started_at: String,
     pub(crate) finished_at: Option<String>,
@@ -282,7 +280,7 @@ impl ConversationSyncScope {
         match record_kind {
             "session" | "sessions" | "conversation" | "conversations" => Ok(Self::Session),
             "web" | "web-record" | "web_record" | "web-records" | "web_records" => Ok(Self::Web),
-            _ => Err(crate::backend::runtime::AppError::Validation(format!(
+            _ => Err(crate::backend::application::AppError::Validation(format!(
                 "unsupported conversation record kind: {record_kind}"
             ))),
         }
@@ -455,10 +453,10 @@ impl BackgroundTaskRegistry {
         .with_conflict_keys(conflict_keys);
         spec.detail = detail;
         match self.task_runtime.register_external(spec)? {
-            ExternalRegistrationOutcome::Started(snapshot) => self
+            ExternalRegistrationOutcome::Started(snapshot) => Ok(self
                 .task_runtime
                 .activate_external(task_id, snapshot.detail)
-                .map(ExternalRegistrationOutcome::Started),
+                .map(ExternalRegistrationOutcome::Started)?),
             outcome @ ExternalRegistrationOutcome::Existing(_)
             | outcome @ ExternalRegistrationOutcome::Conflict(_) => Ok(outcome),
         }
@@ -491,16 +489,52 @@ impl BackgroundTaskRegistry {
         conflict_keys: impl IntoIterator<Item = String>,
         projection: &T,
     ) -> AppResult<ExternalRegistrationOutcome> {
-        let detail = serde_json::to_value(projection)
-            .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?;
-        self.register_external_task_for_tenant(
+        self.register_projection_for_tenant_with_meta(
             tenant_id,
             kind,
             task_id,
+            None,
+            None,
             dedup_key,
             conflict_keys,
-            detail,
+            projection,
         )
+    }
+
+    fn register_projection_for_tenant_with_meta<T: Serialize>(
+        &self,
+        tenant_id: Option<&str>,
+        kind: TaskKind,
+        task_id: &str,
+        title: Option<String>,
+        category: Option<String>,
+        dedup_key: Option<String>,
+        conflict_keys: impl IntoIterator<Item = String>,
+        projection: &T,
+    ) -> AppResult<ExternalRegistrationOutcome> {
+        let detail = serde_json::to_value(projection)
+            .map_err(|error| crate::backend::application::AppError::External(error.to_string()))?;
+        let mut spec = match tenant_id {
+            Some(tenant_id) => TaskSpec::new(kind, dedup_key).with_tenant_id(tenant_id),
+            None => TaskSpec::global(kind, dedup_key),
+        }
+        .with_task_id(task_id.to_string())
+        .with_conflict_keys(conflict_keys);
+        if let Some(t) = title {
+            spec = spec.with_title(t);
+        }
+        if let Some(c) = category {
+            spec = spec.with_category(c);
+        }
+        spec.detail = detail;
+        match self.task_runtime.register_external(spec)? {
+            ExternalRegistrationOutcome::Started(snapshot) => Ok(self
+                .task_runtime
+                .activate_external(task_id, snapshot.detail)
+                .map(ExternalRegistrationOutcome::Started)?),
+            outcome @ ExternalRegistrationOutcome::Existing(_)
+            | outcome @ ExternalRegistrationOutcome::Conflict(_) => Ok(outcome),
+        }
     }
 
     fn finish_external_task(
@@ -508,20 +542,22 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         result: AppResult<Value>,
     ) -> AppResult<TaskSnapshot> {
-        self.task_runtime.complete_external(task_id, result)
+        let result = result.map_err(AppErrorView::from);
+        Ok(self.task_runtime.complete_external(task_id, result)?)
     }
 
     fn finish_external_result(
         &self,
         task_id: &str,
-        result: crate::backend::runtime::AppResult<Value>,
+        result: crate::backend::application::AppResult<Value>,
     ) -> AppResult<TaskSnapshot> {
-        self.task_runtime.complete_external(task_id, result)
+        let result = result.map_err(AppErrorView::from);
+        Ok(self.task_runtime.complete_external(task_id, result)?)
     }
 
     fn external_task_snapshot(&self, task_id: &str) -> AppResult<TaskSnapshot> {
         self.task_runtime.get(task_id).ok_or_else(|| {
-            crate::backend::runtime::AppError::NotFound(format!(
+            crate::backend::application::AppError::NotFound(format!(
                 "background task not found: {task_id}"
             ))
         })
@@ -535,7 +571,7 @@ impl BackgroundTaskRegistry {
         self.task_runtime
             .get_for_tenant(tenant_id, task_id)
             .ok_or_else(|| {
-                crate::backend::runtime::AppError::NotFound(format!(
+                crate::backend::application::AppError::NotFound(format!(
                     "background task not found: {task_id}"
                 ))
             })
@@ -543,7 +579,7 @@ impl BackgroundTaskRegistry {
 
     fn decode<T: DeserializeOwned>(&self, runtime: &TaskSnapshot) -> AppResult<T> {
         serde_json::from_value(runtime.detail.clone()).map_err(|error| {
-            crate::backend::runtime::AppError::External(format!(
+            crate::backend::application::AppError::External(format!(
                 "task projection {} could not be decoded: {error}",
                 runtime.task_id
             ))
@@ -573,13 +609,16 @@ impl BackgroundTaskRegistry {
 
     fn write_projection<T: Serialize>(&self, task_id: &str, projection: &T) -> AppResult<()> {
         let detail = serde_json::to_value(projection)
-            .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?;
-        self.task_runtime.update_detail(task_id, detail).map(|_| ())
+            .map_err(|error| crate::backend::application::AppError::External(error.to_string()))?;
+        Ok(self
+            .task_runtime
+            .update_detail(task_id, detail)
+            .map(|_| ())?)
     }
 
     fn list_projections<T: BackgroundTaskProjection>(&self, kind: TaskKind) -> AppResult<Vec<T>> {
         self.task_runtime
-            .list(crate::backend::runtime::tasks::TaskFilter {
+            .list(crate::backend::infrastructure::tasks::TaskFilter {
                 kind: Some(kind),
                 active_only: false,
                 ..Default::default()
@@ -597,7 +636,7 @@ impl BackgroundTaskRegistry {
         self.task_runtime
             .list_for_tenant(
                 tenant_id,
-                crate::backend::runtime::tasks::TaskFilter {
+                crate::backend::infrastructure::tasks::TaskFilter {
                     kind: Some(kind),
                     active_only: false,
                     ..Default::default()
@@ -610,12 +649,12 @@ impl BackgroundTaskRegistry {
 
     fn cancel_external_task(&self, task_id: &str) -> AppResult<TaskSnapshot> {
         match self.task_runtime.cancel(task_id) {
-            crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
-            | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
+            crate::backend::infrastructure::tasks::CancelOutcome::Requested(snapshot)
+            | crate::backend::infrastructure::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
                 Ok(snapshot)
             }
-            crate::backend::runtime::tasks::CancelOutcome::NotFound => {
-                Err(crate::backend::runtime::AppError::NotFound(format!(
+            crate::backend::infrastructure::tasks::CancelOutcome::NotFound => {
+                Err(crate::backend::application::AppError::NotFound(format!(
                     "background task not found: {task_id}"
                 )))
             }
@@ -628,12 +667,12 @@ impl BackgroundTaskRegistry {
         task_id: &str,
     ) -> AppResult<TaskSnapshot> {
         match self.task_runtime.cancel_for_tenant(tenant_id, task_id) {
-            crate::backend::runtime::tasks::CancelOutcome::Requested(snapshot)
-            | crate::backend::runtime::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
+            crate::backend::infrastructure::tasks::CancelOutcome::Requested(snapshot)
+            | crate::backend::infrastructure::tasks::CancelOutcome::AlreadyFinished(snapshot) => {
                 Ok(snapshot)
             }
-            crate::backend::runtime::tasks::CancelOutcome::NotFound => {
-                Err(crate::backend::runtime::AppError::NotFound(format!(
+            crate::backend::infrastructure::tasks::CancelOutcome::NotFound => {
+                Err(crate::backend::application::AppError::NotFound(format!(
                     "background task not found: {task_id}"
                 )))
             }
@@ -644,7 +683,7 @@ impl BackgroundTaskRegistry {
         &self,
         tenant_id: &str,
         scope: SourceScanScope,
-        kind: Option<crate::backend::models::AssetKind>,
+        kind: Option<crate::backend::domain::AssetKind>,
     ) -> AppResult<(SourceScanTaskSnapshot, bool)> {
         let id = Uuid::new_v4().to_string();
         let snapshot = SourceScanTaskSnapshot {
@@ -694,12 +733,13 @@ impl BackgroundTaskRegistry {
     pub(crate) fn finish_source_scan(
         &self,
         task_id: &str,
-        result: AppResult<crate::backend::application::SourceScanResult>,
+        result: AppResult<Vec<CatalogAsset>>,
     ) -> AppResult<SourceScanTaskSnapshot> {
         let runtime_result = match result.as_ref() {
-            Ok(value) => serde_json::to_value(&value.assets)
-                .map_err(crate::backend::runtime::AppError::external),
-            Err(error) => Err(crate::backend::runtime::AppError::from(error.view())),
+            Ok(value) => {
+                serde_json::to_value(value).map_err(crate::backend::application::AppError::external)
+            }
+            Err(error) => Err(crate::backend::application::AppError::from(error.view())),
         };
         let runtime = self.finish_external_result(task_id, runtime_result)?;
         let mut snapshot: SourceScanTaskSnapshot = self.decode(&runtime)?;
@@ -708,7 +748,7 @@ impl BackgroundTaskRegistry {
             .clone()
             .map(serde_json::from_value)
             .transpose()
-            .map_err(crate::backend::runtime::AppError::external)?;
+            .map_err(crate::backend::application::AppError::external)?;
         self.write_projection(task_id, &snapshot)?;
         self.projection_from_runtime(&self.external_task_snapshot(task_id)?)
     }
@@ -886,13 +926,13 @@ impl BackgroundTaskRegistry {
         &self,
         task_id: &str,
         task: TaskFn,
-    ) -> crate::backend::runtime::AppResult<TaskSnapshot> {
+    ) -> crate::backend::application::AppResult<TaskSnapshot> {
         let detail = self
             .task_runtime
             .get(task_id)
             .map(|snapshot| snapshot.detail)
             .unwrap_or(Value::Null);
-        self.lifecycle.spawn(task_id, detail, task)
+        Ok(self.lifecycle.spawn(task_id, detail, task)?)
     }
 
     pub(crate) fn begin_agent_market_refresh(
@@ -932,9 +972,9 @@ impl BackgroundTaskRegistry {
     ) -> AppResult<AgentMarketRefreshTaskSnapshot> {
         let runtime_result = match result.as_ref() {
             Ok(value) => {
-                serde_json::to_value(value).map_err(crate::backend::runtime::AppError::external)
+                serde_json::to_value(value).map_err(crate::backend::application::AppError::external)
             }
-            Err(error) => Err(crate::backend::runtime::AppError::from(error.view())),
+            Err(error) => Err(crate::backend::application::AppError::from(error.view())),
         };
         let runtime = self.finish_external_result(task_id, runtime_result)?;
         let mut snapshot: AgentMarketRefreshTaskSnapshot = self.decode(&runtime)?;
@@ -943,7 +983,7 @@ impl BackgroundTaskRegistry {
             .clone()
             .map(serde_json::from_value)
             .transpose()
-            .map_err(crate::backend::runtime::AppError::external)?;
+            .map_err(crate::backend::application::AppError::external)?;
         snapshot.updated_at = Utc::now().to_rfc3339();
         self.write_projection(task_id, &snapshot)?;
         self.projection(task_id)
@@ -1093,8 +1133,8 @@ impl BackgroundTaskRegistry {
         catalog_version: Option<String>,
         agent_version: Option<String>,
         distribution_id: Option<String>,
-        distribution_type: Option<crate::backend::agent_market::types::DistributionType>,
-        ownership: Option<crate::backend::agent_market::types::Ownership>,
+        distribution_type: Option<crate::backend::domain::agents::DistributionType>,
+        ownership: Option<crate::backend::domain::agents::Ownership>,
     ) -> AppResult<(
         AgentLifecycleTaskSnapshot,
         tokio_util::sync::CancellationToken,
@@ -1183,7 +1223,7 @@ impl BackgroundTaskRegistry {
             Err(error) => {
                 let view = (&error).into();
                 (
-                    Err(crate::backend::runtime::AppError::from(error)),
+                    Err(crate::backend::application::AppError::from(error)),
                     Vec::new(),
                     Some(view),
                 )
@@ -1242,7 +1282,7 @@ impl BackgroundTaskRegistry {
             error: None,
         };
         let detail = serde_json::to_value(&snapshot)
-            .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?;
+            .map_err(|error| crate::backend::application::AppError::External(error.to_string()))?;
         let mut spec = TaskSpec::new(
             TaskKind::SearchIndexRebuild,
             Some(format!("{tenant_id}:conversation-search-index")),
@@ -1321,10 +1361,17 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let registration = self.register_projection_for_tenant(
+        let (title, category) = match scope {
+            ConversationSyncScope::Session => ("会话记录同步", "conversation/session_sync"),
+            ConversationSyncScope::Web => ("网页记录同步", "conversation/web_sync"),
+            ConversationSyncScope::All => ("完整同步", "conversation/sync"),
+        };
+        let registration = self.register_projection_for_tenant_with_meta(
             Some(tenant_id),
             TaskKind::ConversationSync,
             &snapshot.id,
+            Some(title.to_string()),
+            Some(category.to_string()),
             Some(format!("{tenant_id}:{}", scope.dedup_key())),
             scope
                 .conflict_keys()
@@ -1644,7 +1691,7 @@ impl BackgroundTaskRegistry {
     ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         let item_id = params.item_id.trim().to_string();
         if item_id.is_empty() {
-            return Err(crate::backend::runtime::AppError::Validation(
+            return Err(crate::backend::application::AppError::Validation(
                 "conversation script install requires an item id".to_string(),
             ));
         }
@@ -1696,7 +1743,7 @@ impl BackgroundTaskRegistry {
     ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         let package_id = params.package_id.trim().to_string();
         if package_id.is_empty() {
-            return Err(crate::backend::runtime::AppError::Validation(
+            return Err(crate::backend::application::AppError::Validation(
                 "conversation adapter package install requires a package id".to_string(),
             ));
         }
@@ -1732,7 +1779,7 @@ impl BackgroundTaskRegistry {
     ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         let package_id = params.package_id.trim().to_string();
         if package_id.is_empty() {
-            return Err(crate::backend::runtime::AppError::Validation(
+            return Err(crate::backend::application::AppError::Validation(
                 "conversation adapter package uninstall requires a package id".to_string(),
             ));
         }
@@ -1792,7 +1839,7 @@ impl BackgroundTaskRegistry {
     ) -> AppResult<(SkillBackupTaskSnapshot, bool)> {
         let asset_ids = dedupe_non_empty(asset_ids);
         if asset_ids.is_empty() {
-            return Err(crate::backend::runtime::AppError::Validation(
+            return Err(crate::backend::application::AppError::Validation(
                 "skill backup requires at least one asset id".to_string(),
             ));
         }
@@ -1847,17 +1894,17 @@ impl BackgroundTaskRegistry {
     pub(crate) fn finish_skill_backup(
         &self,
         task_id: &str,
-        result: crate::backend::runtime::AppResult<Vec<CatalogAsset>>,
+        result: crate::backend::application::AppResult<Vec<CatalogAsset>>,
     ) -> AppResult<SkillBackupTaskSnapshot> {
         let runtime_result = match &result {
             Ok(assets) => serde_json::to_value(assets)
                 .map(Some)
-                .map_err(crate::backend::runtime::AppError::external),
-            Err(error) => Err(crate::backend::runtime::AppError::from(error.view())),
+                .map_err(crate::backend::application::AppError::external),
+            Err(error) => Err(crate::backend::application::AppError::from(error.view())),
         };
         let runtime_result = runtime_result.and_then(|result| {
             result.ok_or_else(|| {
-                crate::backend::runtime::AppError::External(
+                crate::backend::application::AppError::External(
                     "skill backup result was empty".to_string(),
                 )
             })
@@ -1898,14 +1945,14 @@ impl BackgroundTaskRegistry {
         &self,
         tenant_id: &str,
         purpose: AiExecutionPurpose,
-        agent_id: &AgentId,
+        agent_id: impl std::fmt::Display,
     ) -> AppResult<(AiExecutionTaskSnapshot, AiExecutionCancellation)> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         let snapshot = AiExecutionTaskSnapshot {
             id: id.clone(),
             purpose,
-            agent_id: agent_id.as_str().to_string(),
+            agent_id: agent_id.to_string(),
             state: AiExecutionTaskState::Queued,
             phase: AiExecutionPhase::Queued,
             created_at: now.clone(),
@@ -1921,13 +1968,14 @@ impl BackgroundTaskRegistry {
             &id,
             None,
             Vec::new(),
-            serde_json::to_value(&snapshot)
-                .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?,
+            serde_json::to_value(&snapshot).map_err(|error| {
+                crate::backend::application::AppError::External(error.to_string())
+            })?,
         )? {
             ExternalRegistrationOutcome::Started(runtime) => runtime,
             ExternalRegistrationOutcome::Existing(runtime)
             | ExternalRegistrationOutcome::Conflict(runtime) => {
-                return Err(crate::backend::runtime::AppError::Conflict(format!(
+                return Err(crate::backend::application::AppError::Conflict(format!(
                     "AI execution task id was already registered: {}",
                     runtime.task_id
                 )))
@@ -1996,7 +2044,7 @@ impl BackgroundTaskRegistry {
             .map(|value| serde_json::json!({"text": value.text}))
             .map_err(|error| {
                 let view = error.to_view();
-                crate::backend::runtime::AppError::Domain {
+                crate::backend::application::AppError::Domain {
                     code: view.code,
                     message: view.message,
                     retryable: view.retryable,
@@ -2091,7 +2139,7 @@ impl BackgroundTaskRegistry {
     pub(crate) fn cancel_all_ai_executions(&self) -> AppResult<Vec<AiExecutionTaskSnapshot>> {
         let task_ids = self
             .task_runtime
-            .list(crate::backend::runtime::tasks::TaskFilter {
+            .list(crate::backend::infrastructure::tasks::TaskFilter {
                 kind: Some(TaskKind::AiExecution),
                 active_only: true,
                 ..Default::default()
@@ -2142,7 +2190,7 @@ impl BackgroundTaskRegistry {
     fn active_ai_execution_count(&self) -> AppResult<usize> {
         Ok(self
             .task_runtime
-            .list(crate::backend::runtime::tasks::TaskFilter {
+            .list(crate::backend::infrastructure::tasks::TaskFilter {
                 kind: Some(TaskKind::AiExecution),
                 active_only: true,
                 ..Default::default()
@@ -2156,7 +2204,7 @@ impl BackgroundTaskRegistry {
 
     pub(crate) fn active_conversation_usage_scan_id(&self, tenant_id: &str) -> Option<String> {
         self.task_runtime
-            .list(crate::backend::runtime::tasks::TaskFilter {
+            .list(crate::backend::infrastructure::tasks::TaskFilter {
                 kind: Some(TaskKind::ConversationUsageScan),
                 active_only: true,
                 ..Default::default()
@@ -2461,7 +2509,7 @@ fn extension_lifecycle_key(
 ) -> AppResult<LifecycleRequestKey> {
     let version = version.unwrap_or("0.0.0");
     let version = semver::Version::parse(version)
-        .map_err(|error| crate::backend::runtime::AppError::Validation(error.to_string()))?;
+        .map_err(|error| crate::backend::application::AppError::Validation(error.to_string()))?;
     Ok(LifecycleRequestKey {
         resource: ResourceKey::new(PackageIdentity {
             kind,
@@ -2477,7 +2525,7 @@ fn extension_lifecycle_key(
             "disable" => LifecycleOp::Disable,
             "probe" => LifecycleOp::Probe,
             _ => {
-                return Err(crate::backend::runtime::AppError::Validation(format!(
+                return Err(crate::backend::application::AppError::Validation(format!(
                     "unsupported lifecycle action: {action}"
                 )))
             }

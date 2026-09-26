@@ -1,5 +1,5 @@
 use super::prelude::*;
-use crate::backend::models::{
+use crate::backend::domain::{
     AssetFormat, AssetGroupRules, ConversationAdapterKind, ConversationAdapterTrustState,
     ConversationGroupingOrigin, ConversationPartKind, ConversationPartRole, ConversationSource,
     ConversationSourceKind, DeploymentState, NormalizedConversationPart,
@@ -7,6 +7,30 @@ use crate::backend::models::{
 };
 use sqlx::AssertSqlSafe;
 use std::fs;
+
+#[test]
+fn application_uses_only_canonical_context_directories() {
+    let root = include_str!("mod.rs");
+    assert!(root.contains("mod agents;"));
+    assert!(!root.contains("mod agent_market;"));
+    assert!(!root.contains("mod recent;"));
+    assert!(!root.contains("mod skills;"));
+
+    for context in [
+        include_str!("catalog/mod.rs"),
+        include_str!("conversations/mod.rs"),
+        include_str!("memory/mod.rs"),
+        include_str!("mounting/mod.rs"),
+        include_str!("agents/mod.rs"),
+        include_str!("system/mod.rs"),
+        include_str!("memory/recent/mod.rs"),
+    ] {
+        assert!(
+            !context.contains("::*;"),
+            "Application context modules must expose named interfaces"
+        );
+    }
+}
 
 async fn execute_test_sql(service: &AppService, sql: &str) -> AppResult<()> {
     let pool = service.db.pool();
@@ -74,10 +98,10 @@ async fn command_projection_falls_back_to_core_projector_for_legacy_adapter() {
 
     let projections = service
         .project_conversation_command_parts(
-            crate::backend::conversations::ConversationCommandProjectionParams {
+            crate::backend::infrastructure::conversations::ConversationCommandProjectionParams {
                 adapter_id: "legacy-command-adapter".to_string(),
                 parts: vec![
-                    crate::backend::conversations::ConversationCommandProjectionPart {
+                    crate::backend::infrastructure::conversations::ConversationCommandProjectionPart {
                         part_id: "legacy-command-part".to_string(),
                         command: "printf '%s\\n' '--- tests ---' && pnpm test".to_string(),
                         command_label: None,
@@ -151,10 +175,10 @@ async fn command_projection_falls_back_when_adapter_projector_is_unavailable() {
 
     let projections = service
         .project_conversation_command_parts(
-            crate::backend::conversations::ConversationCommandProjectionParams {
+            crate::backend::infrastructure::conversations::ConversationCommandProjectionParams {
                 adapter_id: "unavailable-command-adapter".to_string(),
                 parts: vec![
-                    crate::backend::conversations::ConversationCommandProjectionPart {
+                    crate::backend::infrastructure::conversations::ConversationCommandProjectionPart {
                         part_id: "unavailable-command-part".to_string(),
                         command: "printf '%s\\n' '--- tests ---' && pnpm test".to_string(),
                         command_label: None,
@@ -1091,7 +1115,8 @@ async fn creating_tenant_seeds_isolated_skill_backup_library_root() {
         .await
         .expect("list tenant sources")
         .iter()
-        .any(|source| source.id == capabilities::SKILL_BACKUP_SOURCE_ID
+        .any(|source| source.id
+            == crate::backend::application::catalog::catalog_ops::SKILL_BACKUP_SOURCE_ID
             && source.root_path == settings.root_path));
     assert!(!tenant_service
         .list_profiles()
@@ -1249,8 +1274,8 @@ async fn system_skill_source_cannot_be_edited_or_removed() {
     let service = AppService::open_with_db_path(root.join("app.db"))
         .await
         .expect("open application service");
-    let mut source =
-        crate::backend::builtin_skills::system_skill_source().expect("build system Skill source");
+    let mut source = crate::backend::application::catalog::builtin_skills::system_skill_source()
+        .expect("build system Skill source");
     source.name = "Changed name".to_string();
 
     let update_error = service
@@ -1258,7 +1283,10 @@ async fn system_skill_source_cannot_be_edited_or_removed() {
         .await
         .expect_err("system source update should fail");
     let remove_error = service
-        .delete_source(crate::backend::builtin_skills::SYSTEM_SKILL_SOURCE_ID.to_string())
+        .delete_source(
+            crate::backend::application::catalog::builtin_skills::SYSTEM_SKILL_SOURCE_ID
+                .to_string(),
+        )
         .await
         .expect_err("system source removal should fail");
 
@@ -1279,8 +1307,8 @@ async fn system_skill_cannot_be_copied_into_the_user_backup_library() {
     let service = AppService::open_with_db_path(root.join("app.db"))
         .await
         .expect("open application service");
-    let source =
-        crate::backend::builtin_skills::system_skill_source().expect("build system Skill source");
+    let source = crate::backend::application::catalog::builtin_skills::system_skill_source()
+        .expect("build system Skill source");
     let now = Utc::now().to_rfc3339();
     let asset = Asset {
         id: "system-skill-a".to_string(),
@@ -1398,7 +1426,7 @@ async fn runtime_status_includes_harvester_runtime_requirements() {
     let python_requirement = statuses
         .iter()
         .find(|status| {
-            status.kind == crate::backend::conversations::ConversationAdapterRuntimeKind::Python
+            status.kind == crate::backend::infrastructure::conversations::ConversationAdapterRuntimeKind::Python
         })
         .and_then(|status| status.required_version.as_deref());
 
@@ -1656,7 +1684,7 @@ async fn conversation_blocks_list_locators_and_get_selected_content_for_each_rec
                 source_id: None,
                 project_path: None,
                 query: session_id,
-                content_types: vec![crate::backend::dto::ConversationSearchCardType::question()],
+                content_types: vec![crate::backend::domain::ConversationSearchCardType::question()],
                 card_kinds: Vec::new(),
                 semantic_roles: Vec::new(),
                 include_questions: Some(true),
@@ -1751,8 +1779,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             session_id,
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Rendered,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Rendered,
             dry_run: false,
         })
         .await
@@ -1888,16 +1916,20 @@ esac
     .unwrap();
 
     let task_runtime = service.runtime.task_runtime();
-    let spec = crate::backend::runtime::tasks::TaskSpec::new(
-        crate::backend::runtime::tasks::TaskKind::ConversationSync,
+    let spec = crate::backend::infrastructure::tasks::TaskSpec::new(
+        crate::backend::infrastructure::tasks::TaskKind::ConversationSync,
         None,
     )
     .with_tenant_id(service.tenant_id());
     let outcome = task_runtime.register_external(spec).unwrap();
     let task_id = match outcome {
-        crate::backend::runtime::tasks::ExternalRegistrationOutcome::Started(s) => s.task_id,
-        crate::backend::runtime::tasks::ExternalRegistrationOutcome::Existing(s) => s.task_id,
-        crate::backend::runtime::tasks::ExternalRegistrationOutcome::Conflict(s) => s.task_id,
+        crate::backend::infrastructure::tasks::ExternalRegistrationOutcome::Started(s) => s.task_id,
+        crate::backend::infrastructure::tasks::ExternalRegistrationOutcome::Existing(s) => {
+            s.task_id
+        }
+        crate::backend::infrastructure::tasks::ExternalRegistrationOutcome::Conflict(s) => {
+            s.task_id
+        }
     };
     let cancellation = task_runtime.cancellation_token(&task_id).unwrap();
 
@@ -1921,16 +1953,17 @@ esac
     assert_eq!(result["results"].as_array().unwrap().len(), 1);
 
     let snapshot = task_runtime.get(&task_id).unwrap();
-    assert_eq!(snapshot.stages.len(), 1);
-    let stage = &snapshot.stages[0];
-    assert!(stage.id.starts_with("adapter:"));
-    assert_eq!(
-        stage.status,
-        crate::backend::runtime::tasks::StageStatus::Succeeded
-    );
+    assert_eq!(snapshot.stages.len(), 3);
+    for stage in &snapshot.stages {
+        assert!(stage.id.starts_with("adapter:"));
+        assert_eq!(
+            stage.status,
+            crate::backend::infrastructure::tasks::StageStatus::Succeeded
+        );
+    }
     assert_eq!(
         snapshot.outcome,
-        Some(crate::backend::runtime::tasks::TaskOutcome::Success)
+        Some(crate::backend::infrastructure::tasks::TaskOutcome::Success)
     );
 
     drop(service);
@@ -2206,8 +2239,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             session_id,
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Rendered,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .await
@@ -2258,8 +2291,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             session_id,
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Rendered,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Rendered,
             dry_run: false,
         })
         .await
@@ -2300,8 +2333,8 @@ async fn conversation_session_export_falls_back_to_core_without_adapter_markdown
             session_id,
             output_root: root.join("exports").to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Rendered,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .await
@@ -2337,8 +2370,8 @@ async fn conversation_raw_export_preserves_source_facts_and_excludes_question_sn
             session_id,
             output_root: root.join("session-export").to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Raw,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Raw,
             dry_run: false,
         })
         .await
@@ -2370,8 +2403,8 @@ async fn conversation_raw_export_preserves_source_facts_and_excludes_question_sn
             session_id: web_session_id,
             output_root: root.join("web-export").to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Raw,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Raw,
             dry_run: true,
         })
         .await
@@ -2464,8 +2497,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             session_id,
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Rendered,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Rendered,
             dry_run: false,
         })
         .await
@@ -2549,8 +2582,8 @@ async fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
             session_id: session_id.clone(),
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Rendered,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .await
@@ -2563,8 +2596,8 @@ async fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
             session_id,
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Rendered,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Rendered,
             dry_run: false,
         })
         .await
@@ -2610,8 +2643,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             session_id,
             output_root: root.join("exports").to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Rendered,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .await
@@ -2674,8 +2707,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             session_id,
             output_root: root.join("exports").to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Rendered,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .await
@@ -2729,8 +2762,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             session_id,
             output_root: root.join("exports").to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Rendered,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .await
@@ -2771,8 +2804,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
     .await;
     let adapter = load_export_fixture_adapter(&service, &session_id).await;
     let manifest_path = adapter.manifest_path.clone().expect("manifest path");
-    let validation = crate::backend::conversations::validate_external_adapter(
-        crate::backend::conversations::ExternalAdapterValidateParams {
+    let validation = crate::backend::infrastructure::conversations::validate_external_adapter(
+        crate::backend::infrastructure::conversations::ExternalAdapterValidateParams {
             manifest_path: manifest_path.clone(),
         },
     )
@@ -2810,8 +2843,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             session_id,
             output_root: root.join("exports").to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Rendered,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Rendered,
             dry_run: true,
         })
         .await
@@ -2855,8 +2888,8 @@ printf '%s\n' '{"type":"complete","item":{}}'
         .to_string(),
     )
     .expect("write adapter manifest");
-    let validation = crate::backend::conversations::validate_external_adapter(
-        crate::backend::conversations::ExternalAdapterValidateParams {
+    let validation = crate::backend::infrastructure::conversations::validate_external_adapter(
+        crate::backend::infrastructure::conversations::ExternalAdapterValidateParams {
             manifest_path: manifest_path.to_string_lossy().to_string(),
         },
     )
@@ -2959,8 +2992,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             session_id,
             output_root: output_root.to_string_lossy().to_string(),
             question_ids: Vec::new(),
-            content_filter: crate::backend::dto::ConversationExportContentFilter::default(),
-            format: crate::backend::dto::ConversationExportFormat::Rendered,
+            content_filter: crate::backend::domain::ConversationExportContentFilter::default(),
+            format: crate::backend::domain::ConversationExportFormat::Rendered,
             dry_run: false,
         })
         .await
@@ -3333,9 +3366,12 @@ async fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {
     .await
     .expect("seed orphan records");
 
-    capabilities::cleanup_orphan_asset_records(service.db.pool(), service.tenant_id())
-        .await
-        .expect("cleanup orphan records");
+    crate::backend::application::catalog::source_scanner::cleanup_orphan_asset_records(
+        service.db.pool(),
+        service.tenant_id(),
+    )
+    .await
+    .expect("cleanup orphan records");
 
     for table in [
         "asset_mounts",
@@ -3461,7 +3497,7 @@ async fn disabled_mount_preference_persists_through_sqlx_path() {
         .create_profile(TargetProfileInput {
             id: Some("target-a".to_string()),
             name: "Target A".to_string(),
-            app_kind: Some(crate::backend::models::AppKind::Custom),
+            app_kind: Some(crate::backend::domain::AppKind::Custom),
             target_provider_id: None,
             target_paths: Some(vec![target_root.to_string_lossy().to_string()]),
             supported_kinds: None,
@@ -3563,7 +3599,7 @@ async fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
         .create_profile(TargetProfileInput {
             id: Some("target-a".to_string()),
             name: "Target A".to_string(),
-            app_kind: Some(crate::backend::models::AppKind::Custom),
+            app_kind: Some(crate::backend::domain::AppKind::Custom),
             target_provider_id: None,
             target_paths: Some(vec![target_root.to_string_lossy().to_string()]),
             supported_kinds: None,
@@ -3741,7 +3777,7 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
         .create_profile(TargetProfileInput {
             id: Some("test-target".to_string()),
             name: "Test Target".to_string(),
-            app_kind: Some(crate::backend::models::AppKind::Custom),
+            app_kind: Some(crate::backend::domain::AppKind::Custom),
             target_provider_id: None,
             target_paths: Some(vec![target_root.to_string_lossy().to_string()]),
             supported_kinds: None,
@@ -3951,9 +3987,10 @@ async fn stale_backup_record_outside_current_root_does_not_mark_git_skill_backed
         last_scanned_at: None,
         last_scan_status: None,
     };
-    let backup_source = capabilities::assetiweave_library_source_with_root(
-        current_backup_root.to_string_lossy().to_string(),
-    );
+    let backup_source =
+        crate::backend::application::catalog::catalog_ops::assetiweave_library_source_with_root(
+            current_backup_root.to_string_lossy().to_string(),
+        );
     upsert_test_source(&service, &source).await;
     upsert_test_source(&service, &backup_source).await;
 
@@ -4035,7 +4072,7 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
         source_origin: SourceOrigin::AppTarget,
         repo_root: None,
         scan_root: String::new(),
-        origin_app_kind: Some(crate::backend::models::AppKind::Codex),
+        origin_app_kind: Some(crate::backend::domain::AppKind::Codex),
         origin_provider_id: None,
         include_globs: vec!["**/SKILL.md".to_string()],
         exclude_globs: Vec::new(),
@@ -4050,7 +4087,7 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
         .create_profile(TargetProfileInput {
             id: Some("codex-test".to_string()),
             name: "Codex Test".to_string(),
-            app_kind: Some(crate::backend::models::AppKind::Codex),
+            app_kind: Some(crate::backend::domain::AppKind::Codex),
             target_provider_id: None,
             target_paths: Some(vec![app_target_root.to_string_lossy().to_string()]),
             supported_kinds: None,
@@ -4084,7 +4121,7 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
     assert_eq!(catalog.len(), 1);
     assert_eq!(
         catalog[0].asset.source_id,
-        capabilities::SKILL_BACKUP_SOURCE_ID
+        crate::backend::application::catalog::catalog_ops::SKILL_BACKUP_SOURCE_ID
     );
 
     let statuses = service
@@ -4137,17 +4174,16 @@ async fn refreshing_target_catalog_reconciles_existing_default_profiles() {
         .expect("open service");
 
     service
-        .runtime
-        .refresh_target_catalog(vec![crate::backend::models::TargetProfileDescriptor {
+        .refresh_target_catalog(vec![crate::backend::domain::TargetProfileDescriptor {
             id: "codex".to_string(),
             name: "Codex Fixture".to_string(),
-            app_kind_compat: Some(crate::backend::models::AppKind::Codex),
+            app_kind_compat: Some(crate::backend::domain::AppKind::Codex),
             default_targets: vec![
-                crate::backend::models::TargetPathRule {
+                crate::backend::domain::TargetPathRule {
                     asset_kind: AssetKind::Skill,
                     path: skill_target.to_string_lossy().to_string(),
                 },
-                crate::backend::models::TargetPathRule {
+                crate::backend::domain::TargetPathRule {
                     asset_kind: AssetKind::Prompt,
                     path: prompt_target.to_string_lossy().to_string(),
                 },
@@ -4169,10 +4205,14 @@ async fn refreshing_target_catalog_reconciles_existing_default_profiles() {
     assert_eq!(
         profile.target_paths,
         vec![
-            crate::backend::path_utils::normalize_std_path_for_storage(&skill_target)
-                .expect("normalized skill target"),
-            crate::backend::path_utils::normalize_std_path_for_storage(&prompt_target)
-                .expect("normalized prompt target"),
+            crate::backend::infrastructure::path_utils::normalize_std_path_for_storage(
+                &skill_target
+            )
+            .expect("normalized skill target"),
+            crate::backend::infrastructure::path_utils::normalize_std_path_for_storage(
+                &prompt_target
+            )
+            .expect("normalized prompt target"),
         ]
     );
 
@@ -4193,11 +4233,11 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
     let service = AppService::open_with_db_path(root.join("app.db"))
         .await
         .expect("open service");
-    let descriptor = crate::backend::models::TargetProfileDescriptor {
+    let descriptor = crate::backend::domain::TargetProfileDescriptor {
         id: "fixture-provider".to_string(),
         name: "Fixture Provider".to_string(),
         app_kind_compat: None,
-        default_targets: vec![crate::backend::models::TargetPathRule {
+        default_targets: vec![crate::backend::domain::TargetPathRule {
             asset_kind: AssetKind::Skill,
             path: target_root.to_string_lossy().to_string(),
         }],
@@ -4206,7 +4246,6 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
         icon: None,
     };
     service
-        .runtime
         .refresh_target_catalog(vec![descriptor])
         .await
         .expect("publish fixture target catalog");
@@ -4231,10 +4270,10 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
         .add_source(SourceInput {
             id: Some("fixture-detect-source".to_string()),
             name: "Fixture target source".to_string(),
-            kind: crate::backend::models::SourceKind::Local,
+            kind: crate::backend::domain::SourceKind::Local,
             root_path: target_root.to_string_lossy().to_string(),
-            scanner_kind: Some(crate::backend::models::SourceScannerKind::Skill),
-            source_origin: Some(crate::backend::models::SourceOrigin::LocalFolder),
+            scanner_kind: Some(crate::backend::domain::SourceScannerKind::Skill),
+            source_origin: Some(crate::backend::domain::SourceOrigin::LocalFolder),
             repo_root: None,
             scan_root: None,
             origin_app_kind: None,
@@ -4255,10 +4294,10 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
     let source = Source {
         id: "fixture-asset-source".to_string(),
         name: "Fixture asset source".to_string(),
-        kind: crate::backend::models::SourceKind::Local,
+        kind: crate::backend::domain::SourceKind::Local,
         root_path: source_root.to_string_lossy().to_string(),
-        scanner_kind: crate::backend::models::SourceScannerKind::Skill,
-        source_origin: crate::backend::models::SourceOrigin::LocalFolder,
+        scanner_kind: crate::backend::domain::SourceScannerKind::Skill,
+        source_origin: crate::backend::domain::SourceOrigin::LocalFolder,
         repo_root: None,
         scan_root: String::new(),
         origin_app_kind: None,
@@ -4282,7 +4321,7 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
             kind: AssetKind::Skill,
             detector_id: "fixture.detector".to_string(),
             detector_version: 1,
-            format: crate::backend::models::AssetFormat::Markdown,
+            format: crate::backend::domain::AssetFormat::Markdown,
             relative_path: "SKILL.md".to_string(),
             absolute_path: source_file.to_string_lossy().to_string(),
             entry_file: Some("SKILL.md".to_string()),
@@ -4322,12 +4361,11 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
     assert!(target_root.join("Fixture Skill.md").is_symlink());
 
     let invalid = service
-        .runtime
-        .refresh_target_catalog(vec![crate::backend::models::TargetProfileDescriptor {
+        .refresh_target_catalog(vec![crate::backend::domain::TargetProfileDescriptor {
             id: "fixture-provider".to_string(),
             name: "Fixture Provider".to_string(),
             app_kind_compat: None,
-            default_targets: vec![crate::backend::models::TargetPathRule {
+            default_targets: vec![crate::backend::domain::TargetPathRule {
                 asset_kind: AssetKind::Skill,
                 path: String::new(),
             }],
@@ -4613,7 +4651,7 @@ async fn conversation_search_index_status_reports_missing_lexical_index() {
     assert_eq!(status.indexed_revision, None);
     assert_eq!(
         status.supported_modes,
-        vec![crate::backend::dto::SearchRetrievalMode::Lexical]
+        vec![crate::backend::domain::SearchRetrievalMode::Lexical]
     );
     let _ = std::fs::remove_dir_all(root);
 }
@@ -4692,7 +4730,7 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
             source_id: None,
             project_path: None,
             query: "stale-answer-snapshot".to_string(),
-            content_types: vec![crate::backend::dto::ConversationSearchCardType::answer()],
+            content_types: vec![crate::backend::domain::ConversationSearchCardType::answer()],
             card_kinds: Vec::new(),
             semantic_roles: Vec::new(),
             include_questions: None,
@@ -4725,7 +4763,7 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
             source_id: None,
             project_path: None,
             query: "Rust fallback".to_string(),
-            content_types: vec![crate::backend::dto::ConversationSearchCardType::answer()],
+            content_types: vec![crate::backend::domain::ConversationSearchCardType::answer()],
             card_kinds: Vec::new(),
             semantic_roles: Vec::new(),
             include_questions: None,
@@ -4755,7 +4793,7 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
             source_id: None,
             project_path: None,
             query: "Rust fallback".to_string(),
-            content_types: vec![crate::backend::dto::ConversationSearchCardType::answer()],
+            content_types: vec![crate::backend::domain::ConversationSearchCardType::answer()],
             card_kinds: Vec::new(),
             semantic_roles: Vec::new(),
             include_questions: None,
@@ -4778,7 +4816,7 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
     assert_eq!(result.hits[0].snippet, legacy.hits[0].snippet);
     assert_eq!(
         result.hits[0].card_type,
-        crate::backend::dto::ConversationSearchCardType::answer()
+        crate::backend::domain::ConversationSearchCardType::answer()
     );
     assert!(result.hits[0].snippet.contains("Rust fallback"));
     assert_eq!(
@@ -4811,7 +4849,7 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
     assert_eq!(node.node_type, result.hits[0].card_type.as_str());
     assert_eq!(node.semantic_role.as_deref(), Some("answer"));
     assert_eq!(node.content, result.hits[0].snippet);
-    let memory_card = super::memory_search::recall_card_projection_for_test(&detail)
+    let memory_card = super::memory::memory_search::recall_card_projection_for_test(&detail)
         .into_iter()
         .find(|(candidate_part_id, _, _)| candidate_part_id == part_id)
         .expect("Memory evidence for the same Part");
@@ -4912,7 +4950,7 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
     );
 
     let session_fragment =
-        crate::backend::models::conversation_id_fragment(&result.hits[0].session.session.id);
+        crate::backend::domain::conversation_id_fragment(&result.hits[0].session.session.id);
     let id_result = service
         .search_conversation_records(ConversationSearchParams {
             record_kind: Some("session".to_string()),
@@ -4920,7 +4958,7 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
             source_id: None,
             project_path: None,
             query: session_fragment,
-            content_types: vec![crate::backend::dto::ConversationSearchCardType::answer()],
+            content_types: vec![crate::backend::domain::ConversationSearchCardType::answer()],
             card_kinds: Vec::new(),
             semantic_roles: Vec::new(),
             include_questions: None,
@@ -4954,7 +4992,7 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
             source_id: None,
             project_path: None,
             query: "Rust fallback".to_string(),
-            content_types: vec![crate::backend::dto::ConversationSearchCardType::answer()],
+            content_types: vec![crate::backend::domain::ConversationSearchCardType::answer()],
             card_kinds: Vec::new(),
             semantic_roles: Vec::new(),
             include_questions: None,
@@ -5247,7 +5285,7 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
             source_id: None,
             project_path: None,
             query: "legacy split second".to_string(),
-            content_types: vec![crate::backend::dto::ConversationSearchCardType::new(
+            content_types: vec![crate::backend::domain::ConversationSearchCardType::new(
                 "codex.command",
             )],
             card_kinds: Vec::new(),
@@ -5280,7 +5318,7 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
             source_id: None,
             project_path: None,
             query: "git status --short".to_string(),
-            content_types: vec![crate::backend::dto::ConversationSearchCardType::new(
+            content_types: vec![crate::backend::domain::ConversationSearchCardType::new(
                 "codex.command",
             )],
             card_kinds: Vec::new(),
@@ -5347,7 +5385,7 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
             source_id: None,
             project_path: None,
             query: "git status --short".to_string(),
-            content_types: vec![crate::backend::dto::ConversationSearchCardType::new(
+            content_types: vec![crate::backend::domain::ConversationSearchCardType::new(
                 "codex.command",
             )],
             card_kinds: Vec::new(),
@@ -5501,7 +5539,7 @@ async fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_
             source_id: None,
             project_path: None,
             query: "Deep recall".to_string(),
-            content_types: vec![crate::backend::dto::ConversationSearchCardType::answer()],
+            content_types: vec![crate::backend::domain::ConversationSearchCardType::answer()],
             card_kinds: Vec::new(),
             semantic_roles: Vec::new(),
             include_questions: Some(false),

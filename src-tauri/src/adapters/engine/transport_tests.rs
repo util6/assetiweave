@@ -159,7 +159,7 @@ fn engine_error_preserves_same_code_as_tauri() {
 #[test]
 fn engine_error_preserves_structured_extension_details() {
     let app_error = AppError::from(
-        crate::backend::extension_kernel::ExtensionError::OutputLimitExceeded {
+        crate::backend::infrastructure::extensions::ExtensionError::OutputLimitExceeded {
             package_id: "private-agent".to_string(),
             stdout: true,
             stderr: false,

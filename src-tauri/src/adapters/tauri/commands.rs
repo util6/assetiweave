@@ -16,25 +16,37 @@ use crate::adapters::tauri::background_tasks::{
     SourceScanScope, SourceScanTaskSnapshot,
 };
 #[cfg(test)]
-use crate::backend::capabilities::{
-    apply_skill_group_exclusive_mount_record, apply_skill_group_mount_record,
-    assetiweave_library_source_with_root, build_catalog_assets,
-    build_skill_group_exclusive_mount_preview_sqlx, ensure_profile_can_be_deleted_sqlx,
-    exclusive_item, mount_asset_mount_record, refresh_recorded_assets,
-    scan_asset_mount_statuses_sqlx, scan_selected_sources, set_asset_mount_record,
-    sync_asset_mount_observations, target_profile_from_input, unmount_asset_mount_record,
+use crate::backend::application::{
+    catalog::{
+        catalog_ops::{assetiweave_library_source_with_root, build_catalog_assets},
+        source_scanner::{refresh_recorded_assets, scan_selected_sources},
+    },
+    mounting::{
+        groups::{
+            apply_skill_group_exclusive_mount_record, apply_skill_group_mount_record,
+            build_skill_group_exclusive_mount_preview_sqlx, exclusive_item,
+        },
+        mount_ops::{
+            mount_asset_mount_record, scan_asset_mount_statuses_sqlx, set_asset_mount_record,
+            sync_asset_mount_observations, unmount_asset_mount_record,
+        },
+        profile_ops::{ensure_profile_can_be_deleted_sqlx, target_profile_from_input},
+    },
 };
 use crate::{
-    backend::agents::types::{
+    backend::application::agents::{
         AgentCatalogEntry, AgentConnectionCheckRequest, AgentConnectionResult, AgentModelsRequest,
         AgentModelsResult,
     },
-    backend::ai_execution::{
-        AgentExecutionRuntime, AiExecutionCleanupReport, AiExecutionError, AiExecutionLimits,
-        AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
+    backend::application::conversations::card_translation::{
+        ConversationTranslationConnectionRequest, ConversationTranslationModelsRequest,
+        ConversationTranslationModelsResult, ConversationTranslationRequest,
+        OpencodeTranslationAvailability, OpencodeTranslationRequest, OpencodeTranslationResult,
+        PromptOptimizationRequest, PromptOptimizationResult,
     },
     backend::application::{
-        AppService, BackgroundTaskGetParams, ConversationAdapterCatalogRefreshParams,
+        conversations::card_translation::PreparedConversationCardTranslation, AppService,
+        BackgroundTaskGetParams, ConversationAdapterCatalogRefreshParams,
         ConversationAdapterLocalRegisterParams, ConversationAdapterPackageCatalogParams,
         ConversationAdapterPackageChangeParams, ConversationAdapterPackageInspectParams,
         ConversationAdapterPackageInstallParams, ConversationAdapterPackageReleaseListParams,
@@ -57,31 +69,31 @@ use crate::{
         SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult, SourceRemoveParams,
         SourceScanParams, TenantCreateParams, UpdateSkillBackupSettingsParams,
     },
-    backend::card_translation::{
-        prepare_opencode_agent_translation, ConversationTranslationConnectionRequest,
-        ConversationTranslationModelsRequest, ConversationTranslationModelsResult,
-        ConversationTranslationRequest, OpencodeTranslationAvailability,
-        OpencodeTranslationRequest, OpencodeTranslationResult, PromptOptimizationRequest,
-        PromptOptimizationResult,
+    backend::application::{
+        memory::{MemoryContextResult, MemoryProjectView, MemoryRebuildResult, MemoryTaskView},
+        mounting::{
+            AssetGroupInput, ExecutionResult, SkillGroupExclusiveMountInput, SourceInput,
+            TargetProfileInput,
+        },
+        system::NavigationModel,
     },
-    backend::conversations::{
+    backend::domain::{
+        AppErrorView, AppOverview, AppShortcut, Asset, AssetGroup, AssetGroupDetail, AssetKind,
+        AssetMount, AssetMountStatus, AssetMountUpdateResult, CatalogAsset, ConversationAdapter,
+        ConversationSearchIndexStatus, ConversationSource, DeploymentPlan, DeploymentStrategy,
+        PhysicalMountStateDto, SkillBackupSettings, SkillGroupExclusiveMountPreview,
+        SkillRemoteSource, Source, TargetProfile, TargetProfileDescriptor, Tenant,
+    },
+    backend::infrastructure::agent_execution::{
+        AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionError, AiExecutionPhase,
+        AiExecutionProgressSink, AiExecutionPurpose,
+    },
+    backend::infrastructure::conversations::{
         ConversationCommandProjection, ConversationCommandProjectionParams,
         ExternalAdapterRegisterParams, ExternalAdapterScaffoldParams, ExternalAdapterTryRunParams,
         ExternalAdapterValidateParams,
     },
-    backend::dto::{
-        AppOverview, AppShortcut, AssetGroupInput, AssetMountStatus, AssetMountUpdateResult,
-        CatalogAsset, ConversationSearchIndexStatus, ExecutionResult, MemoryContextResult,
-        MemoryProjectView, MemoryRebuildResult, MemoryTaskView, NavigationModel,
-        PhysicalMountStateDto, SkillBackupSettings, SkillGroupExclusiveMountInput,
-        SkillGroupExclusiveMountPreview, SkillRemoteSource, SourceInput, TargetProfileInput,
-    },
-    backend::models::{
-        Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
-        ConversationSource, DeploymentPlan, DeploymentStrategy, Source, TargetProfile,
-        TargetProfileDescriptor, Tenant,
-    },
-    backend::runtime::{tasks::TaskContext, AppError},
+    backend::{application::AppError, infrastructure::tasks::TaskContext},
 };
 use serde_json::Value;
 use std::{
@@ -90,7 +102,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, State};
 
-type RuntimeAppResult<T> = crate::backend::runtime::AppResult<T>;
+type RuntimeAppResult<T> = crate::backend::application::AppResult<T>;
 
 pub(crate) const AI_EXECUTION_TASK_UPDATED_EVENT: &str = "ai-execution://task-updated";
 
@@ -170,7 +182,7 @@ pub(crate) async fn switch_tenant(
 #[tauri::command]
 pub(crate) async fn get_app_settings(
     state: State<'_, AppState>,
-) -> RuntimeAppResult<crate::backend::app_settings::AppSettingsFile> {
+) -> RuntimeAppResult<crate::backend::infrastructure::app_settings::AppSettingsFile> {
     AppService::from_runtime(&state.runtime)
         .get_app_settings()
         .await
@@ -180,7 +192,7 @@ pub(crate) async fn get_app_settings(
 pub(crate) async fn save_app_settings(
     state: State<'_, AppState>,
     settings: serde_json::Value,
-) -> RuntimeAppResult<crate::backend::app_settings::AppSettingsFile> {
+) -> RuntimeAppResult<crate::backend::infrastructure::app_settings::AppSettingsFile> {
     AppService::from_runtime(&state.runtime)
         .save_app_settings(settings)
         .await
@@ -189,8 +201,8 @@ pub(crate) async fn save_app_settings(
 #[tauri::command]
 pub(crate) async fn initialize_app_locale_if_unset(
     state: State<'_, AppState>,
-    locale: crate::backend::app_settings::AppLocale,
-) -> RuntimeAppResult<crate::backend::app_settings::AppSettingsFile> {
+    locale: crate::backend::infrastructure::app_settings::AppLocale,
+) -> RuntimeAppResult<crate::backend::infrastructure::app_settings::AppSettingsFile> {
     AppService::from_runtime(&state.runtime)
         .initialize_app_locale_if_unset(locale)
         .await
@@ -277,7 +289,7 @@ pub(crate) async fn list_source_assets(
 #[tauri::command]
 pub(crate) async fn get_memory_recent_snapshot(
     state: State<'_, AppState>,
-) -> RuntimeAppResult<crate::backend::dto::RecentMemoryStateView> {
+) -> RuntimeAppResult<crate::backend::domain::RecentMemoryStateView> {
     AppService::from_runtime(&state.runtime)
         .get_recent_memory_snapshot()
         .await
@@ -287,7 +299,7 @@ pub(crate) async fn get_memory_recent_snapshot(
 #[tauri::command]
 pub(crate) async fn duplicate_memory_generation_skill(
     state: State<'_, AppState>,
-) -> RuntimeAppResult<crate::backend::dto::CatalogAsset> {
+) -> RuntimeAppResult<crate::backend::domain::CatalogAsset> {
     AppService::from_runtime(&state.runtime)
         .duplicate_generation_skill_to_library()
         .await
@@ -308,7 +320,7 @@ pub(crate) async fn reset_memory_generation_skill_to_default(
 pub(crate) async fn search_memory_recall(
     state: State<'_, AppState>,
     params: MemoryRecallSearchParams,
-) -> RuntimeAppResult<crate::backend::models::MemoryRecallSearchResult> {
+) -> RuntimeAppResult<crate::backend::domain::MemoryRecallSearchResult> {
     AppService::from_runtime(&state.runtime)
         .search_memory_recall(params)
         .await
@@ -387,7 +399,7 @@ pub(crate) async fn retry_memory_public_task(
 pub(crate) async fn create_memory_recall_session(
     state: State<'_, AppState>,
     params: MemoryRecallSessionCreateParams,
-) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
+) -> RuntimeAppResult<crate::backend::domain::MemoryRecallSession> {
     AppService::from_runtime(&state.runtime)
         .create_memory_recall_session(params)
         .await
@@ -398,7 +410,7 @@ pub(crate) async fn create_memory_recall_session(
 pub(crate) async fn get_memory_recall_session(
     state: State<'_, AppState>,
     params: MemoryRecallSessionGetParams,
-) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
+) -> RuntimeAppResult<crate::backend::domain::MemoryRecallSession> {
     AppService::from_runtime(&state.runtime)
         .get_memory_recall_session(params)
         .await
@@ -409,7 +421,7 @@ pub(crate) async fn get_memory_recall_session(
 pub(crate) async fn send_memory_recall_turn(
     state: State<'_, AppState>,
     params: MemoryRecallTurnSendParams,
-) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
+) -> RuntimeAppResult<crate::backend::domain::MemoryRecallSession> {
     AppService::from_runtime(&state.runtime)
         .send_memory_recall_turn(params)
         .await
@@ -420,7 +432,7 @@ pub(crate) async fn send_memory_recall_turn(
 pub(crate) async fn cancel_memory_recall_turn(
     state: State<'_, AppState>,
     params: MemoryRecallTurnCancelParams,
-) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
+) -> RuntimeAppResult<crate::backend::domain::MemoryRecallSession> {
     AppService::from_runtime(&state.runtime)
         .cancel_memory_recall_turn(params)
         .await
@@ -652,7 +664,7 @@ where
                 "更新扩展生命周期任务状态失败"
             ),
         }
-        result
+        result.map_err(AppErrorView::from)
     });
     if let Err(error) = background_tasks.spawn_extension_lifecycle(&task_id, task) {
         let projection_error = AppError::from(error.view());
@@ -1572,13 +1584,9 @@ pub(crate) fn start_source_scan(
     tauri::async_runtime::spawn(async move {
         let result = match tokio::spawn(async move {
             let service = AppService::from_runtime(&runtime);
-            crate::backend::application::SourceScanWorkflow::run(
-                &service,
-                params,
-                &task_context,
-                skill_sources_only,
-            )
-            .await
+            service
+                .scan_sources_with_task_context(params, &task_context, skill_sources_only)
+                .await
         })
         .await
         {
@@ -1885,7 +1893,8 @@ pub(crate) fn list_conversation_adapters(
 pub(crate) fn scaffold_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterScaffoldParams,
-) -> RuntimeAppResult<crate::backend::conversations::ExternalAdapterScaffoldResult> {
+) -> RuntimeAppResult<crate::backend::infrastructure::conversations::ExternalAdapterScaffoldResult>
+{
     AppService::from_runtime(&state.runtime).scaffold_conversation_adapter(params)
 }
 
@@ -1893,14 +1902,17 @@ pub(crate) fn scaffold_conversation_adapter(
 pub(crate) fn validate_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterValidateParams,
-) -> RuntimeAppResult<crate::backend::conversations::ExternalAdapterValidationResult> {
+) -> RuntimeAppResult<crate::backend::infrastructure::conversations::ExternalAdapterValidationResult>
+{
     AppService::from_runtime(&state.runtime).validate_conversation_adapter(params)
 }
 
 #[tauri::command]
 pub(crate) async fn list_conversation_adapter_runtime_statuses(
     state: State<'_, AppState>,
-) -> RuntimeAppResult<Vec<crate::backend::conversations::ConversationAdapterRuntimeStatus>> {
+) -> RuntimeAppResult<
+    Vec<crate::backend::infrastructure::conversations::ConversationAdapterRuntimeStatus>,
+> {
     AppService::from_runtime(&state.runtime)
         .list_conversation_adapter_runtime_statuses()
         .await
@@ -1958,7 +1970,9 @@ pub(crate) async fn check_opencode_translation_availability(
 #[tauri::command]
 pub(crate) async fn check_prompt_optimization_availability(
     state: State<'_, AppState>,
-) -> RuntimeAppResult<crate::backend::card_translation::ActionAvailability> {
+) -> RuntimeAppResult<
+    crate::backend::application::conversations::card_translation::ActionAvailability,
+> {
     AppService::from_runtime(&state.runtime).check_prompt_optimization_availability()
 }
 
@@ -2085,61 +2099,57 @@ impl AiExecutionProgressSink for RegistryAiExecutionProgressSink {
 fn prepare_ai_execution_task_for_tenant(
     tenant_id: &str,
     tasks: Arc<BackgroundTaskRegistry>,
-    params: ConversationTranslationRequest,
+    prepared: PreparedConversationCardTranslation,
     emitter: Arc<dyn AiExecutionTaskEmitter>,
-) -> RuntimeAppResult<(AiExecutionTaskSnapshot, AiExecutionRequest)> {
-    let (agent_id, prompt, model) = prepare_opencode_agent_translation(params)?;
+) -> RuntimeAppResult<(
+    AiExecutionTaskSnapshot,
+    PreparedConversationCardTranslation,
+    AiExecutionCancellation,
+    Arc<dyn AiExecutionProgressSink>,
+)> {
     let (snapshot, cancellation) = tasks.begin_ai_execution_for_tenant(
         tenant_id,
         AiExecutionPurpose::Translation,
-        &agent_id,
+        &prepared.0,
     )?;
-    let progress = Arc::new(RegistryAiExecutionProgressSink {
+    let progress: Arc<dyn AiExecutionProgressSink> = Arc::new(RegistryAiExecutionProgressSink {
         tasks,
         task_id: snapshot.id.clone(),
         emitter: emitter.clone(),
         last_execution_phase: Mutex::new(None),
     });
-    let request = AiExecutionRequest {
-        execution_id: snapshot.id.clone(),
-        agent_id,
-        purpose: AiExecutionPurpose::Translation,
-        session_mode: crate::backend::ai_execution::AgentSessionMode::OneShot,
-        prompt,
-        model,
-        limits: AiExecutionLimits::default(),
-        cancellation,
-        progress: Some(progress),
-        tenant_id: None,
-        execution_context_key: None,
-        binding: None,
-        replay: false,
-        restore_only: false,
-        recall_tools: None,
-        memory_generation_tools: None,
-    };
     emitter.emit(&snapshot);
-    Ok((snapshot, request))
+    Ok((snapshot, prepared, cancellation, progress))
 }
 
 async fn run_ai_execution_task(
     tasks: Arc<BackgroundTaskRegistry>,
-    runtime: Arc<dyn AgentExecutionRuntime>,
+    service: AppService,
     task_id: String,
-    request: AiExecutionRequest,
+    prepared: PreparedConversationCardTranslation,
+    cancellation: AiExecutionCancellation,
+    progress: Arc<dyn AiExecutionProgressSink>,
     emitter: Arc<dyn AiExecutionTaskEmitter>,
 ) {
-    let progress = request.progress.clone();
-    let execution = tokio::spawn(async move { runtime.execute(request).await });
+    let execution_id = task_id.clone();
+    let execution_progress = progress.clone();
+    let execution = tokio::spawn(async move {
+        service
+            .execute_prepared_conversation_card_translation(
+                prepared,
+                execution_id,
+                cancellation,
+                Some(execution_progress),
+            )
+            .await
+    });
     let result = match execution.await {
         Ok(result) => result,
         Err(_) => Err(AiExecutionError::Protocol {
             operation: "execution_task_panicked",
         }),
     };
-    let failure_phase = progress
-        .as_ref()
-        .and_then(|progress| progress.failure_phase());
+    let failure_phase = progress.failure_phase();
     match tasks.finish_ai_execution_with_phase(&task_id, result, failure_phase) {
         Ok(snapshot) => emitter.emit(&snapshot),
         Err(error) => tracing::error!(
@@ -2160,12 +2170,19 @@ pub(crate) async fn start_conversation_card_translation(
     let emitter: Arc<dyn AiExecutionTaskEmitter> = Arc::new(TauriAiExecutionTaskEmitter { app });
     let tasks = state.background_tasks.clone();
     let tenant_id = state.runtime.context().tenant.id.clone();
-    let (snapshot, request) =
-        prepare_ai_execution_task_for_tenant(&tenant_id, tasks.clone(), params, emitter.clone())?;
-    let runtime = state.agent_runtime.clone();
+    let prepared = AppService::prepare_conversation_card_translation(params)?;
+    let (snapshot, prepared, cancellation, progress) =
+        prepare_ai_execution_task_for_tenant(&tenant_id, tasks.clone(), prepared, emitter.clone())?;
+    let service = AppService::from_runtime(&state.runtime);
     let task_id = snapshot.id.clone();
     tauri::async_runtime::spawn(run_ai_execution_task(
-        tasks, runtime, task_id, request, emitter,
+        tasks,
+        service,
+        task_id,
+        prepared,
+        cancellation,
+        progress,
+        emitter,
     ));
     Ok(snapshot)
 }
@@ -2229,7 +2246,7 @@ pub(crate) async fn unregister_conversation_adapter(
 pub(crate) async fn try_run_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterTryRunParams,
-) -> RuntimeAppResult<crate::backend::conversations::ExternalAdapterRunResult> {
+) -> RuntimeAppResult<crate::backend::infrastructure::conversations::ExternalAdapterRunResult> {
     AppService::from_runtime(&state.runtime)
         .try_run_conversation_adapter(params)
         .await
@@ -2336,7 +2353,7 @@ pub(crate) async fn list_conversation_adapter_packages(
 pub(crate) async fn list_conversation_adapter_package_releases(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageReleaseListParams,
-) -> RuntimeAppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
+) -> RuntimeAppResult<Vec<crate::backend::domain::ConversationAdapterCatalogRelease>> {
     AppService::from_runtime(&state.runtime)
         .list_conversation_adapter_package_releases(params)
         .await
@@ -2346,7 +2363,7 @@ pub(crate) async fn list_conversation_adapter_package_releases(
 pub(crate) async fn list_installed_conversation_adapter_package_versions(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
-) -> RuntimeAppResult<Vec<crate::backend::models::ConversationAdapterPackageVersion>> {
+) -> RuntimeAppResult<Vec<crate::backend::domain::ConversationAdapterPackageVersion>> {
     AppService::from_runtime(&state.runtime)
         .list_installed_conversation_adapter_package_versions(params)
         .await
@@ -2386,7 +2403,7 @@ pub(crate) async fn delete_conversation_adapter_package_version(
 pub(crate) async fn refresh_conversation_adapter_catalogs(
     state: State<'_, AppState>,
     params: ConversationAdapterCatalogRefreshParams,
-) -> RuntimeAppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
+) -> RuntimeAppResult<Vec<crate::backend::domain::ConversationAdapterCatalogRelease>> {
     AppService::from_runtime(&state.runtime)
         .refresh_conversation_adapter_catalogs(params)
         .await
@@ -2406,7 +2423,7 @@ pub(crate) async fn check_conversation_adapter_package_updates(
 pub(crate) async fn set_conversation_adapter_package_update_policy(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageUpdatePolicyParams,
-) -> RuntimeAppResult<crate::backend::models::ConversationAdapterPackage> {
+) -> RuntimeAppResult<crate::backend::domain::ConversationAdapterPackage> {
     AppService::from_runtime(&state.runtime)
         .set_conversation_adapter_package_update_policy(params)
         .await
@@ -2572,7 +2589,7 @@ pub(crate) fn sync_conversations(
 
 pub(crate) fn start_conversation_sync_background(
     app: AppHandle,
-    runtime: std::sync::Arc<crate::backend::runtime::AppRuntime>,
+    runtime: std::sync::Arc<crate::backend::infrastructure::runtime::AppRuntime>,
     background_tasks: std::sync::Arc<
         crate::adapters::tauri::background_tasks::BackgroundTaskRegistry,
     >,
@@ -2682,12 +2699,12 @@ pub(crate) fn start_conversation_sync_background(
                     }
                     Ok(Value::Null)
                 }
-                Err(error) => Err(error),
+                Err(error) => Err(error.into()),
             }
         }),
     );
     if let Err(error) = outcome {
-        return Err(error);
+        return Err(error.into());
     }
 
     Ok(snapshot)
@@ -2727,8 +2744,8 @@ pub(crate) fn cancel_conversation_sync(
 #[tauri::command]
 pub(crate) async fn get_conversation_usage_dashboard(
     state: State<'_, AppState>,
-    filter: crate::backend::dto::UsageDashboardFilter,
-) -> RuntimeAppResult<crate::backend::dto::UsageDashboardDto> {
+    filter: crate::backend::application::conversations::UsageDashboardFilter,
+) -> RuntimeAppResult<crate::backend::application::conversations::UsageDashboardDto> {
     AppService::from_runtime(&state.runtime)
         .get_conversation_usage_dashboard(filter)
         .await
@@ -2737,7 +2754,7 @@ pub(crate) async fn get_conversation_usage_dashboard(
 #[tauri::command]
 pub(crate) async fn get_conversation_usage_scan_status(
     state: State<'_, AppState>,
-) -> RuntimeAppResult<crate::backend::dto::UsageScanStatusDto> {
+) -> RuntimeAppResult<crate::backend::application::conversations::UsageScanStatusDto> {
     let mut status = AppService::from_runtime(&state.runtime)
         .get_conversation_usage_scan_status()
         .await?;
@@ -2756,7 +2773,7 @@ pub(crate) async fn get_conversation_usage_scan_status(
 pub(crate) fn scan_conversation_usage(
     app: AppHandle,
     state: State<'_, AppState>,
-    options: crate::backend::dto::UsageScanOptions,
+    options: crate::backend::application::conversations::UsageScanOptions,
 ) -> RuntimeAppResult<crate::adapters::tauri::background_tasks::ConversationUsageScanTaskSnapshot> {
     start_conversation_usage_scan_background(
         app,
@@ -2768,11 +2785,11 @@ pub(crate) fn scan_conversation_usage(
 
 pub(crate) fn start_conversation_usage_scan_background(
     app: AppHandle,
-    runtime: std::sync::Arc<crate::backend::runtime::AppRuntime>,
+    runtime: std::sync::Arc<crate::backend::infrastructure::runtime::AppRuntime>,
     background_tasks: std::sync::Arc<
         crate::adapters::tauri::background_tasks::BackgroundTaskRegistry,
     >,
-    options: crate::backend::dto::UsageScanOptions,
+    options: crate::backend::application::conversations::UsageScanOptions,
 ) -> RuntimeAppResult<crate::adapters::tauri::background_tasks::ConversationUsageScanTaskSnapshot> {
     let tenant_id = runtime.context().tenant.id.clone();
     let mode = options
@@ -2883,7 +2900,7 @@ pub(crate) fn start_conversation_usage_scan_background(
             }
         });
     if let Err(error) = outcome {
-        return Err(error);
+        return Err(error.into());
     }
 
     Ok(snapshot)
@@ -2928,7 +2945,7 @@ pub(crate) fn repair_conversation_data(
 
 fn start_conversation_data_maintenance_background(
     app: AppHandle,
-    runtime: std::sync::Arc<crate::backend::runtime::AppRuntime>,
+    runtime: std::sync::Arc<crate::backend::infrastructure::runtime::AppRuntime>,
     background_tasks: std::sync::Arc<BackgroundTaskRegistry>,
     operation: &'static str,
     audit_params: ConversationDataAuditParams,
@@ -3031,12 +3048,12 @@ fn start_conversation_data_maintenance_background(
                     let _ = task_app.emit("conversation-data-maintenance-task-updated", &snapshot);
                     Ok(Value::Null)
                 }
-                Err(error) => Err(error),
+                Err(error) => Err(error.into()),
             }
         }),
     );
     if let Err(error) = outcome {
-        return Err(error);
+        return Err(error.into());
     }
     Ok(snapshot)
 }
@@ -3086,7 +3103,7 @@ pub(crate) async fn rollback_conversation_data(
 pub(crate) async fn list_conversation_sessions(
     state: State<'_, AppState>,
     params: ConversationSessionListParams,
-) -> RuntimeAppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
+) -> RuntimeAppResult<Vec<crate::backend::domain::ConversationSessionListItem>> {
     AppService::from_runtime(&state.runtime)
         .list_conversation_sessions(params)
         .await
@@ -3096,7 +3113,7 @@ pub(crate) async fn list_conversation_sessions(
 pub(crate) async fn get_conversation_session(
     state: State<'_, AppState>,
     params: ConversationSessionGetParams,
-) -> RuntimeAppResult<crate::backend::dto::ConversationSessionDetail> {
+) -> RuntimeAppResult<crate::backend::domain::ConversationSessionDetail> {
     AppService::from_runtime(&state.runtime)
         .get_conversation_session(params)
         .await
@@ -3116,7 +3133,7 @@ pub(crate) async fn export_conversation_session(
 pub(crate) async fn list_web_record_sessions(
     state: State<'_, AppState>,
     params: ConversationSessionListParams,
-) -> RuntimeAppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
+) -> RuntimeAppResult<Vec<crate::backend::domain::ConversationSessionListItem>> {
     AppService::from_runtime(&state.runtime)
         .list_web_record_sessions(params)
         .await
@@ -3126,7 +3143,7 @@ pub(crate) async fn list_web_record_sessions(
 pub(crate) async fn get_web_record_session(
     state: State<'_, AppState>,
     params: ConversationSessionGetParams,
-) -> RuntimeAppResult<crate::backend::dto::ConversationSessionDetail> {
+) -> RuntimeAppResult<crate::backend::domain::ConversationSessionDetail> {
     AppService::from_runtime(&state.runtime)
         .get_web_record_session(params)
         .await
@@ -3237,14 +3254,14 @@ pub(crate) fn start_conversation_search_index_rebuild(
                     "更新对话搜索索引任务状态失败"
                 ),
             }
-            result
+            result.map_err(AppErrorView::from)
         }),
     );
     if let Err(error) = outcome {
         let projection_error = AppError::from(error.view());
         let _ = background_tasks
             .finish_conversation_search_index_rebuild(&task_id, Err(projection_error));
-        return Err(error);
+        return Err(error.into());
     }
     Ok(snapshot)
 }
@@ -3273,7 +3290,7 @@ pub(crate) async fn export_web_record_session(
 pub(crate) async fn list_conversation_questions(
     state: State<'_, AppState>,
     params: ConversationQuestionListParams,
-) -> RuntimeAppResult<Vec<crate::backend::dto::ConversationQuestionDetail>> {
+) -> RuntimeAppResult<Vec<crate::backend::domain::ConversationQuestionDetail>> {
     AppService::from_runtime(&state.runtime)
         .list_conversation_questions(params)
         .await
@@ -3283,7 +3300,7 @@ pub(crate) async fn list_conversation_questions(
 pub(crate) async fn get_conversation_question(
     state: State<'_, AppState>,
     params: ConversationQuestionGetParams,
-) -> RuntimeAppResult<crate::backend::dto::ConversationQuestionDetail> {
+) -> RuntimeAppResult<crate::backend::domain::ConversationQuestionDetail> {
     AppService::from_runtime(&state.runtime)
         .get_conversation_question(params)
         .await
@@ -3293,7 +3310,7 @@ pub(crate) async fn get_conversation_question(
 pub(crate) async fn list_conversation_blocks(
     state: State<'_, AppState>,
     params: ConversationBlockListParams,
-) -> RuntimeAppResult<Vec<crate::backend::dto::ConversationBlockLocator>> {
+) -> RuntimeAppResult<Vec<crate::backend::domain::ConversationBlockLocator>> {
     AppService::from_runtime(&state.runtime)
         .list_conversation_blocks(params)
         .await
@@ -3303,7 +3320,7 @@ pub(crate) async fn list_conversation_blocks(
 pub(crate) async fn get_conversation_block(
     state: State<'_, AppState>,
     params: ConversationBlockGetParams,
-) -> RuntimeAppResult<crate::backend::dto::ConversationBlockDetail> {
+) -> RuntimeAppResult<crate::backend::domain::ConversationBlockDetail> {
     AppService::from_runtime(&state.runtime)
         .get_conversation_block(params)
         .await
@@ -3313,7 +3330,7 @@ pub(crate) async fn get_conversation_block(
 pub(crate) async fn merge_conversation_questions(
     state: State<'_, AppState>,
     params: ConversationQuestionMergeParams,
-) -> RuntimeAppResult<crate::backend::dto::ConversationMutationResult> {
+) -> RuntimeAppResult<crate::backend::domain::ConversationMutationResult> {
     AppService::from_runtime(&state.runtime)
         .merge_conversation_questions(params)
         .await
@@ -3323,7 +3340,7 @@ pub(crate) async fn merge_conversation_questions(
 pub(crate) async fn split_conversation_question(
     state: State<'_, AppState>,
     params: ConversationQuestionSplitParams,
-) -> RuntimeAppResult<crate::backend::dto::ConversationMutationResult> {
+) -> RuntimeAppResult<crate::backend::domain::ConversationMutationResult> {
     AppService::from_runtime(&state.runtime)
         .split_conversation_question(params)
         .await
@@ -3473,26 +3490,27 @@ pub(crate) fn install_cli_tools(
 
 #[tauri::command]
 pub(crate) fn logs_get_snapshot(
+    state: State<'_, AppState>,
     file_name: Option<String>,
     line_limit: Option<usize>,
-) -> RuntimeAppResult<crate::backend::logs::LogSnapshot> {
-    crate::backend::logs::logs_get_snapshot(file_name, line_limit).map_err(AppError::from)
+) -> RuntimeAppResult<crate::backend::infrastructure::logs::LogSnapshot> {
+    AppService::from_runtime(&state.runtime).logs_get_snapshot(file_name, line_limit)
 }
 
 #[tauri::command]
-pub(crate) fn logs_open_log_directory() -> RuntimeAppResult<()> {
-    crate::backend::logs::logs_open_log_directory().map_err(AppError::from)
+pub(crate) fn logs_open_log_directory(state: State<'_, AppState>) -> RuntimeAppResult<()> {
+    AppService::from_runtime(&state.runtime).logs_open_log_directory()
 }
 
 #[tauri::command]
 pub(crate) fn logs_write_operation(
+    state: State<'_, AppState>,
     level: String,
     operation: String,
     message: String,
     fields: Option<BTreeMap<String, String>>,
 ) -> RuntimeAppResult<()> {
-    crate::backend::logs::logs_write_operation(level, operation, message, fields)
-        .map_err(AppError::from)
+    AppService::from_runtime(&state.runtime).logs_write_operation(level, operation, message, fields)
 }
 
 #[tauri::command]
@@ -3506,8 +3524,8 @@ pub(crate) fn copy_prompt_card_to_clipboard(params: PromptClipboardParams) -> Ru
 #[tauri::command]
 pub(crate) async fn list_agent_market(
     state: State<'_, AppState>,
-    params: crate::backend::agent_market::types::AgentMarketListRequest,
-) -> crate::backend::runtime::AppResult<Vec<crate::backend::application::AgentMarketItemView>> {
+    params: crate::backend::infrastructure::agent_market::AgentMarketListRequest,
+) -> crate::backend::application::AppResult<Vec<crate::backend::application::AgentMarketItemView>> {
     crate::adapters::tauri::agent_market::list_agent_market(state, params).await
 }
 
@@ -3515,7 +3533,7 @@ pub(crate) async fn list_agent_market(
 pub(crate) async fn inspect_agent_market_item(
     state: State<'_, AppState>,
     agent_id: String,
-) -> crate::backend::runtime::AppResult<crate::backend::application::AgentMarketItemView> {
+) -> crate::backend::application::AppResult<crate::backend::application::AgentMarketItemView> {
     crate::adapters::tauri::agent_market::inspect_agent_market_item(state, agent_id).await
 }
 
@@ -3523,7 +3541,7 @@ pub(crate) async fn inspect_agent_market_item(
 pub(crate) fn refresh_agent_market(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> crate::backend::runtime::AppResult<
+) -> crate::backend::application::AppResult<
     crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot,
 > {
     crate::adapters::tauri::agent_market::refresh_agent_market(app, state)
@@ -3533,7 +3551,7 @@ pub(crate) fn refresh_agent_market(
 pub(crate) fn get_agent_market_refresh_task(
     state: State<'_, AppState>,
     task_id: String,
-) -> crate::backend::runtime::AppResult<
+) -> crate::backend::application::AppResult<
     crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot,
 > {
     crate::adapters::tauri::agent_market::get_agent_market_refresh_task(state, task_id)
@@ -3542,7 +3560,7 @@ pub(crate) fn get_agent_market_refresh_task(
 #[tauri::command]
 pub(crate) fn list_agent_market_refresh_tasks(
     state: State<'_, AppState>,
-) -> crate::backend::runtime::AppResult<
+) -> crate::backend::application::AppResult<
     Vec<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot>,
 > {
     crate::adapters::tauri::agent_market::list_agent_market_refresh_tasks(state)
@@ -3551,8 +3569,8 @@ pub(crate) fn list_agent_market_refresh_tasks(
 #[tauri::command]
 pub(crate) async fn preview_agent_installation(
     state: State<'_, AppState>,
-    params: crate::backend::agent_market::types::AgentInstallPreviewRequest,
-) -> crate::backend::runtime::AppResult<crate::backend::application::AgentInstallPreview> {
+    params: crate::backend::infrastructure::agent_market::AgentInstallPreviewRequest,
+) -> crate::backend::application::AppResult<crate::backend::application::AgentInstallPreview> {
     crate::adapters::tauri::agent_market::preview_agent_installation(state, params).await
 }
 
@@ -3560,15 +3578,15 @@ pub(crate) async fn preview_agent_installation(
 pub(crate) async fn preview_agent_uninstall(
     state: State<'_, AppState>,
     agent_id: String,
-) -> crate::backend::runtime::AppResult<crate::backend::application::AgentUninstallPreview> {
+) -> crate::backend::application::AppResult<crate::backend::application::AgentUninstallPreview> {
     crate::adapters::tauri::agent_market::preview_agent_uninstall(state, agent_id).await
 }
 
 #[tauri::command]
 pub(crate) async fn list_installed_agents(
     state: State<'_, AppState>,
-) -> crate::backend::runtime::AppResult<
-    Vec<crate::backend::agent_market::types::AgentInstallationView>,
+) -> crate::backend::application::AppResult<
+    Vec<crate::backend::infrastructure::agent_market::AgentInstallationView>,
 > {
     crate::adapters::tauri::agent_market::list_installed_agents(state).await
 }
@@ -3577,8 +3595,9 @@ pub(crate) async fn list_installed_agents(
 pub(crate) async fn get_installed_agent(
     state: State<'_, AppState>,
     agent_id: String,
-) -> crate::backend::runtime::AppResult<crate::backend::agent_market::types::AgentInstallationView>
-{
+) -> crate::backend::application::AppResult<
+    crate::backend::infrastructure::agent_market::AgentInstallationView,
+> {
     crate::adapters::tauri::agent_market::get_installed_agent(state, agent_id).await
 }
 
@@ -3586,8 +3605,9 @@ pub(crate) async fn get_installed_agent(
 pub(crate) async fn check_agent_runtime(
     state: State<'_, AppState>,
     agent_id: String,
-) -> crate::backend::runtime::AppResult<crate::backend::agent_market::types::AgentInstallationView>
-{
+) -> crate::backend::application::AppResult<
+    crate::backend::infrastructure::agent_market::AgentInstallationView,
+> {
     crate::adapters::tauri::agent_market::check_agent_runtime(state, agent_id).await
 }
 
@@ -3595,8 +3615,8 @@ pub(crate) async fn check_agent_runtime(
 pub(crate) fn get_agent_lifecycle_task(
     state: State<'_, AppState>,
     task_id: String,
-) -> crate::backend::runtime::AppResult<
-    crate::backend::agent_market::types::AgentLifecycleTaskSnapshot,
+) -> crate::backend::application::AppResult<
+    crate::backend::infrastructure::agent_market::AgentLifecycleTaskSnapshot,
 > {
     crate::adapters::tauri::agent_market::get_agent_lifecycle_task(state, task_id)
 }
@@ -3604,8 +3624,8 @@ pub(crate) fn get_agent_lifecycle_task(
 #[tauri::command]
 pub(crate) fn list_agent_lifecycle_tasks(
     state: State<'_, AppState>,
-) -> crate::backend::runtime::AppResult<
-    Vec<crate::backend::agent_market::types::AgentLifecycleTaskSnapshot>,
+) -> crate::backend::application::AppResult<
+    Vec<crate::backend::infrastructure::agent_market::AgentLifecycleTaskSnapshot>,
 > {
     crate::adapters::tauri::agent_market::list_agent_lifecycle_tasks(state)
 }
@@ -3615,8 +3635,8 @@ pub(crate) fn cancel_agent_lifecycle_task(
     app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
-) -> crate::backend::runtime::AppResult<
-    crate::backend::agent_market::types::AgentLifecycleTaskSnapshot,
+) -> crate::backend::application::AppResult<
+    crate::backend::infrastructure::agent_market::AgentLifecycleTaskSnapshot,
 > {
     crate::adapters::tauri::agent_market::cancel_agent_lifecycle_task(app, state, task_id)
 }
@@ -3625,9 +3645,9 @@ pub(crate) fn cancel_agent_lifecycle_task(
 pub(crate) fn start_agent_installation(
     app: AppHandle,
     state: State<'_, AppState>,
-    params: crate::backend::agent_market::types::AgentInstallStartRequest,
-) -> crate::backend::runtime::AppResult<
-    crate::backend::agent_market::types::AgentLifecycleTaskSnapshot,
+    params: crate::backend::infrastructure::agent_market::AgentInstallStartRequest,
+) -> crate::backend::application::AppResult<
+    crate::backend::infrastructure::agent_market::AgentLifecycleTaskSnapshot,
 > {
     crate::adapters::tauri::agent_market::start_agent_installation(app, state, params)
 }
@@ -3636,9 +3656,9 @@ pub(crate) fn start_agent_installation(
 pub(crate) fn start_agent_update(
     app: AppHandle,
     state: State<'_, AppState>,
-    params: crate::backend::agent_market::types::AgentInstallStartRequest,
-) -> crate::backend::runtime::AppResult<
-    crate::backend::agent_market::types::AgentLifecycleTaskSnapshot,
+    params: crate::backend::infrastructure::agent_market::AgentInstallStartRequest,
+) -> crate::backend::application::AppResult<
+    crate::backend::infrastructure::agent_market::AgentLifecycleTaskSnapshot,
 > {
     crate::adapters::tauri::agent_market::start_agent_update(app, state, params)
 }
@@ -3647,9 +3667,9 @@ pub(crate) fn start_agent_update(
 pub(crate) fn start_agent_reinstallation(
     app: AppHandle,
     state: State<'_, AppState>,
-    params: crate::backend::agent_market::types::AgentInstallStartRequest,
-) -> crate::backend::runtime::AppResult<
-    crate::backend::agent_market::types::AgentLifecycleTaskSnapshot,
+    params: crate::backend::infrastructure::agent_market::AgentInstallStartRequest,
+) -> crate::backend::application::AppResult<
+    crate::backend::infrastructure::agent_market::AgentLifecycleTaskSnapshot,
 > {
     crate::adapters::tauri::agent_market::start_agent_reinstallation(app, state, params)
 }
@@ -3658,9 +3678,9 @@ pub(crate) fn start_agent_reinstallation(
 pub(crate) fn start_agent_uninstall(
     app: AppHandle,
     state: State<'_, AppState>,
-    params: crate::backend::agent_market::types::AgentUninstallStartRequest,
-) -> crate::backend::runtime::AppResult<
-    crate::backend::agent_market::types::AgentLifecycleTaskSnapshot,
+    params: crate::backend::infrastructure::agent_market::AgentUninstallStartRequest,
+) -> crate::backend::application::AppResult<
+    crate::backend::infrastructure::agent_market::AgentLifecycleTaskSnapshot,
 > {
     crate::adapters::tauri::agent_market::start_agent_uninstall(app, state, params)
 }
@@ -3669,8 +3689,9 @@ pub(crate) fn start_agent_uninstall(
 pub(crate) async fn enable_agent(
     state: State<'_, AppState>,
     agent_id: String,
-) -> crate::backend::runtime::AppResult<crate::backend::agent_market::types::AgentInstallationView>
-{
+) -> crate::backend::application::AppResult<
+    crate::backend::infrastructure::agent_market::AgentInstallationView,
+> {
     crate::adapters::tauri::agent_market::enable_agent(state, agent_id).await
 }
 
@@ -3678,16 +3699,17 @@ pub(crate) async fn enable_agent(
 pub(crate) async fn disable_agent(
     state: State<'_, AppState>,
     agent_id: String,
-) -> crate::backend::runtime::AppResult<crate::backend::agent_market::types::AgentInstallationView>
-{
+) -> crate::backend::application::AppResult<
+    crate::backend::infrastructure::agent_market::AgentInstallationView,
+> {
     crate::adapters::tauri::agent_market::disable_agent(state, agent_id).await
 }
 
 #[tauri::command]
 pub(crate) fn list_public_tasks(
     state: State<'_, AppState>,
-    params: crate::backend::dto::TaskListParams,
-) -> RuntimeAppResult<Vec<crate::backend::dto::TaskView>> {
+    params: crate::backend::application::system::TaskListParams,
+) -> RuntimeAppResult<Vec<crate::backend::application::system::TaskView>> {
     let service = AppService::from_runtime(&state.runtime);
     service.list_public_tasks(params)
 }
@@ -3695,8 +3717,8 @@ pub(crate) fn list_public_tasks(
 #[tauri::command]
 pub(crate) fn get_public_task(
     state: State<'_, AppState>,
-    params: crate::backend::dto::TaskGetParams,
-) -> RuntimeAppResult<Option<crate::backend::dto::TaskView>> {
+    params: crate::backend::application::system::TaskGetParams,
+) -> RuntimeAppResult<Option<crate::backend::application::system::TaskView>> {
     let service = AppService::from_runtime(&state.runtime);
     service.get_public_task(params)
 }
@@ -3704,8 +3726,8 @@ pub(crate) fn get_public_task(
 #[tauri::command]
 pub(crate) fn cancel_public_task(
     state: State<'_, AppState>,
-    params: crate::backend::dto::TaskCancelParams,
-) -> RuntimeAppResult<crate::backend::dto::TaskView> {
+    params: crate::backend::application::system::TaskCancelParams,
+) -> RuntimeAppResult<crate::backend::application::system::TaskView> {
     let service = AppService::from_runtime(&state.runtime);
     service.cancel_public_task(params)
 }
@@ -3713,8 +3735,8 @@ pub(crate) fn cancel_public_task(
 #[tauri::command]
 pub(crate) async fn retry_public_task(
     state: State<'_, AppState>,
-    params: crate::backend::dto::TaskRetryParams,
-) -> RuntimeAppResult<crate::backend::dto::TaskView> {
+    params: crate::backend::application::system::TaskRetryParams,
+) -> RuntimeAppResult<crate::backend::application::system::TaskView> {
     let service = AppService::from_runtime(&state.runtime);
     service.retry_public_task(params).await
 }
@@ -3722,7 +3744,7 @@ pub(crate) async fn retry_public_task(
 #[tauri::command]
 pub(crate) fn clear_terminal_tasks(
     state: State<'_, AppState>,
-    params: crate::backend::dto::TaskClearParams,
+    params: crate::backend::application::system::TaskClearParams,
 ) -> RuntimeAppResult<usize> {
     let service = AppService::from_runtime(&state.runtime);
     service.clear_terminal_tasks(params)
@@ -3731,8 +3753,8 @@ pub(crate) fn clear_terminal_tasks(
 #[tauri::command]
 pub(crate) fn agent_session_get(
     state: State<'_, AppState>,
-    params: crate::backend::dto::AgentSessionGetParams,
-) -> RuntimeAppResult<crate::backend::dto::AgentSessionGetResult> {
+    params: crate::backend::application::agents::AgentSessionGetParams,
+) -> RuntimeAppResult<crate::backend::application::agents::AgentSessionGetResult> {
     let service = AppService::from_runtime(&state.runtime);
     service.get_agent_session(params)
 }

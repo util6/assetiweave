@@ -4,7 +4,8 @@
 //! 最终将格式化的 JSON 响应写回标准输出 (stdout) 的标准 Stdio 协议循环。
 
 use super::{policy, protocol, registry as command_registry, runtime};
-use crate::backend::runtime::{AppError, WireError};
+use crate::backend::application::AppError;
+use crate::backend::domain::AppErrorView as WireError;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};

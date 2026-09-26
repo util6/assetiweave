@@ -3,8 +3,8 @@
 //! 定义 CLI Engine 暴露的所有命令契约元数据（规范方法名、风险等级 CommandRisk、暴露范围 CommandExposure、参数 Schema 及处理器绑定）。
 
 use super::protocol;
+use crate::backend::application::AppError;
 use crate::backend::application::AppService;
-use crate::backend::runtime::AppError;
 use schemars::{generate::SchemaSettings, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1009,7 +1009,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Write,
         Friendly,
         true,
-        crate::backend::conversations::ExternalAdapterScaffoldParams,
+        crate::backend::infrastructure::conversations::ExternalAdapterScaffoldParams,
         Service => |service, params| service.scaffold_conversation_adapter(params),
         &[
             param!("directory", "Directory where scaffold files will be created"),
@@ -1029,7 +1029,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Read,
         Friendly,
         false,
-        crate::backend::conversations::ExternalAdapterValidateParams,
+        crate::backend::infrastructure::conversations::ExternalAdapterValidateParams,
         Service => |service, params| service.validate_conversation_adapter(params),
         &[param!("manifest_path", "Adapter manifest path", ["manifestPath"])],
         None
@@ -1053,7 +1053,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         HighRiskWrite,
         Friendly,
         true,
-        crate::backend::conversations::ExternalAdapterRegisterParams,
+        crate::backend::infrastructure::conversations::ExternalAdapterRegisterParams,
         ServiceAsync => |service, params| service.register_conversation_adapter(params).await,
         &[
             param!("manifest_path", "Adapter manifest path", ["manifestPath"]),
@@ -1085,7 +1085,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         HighRiskWrite,
         Friendly,
         false,
-        crate::backend::conversations::ExternalAdapterTryRunParams,
+        crate::backend::infrastructure::conversations::ExternalAdapterTryRunParams,
         ServiceAsync => |service, params| service.try_run_conversation_adapter(params).await,
         &[
             param!("manifest_path", "Adapter manifest path", ["manifestPath"]),
@@ -1531,7 +1531,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Read,
         Friendly,
         false,
-        crate::backend::conversations::ConversationCommandProjectionParams,
+        crate::backend::infrastructure::conversations::ConversationCommandProjectionParams,
         ServiceAsync => |service, params| service.project_conversation_command_parts(params).await,
         &[
             param!("adapter_id", "Source conversation adapter identifier", ["adapterId"]),
@@ -2720,7 +2720,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Write,
         App,
         false,
-        crate::backend::conversations::ExternalAdapterScaffoldParams,
+        crate::backend::infrastructure::conversations::ExternalAdapterScaffoldParams,
         Service => |service, params| service.scaffold_conversation_adapter(params),
         &[
             param!("directory", "Directory where scaffold files will be created"),
@@ -2740,7 +2740,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Read,
         App,
         false,
-        crate::backend::conversations::ExternalAdapterValidateParams,
+        crate::backend::infrastructure::conversations::ExternalAdapterValidateParams,
         Service => |service, params| service.validate_conversation_adapter(params),
         &[param!("manifest_path", "Adapter manifest path", ["manifestPath"])],
         None
@@ -2764,7 +2764,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Write,
         Friendly,
         false,
-        crate::backend::card_translation::ConversationTranslationRequest,
+        crate::backend::application::conversations::card_translation::ConversationTranslationRequest,
         ServiceAsync => |service, params| service.translate_conversation_card(params).await,
         &[
             param!("provider", "Translation provider family"),
@@ -2781,7 +2781,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Write,
         Friendly,
         false,
-        crate::backend::card_translation::PromptOptimizationRequest,
+        crate::backend::application::conversations::card_translation::PromptOptimizationRequest,
         ServiceAsync => |service, params| service.optimize_prompt(params).await,
         &[
             param!("provider", "AI provider family"),
@@ -2822,7 +2822,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Read,
         App,
         false,
-        crate::backend::agent_market::types::AgentMarketListRequest,
+        crate::backend::infrastructure::agent_market::AgentMarketListRequest,
         ServiceAsync => |service, params| service.list_agent_market(params).await,
         &[
             param!("query", "Optional Agent search query"),
@@ -2862,7 +2862,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Read,
         App,
         false,
-        crate::backend::agent_market::types::AgentInstallPreviewRequest,
+        crate::backend::infrastructure::agent_market::AgentInstallPreviewRequest,
         ServiceAsync => |service, params| service.preview_agent_installation(params).await,
         &[
             param!("agentId", "Curated Agent identifier", ["agent_id"]),
@@ -2914,7 +2914,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         HighRiskWrite,
         Friendly,
         false,
-        crate::backend::agent_market::types::AgentInstallStartRequest,
+        crate::backend::infrastructure::agent_market::AgentInstallStartRequest,
         ServiceAsync => |service, params| service.install_agent(params).await,
         &[
             param!("agentId", "Curated Agent identifier", ["agent_id"]),
@@ -2933,7 +2933,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         HighRiskWrite,
         Friendly,
         false,
-        crate::backend::agent_market::types::AgentUninstallStartRequest,
+        crate::backend::infrastructure::agent_market::AgentUninstallStartRequest,
         ServiceAsync => |service, params| service.uninstall_agent(params).await,
         &[
             param!("agentId", "Installed Agent identifier", ["agent_id"]),
@@ -2973,7 +2973,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Read,
         App,
         false,
-        crate::backend::agents::types::AgentConnectionCheckRequest,
+        crate::backend::application::agents::AgentConnectionCheckRequest,
         ServiceAsync => |service, params| service.check_agent_connection(params).await,
         &[
             param!("agent_id", "Registered Agent identifier", ["agentId"]),
@@ -3000,7 +3000,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Read,
         App,
         false,
-        crate::backend::agents::types::AgentModelsRequest,
+        crate::backend::application::agents::AgentModelsRequest,
         ServiceAsync => |service, params| service.list_agent_models(params).await,
         &[
             param!("agent_id", "Registered Agent identifier", ["agentId"])
@@ -3038,7 +3038,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Write,
         App,
         false,
-        crate::backend::card_translation::OpencodeTranslationRequest,
+        crate::backend::application::conversations::card_translation::OpencodeTranslationRequest,
         ServiceAsync => |service, params| service.translate_conversation_card_with_opencode(params).await,
         &[param!("prompt", "Rendered translation prompt passed to the OpenCode ACP agent")],
         None
@@ -3050,7 +3050,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Write,
         App,
         false,
-        crate::backend::card_translation::ConversationTranslationRequest,
+        crate::backend::application::conversations::card_translation::ConversationTranslationRequest,
         ServiceAsync => |service, params| service.translate_conversation_card(params).await,
         &[
             param!("provider", "Translation provider family"),
@@ -3067,7 +3067,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Write,
         App,
         false,
-        crate::backend::card_translation::PromptOptimizationRequest,
+        crate::backend::application::conversations::card_translation::PromptOptimizationRequest,
         ServiceAsync => |service, params| service.optimize_prompt(params).await,
         &[
             param!("provider", "AI provider family"),
@@ -3096,7 +3096,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Read,
         App,
         false,
-        crate::backend::card_translation::ConversationTranslationConnectionRequest,
+        crate::backend::application::conversations::card_translation::ConversationTranslationConnectionRequest,
         ServiceAsync => |service, params| service.test_conversation_translation_connection(params).await,
         &[
             param!("provider", "Translation provider family"),
@@ -3113,7 +3113,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Read,
         App,
         false,
-        crate::backend::card_translation::ConversationTranslationModelsRequest,
+        crate::backend::application::conversations::card_translation::ConversationTranslationModelsRequest,
         Service => |service, params| service.list_conversation_translation_models(params),
         &[
             param!("provider", "Translation provider family"),
@@ -3128,7 +3128,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         HighRiskWrite,
         App,
         false,
-        crate::backend::conversations::ExternalAdapterRegisterParams,
+        crate::backend::infrastructure::conversations::ExternalAdapterRegisterParams,
         ServiceAsync => |service, params| service.register_conversation_adapter(params).await,
         &[
             param!("manifest_path", "Adapter manifest path", ["manifestPath"]),
@@ -3160,7 +3160,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         HighRiskWrite,
         App,
         false,
-        crate::backend::conversations::ExternalAdapterTryRunParams,
+        crate::backend::infrastructure::conversations::ExternalAdapterTryRunParams,
         ServiceAsync => |service, params| service.try_run_conversation_adapter(params).await,
         &[
             param!("manifest_path", "Adapter manifest path", ["manifestPath"]),
@@ -3575,7 +3575,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Read,
         App,
         false,
-        crate::backend::conversations::ConversationCommandProjectionParams,
+        crate::backend::infrastructure::conversations::ConversationCommandProjectionParams,
         ServiceAsync => |service, params| service.project_conversation_command_parts(params).await,
         &[
             param!("adapter_id", "Source conversation adapter identifier", ["adapterId"]),
@@ -3957,7 +3957,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Read,
         App,
         false,
-        crate::backend::dto::TaskListParams,
+        crate::backend::application::system::TaskListParams,
         Service => |service, params| service.list_public_tasks(params),
         &[
             param!("tenant_id", "Tenant identifier", ["tenantId"]),
@@ -3973,7 +3973,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Read,
         App,
         false,
-        crate::backend::dto::TaskGetParams,
+        crate::backend::application::system::TaskGetParams,
         Service => |service, params| service.get_public_task(params),
         &[param!("task_id", "Task identifier", ["taskId"])],
         None
@@ -3985,7 +3985,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Write,
         App,
         false,
-        crate::backend::dto::TaskCancelParams,
+        crate::backend::application::system::TaskCancelParams,
         Service => |service, params| service.cancel_public_task(params),
         &[param!("task_id", "Task identifier", ["taskId"])],
         None
@@ -3997,7 +3997,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Write,
         App,
         false,
-        crate::backend::dto::TaskRetryParams,
+        crate::backend::application::system::TaskRetryParams,
         ServiceAsync => |service, params| service.retry_public_task(params).await,
         &[param!("task_id", "Task identifier", ["taskId"])],
         None
@@ -4009,7 +4009,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Write,
         App,
         false,
-        crate::backend::dto::TaskClearParams,
+        crate::backend::application::system::TaskClearParams,
         Service => |service, params| service.clear_terminal_tasks(params),
         &[
             param!("tenant_id", "Tenant identifier", ["tenantId"]),
