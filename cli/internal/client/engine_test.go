@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -335,3 +336,124 @@ func assertTypedProblem(t *testing.T, err error, category errs.Category, subtype
 	}
 	return problem
 }
+
+func TestFindWorkspaceEngineFromWorkspaceRootAndSubdirectory(t *testing.T) {
+	wsDir := t.TempDir()
+	pkgJSON := filepath.Join(wsDir, "package.json")
+	if err := os.WriteFile(pkgJSON, []byte(`{"name":"assetiweave"}`), 0o600); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	targetDir := filepath.Join(wsDir, "target", "debug")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("mkdir target/debug: %v", err)
+	}
+	engineFile := filepath.Join(targetDir, executableName("assetiweave-engine"))
+	if err := os.WriteFile(engineFile, []byte("binary"), 0o755); err != nil {
+		t.Fatalf("write fake engine: %v", err)
+	}
+
+	// 1. From workspace root
+	found := findWorkspaceEngineFrom(wsDir)
+	if found != engineFile {
+		t.Fatalf("findWorkspaceEngineFrom(root) = %q, want %q", found, engineFile)
+	}
+
+	// 2. From nested subdirectory
+	subDir := filepath.Join(wsDir, "cli", "internal", "client")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir subDir: %v", err)
+	}
+	foundSub := findWorkspaceEngineFrom(subDir)
+	if foundSub != engineFile {
+		t.Fatalf("findWorkspaceEngineFrom(subDir) = %q, want %q", foundSub, engineFile)
+	}
+
+	// 3. Non-workspace dir returns empty
+	otherDir := t.TempDir()
+	if foundOther := findWorkspaceEngineFrom(otherDir); foundOther != "" {
+		t.Fatalf("findWorkspaceEngineFrom(otherDir) = %q, want empty", foundOther)
+	}
+}
+
+func TestResolvePathPrioritizesWorkspaceEngineOverLookPath(t *testing.T) {
+	wsDir := t.TempDir()
+	pkgJSON := filepath.Join(wsDir, "package.json")
+	if err := os.WriteFile(pkgJSON, []byte(`{"name":"assetiweave"}`), 0o600); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	targetDir := filepath.Join(wsDir, "target", "debug")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("mkdir target/debug: %v", err)
+	}
+	workspaceEngine := filepath.Join(targetDir, executableName("assetiweave-engine"))
+	if err := os.WriteFile(workspaceEngine, []byte("workspace-engine"), 0o755); err != nil {
+		t.Fatalf("write fake engine: %v", err)
+	}
+
+	fakeBinDir := t.TempDir()
+	globalEngine := filepath.Join(fakeBinDir, executableName("assetiweave-engine"))
+	if err := os.WriteFile(globalEngine, []byte("global-engine"), 0o755); err != nil {
+		t.Fatalf("write fake global engine: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(wsDir); err != nil {
+		t.Fatalf("chdir wsDir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	t.Setenv("PATH", fakeBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ASSETIWEAVE_ENGINE", "")
+
+	client := &EngineClient{}
+	resolved, err := client.resolvePath()
+	if err != nil {
+		t.Fatalf("resolvePath() error = %v", err)
+	}
+	realResolved, err := filepath.EvalSymlinks(resolved)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(resolved): %v", err)
+	}
+	realWorkspaceEngine, err := filepath.EvalSymlinks(workspaceEngine)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(workspaceEngine): %v", err)
+	}
+	if realResolved != realWorkspaceEngine {
+		t.Fatalf("resolvePath() = %q, want workspace engine %q (not global %q)", realResolved, realWorkspaceEngine, globalEngine)
+	}
+}
+
+func TestCallTranslatesMigrationMissingError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock shell script requires POSIX shell")
+	}
+
+	tempDir := t.TempDir()
+	fakeEngine := filepath.Join(tempDir, "fake-outdated-engine")
+	script := "#!/bin/sh\n" +
+		"echo 'failed to initialize Engine AppRuntime: migration 202609260001 was previously applied but is missing in the resolved migrations' >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(fakeEngine, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake engine script: %v", err)
+	}
+
+	client := NewEngineClient(fakeEngine)
+	_, err := client.Call(context.Background(), "profile.list", map[string]any{})
+	if err == nil {
+		t.Fatal("Call() error = nil, want migration error")
+	}
+
+	problem := assertTypedProblem(t, err, errs.CategoryEngine, errs.SubtypeEngineProcess)
+	if problem.Code != "engine_migration_outdated" {
+		t.Fatalf("problem.Code = %q, want 'engine_migration_outdated'", problem.Code)
+	}
+	if !strings.Contains(problem.Hint, "cargo build -p assetiweave --bin assetiweave-engine or pnpm cli:install") {
+		t.Fatalf("problem.Hint = %q, want hint to mention cargo build and pnpm cli:install", problem.Hint)
+	}
+}
+

@@ -83,7 +83,15 @@ func (c *EngineClient) Call(ctx context.Context, method string, params any) (Cal
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return CallResult{}, errs.NewEngineError(errs.SubtypeEngineProcess, "engine process failed: %v; stderr: %s", err, stderr.String()).
+		stderrStr := stderr.String()
+		stdoutStr := stdout.String()
+		if strings.Contains(stderrStr, "missing in the resolved migrations") || strings.Contains(stdoutStr, "missing in the resolved migrations") {
+			return CallResult{}, errs.NewEngineError(errs.SubtypeEngineProcess, "engine process failed: %v; stderr: %s", err, stderrStr).
+				WithCode("engine_migration_outdated").
+				WithHint("In assetiweave workspace, run: cargo build -p assetiweave --bin assetiweave-engine or pnpm cli:install").
+				WithCause(err)
+		}
+		return CallResult{}, errs.NewEngineError(errs.SubtypeEngineProcess, "engine process failed: %v; stderr: %s", err, stderrStr).
 			WithCode("engine_error").
 			WithHint("run `assetiweave-cli doctor` for local diagnostics").
 			WithCause(err)
@@ -253,6 +261,9 @@ func (c *EngineClient) resolvePath() (string, error) {
 	if envPath := os.Getenv("ASSETIWEAVE_ENGINE"); envPath != "" {
 		return envPath, nil
 	}
+	if wsEngine := findWorkspaceEngine(); wsEngine != "" {
+		return wsEngine, nil
+	}
 	if path, err := exec.LookPath("assetiweave-engine"); err == nil {
 		return path, nil
 	}
@@ -273,6 +284,59 @@ func (c *EngineClient) resolvePath() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("assetiweave-engine not found")
+}
+
+func findWorkspaceEngine() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return findWorkspaceEngineFrom(cwd)
+}
+
+func findWorkspaceEngineFrom(startDir string) string {
+	dir := filepath.Clean(startDir)
+	for {
+		if isAssetIWeaveWorkspace(dir) {
+			candidates := []string{
+				filepath.Join(dir, "target", "debug", executableName("assetiweave-engine")),
+				filepath.Join(dir, "src-tauri", "target", "debug", executableName("assetiweave-engine")),
+			}
+			for _, candidate := range candidates {
+				if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+					return candidate
+				}
+			}
+			return ""
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
+func isAssetIWeaveWorkspace(dir string) bool {
+	pkgPath := filepath.Join(dir, "package.json")
+	if data, err := os.ReadFile(pkgPath); err == nil {
+		var pkg struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(data, &pkg); err == nil && pkg.Name == "assetiweave" {
+			return true
+		}
+	}
+
+	tauriCargo := filepath.Join(dir, "src-tauri", "Cargo.toml")
+	if info, err := os.Stat(tauriCargo); err == nil && !info.IsDir() {
+		cargoPath := filepath.Join(dir, "Cargo.toml")
+		if cData, err := os.ReadFile(cargoPath); err == nil && strings.Contains(string(cData), "src-tauri") {
+			return true
+		}
+	}
+	return false
 }
 
 func executableName(name string) string {
