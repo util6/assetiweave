@@ -147,6 +147,20 @@ pub enum ConversationPartKind {
     Metadata,
 }
 
+impl ConversationPartKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::CodeBlock => "code",
+            Self::Command => "command",
+            Self::Tool => "tool",
+            Self::FileChange => "file_change",
+            Self::Subagent => "subagent",
+            Self::Metadata => "metadata",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationGroupingOrigin {

@@ -77,6 +77,7 @@ const (
 	MethodConversationSearchIndexStatus       = "conversation.search.index.status"
 	MethodConversationSearchIndexRebuild      = "conversation.search.index.rebuild"
 	MethodConversationSessionGet              = "conversation.session.get"
+	MethodConversationSessionOutline          = "conversation.session.outline"
 	MethodConversationSessionExport           = "conversation.session.export"
 	MethodConversationWebRecordList           = "conversation.web-record.list"
 	MethodConversationWebRecordGet            = "conversation.web-record.get"

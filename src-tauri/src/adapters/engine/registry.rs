@@ -1624,6 +1624,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation session get <session-id>")
     ),
     command!(
+        "conversation.session.outline",
+        "conversation.session.outline",
+        "Get compact conversation session outline tree with consecutive card run folding",
+        Read,
+        Friendly,
+        false,
+        crate::backend::application::ConversationSessionOutlineParams,
+        ServiceAsync => |service, params| service.get_conversation_session_outline(params).await,
+        &[param!("id", "Session, question, turn, or card identifier", ["id", "anyId"])],
+        Some("assetiweave-cli conversation session outline <any-id>")
+    ),
+    command!(
         "conversation.session.export",
         "conversation.session.export",
         "Export one conversation session as rendered Markdown or raw JSON facts",
@@ -3593,6 +3605,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         crate::backend::application::ConversationSessionGetParams,
         ServiceAsync => |service, params| service.get_conversation_session(params).await,
         &[param!("session_id", "Session identifier", ["sessionId"])],
+        None
+    ),
+    command!(
+        "get_conversation_session_outline",
+        "conversation.session.outline",
+        "Get compact conversation session outline tree with consecutive card run folding",
+        Read,
+        App,
+        false,
+        crate::backend::application::ConversationSessionOutlineParams,
+        ServiceAsync => |service, params| service.get_conversation_session_outline(params).await,
+        &[param!("id", "Session, question, turn, or card identifier", ["id", "anyId"])],
         None
     ),
     command!(

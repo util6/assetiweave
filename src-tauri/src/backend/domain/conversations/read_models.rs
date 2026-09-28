@@ -142,6 +142,29 @@ pub struct ConversationSessionDetail {
     pub questions: Vec<ConversationQuestionDetail>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ConversationSessionOutline {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub turns: Vec<ConversationTurnOutline>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ConversationTurnOutline {
+    pub turn_id: String,
+    pub turn_index: usize,
+    pub user_question: String,
+    pub cards: Vec<ConversationCardRunGroup>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ConversationCardRunGroup {
+    pub card_kind: String,
+    pub count: usize,
+    pub card_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchRetrievalMode {

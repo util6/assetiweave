@@ -241,3 +241,115 @@ pub(crate) async fn resolve_conversation_part_id_prefix_sqlx(
     }
     Ok(rows[0].clone())
 }
+
+pub(crate) async fn resolve_any_id_to_session_id_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    any_id: &str,
+) -> StoreResult<(ConversationRecordKind, String)> {
+    let trimmed = any_id.trim();
+    if trimmed.is_empty() {
+        return Err(StoreError::Validation(
+            "identifier cannot be empty".to_string(),
+        ));
+    }
+
+    let clean_hash = trimmed
+        .strip_prefix("conversation-session-")
+        .or_else(|| trimmed.strip_prefix("conversation-question-"))
+        .or_else(|| trimmed.strip_prefix("conversation-turn-"))
+        .or_else(|| trimmed.strip_prefix("conversation-part-"))
+        .or_else(|| trimmed.strip_prefix("web-record-session-"))
+        .or_else(|| trimmed.strip_prefix("web-record-question-"))
+        .or_else(|| trimmed.strip_prefix("web-record-turn-"))
+        .or_else(|| trimmed.strip_prefix("web-record-part-"))
+        .unwrap_or(trimmed);
+
+    let verbatim_like = format!("{trimmed}%");
+    let hash_like = format!("%-{clean_hash}%");
+
+    let query = r#"
+        WITH candidates AS (
+            SELECT s.id AS session_id, 'session' AS kind
+            FROM conversation_sessions s
+            WHERE s.tenant_id = ?1 AND (s.id = ?2 OR s.id LIKE ?3 OR s.id LIKE ?4)
+            UNION
+            SELECT q.session_id, 'session' AS kind
+            FROM conversation_questions q
+            WHERE q.tenant_id = ?1 AND (q.id = ?2 OR q.id LIKE ?3 OR q.id LIKE ?4)
+            UNION
+            SELECT t.session_id, 'session' AS kind
+            FROM conversation_turns t
+            WHERE t.tenant_id = ?1 AND (t.id = ?2 OR t.id LIKE ?3 OR t.id LIKE ?4)
+            UNION
+            SELECT t.session_id, 'session' AS kind
+            FROM conversation_parts p
+            JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
+            WHERE p.tenant_id = ?1 AND (p.id = ?2 OR p.id LIKE ?3 OR p.id LIKE ?4)
+            UNION
+            SELECT s.id AS session_id, 'web' AS kind
+            FROM web_record_sessions s
+            WHERE s.tenant_id = ?1 AND (s.id = ?2 OR s.id LIKE ?3 OR s.id LIKE ?4)
+            UNION
+            SELECT q.session_id, 'web' AS kind
+            FROM web_record_questions q
+            WHERE q.tenant_id = ?1 AND (q.id = ?2 OR q.id LIKE ?3 OR q.id LIKE ?4)
+            UNION
+            SELECT t.session_id, 'web' AS kind
+            FROM web_record_turns t
+            WHERE t.tenant_id = ?1 AND (t.id = ?2 OR t.id LIKE ?3 OR t.id LIKE ?4)
+            UNION
+            SELECT t.session_id, 'web' AS kind
+            FROM web_record_parts p
+            JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
+            WHERE p.tenant_id = ?1 AND (p.id = ?2 OR p.id LIKE ?3 OR p.id LIKE ?4)
+        )
+        SELECT session_id, kind FROM candidates LIMIT 11
+    "#;
+
+    let rows: Vec<(String, String)> = sqlx::query_as(query)
+        .bind(tenant_id)
+        .bind(trimmed)
+        .bind(&verbatim_like)
+        .bind(&hash_like)
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::external)?;
+
+    if rows.is_empty() {
+        return Err(StoreError::NotFound(format!(
+            "no session or card found matching identifier {:?}",
+            any_id
+        )));
+    }
+
+    if rows.len() > 1 {
+        let max_display = std::cmp::min(rows.len(), 5);
+        let examples = rows[..max_display]
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let indicator = if rows.len() > 5 { "..." } else { "" };
+        return Err(StoreError::Conflict(format!(
+            "ambiguous identifier {:?}: {} sessions match (e.g. {}{})",
+            any_id,
+            if rows.len() > 10 {
+                "10+".to_string()
+            } else {
+                rows.len().to_string()
+            },
+            examples,
+            indicator
+        )));
+    }
+
+    let (session_id, kind_str) = &rows[0];
+    let kind = if kind_str == "web" {
+        ConversationRecordKind::Web
+    } else {
+        ConversationRecordKind::Session
+    };
+
+    Ok((kind, session_id.clone()))
+}

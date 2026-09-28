@@ -89,6 +89,7 @@
     "conversation.search.index.status",
     "conversation.search.index.rebuild",
     "conversation.session.get",
+    "conversation.session.outline",
     "conversation.session.export",
     "conversation.web-record.list",
     "conversation.web-record.get",
@@ -227,6 +228,7 @@
     "list_conversation_sessions",
     "project_conversation_command_parts",
     "get_conversation_session",
+    "get_conversation_session_outline",
     "export_conversation_session",
     "list_web_record_sessions",
     "get_web_record_session",
@@ -4550,6 +4552,36 @@
         "additionalProperties": false
       },
       "cli": "assetiweave-cli conversation session get <session-id>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "conversation.session.outline",
+      "canonical_method": "conversation.session.outline",
+      "description": "Get compact conversation session outline tree with consecutive card run folding",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Session, question, turn, or card identifier",
+            "aliases": [
+              "id",
+              "anyId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli conversation session outline <any-id>",
       "since": "0.1.0",
       "deprecated": false
     },
@@ -11099,6 +11131,36 @@
             "description": "Session identifier",
             "aliases": [
               "sessionId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "get_conversation_session_outline",
+      "canonical_method": "conversation.session.outline",
+      "description": "Get compact conversation session outline tree with consecutive card run folding",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Session, question, turn, or card identifier",
+            "aliases": [
+              "id",
+              "anyId"
             ]
           }
         },

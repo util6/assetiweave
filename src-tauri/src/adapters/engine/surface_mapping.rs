@@ -341,6 +341,11 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
+        canonical_method: "conversation.session.outline",
+        tauri_command: Some("get_conversation_session_outline"),
+        note: None,
+    },
+    SurfaceMapping {
         canonical_method: "conversation.session.list",
         tauri_command: Some("list_conversation_sessions"),
         note: None,

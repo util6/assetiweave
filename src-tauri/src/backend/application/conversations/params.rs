@@ -248,6 +248,12 @@ pub(crate) struct ConversationSessionGetParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConversationSessionOutlineParams {
+    #[serde(alias = "anyId")]
+    pub(crate) id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ConversationSessionExportParams {
     #[serde(alias = "sessionId")]
     pub(crate) session_id: String,

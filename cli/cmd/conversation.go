@@ -1328,6 +1328,7 @@ func newCmdConversationSession(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{Use: "session", Short: "Browse and export conversation sessions"}
 	cmd.AddCommand(newCmdConversationSessionList(f))
 	cmd.AddCommand(newCmdConversationSessionGet(f))
+	cmd.AddCommand(newCmdConversationSessionOutline(f))
 	cmd.AddCommand(newCmdConversationSessionExport(f))
 	return cmd
 }
@@ -1373,6 +1374,18 @@ func newCmdConversationSessionGet(f *cmdutil.Factory) *cobra.Command {
 		},
 	}
 }
+
+func newCmdConversationSessionOutline(f *cmdutil.Factory) *cobra.Command {
+	return &cobra.Command{
+		Use:   "outline <any-id>",
+		Short: "Get compact session outline tree with consecutive card folding (accepts any ID or 8-hex prefix)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodConversationSessionOutline, map[string]any{"id": args[0]})
+		},
+	}
+}
+
 
 func newCmdConversationSessionExport(f *cmdutil.Factory) *cobra.Command {
 	var outputRoot string

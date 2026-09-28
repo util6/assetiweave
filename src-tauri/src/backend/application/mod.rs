@@ -47,8 +47,9 @@ pub(crate) use conversations::{
         ConversationQuestionSplitParams, ConversationScriptCatalogParams,
         ConversationScriptInstallParams, ConversationSearchParams, ConversationSearchResult,
         ConversationSessionExportParams, ConversationSessionGetParams,
-        ConversationSessionListParams, ConversationSourceDisableParams,
-        ConversationSourceUpsertParams, ConversationSyncMode, ConversationSyncParams,
+        ConversationSessionListParams, ConversationSessionOutlineParams,
+        ConversationSourceDisableParams, ConversationSourceUpsertParams, ConversationSyncMode,
+        ConversationSyncParams,
     },
 };
 pub(crate) use memory::params::{

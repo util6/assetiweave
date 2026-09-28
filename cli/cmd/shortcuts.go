@@ -69,6 +69,7 @@ var commandAliases = map[string][]string{
 	"members":        {"ms"},
 	"merge":          {"mg"},
 	"mount":          {"mt"},
+	"outline":        {"ot", "out"},
 	"overview":       {"ov", "o"},
 	"package":        {"pkg"},
 	"part":           {"pt"},
