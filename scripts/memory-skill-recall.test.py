@@ -29,8 +29,24 @@ def success(data):
 
 if args == ["version"]:
     success({"cli_version": "0.6.1", "engine_version": "0.6.1", "compatible": True})
+elif args == ["schema"]:
+    import os
+    missing = os.environ.get("MOCK_MISSING_CONTRACT")
+    methods = [
+        "memory.recent.snapshot.get",
+        "memory.context.resolve",
+        "memory.project.get",
+        "memory.recall.search",
+        "memory.recall.session.create",
+        "memory.recall.session.get",
+        "memory.recall.turn.send",
+        "memory.recall.turn.cancel",
+    ]
+    if missing:
+        methods = [m for m in methods if m != missing]
+    success({"methods": methods})
 elif args[:1] == ["schema"]:
-    success({"method": args[1]})
+    success({"method": args[1] if len(args) > 1 else ""})
 elif args[:3] == ["memory", "recall", "search"]:
     query = args[args.index("--query") + 1]
     limit = args[args.index("--limit") + 1]
@@ -112,6 +128,22 @@ else:
                 "memory.recall.turn.cancel",
             ],
         )
+
+    def test_doctor_fails_when_contract_is_missing(self):
+        environment = os.environ.copy()
+        environment["ASSETIWEAVE_CLI"] = str(self.cli)
+        environment["MOCK_MISSING_CONTRACT"] = "memory.recall.turn.send"
+        completed = subprocess.run(
+            ["python3", str(SCRIPT), "doctor"],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        self.assertEqual(completed.returncode, 3)
+        payload = json.loads(completed.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("memory.recall.turn.send", payload["error"]["message"])
 
     def test_search_uses_the_new_recall_contract_and_scope(self):
         completed, payload = self.run_script(

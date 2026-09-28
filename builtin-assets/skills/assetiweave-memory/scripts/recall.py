@@ -64,10 +64,14 @@ def doctor() -> dict[str, Any]:
     version = call_cli(["version"]).get("data", {})
     if version.get("compatible") is False:
         raise RecallError("AssetIWeave CLI and Engine report incompatible protocol contracts")
+    schema_index = call_cli(["schema"]).get("data", {})
+    available_methods = set(schema_index.get("methods") or [])
+    for command in schema_index.get("commands") or []:
+        if isinstance(command, dict) and "method" in command:
+            available_methods.add(command["method"])
     contracts = []
     for method in CONTRACTS:
-        value = call_cli(["schema", method]).get("data", {})
-        if value.get("method") != method:
+        if method not in available_methods:
             raise RecallError(f"AssetIWeave contract is missing: {method}")
         contracts.append(method)
     return {
