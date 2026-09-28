@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-09-19T00:00:00Z",
+  "updated_at": "2026-09-28T00:00:00Z",
   "items": [
     {
       "id": "io.github.util6.codex-session",
@@ -16,7 +16,7 @@
         "codex",
         "node"
       ],
-      "expected_package_hash": "49e97db8f7dbfd0cc18b4e794fbe8633902e90a83d871318a12b3f2ff4cca5b4",
+      "expected_package_hash": "acbdbe385670b60b868ff36b06ac752a792f91481fed2178e974b188a19e8920",
       "expected_content_hash": "51053c265f4a4c158e2ac6a7f2f0671203e7001452f83b39a2694b832d4bdcc8",
       "source": {
         "type": "github",

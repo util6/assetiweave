@@ -3,29 +3,59 @@ use crate::backend::infrastructure::tasks::{
     StageStatus, TaskKind, TaskRuntime, TaskSpec, TaskState,
 };
 
+#[tokio::test(flavor = "current_thread")]
+async fn task_process_fixture() {
+    match std::env::var("ASSETIWEAVE_TASK_PROCESS_FIXTURE").as_deref() {
+        Ok("stream-ndjson") => {
+            println!(r#"{{"type":"progress","current":5,"total":10,"note":"正在转换"}}"#);
+            println!(r#"{{"type":"metric","code":"converted_files","value":5}}"#);
+            println!(
+                r#"{{"type":"activity","worker_id":"worker-1","operation":"transforming","display_path":"a.md"}}"#
+            );
+            println!(r#"{{"type":"skipped","reason_code":"ignore_hidden","sample":".git"}}"#);
+            println!(r#"{{"type":"result_summary","summary":"完成 5 个文件转换"}}"#);
+        }
+        Ok("exit-42") => {
+            eprintln!("something broke");
+            std::process::exit(42);
+        }
+        Ok("sleep-10") => {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
+        _ => {}
+    }
+}
+
+fn fixture_process_spec(mode: &str, stage_id: &str) -> ProcessCommandSpec {
+    ProcessCommandSpec::new(
+        std::env::current_exe().expect("resolve test binary"),
+        stage_id,
+    )
+    .args([
+        "--exact",
+        "backend::infrastructure::tasks::task_process::tests::task_process_fixture",
+        "--nocapture",
+    ])
+    .env("ASSETIWEAVE_TASK_PROCESS_FIXTURE", mode)
+}
+
 #[tokio::test]
 async fn process_runner_streams_ndjson_protocol_and_updates_stage() {
     let runtime = TaskRuntime::with_runtime_handle(tokio::runtime::Handle::current());
     let spec = TaskSpec::new(TaskKind::Other, None).with_task_id("proc-task-1");
 
-    let script = r#"
-echo '{"type":"progress","current":5,"total":10,"note":"正在转换"}'
-echo '{"type":"metric","code":"converted_files","value":5}'
-echo '{"type":"activity","worker_id":"worker-1","operation":"transforming","display_path":"a.md"}'
-echo '{"type":"skipped","reason_code":"ignore_hidden","sample":".git"}'
-echo '{"type":"result_summary","summary":"完成 5 个文件转换"}'
-"#;
-
-    let proc_spec = ProcessCommandSpec::new("/bin/sh", "transform")
-        .arg("-c")
-        .arg(script);
-
+    let proc_spec = fixture_process_spec("stream-ndjson", "transform");
     let _handle = runtime.run_process(spec, proc_spec).expect("run process");
 
-    // 等待子进程执行完毕
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut snap = runtime.get("proc-task-1").expect("snapshot exists");
+    for _ in 0..60 {
+        if snap.state.is_terminal() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        snap = runtime.get("proc-task-1").expect("snapshot exists");
+    }
 
-    let snap = runtime.get("proc-task-1").expect("snapshot exists");
     assert_eq!(snap.state, TaskState::Succeeded);
     assert_eq!(snap.result_summary.as_deref(), Some("完成 5 个文件转换"));
 
@@ -62,15 +92,18 @@ async fn process_runner_handles_non_zero_exit_code() {
     let runtime = TaskRuntime::with_runtime_handle(tokio::runtime::Handle::current());
     let spec = TaskSpec::new(TaskKind::Other, None).with_task_id("proc-task-fail");
 
-    let proc_spec = ProcessCommandSpec::new("/bin/sh", "build")
-        .arg("-c")
-        .arg("echo 'something broke' >&2; exit 42");
-
+    let proc_spec = fixture_process_spec("exit-42", "build");
     let _handle = runtime.run_process(spec, proc_spec).expect("run process");
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut snap = runtime.get("proc-task-fail").expect("snapshot exists");
+    for _ in 0..60 {
+        if snap.state.is_terminal() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        snap = runtime.get("proc-task-fail").expect("snapshot exists");
+    }
 
-    let snap = runtime.get("proc-task-fail").expect("snapshot exists");
     assert_eq!(snap.state, TaskState::Failed);
 
     let stage = snap
@@ -92,23 +125,24 @@ async fn process_runner_kills_child_process_on_cancellation() {
     let runtime = TaskRuntime::with_runtime_handle(tokio::runtime::Handle::current());
     let spec = TaskSpec::new(TaskKind::Other, None).with_task_id("proc-task-cancel");
 
-    // 运行长达 10 秒的子进程
-    let proc_spec = ProcessCommandSpec::new("/bin/sh", "long_job")
-        .arg("-c")
-        .arg("sleep 10");
-
+    let proc_spec = fixture_process_spec("sleep-10", "long_job");
     let handle = runtime.run_process(spec, proc_spec).expect("run process");
 
     // 等待子进程真正拉起
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // 发起取消
     handle.cancel();
 
-    // 等待 kill 与退出
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut snap = runtime.get("proc-task-cancel").expect("snapshot exists");
+    for _ in 0..60 {
+        if snap.state.is_terminal() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        snap = runtime.get("proc-task-cancel").expect("snapshot exists");
+    }
 
-    let snap = runtime.get("proc-task-cancel").expect("snapshot exists");
     assert_eq!(snap.state, TaskState::Canceled);
 
     let stage = snap

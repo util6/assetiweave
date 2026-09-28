@@ -137,7 +137,9 @@ impl ProcessRunner {
         let wrap = wrap.wrap(JobObject);
 
         let mut child = wrap.spawn().map_err(|e| {
-            InfraError::external(format!("启动子进程失败 ({}): {e}", spec.program.display()))
+            let msg = format!("启动子进程失败 ({}): {e}", spec.program.display());
+            guard.fail("spawn_error", &msg, false);
+            InfraError::external(msg)
         })?;
 
         let stdout = child
