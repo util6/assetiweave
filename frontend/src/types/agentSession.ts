@@ -309,7 +309,8 @@ export type SessionItemKind =
 
 export type SessionEventDelivery = "live" | "replay";
 export type SessionItemState = "running" | "completed" | "failed" | "cancelled";
-export type SessionTaskStatus = "pending" | "in_progress" | "completed" | "failed";
+export type SessionTaskStatus =
+  "pending" | "in_progress" | "completed" | "failed";
 
 export interface SessionItemIdentity {
   session_id?: string;

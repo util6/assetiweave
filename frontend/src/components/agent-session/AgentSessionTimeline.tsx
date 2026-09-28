@@ -117,9 +117,7 @@ export function AgentSessionTimeline({
           }
           icon={emptyIcon || <MessageSquare size={21} />}
           title={
-            emptyTitle ||
-            t("agentSession.emptyTitle") ||
-            "No activity yet"
+            emptyTitle || t("agentSession.emptyTitle") || "No activity yet"
           }
         />
       )}

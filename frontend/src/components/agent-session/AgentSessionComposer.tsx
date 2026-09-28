@@ -127,10 +127,7 @@ export function AgentSessionComposer({
           disabled={disabled || (isExecuting && !capabilities?.queue)}
           onChange={(e) => onDraftChange?.(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={
-            placeholder ||
-            t("agentSession.composerPlaceholder")
-          }
+          placeholder={placeholder || t("agentSession.composerPlaceholder")}
           rows={2}
           value={draft}
         />
@@ -176,9 +173,7 @@ export function AgentSessionComposer({
           </Button>
         ) : (
           <Button
-            aria-label={
-              submitLabel || t("agentSession.send")
-            }
+            aria-label={submitLabel || t("agentSession.send")}
             data-testid={`${testIdPrefix}-send`}
             disabled={!canSend || disabled || !draft.trim()}
             size="sm"
