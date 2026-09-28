@@ -249,7 +249,6 @@ function MemoryRecallView() {
   );
 }
 
-
 function UnderConstructionView() {
   const { onManualOpen } = useWorkspaceContext();
   return <UnderConstructionPage onManualOpen={onManualOpen} />;
@@ -339,7 +338,6 @@ export const memoryRecallRoute = createRoute({
   component: MemoryRecallView,
   pendingComponent: ColumnsPending,
 });
-
 
 export const underConstructionRoute = createRoute({
   getParentRoute: () => rootRoute,

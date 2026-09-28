@@ -428,7 +428,9 @@ describe("TaskCenterModal", () => {
     );
 
     // 验证分类文本在列表项与详情头部均正确渲染
-    expect(screen.getAllByText("custom/pipeline-run").length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText("custom/pipeline-run").length,
+    ).toBeGreaterThanOrEqual(1);
 
     // 验证 skipped 徽标
     expect(screen.getByText("已跳过")).toBeTruthy();

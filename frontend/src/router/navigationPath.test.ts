@@ -46,7 +46,6 @@ describe("navigationPath", () => {
     expect(navigationPath(model, "recall")).toBe("/memory/recall");
   });
 
-
   it("routes retired conversation tabs and unimplemented tabs to /under-construction", () => {
     const model = {
       ...fallbackNavigationModel,

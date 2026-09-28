@@ -164,7 +164,9 @@ function TaskCenterModalContent({
         const query = searchQuery.trim().toLowerCase();
         const matchesTitle = (task.title ?? "").toLowerCase().includes(query);
         const matchesId = (task.id ?? "").toLowerCase().includes(query);
-        const matchesCategory = (task.category ?? "").toLowerCase().includes(query);
+        const matchesCategory = (task.category ?? "")
+          .toLowerCase()
+          .includes(query);
         const matchesKind =
           (task.kind ?? "").toLowerCase().includes(query) || matchesCategory;
         return matchesTitle || matchesId || matchesKind;
@@ -356,7 +358,9 @@ function TaskCenterModalContent({
                         </div>
 
                         <div className="mt-1 flex items-center gap-2 text-code-sm text-on-surface-variant">
-                          <span className="capitalize">{task.category || task.kind}</span>
+                          <span className="capitalize">
+                            {task.category || task.kind}
+                          </span>
                           <span className="text-on-surface-muted">•</span>
                           <span>{formatTimeShort(startedAt)}</span>
                         </div>
