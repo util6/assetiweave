@@ -218,3 +218,86 @@ fn map_memory_recall_question_ref(row: &SqliteRow) -> StoreResult<MemoryRecallQu
         question_index: row.try_get("question_index")?,
     })
 }
+
+pub(crate) async fn filter_valid_recall_sessions_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    record_kind: MemoryRecordKind,
+    session_ids: &[String],
+) -> StoreResult<std::collections::BTreeSet<String>> {
+    if session_ids.is_empty() {
+        return Ok(std::collections::BTreeSet::new());
+    }
+    let session_ids_json = serde_json::to_string(session_ids).map_err(StoreError::external)?;
+    let (sessions_table, extra_filter) = match record_kind {
+        MemoryRecordKind::Session => (
+            "conversation_sessions",
+            "AND s.user_visible = 1 AND s.execution_origin != 'internal_memory'",
+        ),
+        MemoryRecordKind::Web => ("web_record_sessions", ""),
+    };
+    let sql = format!(
+        r#"
+        SELECT s.id
+        FROM {sessions_table} s
+        JOIN conversation_sources source ON source.tenant_id = s.tenant_id AND source.id = s.source_id
+        WHERE s.tenant_id = ?1
+          AND s.missing = 0
+          AND source.enabled = 1
+          AND source.adapter_id <> 'assetiweave-memory-recall'
+          {extra_filter}
+          AND s.id IN (SELECT value FROM json_each(?2))
+        "#
+    );
+    let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(tenant_id)
+        .bind(session_ids_json)
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::external)?;
+    Ok(rows.into_iter().collect())
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub(crate) struct RecallPartFacts {
+    pub question_id: String,
+    pub kind: String,
+    pub text: Option<String>,
+    pub command: Option<String>,
+    pub cwd: Option<String>,
+    pub command_label: Option<String>,
+    pub metadata_json: Option<String>,
+    pub status: Option<String>,
+    pub exit_code: Option<i64>,
+}
+
+pub(crate) async fn load_recall_parts_for_questions_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    record_kind: MemoryRecordKind,
+    question_ids: &[String],
+) -> StoreResult<Vec<RecallPartFacts>> {
+    if question_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let question_ids_json = serde_json::to_string(question_ids).map_err(StoreError::external)?;
+    let parts_table = match record_kind {
+        MemoryRecordKind::Session => "conversation_parts",
+        MemoryRecordKind::Web => "web_record_parts",
+    };
+    let sql = format!(
+        r#"
+        SELECT p.question_id, p.kind, p.text, p.command, p.cwd, p.command_label, p.metadata_json, p.status, p.exit_code
+        FROM {parts_table} p
+        WHERE p.tenant_id = ?1
+          AND p.question_id IN (SELECT value FROM json_each(?2))
+        "#
+    );
+    let rows: Vec<RecallPartFacts> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(tenant_id)
+        .bind(question_ids_json)
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::external)?;
+    Ok(rows)
+}

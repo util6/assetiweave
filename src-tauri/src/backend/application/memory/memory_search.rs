@@ -1,9 +1,8 @@
 pub(crate) use super::memory_search_matching::*;
 use crate::backend::application::prelude::*;
 use crate::backend::application::{AppError, AppResult};
-use crate::backend::domain::ConversationPart;
 
-const RECALL_SEARCH_MAX_CORPUS: usize = 512;
+const RECALL_SEARCH_CANDIDATE_LIMIT: usize = 32;
 const RECALL_SEARCH_MAX_LIMIT: usize = 128;
 
 impl AppService {
@@ -11,10 +10,28 @@ impl AppService {
         &self,
         params: MemoryRecallSearchParams,
     ) -> AppResult<MemoryRecallSearchResult> {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.search_memory_recall_inner(params),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(AppError::Timeout(
+                "Memory recall search timed out after 2s".to_string(),
+            )),
+        }
+    }
+
+    async fn search_memory_recall_inner(
+        &self,
+        params: MemoryRecallSearchParams,
+    ) -> AppResult<MemoryRecallSearchResult> {
         validate_recall_search_params(&params)?;
         let query = params.query.trim().to_string();
         let limit = params.limit.unwrap_or(24).clamp(1, RECALL_SEARCH_MAX_LIMIT);
-        let corpus = self.load_recall_search_corpus(&params).await?;
+        let candidate_limit = limit.max(20).min(RECALL_SEARCH_CANDIDATE_LIMIT);
+
         let mut hits = BTreeMap::<String, MemoryRecallSearchHit>::new();
         let mut lexical_backends = BTreeSet::new();
 
@@ -40,25 +57,90 @@ impl AppService {
                     since: params.since.clone(),
                     until: params.until.clone(),
                     timeline: false,
-                    limit: Some(RECALL_SEARCH_MAX_LIMIT),
+                    limit: Some(candidate_limit),
                     offset: Some(0),
                     search_options: None,
                 })
                 .await?;
+
+            if result.hits.is_empty() {
+                continue;
+            }
             lexical_backends.insert(result.backend);
-            for hit in result.hits {
-                let reference = MemoryRecallQuestionRef {
+
+            // Batch validate candidate sessions (missing = 0, source enabled = 1, adapter != assetiweave-memory-recall)
+            let session_ids = result
+                .hits
+                .iter()
+                .map(|hit| hit.session.session.id.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+
+            let valid_session_ids = crate::backend::store::filter_valid_recall_sessions_sqlx(
+                self.db.pool(),
+                self.tenant_id(),
+                record_kind,
+                &session_ids,
+            )
+            .await
+            .map_err(AppError::Store)?;
+
+            let candidate_hits: Vec<_> = result
+                .hits
+                .into_iter()
+                .filter(|hit| valid_session_ids.contains(&hit.session.session.id))
+                .collect();
+
+            if candidate_hits.is_empty() {
+                continue;
+            }
+
+            // Batch filter by hints (file, command, error) if present
+            let has_hints =
+                params.file.is_some() || params.command.is_some() || params.error.is_some();
+            let matching_question_ids = if has_hints {
+                let candidate_question_ids = candidate_hits
+                    .iter()
+                    .map(|h| h.question_id.clone())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                let parts = crate::backend::store::load_recall_parts_for_questions_sqlx(
+                    self.db.pool(),
+                    self.tenant_id(),
                     record_kind,
-                    source_id: hit.session.session.source_id.clone(),
-                    session_id: hit.session.session.id.clone(),
-                    session_title: hit.session.session.title.clone(),
-                    project_path: hit.session.session.project_path.clone(),
-                    question_id: hit.question_id.clone(),
-                    question_index: hit.question_index,
-                };
-                let Some(document) = self.load_recall_search_document(reference).await? else {
-                    continue;
-                };
+                    &candidate_question_ids,
+                )
+                .await
+                .map_err(AppError::Store)?;
+
+                let mut parts_by_question =
+                    BTreeMap::<String, Vec<crate::backend::store::RecallPartFacts>>::new();
+                for part in parts {
+                    parts_by_question
+                        .entry(part.question_id.clone())
+                        .or_default()
+                        .push(part);
+                }
+                let mut matched = BTreeSet::new();
+                for (q_id, q_parts) in parts_by_question {
+                    if part_facts_match_search_hints(&q_parts, &params) {
+                        matched.insert(q_id);
+                    }
+                }
+                Some(matched)
+            } else {
+                None
+            };
+
+            for hit in candidate_hits {
+                if let Some(ref matched_ids) = matching_question_ids {
+                    if !matched_ids.contains(&hit.question_id) {
+                        continue;
+                    }
+                }
+
                 let key = recall_locator_key(
                     record_kind,
                     &hit.session.session.id,
@@ -67,9 +149,7 @@ impl AppService {
                     hit.part_id.as_deref(),
                     &hit.block_id,
                 );
-                if !document_matches_search_hints(&document, &params) {
-                    continue;
-                }
+
                 merge_recall_search_hit(
                     &mut hits,
                     key,
@@ -89,89 +169,10 @@ impl AppService {
                         lexical_score: hit.score as u64,
                         semantic_score: 0,
                         score: (hit.score as u64).saturating_mul(RECALL_LEXICAL_WEIGHT),
-                        sources: vec!["lexical".to_string()],
+                        sources: vec!["tantivy_bm25".to_string()],
                     },
                 );
             }
-        }
-
-        let semantic_documents = corpus
-            .values()
-            .map(|document| {
-                crate::backend::infrastructure::search::memory_semantic::SemanticDocument {
-                    key: recall_question_key(&document.reference),
-                    text: document.search_text.clone(),
-                }
-            })
-            .collect::<Vec<_>>();
-        let semantic_matches =
-            crate::backend::infrastructure::search::memory_semantic::rank_documents(
-                &query,
-                &semantic_documents,
-                RECALL_SEARCH_MAX_CORPUS,
-            );
-        for semantic_match in semantic_matches {
-            let Some(document) = corpus.get(&semantic_match.key) else {
-                continue;
-            };
-            let part_documents = document
-                .parts
-                .iter()
-                .map(|part| {
-                    crate::backend::infrastructure::search::memory_semantic::SemanticDocument {
-                        key: part.block_id.clone(),
-                        text: part.content.clone(),
-                    }
-                })
-                .collect::<Vec<_>>();
-            let best_part =
-                crate::backend::infrastructure::search::memory_semantic::rank_documents(
-                    &query,
-                    &part_documents,
-                    1,
-                )
-                .into_iter()
-                .next()
-                .and_then(|matched| {
-                    document
-                        .parts
-                        .iter()
-                        .find(|part| part.block_id == matched.key)
-                        .map(|part| (part, matched.score))
-                });
-            let Some((part, part_score)) = best_part else {
-                continue;
-            };
-            let key = recall_locator_key(
-                document.reference.record_kind,
-                &document.reference.session_id,
-                &document.reference.question_id,
-                part.turn_id.as_deref(),
-                part.part_id.as_deref(),
-                &part.block_id,
-            );
-            merge_recall_search_hit(
-                &mut hits,
-                key,
-                MemoryRecallSearchHit {
-                    record_kind: document.reference.record_kind,
-                    source_id: document.reference.source_id.clone(),
-                    session_id: document.reference.session_id.clone(),
-                    session_title: document.reference.session_title.clone(),
-                    project_path: document.reference.project_path.clone(),
-                    question_id: document.reference.question_id.clone(),
-                    question_index: document.reference.question_index,
-                    turn_id: part.turn_id.clone(),
-                    part_id: part.part_id.clone(),
-                    block_id: part.block_id.clone(),
-                    card_type: part.card_type.clone(),
-                    snippet: leading_recall_snippet(&part.content),
-                    lexical_score: 0,
-                    semantic_score: part_score.max(semantic_match.score),
-                    score: part_score.max(semantic_match.score),
-                    sources: vec!["semantic".to_string()],
-                },
-            );
         }
 
         let mut hits = hits.into_values().collect::<Vec<_>>();
@@ -186,127 +187,18 @@ impl AppService {
         });
         let total_count = hits.len();
         let offset = params.offset.unwrap_or(0);
-        hits = hits.into_iter().skip(offset).take(limit).collect();
+        let hits = hits.into_iter().skip(offset).take(limit).collect();
         let backend = match lexical_backends.into_iter().collect::<Vec<_>>().as_slice() {
-            [] => "deterministic_semantic".to_string(),
-            backends => format!("hybrid({})+deterministic_semantic", backends.join("+")),
+            [] => "tantivy_bm25".to_string(),
+            backends => format!("tantivy_bm25({})", backends.join("+")),
         };
+
         Ok(MemoryRecallSearchResult {
             query,
             backend,
             total_count,
             hits,
         })
-    }
-
-    async fn load_recall_search_corpus(
-        &self,
-        params: &MemoryRecallSearchParams,
-    ) -> AppResult<BTreeMap<String, RecallSearchDocument>> {
-        let (total, references) = crate::backend::store::list_memory_recall_question_refs_sqlx(
-            self.db.pool(),
-            self.tenant_id(),
-            &params.scope,
-            params.since.as_deref(),
-            params.until.as_deref(),
-            false,
-            RECALL_SEARCH_MAX_CORPUS,
-            0,
-        )
-        .await
-        .map_err(AppError::external)?;
-        let _ = total;
-        let mut corpus = BTreeMap::new();
-        for reference in references {
-            if let Some(document) = self.load_recall_search_document(reference).await? {
-                if !document_matches_search_hints(&document, params) {
-                    continue;
-                }
-                corpus.insert(recall_question_key(&document.reference), document);
-            }
-        }
-        Ok(corpus)
-    }
-
-    async fn load_recall_search_document(
-        &self,
-        reference: MemoryRecallQuestionRef,
-    ) -> AppResult<Option<RecallSearchDocument>> {
-        let available = match reference.record_kind {
-            MemoryRecordKind::Session => {
-                sqlx::query_scalar::<_, i64>(
-                    "SELECT EXISTS(SELECT 1 FROM conversation_sessions s JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id WHERE s.tenant_id=?1 AND s.id=?2 AND s.missing=0 AND source.enabled=1 AND source.adapter_id <> 'assetiweave-memory-recall')",
-                )
-                .bind(self.tenant_id())
-                .bind(&reference.session_id)
-                .fetch_one(self.db.pool())
-                .await
-            }
-            MemoryRecordKind::Web => {
-                sqlx::query_scalar::<_, i64>(
-                    "SELECT EXISTS(SELECT 1 FROM web_record_sessions s JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id WHERE s.tenant_id=?1 AND s.id=?2 AND s.missing=0 AND source.enabled=1 AND source.adapter_id <> 'assetiweave-memory-recall')",
-                )
-                .bind(self.tenant_id())
-                .bind(&reference.session_id)
-                .fetch_one(self.db.pool())
-                .await
-            }
-        }
-        .map_err(AppError::Db)?;
-        if available != 1 {
-            return Ok(None);
-        }
-        let detail = self.load_recall_question(&reference).await?;
-        if detail.turns.iter().all(|turn| turn.missing) {
-            return Ok(None);
-        }
-        let parts = recall_evidence_parts(&detail);
-        let search_text = format!(
-            "{}\n{}\n{}",
-            reference.session_title,
-            detail.question.title.as_deref().unwrap_or_default(),
-            parts
-                .iter()
-                .map(|part| part.content.as_str())
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-        Ok(Some(RecallSearchDocument {
-            reference,
-            search_text,
-            parts,
-            source_parts: detail.parts,
-        }))
-    }
-
-    async fn load_recall_question(
-        &self,
-        reference: &MemoryRecallQuestionRef,
-    ) -> AppResult<crate::backend::domain::conversations::ConversationQuestionDetail> {
-        match reference.record_kind {
-            MemoryRecordKind::Session => {
-                self.get_conversation_question(
-                    crate::backend::application::ConversationQuestionGetParams {
-                        question_id: reference.question_id.clone(),
-                    },
-                )
-                .await
-            }
-            MemoryRecordKind::Web => self
-                .get_web_record_session(crate::backend::application::ConversationSessionGetParams {
-                    session_id: reference.session_id.clone(),
-                })
-                .await?
-                .questions
-                .into_iter()
-                .find(|detail| detail.question.id == reference.question_id)
-                .ok_or_else(|| {
-                    AppError::NotFound(format!(
-                        "web Recall question {} was not found",
-                        reference.question_id
-                    ))
-                }),
-        }
     }
 }
 

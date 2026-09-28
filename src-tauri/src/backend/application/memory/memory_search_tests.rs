@@ -375,3 +375,43 @@ async fn search_memory_recall_excluded_records() {
     drop(service);
     std::fs::remove_dir_all(root).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn search_memory_recall_performance_benchmark() {
+    let (service, root) = setup_fixture_service("perf-benchmark").await;
+    let (_source, _session_id) = insert_test_source_and_session(
+        &service,
+        "default",
+        "source-perf",
+        "session-perf",
+        "High Performance Database Migration Session",
+        "How do we handle fast database migration indexing?",
+        "Execute database migration carefully with schema updates and indexing.",
+    )
+    .await;
+
+    let params = MemoryRecallSearchParams {
+        query: "fast database migration indexing".to_string(),
+        scope: MemoryScope::default(),
+        since: None,
+        until: None,
+        file: None,
+        command: None,
+        error: None,
+        limit: Some(10),
+        offset: None,
+    };
+
+    let start = std::time::Instant::now();
+    let result = service.search_memory_recall(params).await.unwrap();
+    let elapsed = start.elapsed();
+    assert!(!result.hits.is_empty(), "expected hits");
+    assert!(
+        elapsed < std::time::Duration::from_millis(100),
+        "recall search must complete under 100ms, took {:?}",
+        elapsed
+    );
+
+    drop(service);
+    std::fs::remove_dir_all(root).ok();
+}

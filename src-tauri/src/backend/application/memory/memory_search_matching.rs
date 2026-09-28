@@ -145,6 +145,76 @@ pub(super) fn document_matches_search_hints(
     true
 }
 
+pub(super) fn part_facts_match_search_hints(
+    parts: &[crate::backend::store::RecallPartFacts],
+    params: &MemoryRecallSearchParams,
+) -> bool {
+    let contains_hint = |hint: Option<&String>, values: &[String]| {
+        hint.map(|value| value.trim())
+            .filter(|hint| !hint.is_empty())
+            .is_none_or(|hint| {
+                values
+                    .iter()
+                    .any(|value| value.to_lowercase().contains(&hint.to_lowercase()))
+            })
+    };
+    let values = parts
+        .iter()
+        .flat_map(|part| {
+            [
+                part.text.clone(),
+                part.command.clone(),
+                part.cwd.clone(),
+                part.command_label.clone(),
+                part.metadata_json.clone(),
+            ]
+            .into_iter()
+            .flatten()
+        })
+        .collect::<Vec<_>>();
+    if !contains_hint(params.file.as_ref(), &values) {
+        return false;
+    }
+    if let Some(command) = params
+        .command
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let command = command.to_lowercase();
+        if !parts
+            .iter()
+            .any(|part| part.kind == "command" || part.command.is_some())
+            || !values
+                .iter()
+                .any(|value| value.to_lowercase().contains(&command))
+        {
+            return false;
+        }
+    }
+    if let Some(error) = params
+        .error
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let error = error.to_lowercase();
+        if !parts.iter().any(|part| {
+            part.exit_code.is_some_and(|code| code != 0)
+                || part
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.to_lowercase().contains("error"))
+                || values
+                    .iter()
+                    .any(|value| value.to_lowercase().contains(&error))
+        }) {
+            return false;
+        }
+    }
+    true
+}
+
 pub(super) fn leading_recall_snippet(content: &str) -> String {
     content.chars().take(320).collect()
 }
