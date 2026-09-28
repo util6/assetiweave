@@ -198,24 +198,44 @@ pub(crate) async fn resolve_conversation_part_id_prefix_sqlx(
     tenant_id: &str,
     prefix_or_id: &str,
 ) -> StoreResult<String> {
-    if prefix_or_id.len() >= 36 {
-        return Ok(prefix_or_id.to_string());
+    let trimmed = prefix_or_id.trim();
+    if trimmed.is_empty() {
+        return Err(StoreError::Validation(
+            "part identifier cannot be empty".to_string(),
+        ));
     }
-    let clean_prefix = prefix_or_id
-        .strip_prefix("conversation-part-")
-        .unwrap_or(prefix_or_id);
-    let like_pattern_verbatim = format!("{}%", prefix_or_id);
-    let like_pattern_domain = format!("conversation-part-{}%", clean_prefix);
 
-    let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM conversation_parts WHERE tenant_id = ?1 AND (id LIKE ?2 OR id LIKE ?3) LIMIT 11",
-    )
-    .bind(tenant_id)
-    .bind(&like_pattern_verbatim)
-    .bind(&like_pattern_domain)
-    .fetch_all(pool)
-    .await
-    .map_err(StoreError::external)?;
+    let clean_hash = trimmed
+        .strip_prefix("conversation-part-")
+        .or_else(|| trimmed.strip_prefix("web-record-part-"))
+        .unwrap_or(trimmed);
+
+    let verbatim_like = format!("{trimmed}%");
+    let domain_like = format!("conversation-part-{clean_hash}%");
+    let web_like = format!("web-record-part-{clean_hash}%");
+    let hash_like = format!("%-{clean_hash}%");
+
+    let query = r#"
+        WITH candidates AS (
+            SELECT id FROM conversation_parts
+            WHERE tenant_id = ?1 AND (id = ?2 OR id LIKE ?3 OR id LIKE ?4 OR id LIKE ?5)
+            UNION
+            SELECT id FROM web_record_parts
+            WHERE tenant_id = ?1 AND (id = ?2 OR id LIKE ?3 OR id LIKE ?6 OR id LIKE ?5)
+        )
+        SELECT id FROM candidates LIMIT 11
+    "#;
+
+    let rows: Vec<String> = sqlx::query_scalar(query)
+        .bind(tenant_id)
+        .bind(trimmed)
+        .bind(&verbatim_like)
+        .bind(&domain_like)
+        .bind(&hash_like)
+        .bind(&web_like)
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::external)?;
 
     if rows.is_empty() {
         return Err(StoreError::NotFound(format!(

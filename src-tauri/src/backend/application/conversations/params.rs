@@ -245,6 +245,8 @@ pub(crate) struct ConversationSessionListParams {
 pub(crate) struct ConversationSessionGetParams {
     #[serde(alias = "sessionId")]
     pub(crate) session_id: String,
+    #[serde(default, alias = "roles")]
+    pub(crate) roles: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

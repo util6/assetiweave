@@ -64,9 +64,64 @@ impl AppService {
             &params.session_id,
         )
         .await?;
-        crate::backend::store::load_conversation_session_detail_sqlx(pool, tenant_id, &session_id)
-            .await
-            .map_err(AppError::external)
+        let mut detail = crate::backend::store::load_conversation_session_detail_sqlx(
+            pool,
+            tenant_id,
+            &session_id,
+        )
+        .await
+        .map_err(AppError::external)?;
+
+        if let Some(raw_roles) = params.roles {
+            let role_set: std::collections::HashSet<String> = raw_roles
+                .into_iter()
+                .flat_map(|r| {
+                    r.split(',')
+                        .map(|s| s.trim().to_lowercase())
+                        .collect::<Vec<_>>()
+                })
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            if !role_set.is_empty() {
+                let keep_questions = role_set.contains("question") || role_set.contains("user");
+                for q in &mut detail.questions {
+                    if !keep_questions {
+                        for turn in &mut q.turns {
+                            turn.user_text.clear();
+                        }
+                    }
+
+                    q.projected_content_nodes.retain(|node| {
+                        let kind = node.node_type.to_lowercase();
+                        let semantic = node
+                            .semantic_role
+                            .as_deref()
+                            .map(|s| s.to_lowercase())
+                            .unwrap_or_default();
+
+                        role_set.contains(&kind)
+                            || (!semantic.is_empty() && role_set.contains(&semantic))
+                            || (kind == "text" && role_set.contains("answer"))
+                    });
+
+                    q.parts.retain(|part| {
+                        let kind = part.kind.as_str().to_lowercase();
+                        let role = format!("{:?}", part.role).to_lowercase();
+
+                        role_set.contains(&kind)
+                            || role_set.contains(&role)
+                            || (part.role == ConversationPartRole::Assistant
+                                && part.kind == ConversationPartKind::Text
+                                && role_set.contains("answer"))
+                            || (part.role == ConversationPartRole::User
+                                && (role_set.contains("question") || role_set.contains("user")))
+                    });
+                }
+            }
+        }
+
+        Ok(detail)
     }
 
     pub(crate) async fn get_conversation_session_outline(

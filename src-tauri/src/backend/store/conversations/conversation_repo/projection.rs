@@ -316,7 +316,7 @@ pub(super) fn conversation_card_block_locator(
     }
 }
 
-pub(super) fn conversation_part_id_for_block_id(block_id: &str) -> &str {
+pub(crate) fn conversation_part_id_for_block_id(block_id: &str) -> &str {
     block_id
         .rsplit_once("-node-")
         .filter(|(_, order)| !order.is_empty() && order.chars().all(|value| value.is_ascii_digit()))

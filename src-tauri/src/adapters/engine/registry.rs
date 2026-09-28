@@ -1620,7 +1620,10 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         false,
         crate::backend::application::ConversationSessionGetParams,
         ServiceAsync => |service, params| service.get_conversation_session(params).await,
-        &[param!("session_id", "Session identifier", ["sessionId"])],
+        &[
+            param!("session_id", "Session identifier", ["sessionId"]),
+            param!("roles", "Filter cards by roles or kinds", ["roles"]),
+        ],
         Some("assetiweave-cli conversation session get <session-id>")
     ),
     command!(
@@ -3604,7 +3607,10 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         false,
         crate::backend::application::ConversationSessionGetParams,
         ServiceAsync => |service, params| service.get_conversation_session(params).await,
-        &[param!("session_id", "Session identifier", ["sessionId"])],
+        &[
+            param!("session_id", "Session identifier", ["sessionId"]),
+            param!("roles", "Filter cards by roles or kinds", ["roles"]),
+        ],
         None
     ),
     command!(

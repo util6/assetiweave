@@ -326,6 +326,9 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
 ) -> StoreResult<ConversationBlockDetail> {
     let tables = record_kind.tables();
     if let Some(turn_id) = block_id.strip_suffix("-question") {
+        let resolved_turn_id = resolve_conversation_turn_id_prefix_sqlx(pool, tenant_id, turn_id)
+            .await
+            .unwrap_or_else(|_| turn_id.to_string());
         let row = sqlx::query_as::<_, ConversationTurnWithQuestionRow>(AssertSqlSafe(format!(
             r#"
             SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
@@ -339,7 +342,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
             question_turns = tables.question_turns,
         )))
         .bind(tenant_id)
-        .bind(turn_id)
+        .bind(&resolved_turn_id)
         .fetch_optional(pool)
         .await
         .map_err(StoreError::external)?
@@ -356,7 +359,10 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         });
     }
 
-    let part_id = conversation_part_id_for_block_id(block_id);
+    let raw_part_id = conversation_part_id_for_block_id(block_id);
+    let resolved_part_id = resolve_conversation_part_id_prefix_sqlx(pool, tenant_id, raw_part_id)
+        .await
+        .unwrap_or_else(|_| raw_part_id.to_string());
     let row = sqlx::query_as::<_, ConversationPartDetailRow>(AssertSqlSafe(format!(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
@@ -373,7 +379,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         turns = tables.turns,
     )))
     .bind(tenant_id)
-    .bind(part_id)
+    .bind(&resolved_part_id)
     .fetch_optional(pool)
     .await
     .map_err(StoreError::external)?
@@ -394,10 +400,39 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
             &adapter_id,
             &card_kinds,
         )?;
+    if cards.is_empty() {
+        let content = part
+            .text
+            .clone()
+            .or_else(|| part.command.clone())
+            .unwrap_or_default();
+        let locator = ConversationBlockLocator {
+            record_kind: conversation_record_kind_label(record_kind).to_string(),
+            session_id: session_id.clone(),
+            question_id: question_id.clone(),
+            turn_id: part.turn_id.clone(),
+            block_id: block_id.to_string(),
+            part_id: Some(part.id.clone()),
+            kind: part.kind.as_str().to_string(),
+            semantic_role: None,
+            renderer: ConversationCardRenderer::Plain,
+            role: part.role,
+            content_length: content.chars().count(),
+            language: part.language.clone(),
+            cwd: part.cwd.clone(),
+            status: part.status.clone(),
+            exit_code: part.exit_code,
+        };
+        return Ok(ConversationBlockDetail {
+            locator,
+            content,
+            translated_content: part.translated_text.clone(),
+        });
+    }
     let card = cards
         .iter()
-        .find(|card| card.node_id == block_id)
-        .or_else(|| (block_id == part.id).then(|| cards.first()).flatten())
+        .find(|card| card.node_id == block_id || card.node_id == resolved_part_id)
+        .or_else(|| cards.first())
         .ok_or_else(|| {
             StoreError::external(format!(
                 "conversation block is not a readable content card: {block_id}"
@@ -405,7 +440,10 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         })?;
     let mut locator =
         conversation_card_block_locator(record_kind, &session_id, &question_id, &part, card);
-    if block_id == part.id {
+    if block_id == part.id
+        || raw_part_id == resolved_part_id
+        || crate::backend::domain::conversation_id_fragment(&part.id) == block_id
+    {
         locator.block_id = block_id.to_string();
     }
     Ok(ConversationBlockDetail {

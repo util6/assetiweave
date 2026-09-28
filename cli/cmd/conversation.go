@@ -1365,14 +1365,21 @@ func newCmdConversationSessionList(f *cmdutil.Factory) *cobra.Command {
 }
 
 func newCmdConversationSessionGet(f *cmdutil.Factory) *cobra.Command {
-	return &cobra.Command{
+	var roles []string
+	cmd := &cobra.Command{
 		Use:   "get <session-id>",
 		Short: "Get one session with question groups (accepts short ID prefix)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return callAndPrint(cmd, f, schema.MethodConversationSessionGet, map[string]any{"session_id": args[0]})
+			params := map[string]any{"session_id": args[0]}
+			if len(roles) > 0 {
+				params["roles"] = roles
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationSessionGet, params)
 		},
 	}
+	cmd.Flags().StringSliceVar(&roles, "roles", nil, "filter cards by roles or kinds (e.g. question,answer)")
+	return cmd
 }
 
 func newCmdConversationSessionOutline(f *cmdutil.Factory) *cobra.Command {

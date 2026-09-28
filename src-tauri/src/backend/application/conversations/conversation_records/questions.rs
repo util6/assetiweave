@@ -67,7 +67,27 @@ impl AppService {
         &self,
         params: ConversationBlockGetParams,
     ) -> AppResult<crate::backend::domain::conversations::ConversationBlockDetail> {
-        let record_kind = conversation_record_kind_from_locator(&params.block_id)?;
+        let record_kind = match conversation_record_kind_from_locator(&params.block_id) {
+            Ok(kind) => kind,
+            Err(_) => {
+                let pool = self.pool();
+                let tenant_id = self.tenant_id();
+                let raw_part_id =
+                    crate::backend::store::conversation_part_id_for_block_id(&params.block_id);
+                match crate::backend::store::resolve_any_id_to_session_id_sqlx(
+                    pool,
+                    tenant_id,
+                    raw_part_id,
+                )
+                .await
+                {
+                    Ok((kind, _)) => kind,
+                    Err(_) => {
+                        crate::backend::domain::conversations::ConversationRecordKind::Session
+                    }
+                }
+            }
+        };
         crate::backend::store::load_conversation_block_detail_sqlx(
             self.pool(),
             self.tenant_id(),

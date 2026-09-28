@@ -4547,6 +4547,20 @@
             "aliases": [
               "sessionId"
             ]
+          },
+          "roles": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "default": null,
+            "description": "Filter cards by roles or kinds",
+            "aliases": [
+              "roles"
+            ]
           }
         },
         "additionalProperties": false
@@ -4756,6 +4770,17 @@
             "aliases": [
               "sessionId"
             ]
+          },
+          "roles": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "default": null,
+            "description": "roles"
           }
         },
         "additionalProperties": false
@@ -11132,6 +11157,20 @@
             "aliases": [
               "sessionId"
             ]
+          },
+          "roles": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "default": null,
+            "description": "Filter cards by roles or kinds",
+            "aliases": [
+              "roles"
+            ]
           }
         },
         "additionalProperties": false
@@ -11341,6 +11380,17 @@
             "aliases": [
               "sessionId"
             ]
+          },
+          "roles": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "default": null,
+            "description": "roles"
           }
         },
         "additionalProperties": false
