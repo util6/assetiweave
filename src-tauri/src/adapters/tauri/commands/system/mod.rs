@@ -14,8 +14,8 @@ pub(crate) mod tenants;
 pub(crate) mod tools;
 
 pub(crate) use navigation::{
-    list_app_shortcut_settings, list_app_shortcuts, update_app_shortcuts,
-    get_navigation_model, update_navigation_model,
+    get_navigation_model, list_app_shortcut_settings, list_app_shortcuts, update_app_shortcuts,
+    update_navigation_model,
 };
 pub(crate) use settings::{
     cancel_app_close_prompt, complete_app_close, get_app_overview, get_app_settings,

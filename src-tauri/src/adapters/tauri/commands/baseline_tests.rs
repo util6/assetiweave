@@ -40,8 +40,10 @@ fn commands_rs_handler_matches_baseline_commands() {
 
     let baseline = load_baseline_commands();
 
-    let missing_in_registered: Vec<_> = baseline.difference(&registered_commands).copied().collect();
-    let unexpected_in_registered: Vec<_> = registered_commands.difference(&baseline).copied().collect();
+    let missing_in_registered: Vec<_> =
+        baseline.difference(&registered_commands).copied().collect();
+    let unexpected_in_registered: Vec<_> =
+        registered_commands.difference(&baseline).copied().collect();
 
     assert!(
         missing_in_registered.is_empty(),

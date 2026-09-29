@@ -1,7 +1,9 @@
 use tauri::State;
 
 use crate::adapters::app_state::AppState;
-use crate::backend::application::memory::{MemoryContextResult, MemoryProjectView, MemoryRebuildResult};
+use crate::backend::application::memory::{
+    MemoryContextResult, MemoryProjectView, MemoryRebuildResult,
+};
 use crate::backend::application::prelude::*;
 use crate::backend::application::AppResult as RuntimeAppResult;
 

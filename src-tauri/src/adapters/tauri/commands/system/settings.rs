@@ -17,7 +17,9 @@ pub(crate) async fn get_app_overview(state: State<'_, AppState>) -> RuntimeAppRe
 }
 
 #[tauri::command]
-pub(crate) async fn get_app_settings(state: State<'_, AppState>) -> RuntimeAppResult<AppSettingsFile> {
+pub(crate) async fn get_app_settings(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<AppSettingsFile> {
     AppService::from_runtime(&state.runtime)
         .get_app_settings()
         .await

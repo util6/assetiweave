@@ -1,9 +1,7 @@
 use tauri::{AppHandle, Emitter, State};
 
 use crate::adapters::app_state::AppState;
-use crate::adapters::tauri::background_tasks::{
-    BackgroundTaskStatus, BatchMountTaskSnapshot,
-};
+use crate::adapters::tauri::background_tasks::{BackgroundTaskStatus, BatchMountTaskSnapshot};
 use crate::backend::application::prelude::*;
 use crate::backend::application::AppResult as RuntimeAppResult;
 
