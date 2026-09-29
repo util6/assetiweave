@@ -8,9 +8,12 @@ pub(crate) mod catalog;
 pub(crate) mod conversations;
 pub(crate) mod memory;
 pub(crate) mod mounting;
+#[macro_use]
 pub(crate) mod system;
 
 pub(crate) const BASELINE_COMMAND_COUNT: usize = 191;
+
+pub(crate) use self::system::*;
 
 use crate::adapters::app_state::AppState;
 use crate::adapters::prompt_clipboard::{
@@ -115,165 +118,6 @@ type RuntimeAppResult<T> = crate::backend::application::AppResult<T>;
 
 pub(crate) const AI_EXECUTION_TASK_UPDATED_EVENT: &str = "ai-execution://task-updated";
 
-#[tauri::command]
-pub(crate) async fn set_app_window_icon(app: AppHandle, icon: Vec<u8>) -> RuntimeAppResult<()> {
-    set_application_icon(app, icon).map_err(AppError::external)
-}
-
-#[tauri::command]
-pub(crate) async fn get_app_overview(state: State<'_, AppState>) -> RuntimeAppResult<AppOverview> {
-    AppService::from_runtime(&state.runtime).overview().await
-}
-
-#[tauri::command]
-pub(crate) async fn list_tenants(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Tenant>> {
-    AppService::from_runtime(&state.runtime)
-        .list_tenants()
-        .await
-}
-
-#[tauri::command]
-pub(crate) async fn get_active_tenant(state: State<'_, AppState>) -> RuntimeAppResult<Tenant> {
-    AppService::from_runtime(&state.runtime)
-        .active_tenant()
-        .await
-}
-
-#[tauri::command]
-pub(crate) async fn create_tenant(
-    state: State<'_, AppState>,
-    params: TenantCreateParams,
-) -> RuntimeAppResult<Tenant> {
-    let tenant_name = params.name.clone();
-    let result = AppService::from_runtime(&state.runtime)
-        .create_tenant(params)
-        .await;
-    match &result {
-        Ok(tenant) => tracing::info!(
-            action = "tenant.create",
-            tenant_id = %tenant.id,
-            "创建租户成功"
-        ),
-        Err(error) => tracing::error!(
-            action = "tenant.create",
-            name = %tenant_name,
-            error = %error,
-            "创建租户失败"
-        ),
-    }
-    result
-}
-
-#[tauri::command]
-pub(crate) async fn switch_tenant(
-    state: State<'_, AppState>,
-    tenant_id: String,
-) -> RuntimeAppResult<Tenant> {
-    let result = AppService::from_runtime(&state.runtime)
-        .switch_tenant(tenant_id.clone())
-        .await;
-    match &result {
-        Ok(tenant) => tracing::info!(
-            action = "tenant.switch",
-            tenant_id = %tenant.id,
-            "切换租户成功"
-        ),
-        Err(error) => tracing::error!(
-            action = "tenant.switch",
-            tenant_id = %tenant_id,
-            error = %error,
-            "切换租户失败"
-        ),
-    }
-    result
-}
-
-#[tauri::command]
-pub(crate) async fn get_app_settings(
-    state: State<'_, AppState>,
-) -> RuntimeAppResult<crate::backend::infrastructure::app_settings::AppSettingsFile> {
-    AppService::from_runtime(&state.runtime)
-        .get_app_settings()
-        .await
-}
-
-#[tauri::command]
-pub(crate) async fn save_app_settings(
-    state: State<'_, AppState>,
-    settings: serde_json::Value,
-) -> RuntimeAppResult<crate::backend::infrastructure::app_settings::AppSettingsFile> {
-    AppService::from_runtime(&state.runtime)
-        .save_app_settings(settings)
-        .await
-}
-
-#[tauri::command]
-pub(crate) async fn initialize_app_locale_if_unset(
-    state: State<'_, AppState>,
-    locale: crate::backend::infrastructure::app_settings::AppLocale,
-) -> RuntimeAppResult<crate::backend::infrastructure::app_settings::AppSettingsFile> {
-    AppService::from_runtime(&state.runtime)
-        .initialize_app_locale_if_unset(locale)
-        .await
-}
-
-#[tauri::command]
-pub(crate) fn cancel_app_close_prompt(state: State<'_, AppState>) -> RuntimeAppResult<()> {
-    state
-        .exit_prompt_open
-        .store(false, std::sync::atomic::Ordering::SeqCst);
-    Ok(())
-}
-
-#[tauri::command]
-pub(crate) async fn complete_app_close(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    backup_database: bool,
-) -> RuntimeAppResult<()> {
-    let shutdown_sync_done = state.shutdown_sync_done.clone();
-    let exit_prompt_open = state.exit_prompt_open.clone();
-    let allow_close = state.allow_close.clone();
-    let allow_exit = state.allow_exit.clone();
-    let db_path = state.db_path.clone();
-    let background_tasks = state.background_tasks.clone();
-    let runtime = state.runtime.clone();
-
-    crate::converge_ai_executions_before_close(background_tasks).await;
-
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-
-    let unfinished_tasks = runtime.stop_tasks_until(deadline).await;
-    if !unfinished_tasks.is_empty() {
-        tracing::warn!(
-            action = "app.close.tasks",
-            unfinished_tasks = unfinished_tasks.len(),
-            "关闭前仍有后台任务未收敛"
-        );
-    }
-
-    if !shutdown_sync_done.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        crate::sync_before_close_with_runtime(&runtime, &db_path, backup_database).await;
-    }
-
-    let shutdown_report = runtime.shutdown_until(deadline).await;
-    if !shutdown_report.is_clean() {
-        tracing::warn!(
-            action = "app.close.runtime",
-            unfinished_tasks = shutdown_report.unfinished_task_ids.len(),
-            dispatcher_remaining_events = shutdown_report.dispatcher_remaining_events,
-            dispatcher_timed_out = shutdown_report.dispatcher_timed_out,
-            unfinished_stages = %shutdown_report.unfinished_stages.join(","),
-            "应用运行时在关闭期限内未完全收敛"
-        );
-    }
-
-    exit_prompt_open.store(false, std::sync::atomic::Ordering::SeqCst);
-    allow_close.store(true, std::sync::atomic::Ordering::SeqCst);
-    allow_exit.store(true, std::sync::atomic::Ordering::SeqCst);
-    app.exit(0);
-    Ok(())
-}
 
 #[tauri::command]
 pub(crate) async fn list_assets(
@@ -1144,93 +988,6 @@ pub(crate) async fn delete_profile(state: State<'_, AppState>, id: String) -> Ru
     result
 }
 
-#[tauri::command]
-pub(crate) async fn get_navigation_model(
-    state: State<'_, AppState>,
-) -> RuntimeAppResult<NavigationModel> {
-    AppService::from_runtime(&state.runtime)
-        .navigation_model()
-        .await
-}
-
-#[tauri::command]
-pub(crate) async fn update_navigation_model(
-    state: State<'_, AppState>,
-    model: NavigationModel,
-) -> RuntimeAppResult<NavigationModel> {
-    let active_rail_id = model.active_rail_id.clone();
-    let active_header_tab_id = model.active_header_tab_id.clone();
-    let active_sub_nav_id = model.active_sub_nav_id.clone();
-    let rail_count = model.rail_items.len();
-    let result = AppService::from_runtime(&state.runtime)
-        .update_navigation_model(model)
-        .await;
-
-    match &result {
-        Ok(_) => tracing::info!(
-            action = "navigation.update",
-            active_rail_id = %active_rail_id,
-            active_header_tab_id = %active_header_tab_id,
-            active_sub_nav_id = %active_sub_nav_id,
-            rail_count = rail_count,
-            "更新导航配置成功"
-        ),
-        Err(error) => tracing::error!(
-            action = "navigation.update",
-            active_rail_id = %active_rail_id,
-            active_header_tab_id = %active_header_tab_id,
-            active_sub_nav_id = %active_sub_nav_id,
-            rail_count = rail_count,
-            error = %error,
-            "更新导航配置失败"
-        ),
-    }
-    result
-}
-
-#[tauri::command]
-pub(crate) async fn list_app_shortcuts(
-    state: State<'_, AppState>,
-) -> RuntimeAppResult<Vec<AppShortcut>> {
-    AppService::from_runtime(&state.runtime)
-        .list_app_shortcuts()
-        .await
-}
-
-#[tauri::command]
-pub(crate) async fn list_app_shortcut_settings(
-    state: State<'_, AppState>,
-) -> RuntimeAppResult<Vec<AppShortcut>> {
-    AppService::from_runtime(&state.runtime)
-        .list_app_shortcut_settings()
-        .await
-}
-
-#[tauri::command]
-pub(crate) async fn update_app_shortcuts(
-    state: State<'_, AppState>,
-    shortcuts: Vec<AppShortcut>,
-) -> RuntimeAppResult<Vec<AppShortcut>> {
-    let shortcut_count = shortcuts.len();
-    let result = AppService::from_runtime(&state.runtime)
-        .update_app_shortcuts(shortcuts)
-        .await;
-
-    match &result {
-        Ok(shortcuts) => tracing::info!(
-            action = "settings.app_shortcuts.update",
-            shortcut_count = shortcuts.len(),
-            "更新 APP 快捷入口配置成功"
-        ),
-        Err(error) => tracing::error!(
-            action = "settings.app_shortcuts.update",
-            shortcut_count = shortcut_count,
-            error = %error,
-            "更新 APP 快捷入口配置失败"
-        ),
-    }
-    result
-}
 
 #[tauri::command]
 pub(crate) async fn list_asset_mounts(
@@ -3462,82 +3219,6 @@ pub(crate) async fn execute_plan(
     result
 }
 
-#[tauri::command]
-pub(crate) fn reveal_path(path: String) -> RuntimeAppResult<()> {
-    let result = crate::adapters::platform::reveal_path(path.clone());
-    match &result {
-        Ok(()) => tracing::info!(
-            action = "path.reveal",
-            resource = "filesystem_path",
-            "打开路径成功"
-        ),
-        Err(error) => tracing::error!(
-            action = "path.reveal",
-            resource = "filesystem_path",
-            error_code = %error.code(),
-            "打开路径失败"
-        ),
-    }
-    result
-}
-
-#[tauri::command]
-pub(crate) fn get_cli_tools_status(
-    app: AppHandle,
-) -> RuntimeAppResult<crate::adapters::cli_tools::CliToolsStatus> {
-    crate::adapters::cli_tools::status(&app)
-}
-
-#[tauri::command]
-pub(crate) fn install_cli_tools(
-    app: AppHandle,
-) -> RuntimeAppResult<crate::adapters::cli_tools::CliToolsStatus> {
-    let result = crate::adapters::cli_tools::install(&app);
-    match &result {
-        Ok(status) => tracing::info!(
-            action = "cli.install",
-            install_dir = %status.install_dir,
-            path_configured = status.path_configured,
-            "安装命令行工具成功"
-        ),
-        Err(error) => tracing::error!(
-            action = "cli.install",
-            error = %error,
-            "安装命令行工具失败"
-        ),
-    }
-    result
-}
-
-#[tauri::command]
-pub(crate) fn logs_get_snapshot(
-    state: State<'_, AppState>,
-    file_name: Option<String>,
-    line_limit: Option<usize>,
-) -> RuntimeAppResult<crate::backend::infrastructure::logs::LogSnapshot> {
-    AppService::from_runtime(&state.runtime).logs_get_snapshot(file_name, line_limit)
-}
-
-#[tauri::command]
-pub(crate) fn logs_open_log_directory(state: State<'_, AppState>) -> RuntimeAppResult<()> {
-    AppService::from_runtime(&state.runtime).logs_open_log_directory()
-}
-
-#[tauri::command]
-pub(crate) fn logs_write_operation(
-    state: State<'_, AppState>,
-    level: String,
-    operation: String,
-    message: String,
-    fields: Option<BTreeMap<String, String>>,
-) -> RuntimeAppResult<()> {
-    AppService::from_runtime(&state.runtime).logs_write_operation(level, operation, message, fields)
-}
-
-#[tauri::command]
-pub(crate) fn copy_prompt_card_to_clipboard(params: PromptClipboardParams) -> RuntimeAppResult<()> {
-    copy_prompt_card_to_clipboard_impl(params)
-}
 
 // Keep the generated Tauri command shims in this module so the existing
 // command handler remains a single, locally resolvable macro surface. The
@@ -3726,50 +3407,6 @@ pub(crate) async fn disable_agent(
     crate::adapters::tauri::agent_market::disable_agent(state, agent_id).await
 }
 
-#[tauri::command]
-pub(crate) fn list_public_tasks(
-    state: State<'_, AppState>,
-    params: crate::backend::application::system::TaskListParams,
-) -> RuntimeAppResult<Vec<crate::backend::application::system::TaskView>> {
-    let service = AppService::from_runtime(&state.runtime);
-    service.list_public_tasks(params)
-}
-
-#[tauri::command]
-pub(crate) fn get_public_task(
-    state: State<'_, AppState>,
-    params: crate::backend::application::system::TaskGetParams,
-) -> RuntimeAppResult<Option<crate::backend::application::system::TaskView>> {
-    let service = AppService::from_runtime(&state.runtime);
-    service.get_public_task(params)
-}
-
-#[tauri::command]
-pub(crate) fn cancel_public_task(
-    state: State<'_, AppState>,
-    params: crate::backend::application::system::TaskCancelParams,
-) -> RuntimeAppResult<crate::backend::application::system::TaskView> {
-    let service = AppService::from_runtime(&state.runtime);
-    service.cancel_public_task(params)
-}
-
-#[tauri::command]
-pub(crate) async fn retry_public_task(
-    state: State<'_, AppState>,
-    params: crate::backend::application::system::TaskRetryParams,
-) -> RuntimeAppResult<crate::backend::application::system::TaskView> {
-    let service = AppService::from_runtime(&state.runtime);
-    service.retry_public_task(params).await
-}
-
-#[tauri::command]
-pub(crate) fn clear_terminal_tasks(
-    state: State<'_, AppState>,
-    params: crate::backend::application::system::TaskClearParams,
-) -> RuntimeAppResult<usize> {
-    let service = AppService::from_runtime(&state.runtime);
-    service.clear_terminal_tasks(params)
-}
 
 #[tauri::command]
 pub(crate) fn agent_session_get(
