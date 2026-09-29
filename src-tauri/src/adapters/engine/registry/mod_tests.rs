@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
 #[test]
@@ -184,7 +185,7 @@ fn prompt_optimization_has_a_dedicated_public_contract() {
 #[test]
 fn committed_cli_contract_matches_registry() {
     let committed: Value = serde_json::from_str(include_str!(
-        "../../../../cli/internal/schema/contract.json"
+        "../../../../../cli/internal/schema/contract.json"
     ))
     .expect("parse committed CLI contract");
     assert_eq!(
