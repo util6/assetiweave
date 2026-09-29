@@ -6,6 +6,7 @@
 pub(crate) mod agents;
 pub(crate) mod catalog;
 pub(crate) mod conversations;
+#[macro_use]
 pub(crate) mod memory;
 pub(crate) mod mounting;
 #[macro_use]
@@ -13,6 +14,7 @@ pub(crate) mod system;
 
 pub(crate) const BASELINE_COMMAND_COUNT: usize = 191;
 
+pub(crate) use self::memory::*;
 pub(crate) use self::system::*;
 
 use crate::adapters::app_state::AppState;
@@ -137,159 +139,6 @@ pub(crate) async fn list_source_assets(
     AppService::from_runtime(&state.runtime)
         .list_source_assets(kind)
         .await
-}
-
-#[tauri::command]
-pub(crate) async fn get_memory_recent_snapshot(
-    state: State<'_, AppState>,
-) -> RuntimeAppResult<crate::backend::domain::RecentMemoryStateView> {
-    AppService::from_runtime(&state.runtime)
-        .get_recent_memory_snapshot()
-        .await
-        .into()
-}
-
-#[tauri::command]
-pub(crate) async fn duplicate_memory_generation_skill(
-    state: State<'_, AppState>,
-) -> RuntimeAppResult<crate::backend::domain::CatalogAsset> {
-    AppService::from_runtime(&state.runtime)
-        .duplicate_generation_skill_to_library()
-        .await
-        .into()
-}
-
-#[tauri::command]
-pub(crate) async fn reset_memory_generation_skill_to_default(
-    state: State<'_, AppState>,
-) -> RuntimeAppResult<()> {
-    AppService::from_runtime(&state.runtime)
-        .reset_generation_skill_to_default()
-        .await
-        .into()
-}
-
-#[tauri::command]
-pub(crate) async fn search_memory_recall(
-    state: State<'_, AppState>,
-    params: MemoryRecallSearchParams,
-) -> RuntimeAppResult<crate::backend::domain::MemoryRecallSearchResult> {
-    AppService::from_runtime(&state.runtime)
-        .search_memory_recall(params)
-        .await
-        .into()
-}
-
-#[tauri::command]
-pub(crate) async fn resolve_memory_context(
-    state: State<'_, AppState>,
-    params: MemoryContextResolveParams,
-) -> RuntimeAppResult<MemoryContextResult> {
-    AppService::from_runtime(&state.runtime)
-        .resolve_memory_context(params)
-        .await
-        .into()
-}
-
-#[tauri::command]
-pub(crate) async fn get_memory_project(
-    state: State<'_, AppState>,
-    params: MemoryProjectGetParams,
-) -> RuntimeAppResult<Option<MemoryProjectView>> {
-    AppService::from_runtime(&state.runtime)
-        .get_memory_project(params)
-        .await
-        .into()
-}
-
-#[tauri::command]
-pub(crate) async fn rebuild_memory_scope(
-    state: State<'_, AppState>,
-    params: MemoryScopeRebuildParams,
-) -> RuntimeAppResult<MemoryRebuildResult> {
-    AppService::from_runtime(&state.runtime)
-        .rebuild_memory_scope(params)
-        .await
-        .into()
-}
-
-#[tauri::command]
-pub(crate) fn list_memory_public_tasks(
-    state: State<'_, AppState>,
-    params: MemoryTaskListParams,
-) -> RuntimeAppResult<Vec<MemoryTaskView>> {
-    AppService::from_runtime(&state.runtime).list_memory_task_views(params)
-}
-
-#[tauri::command]
-pub(crate) fn get_memory_public_task(
-    state: State<'_, AppState>,
-    params: MemoryTaskGetParams,
-) -> RuntimeAppResult<Option<MemoryTaskView>> {
-    AppService::from_runtime(&state.runtime).get_memory_task_view(params)
-}
-
-#[tauri::command]
-pub(crate) fn cancel_memory_public_task(
-    state: State<'_, AppState>,
-    params: MemoryTaskGetParams,
-) -> RuntimeAppResult<MemoryTaskView> {
-    AppService::from_runtime(&state.runtime).cancel_memory_task_view(params)
-}
-
-#[tauri::command]
-pub(crate) async fn retry_memory_public_task(
-    state: State<'_, AppState>,
-    params: MemoryTaskRetryParams,
-) -> RuntimeAppResult<MemoryTaskView> {
-    AppService::from_runtime(&state.runtime)
-        .retry_memory_task(params)
-        .await
-        .into()
-}
-
-#[tauri::command]
-pub(crate) async fn create_memory_recall_session(
-    state: State<'_, AppState>,
-    params: MemoryRecallSessionCreateParams,
-) -> RuntimeAppResult<crate::backend::domain::MemoryRecallSession> {
-    AppService::from_runtime(&state.runtime)
-        .create_memory_recall_session(params)
-        .await
-        .into()
-}
-
-#[tauri::command]
-pub(crate) async fn get_memory_recall_session(
-    state: State<'_, AppState>,
-    params: MemoryRecallSessionGetParams,
-) -> RuntimeAppResult<crate::backend::domain::MemoryRecallSession> {
-    AppService::from_runtime(&state.runtime)
-        .get_memory_recall_session(params)
-        .await
-        .into()
-}
-
-#[tauri::command]
-pub(crate) async fn send_memory_recall_turn(
-    state: State<'_, AppState>,
-    params: MemoryRecallTurnSendParams,
-) -> RuntimeAppResult<crate::backend::domain::MemoryRecallSession> {
-    AppService::from_runtime(&state.runtime)
-        .send_memory_recall_turn(params)
-        .await
-        .into()
-}
-
-#[tauri::command]
-pub(crate) async fn cancel_memory_recall_turn(
-    state: State<'_, AppState>,
-    params: MemoryRecallTurnCancelParams,
-) -> RuntimeAppResult<crate::backend::domain::MemoryRecallSession> {
-    AppService::from_runtime(&state.runtime)
-        .cancel_memory_recall_turn(params)
-        .await
-        .into()
 }
 
 #[tauri::command]
