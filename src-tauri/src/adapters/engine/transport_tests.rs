@@ -864,9 +864,8 @@ fn registry_matches_tauri_handler_methods() {
         .parent()
         .expect("workspace root")
         .to_path_buf();
-    let tauri_command_source =
-        fs::read_to_string(workspace_root.join("src-tauri/src/adapters/tauri/commands.rs"))
-            .expect("read Tauri commands");
+    let commands_path = workspace_root.join("src-tauri/src/adapters/tauri/commands/mod.rs");
+    let tauri_command_source = fs::read_to_string(commands_path).expect("read Tauri commands");
     let mut tauri_handlers = extract_tauri_handler_methods(&tauri_command_source);
     let desktop_only = desktop_only_tauri_methods();
     for method in &desktop_only {

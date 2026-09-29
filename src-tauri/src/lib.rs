@@ -2,7 +2,7 @@ mod adapters;
 mod backend;
 
 use crate::{
-    adapters::{app_state::AppState, tauri::background_tasks::BackgroundTaskRegistry},
+    adapters::tauri::{background_tasks::BackgroundTaskRegistry, AppState},
     backend::{
         application::AppService,
         infrastructure::{
