@@ -1,5 +1,18 @@
 use super::*;
-use crate::backend::domain::agents::AgentId;
+use crate::backend::{
+    application::{
+        AgentMarketRefreshResult, ConversationAdapterPackageInstallParams,
+        ConversationAdapterPackageUninstallParams, ConversationScriptInstallParams,
+        ConversationSyncMode, ConversationSyncParams, SkillAcquireParams,
+    },
+    domain::agents::AgentId,
+    infrastructure::agent_execution::{
+        AiExecutionCancellation, AiExecutionError, AiExecutionPhase, AiExecutionPurpose,
+        AiExecutionResult,
+    },
+    infrastructure::agent_market::{LifecycleTaskPhase, LifecycleTaskState},
+};
+use chrono::Utc;
 
 fn params(record_kind: Option<&str>) -> ConversationSyncParams {
     ConversationSyncParams {
@@ -447,11 +460,21 @@ fn conversation_sync_progress_tracks_completed_and_current_sources() {
         .unwrap();
 
     let updated = registry
-        .update_conversation_sync_progress(&running.id, 1, 3, Some("Gemini Web".to_string()))
+        .update_conversation_sync_progress(
+            &running.id,
+            1,
+            3,
+            Some("Gemini Web".to_string()),
+            vec!["cursor".to_string()],
+        )
         .unwrap();
 
     assert_eq!(updated.progress.completed_source_count, 1);
     assert_eq!(updated.progress.total_source_count, 3);
+    assert_eq!(
+        updated.progress.completed_adapter_ids,
+        vec!["cursor".to_string()]
+    );
     assert_eq!(
         updated.progress.current_source_name.as_deref(),
         Some("Gemini Web")
@@ -1241,7 +1264,7 @@ fn projection_getter_returns_not_found_after_runtime_deletion() {
     assert!(registry.conversation_sync_snapshot().unwrap().is_none());
     assert!(registry.conversation_sync_snapshots().unwrap().is_empty());
     assert!(registry
-        .update_conversation_sync_progress(&task.id, 1, 1, None)
+        .update_conversation_sync_progress(&task.id, 1, 1, None, Vec::new())
         .is_err());
 }
 
