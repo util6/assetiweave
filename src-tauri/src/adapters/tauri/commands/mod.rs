@@ -25,107 +25,6 @@ pub(crate) use self::memory::*;
 pub(crate) use self::mounting::*;
 pub(crate) use self::system::*;
 
-use crate::adapters::app_state::AppState;
-use crate::adapters::prompt_clipboard::{
-    copy_prompt_card_to_clipboard as copy_prompt_card_to_clipboard_impl, PromptClipboardParams,
-};
-use crate::adapters::tauri::app_icon::set_application_icon;
-use crate::adapters::tauri::background_tasks::{
-    AiExecutionTaskGetParams, AiExecutionTaskSnapshot, BackgroundTaskRegistry,
-    BackgroundTaskStatus, BatchMountTaskSnapshot, ConversationDataMaintenanceTaskSnapshot,
-    ConversationScriptInstallTaskSnapshot, ConversationSearchIndexTaskSnapshot,
-    ConversationSyncTaskSnapshot, RemoteSkillAcquireTaskSnapshot, SkillBackupTaskSnapshot,
-    SourceScanScope, SourceScanTaskSnapshot,
-};
-#[cfg(test)]
-use crate::backend::application::{
-    catalog::{
-        catalog_ops::{assetiweave_library_source_with_root, build_catalog_assets},
-        source_scanner::{refresh_recorded_assets, scan_selected_sources},
-    },
-    mounting::{
-        groups::{
-            apply_skill_group_exclusive_mount_record, apply_skill_group_mount_record,
-            build_skill_group_exclusive_mount_preview_sqlx, exclusive_item,
-        },
-        mount_ops::{
-            mount_asset_mount_record, scan_asset_mount_statuses_sqlx, set_asset_mount_record,
-            sync_asset_mount_observations, unmount_asset_mount_record,
-        },
-        profile_ops::{ensure_profile_can_be_deleted_sqlx, target_profile_from_input},
-    },
-};
-use crate::{
-    backend::application::agents::{
-        AgentCatalogEntry, AgentConnectionCheckRequest, AgentConnectionResult, AgentModelsRequest,
-        AgentModelsResult,
-    },
-    backend::application::conversations::card_translation::{
-        ConversationTranslationConnectionRequest, ConversationTranslationModelsRequest,
-        ConversationTranslationModelsResult, ConversationTranslationRequest,
-        OpencodeTranslationAvailability, OpencodeTranslationRequest, OpencodeTranslationResult,
-        PromptOptimizationRequest, PromptOptimizationResult,
-    },
-    backend::application::{
-        conversations::card_translation::PreparedConversationCardTranslation, AppService,
-        BackgroundTaskGetParams, ConversationAdapterCatalogRefreshParams,
-        ConversationAdapterLocalRegisterParams, ConversationAdapterPackageCatalogParams,
-        ConversationAdapterPackageChangeParams, ConversationAdapterPackageInspectParams,
-        ConversationAdapterPackageInstallParams, ConversationAdapterPackageReleaseListParams,
-        ConversationAdapterPackageUninstallParams, ConversationAdapterPackageUpdateCheckParams,
-        ConversationAdapterPackageUpdatePolicyParams,
-        ConversationAdapterPackageVersionChangeParams, ConversationAdapterUnregisterParams,
-        ConversationBlockGetParams, ConversationBlockListParams, ConversationDataAuditParams,
-        ConversationDataRepairParams, ConversationDataRollbackParams,
-        ConversationPartTranslationUpdateParams, ConversationQuestionGetParams,
-        ConversationQuestionListParams, ConversationQuestionMergeParams,
-        ConversationQuestionSplitParams, ConversationScriptCatalogParams,
-        ConversationScriptInstallParams, ConversationSearchParams, ConversationSearchResult,
-        ConversationSessionExportParams, ConversationSessionGetParams,
-        ConversationSessionListParams, ConversationSessionOutlineParams,
-        ConversationSourceDisableParams, ConversationSourceUpsertParams, ConversationSyncParams,
-        ListAssetsParams, MemoryContextResolveParams, MemoryProjectGetParams,
-        MemoryRecallSearchParams, MemoryRecallSessionCreateParams, MemoryRecallSessionGetParams,
-        MemoryRecallTurnCancelParams, MemoryRecallTurnSendParams, MemoryScopeRebuildParams,
-        MemoryTaskGetParams, MemoryTaskListParams, MemoryTaskRetryParams, SkillAcquireParams,
-        SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult, SourceRemoveParams,
-        SourceScanParams, TenantCreateParams, UpdateSkillBackupSettingsParams,
-    },
-    backend::application::{
-        memory::{MemoryContextResult, MemoryProjectView, MemoryRebuildResult, MemoryTaskView},
-        mounting::{
-            AssetGroupInput, ExecutionResult, SkillGroupExclusiveMountInput, SourceInput,
-            TargetProfileInput,
-        },
-        system::NavigationModel,
-    },
-    backend::domain::{
-        AppErrorView, AppOverview, AppShortcut, Asset, AssetGroup, AssetGroupDetail, AssetKind,
-        AssetMount, AssetMountStatus, AssetMountUpdateResult, CatalogAsset, ConversationAdapter,
-        ConversationSearchIndexStatus, ConversationSource, DeploymentPlan, DeploymentStrategy,
-        PhysicalMountStateDto, SkillBackupSettings, SkillGroupExclusiveMountPreview,
-        SkillRemoteSource, Source, TargetProfile, TargetProfileDescriptor, Tenant,
-    },
-    backend::infrastructure::agent_execution::{
-        AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionError, AiExecutionPhase,
-        AiExecutionProgressSink, AiExecutionPurpose,
-    },
-    backend::infrastructure::conversations::{
-        ConversationCommandProjection, ConversationCommandProjectionParams,
-        ExternalAdapterRegisterParams, ExternalAdapterScaffoldParams, ExternalAdapterTryRunParams,
-        ExternalAdapterValidateParams,
-    },
-    backend::{application::AppError, infrastructure::tasks::TaskContext},
-};
-use serde_json::Value;
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, Mutex},
-};
-use tauri::{AppHandle, Emitter, State};
-
-type RuntimeAppResult<T> = crate::backend::application::AppResult<T>;
-
 pub(crate) fn command_handler(
 ) -> impl Fn(::tauri::ipc::Invoke<::tauri::Wry>) -> bool + Send + Sync + 'static {
     ::tauri::generate_handler![
@@ -324,9 +223,5 @@ pub(crate) fn command_handler(
 }
 
 #[cfg(test)]
-#[path = "commands_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "commands/baseline_tests.rs"]
+#[path = "baseline_tests.rs"]
 mod baseline_tests;

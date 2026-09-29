@@ -21,8 +21,8 @@ fn baseline_contains_exactly_191_unique_commands() {
 }
 
 #[test]
-fn commands_rs_handler_matches_baseline_commands() {
-    let commands_source = include_str!("../commands.rs");
+fn commands_mod_handler_matches_baseline_commands() {
+    let commands_source = include_str!("mod.rs");
     let handler_start = commands_source
         .find("::tauri::generate_handler![")
         .expect("should find generate_handler in commands.rs");
@@ -47,12 +47,12 @@ fn commands_rs_handler_matches_baseline_commands() {
 
     assert!(
         missing_in_registered.is_empty(),
-        "Missing commands in commands.rs generate_handler: {:?}",
+        "Missing commands in commands/mod.rs generate_handler: {:?}",
         missing_in_registered
     );
     assert!(
         unexpected_in_registered.is_empty(),
-        "Unexpected extra commands in commands.rs generate_handler: {:?}",
+        "Unexpected extra commands in commands/mod.rs generate_handler: {:?}",
         unexpected_in_registered
     );
     assert_eq!(
