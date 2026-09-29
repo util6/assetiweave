@@ -3,6 +3,15 @@
 //! 该模块包含了所有前端通过 `invoke('plugin:assetiweave|...')` 调用的 Tauri Command 函数实现。
 //! 包含应用配置、数据源管理、资产挂载、会话同步与翻译、Memory 以及 CLI 安装等 IPC 交互逻辑。
 
+pub(crate) mod agents;
+pub(crate) mod catalog;
+pub(crate) mod conversations;
+pub(crate) mod memory;
+pub(crate) mod mounting;
+pub(crate) mod system;
+
+pub(crate) const BASELINE_COMMAND_COUNT: usize = 191;
+
 use crate::adapters::app_state::AppState;
 use crate::adapters::prompt_clipboard::{
     copy_prompt_card_to_clipboard as copy_prompt_card_to_clipboard_impl, PromptClipboardParams,
@@ -60,10 +69,10 @@ use crate::{
         ConversationQuestionSplitParams, ConversationScriptCatalogParams,
         ConversationScriptInstallParams, ConversationSearchParams, ConversationSearchResult,
         ConversationSessionExportParams, ConversationSessionGetParams,
-        ConversationSessionListParams, ConversationSourceDisableParams,
-        ConversationSourceUpsertParams, ConversationSyncParams, ListAssetsParams,
-        MemoryContextResolveParams, MemoryProjectGetParams, MemoryRecallSearchParams,
-        MemoryRecallSessionCreateParams, MemoryRecallSessionGetParams,
+        ConversationSessionListParams, ConversationSessionOutlineParams,
+        ConversationSourceDisableParams, ConversationSourceUpsertParams, ConversationSyncParams,
+        ListAssetsParams, MemoryContextResolveParams, MemoryProjectGetParams,
+        MemoryRecallSearchParams, MemoryRecallSessionCreateParams, MemoryRecallSessionGetParams,
         MemoryRecallTurnCancelParams, MemoryRecallTurnSendParams, MemoryScopeRebuildParams,
         MemoryTaskGetParams, MemoryTaskListParams, MemoryTaskRetryParams, SkillAcquireParams,
         SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult, SourceRemoveParams,
@@ -2624,12 +2633,14 @@ pub(crate) fn start_conversation_sync_background(
                 let mut on_progress =
                     move |completed_source_count: usize,
                           total_source_count: usize,
-                          current_source_name: Option<String>| {
+                          current_source_name: Option<String>,
+                          completed_adapter_ids: &[String]| {
                         match progress_tasks.update_conversation_sync_progress(
                             &progress_task_id,
                             completed_source_count,
                             total_source_count,
                             current_source_name,
+                            completed_adapter_ids.to_vec(),
                         ) {
                             Ok(snapshot) => {
                                 if let Err(error) =
@@ -3116,6 +3127,16 @@ pub(crate) async fn get_conversation_session(
 ) -> RuntimeAppResult<crate::backend::domain::ConversationSessionDetail> {
     AppService::from_runtime(&state.runtime)
         .get_conversation_session(params)
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn get_conversation_session_outline(
+    state: State<'_, AppState>,
+    params: ConversationSessionOutlineParams,
+) -> RuntimeAppResult<crate::backend::domain::ConversationSessionOutline> {
+    AppService::from_runtime(&state.runtime)
+        .get_conversation_session_outline(params)
         .await
 }
 
@@ -3921,6 +3942,7 @@ pub(crate) fn command_handler(
         rollback_conversation_data,
         list_conversation_sessions,
         get_conversation_session,
+        get_conversation_session_outline,
         export_conversation_session,
         list_web_record_sessions,
         get_web_record_session,
@@ -3958,3 +3980,7 @@ pub(crate) fn command_handler(
 #[cfg(test)]
 #[path = "commands_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "commands/baseline_tests.rs"]
+mod baseline_tests;
