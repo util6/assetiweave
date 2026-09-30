@@ -445,4 +445,113 @@ describe("TaskCenterModal", () => {
       expect(within(taskList).queryByText("会话同步")).toBeNull();
     });
   });
+
+  it("在任务完成终态后常驻展示流程节点，并支持展开回放详细历史步骤 steps", async () => {
+    mockSelectedTaskId = "task-replay-1";
+    mockTasks = [
+      {
+        id: "task-replay-1",
+        kind: "ConversationSync",
+        title: "会话同步历史回放",
+        state: "succeeded",
+        outcome: "success",
+        stages: [
+          {
+            id: "scan",
+            name: "扫描会话源",
+            status: "succeeded",
+            startedAt: 1000,
+            endedAt: 2000,
+            progress: {
+              current: 12,
+              total: 12,
+              note: "扫描完成，发现 12 个会话",
+            },
+            steps: [
+              {
+                operation: "scan",
+                detail: "发现会话 session-001",
+                timestamp: 1200,
+              },
+              {
+                operation: "scan",
+                detail: "发现会话 session-002",
+                timestamp: 1400,
+              },
+            ],
+          },
+          {
+            id: "sync",
+            name: "解析与同步会话",
+            status: "succeeded",
+            startedAt: 2000,
+            endedAt: 5000,
+            progress: {
+              current: 12,
+              total: 12,
+              note: "所有会话解析完成",
+            },
+            steps: [
+              {
+                operation: "sync_session",
+                detail: "同步 session-001 (10 msgs)",
+                timestamp: 2500,
+              },
+            ],
+          },
+          {
+            id: "persist",
+            name: "数据入库与索引",
+            status: "succeeded",
+            startedAt: 5000,
+            endedAt: 6000,
+            progress: {
+              current: 1,
+              total: 1,
+              note: "全文索引已就绪",
+            },
+            steps: [],
+          },
+        ],
+        capabilities: { cancellable: false, retryable: false, clearable: true },
+        revision: 1,
+      } as unknown as TaskView,
+    ];
+
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    // 验证所有阶段节点常驻展示，包括已完成状态
+    expect(screen.getByText("扫描会话源")).toBeTruthy();
+    expect(screen.getByText("解析与同步会话")).toBeTruthy();
+    expect(screen.getByText("数据入库与索引")).toBeTruthy();
+    expect(screen.getByText("扫描完成，发现 12 个会话")).toBeTruthy();
+    expect(screen.getAllByText("已完成").length).toBeGreaterThanOrEqual(3);
+
+    // 默认收起流程明细
+    expect(screen.queryByText("发现会话 session-001")).toBeNull();
+
+    // 点击展开第一阶段的流程明细
+    const expandButtons = screen.getAllByRole("button", {
+      name: /查看详细流程/i,
+    });
+    expect(expandButtons.length).toBeGreaterThanOrEqual(1);
+    fireEvent.click(expandButtons[0]);
+
+    // 验证 steps 展开回放
+    await waitFor(() => {
+      expect(screen.getByText("发现会话 session-001")).toBeTruthy();
+      expect(screen.getByText("发现会话 session-002")).toBeTruthy();
+      expect(screen.getByText("收起流程明细")).toBeTruthy();
+    });
+
+    // 再次点击收起
+    fireEvent.click(screen.getByRole("button", { name: "收起流程明细" }));
+    await waitFor(() => {
+      expect(screen.queryByText("发现会话 session-001")).toBeNull();
+    });
+  });
 });

@@ -75,6 +75,15 @@ export interface TaskStageView {
   skipped?: TaskSkippedGroupView[];
   agentSessionRef?: AgentSessionRef | null;
   agent_session_ref?: AgentSessionRef | null;
+  steps?: TaskStageStepView[];
+}
+
+export interface TaskStageStepView {
+  timestamp: string;
+  operation: string;
+  detail?: string | null;
+  current?: number | null;
+  total?: number | null;
 }
 
 export interface TaskCapabilitiesView {
@@ -217,6 +226,18 @@ export function normalizeTaskView(raw: unknown): TaskView {
       agent_session_ref: (st.agentSessionRef ??
         st.agent_session_ref ??
         null) as AgentSessionRef | null,
+      steps: ((st.steps as unknown[]) ?? []).map((stepRaw) => {
+        const step = (
+          stepRaw && typeof stepRaw === "object" ? stepRaw : {}
+        ) as Record<string, unknown>;
+        return {
+          timestamp: (step.timestamp ?? "") as string,
+          operation: (step.operation ?? "") as string,
+          detail: (step.detail ?? null) as string | null,
+          current: typeof step.current === "number" ? step.current : null,
+          total: typeof step.total === "number" ? step.total : null,
+        };
+      }),
     };
   });
 

@@ -10,12 +10,14 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
+  ChevronDown,
   Clock,
   Copy,
   Layers,
   ListTodo,
   Loader2,
   MessageSquare,
+  Minus,
   RefreshCw,
   RotateCcw,
   Search,
@@ -58,6 +60,18 @@ export interface TaskCenterModalProps {
 }
 
 type FilterStatus = "all" | "running" | "completed" | "failed";
+
+function formatTaskCategoryLabel(
+  category?: string | null,
+  kind?: string,
+): string {
+  if (!category && !kind) return "";
+  const cat = (category ?? "").toLowerCase();
+  if (cat === "conversation/session_sync") return "会话同步";
+  if (cat === "conversation/web_sync") return "网页记录同步";
+  if (cat === "conversation/sync") return "全量会话同步";
+  return category || kind || "";
+}
 
 export function TaskCenterModal({ open, onClose }: TaskCenterModalProps) {
   if (!open) return null;
@@ -164,9 +178,13 @@ function TaskCenterModalContent({
         const query = searchQuery.trim().toLowerCase();
         const matchesTitle = (task.title ?? "").toLowerCase().includes(query);
         const matchesId = (task.id ?? "").toLowerCase().includes(query);
-        const matchesCategory = (task.category ?? "")
-          .toLowerCase()
-          .includes(query);
+        const friendlyCategory = formatTaskCategoryLabel(
+          task.category,
+          task.kind,
+        ).toLowerCase();
+        const matchesCategory =
+          (task.category ?? "").toLowerCase().includes(query) ||
+          friendlyCategory.includes(query);
         const matchesKind =
           (task.kind ?? "").toLowerCase().includes(query) || matchesCategory;
         return matchesTitle || matchesId || matchesKind;
@@ -359,7 +377,7 @@ function TaskCenterModalContent({
 
                         <div className="mt-1 flex items-center gap-2 text-code-sm text-on-surface-variant">
                           <span className="capitalize">
-                            {task.category || task.kind}
+                            {formatTaskCategoryLabel(task.category, task.kind)}
                           </span>
                           <span className="text-on-surface-muted">•</span>
                           <span>{formatTimeShort(startedAt)}</span>
@@ -475,7 +493,10 @@ function TaskCenterModalContent({
                                 <span>
                                   分类:{" "}
                                   <code className="rounded-full bg-theme-control/50 px-2 py-0.5 font-mono text-[11px] text-primary">
-                                    {selectedTask.category}
+                                    {formatTaskCategoryLabel(
+                                      selectedTask.category,
+                                      selectedTask.kind,
+                                    )}
                                   </code>
                                 </span>
                               ) : null}
@@ -577,6 +598,42 @@ function TaskCenterModalContent({
                             ))}
                           </div>
                         ) : null}
+
+                        {/* 全局执行进度条 */}
+                        {(() => {
+                          const totalStages = stages.length;
+                          const completedStages = stages.filter(
+                            (s) => s.status === "succeeded",
+                          ).length;
+                          const percent =
+                            totalStages > 0
+                              ? Math.round(
+                                  (completedStages / totalStages) * 100,
+                                )
+                              : selectedTask.state === "succeeded"
+                                ? 100
+                                : null;
+                          if (percent === null) return null;
+                          return (
+                            <div className="flex flex-col gap-1.5 pt-2 border-t border-theme-control-border/40">
+                              <div className="flex items-center justify-between text-caption font-medium text-on-surface-variant">
+                                <span>执行进度</span>
+                                <span className="font-mono">{percent}%</span>
+                              </div>
+                              <div className="h-2 w-full overflow-hidden rounded-full bg-theme-control/60">
+                                <div
+                                  className={clsx(
+                                    "h-full rounded-full transition-all duration-500",
+                                    selectedTask.state === "succeeded"
+                                      ? "bg-status-create"
+                                      : "bg-primary",
+                                  )}
+                                  style={{ width: `${percent}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {/* 阶段流水线 (Stages) */}
@@ -594,10 +651,11 @@ function TaskCenterModalContent({
                             该任务尚未上报阶段划分
                           </div>
                         ) : (
-                          <div className="flex flex-col gap-3">
+                          <div className="flex flex-col">
                             {stages.map((stage, idx) => (
                               <StageCard
                                 index={idx + 1}
+                                isLast={idx === stages.length - 1}
                                 key={stage.id || `stage-${idx}`}
                                 onViewSession={(ref) =>
                                   setViewingSessionRef(ref)
@@ -670,13 +728,22 @@ function TaskCenterModalContent({
 function StageCard({
   stage,
   index,
+  isLast,
   onViewSession,
 }: {
   stage: TaskStageView;
   index: number;
+  isLast: boolean;
   onViewSession?: (sessionRef: AgentSessionRef) => void;
 }) {
+  const [expanded, setExpanded] = useState<boolean>(stage.status === "running");
   const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (stage.status === "running") {
+      setExpanded(true);
+    }
+  }, [stage.status]);
 
   const copyPath = (path: string) => {
     void navigator.clipboard.writeText(path);
@@ -691,121 +758,250 @@ function StageCard({
   const durationMs = stage.durationMs ?? stage.duration_ms;
   const currentActivities =
     stage.currentActivities ?? stage.current_activities ?? [];
+  const steps = stage.steps ?? [];
   const metrics = stage.metrics ?? [];
   const sessionRef = stage.agentSessionRef ?? stage.agent_session_ref;
 
+  const hasDetails = steps.length > 0 || currentActivities.length > 0;
+
   return (
-    <div
-      className={clsx(
-        "flex flex-col gap-2.5 rounded-2xl border border-theme-control-border bg-surface-elevated/50 p-4 transition-all hover:border-theme-control-border",
-        stage.status === "skipped" && "opacity-60 bg-surface-elevated/20",
-      )}
-    >
-      {/* 阶段标题栏 */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <span className="flex size-6 items-center justify-center rounded-full bg-theme-control text-caption font-semibold text-on-surface">
-            {index}
-          </span>
-          <span className="text-body-sm font-semibold text-on-surface">
-            {stage.name}
-          </span>
-          <StageStatusBadge status={stage.status} />
+    <div className="relative flex items-start gap-3.5">
+      {/* 左侧垂直导轨与节点圆徽 */}
+      <div className="relative flex flex-col items-center shrink-0 self-stretch">
+        <div
+          className={clsx(
+            "flex size-7 items-center justify-center rounded-full transition-all duration-200 z-10",
+            stage.status === "succeeded" &&
+              "border border-status-create/40 bg-status-create/15 text-status-create shadow-sm shadow-status-create/10",
+            stage.status === "running" &&
+              "border border-primary/50 bg-primary/20 text-primary shadow-sm shadow-primary/20 ring-2 ring-primary/20 animate-pulse",
+            stage.status === "failed" &&
+              "border border-status-conflict/40 bg-status-conflict/15 text-status-conflict",
+            stage.status === "skipped" &&
+              "border border-theme-control-border bg-theme-control/40 text-on-surface-muted",
+            stage.status === "pending" &&
+              "border border-theme-control-border/60 bg-theme-control/20 text-on-surface-muted",
+          )}
+        >
+          {stage.status === "succeeded" && (
+            <Check className="size-3.5 stroke-[2.5]" />
+          )}
+          {stage.status === "running" && (
+            <Loader2 className="size-3.5 animate-spin stroke-[2.5]" />
+          )}
+          {stage.status === "failed" && (
+            <XCircle className="size-3.5 stroke-[2.5]" />
+          )}
+          {stage.status === "skipped" && (
+            <Minus className="size-3.5 stroke-[2.5]" />
+          )}
+          {stage.status === "pending" && (
+            <span className="text-code-xs font-semibold">{index}</span>
+          )}
         </div>
 
-        <div className="flex items-center gap-3 text-caption text-on-surface-variant">
-          {durationMs ? <span>耗时: {formatDuration(durationMs)}</span> : null}
-          {percent !== null ? <span>{percent}%</span> : null}
-          {sessionRef ? (
-            <Button
-              className="h-7 gap-1 px-2.5 text-caption font-medium"
-              data-testid={`task-stage-view-session-${stage.id}`}
-              onClick={() => onViewSession?.(sessionRef)}
-              size="sm"
-              variant="secondary"
-            >
-              <Sparkles className="size-3 text-primary" />
-              <span>查看执行现场</span>
-            </Button>
-          ) : null}
-        </div>
+        {/* 垂直导轨竖线 */}
+        {!isLast ? (
+          <div
+            className={clsx(
+              "w-0.5 flex-1 my-1 min-h-[36px] rounded-full transition-colors duration-300",
+              stage.status === "succeeded"
+                ? "bg-status-create/30"
+                : "bg-theme-control-border/40",
+            )}
+          />
+        ) : null}
       </div>
 
-      {stage.progress?.note ? (
-        <p className="text-body-sm text-on-surface-variant">
-          {stage.progress.note}
-        </p>
-      ) : null}
-
-      {/* 活跃 Worker 活动 - 防御式读取 currentActivities */}
-      {currentActivities.length > 0 ? (
-        <div className="mt-1 flex flex-col gap-1.5 rounded-xl border border-theme-control-border/50 bg-theme-control/20 p-2.5">
-          <div className="flex items-center gap-1.5 text-caption font-medium text-primary">
-            <Activity className="size-3.5 animate-pulse" />
-            <span>活跃 Workers ({currentActivities.length})</span>
+      {/* 右侧阶段内容卡片 */}
+      <div
+        className={clsx(
+          "flex flex-1 flex-col gap-2 rounded-2xl border border-theme-control-border bg-surface-elevated/40 p-4 transition-all mb-4",
+          stage.status === "running" &&
+            "border-primary/40 bg-surface-elevated/70 shadow-sm shadow-primary/5",
+          stage.status === "skipped" && "opacity-60 bg-surface-elevated/20",
+        )}
+      >
+        {/* 阶段标题栏 */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-body-base font-semibold text-on-surface">
+              {stage.name}
+            </span>
+            {durationMs ? (
+              <span className="rounded-full bg-theme-control/40 px-2 py-0.5 text-code-xs text-on-surface-variant font-mono">
+                耗时: {formatDuration(durationMs)}
+              </span>
+            ) : null}
           </div>
 
-          <div className="flex flex-col gap-1">
-            {currentActivities.map((act: TaskActivityView, actIdx: number) => {
-              const workerId =
-                act.workerId ?? act.worker_id ?? `worker-${actIdx}`;
-              return (
-                <div
-                  className="flex items-center justify-between gap-2 rounded-lg bg-surface-base/60 px-2.5 py-1 text-caption"
-                  key={workerId}
-                >
-                  <div className="flex items-center gap-2 overflow-hidden">
-                    <span className="font-mono font-medium text-on-surface">
-                      [{workerId}]
-                    </span>
-                    <span className="text-on-surface-variant">
-                      {act.operation}
-                    </span>
-                    {act.path ? (
-                      <button
-                        className="group flex items-center gap-1 font-mono text-outline hover:text-on-surface"
-                        onClick={() => copyPath(act.path!)}
-                        title="点击复制路径"
-                        type="button"
-                      >
-                        <span className="max-w-[280px] truncate">
+          <div className="flex items-center gap-3">
+            <StageStatusBadge status={stage.status} />
+            {sessionRef ? (
+              <Button
+                className="h-7 gap-1 px-2.5 text-caption font-medium"
+                data-testid={`task-stage-view-session-${stage.id}`}
+                onClick={() => onViewSession?.(sessionRef)}
+                size="sm"
+                variant="secondary"
+              >
+                <Sparkles className="size-3 text-primary" />
+                <span>查看执行现场</span>
+              </Button>
+            ) : null}
+          </div>
+        </div>
+
+        {/* 阶段 Note 说明 (常驻展示，即使完成也不丢失) */}
+        {stage.progress?.note ? (
+          <p className="text-body-sm text-on-surface-variant break-all">
+            {stage.progress.note}
+          </p>
+        ) : null}
+
+        {/* 阶段数值进度条 */}
+        {percent !== null ? (
+          <div className="flex flex-col gap-1 py-0.5">
+            <div className="flex justify-between text-caption text-on-surface-variant font-mono">
+              <span>
+                {stage.progress?.current} / {stage.progress?.total}
+              </span>
+              <span>{percent}%</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-theme-control/60">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-300"
+                style={{ width: `${percent}%` }}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {/* 活跃 Workers (运行中常驻显示，不闪烁) */}
+        {currentActivities.length > 0 ? (
+          <div className="flex flex-col gap-1.5 pt-1">
+            <span className="text-caption font-medium text-primary flex items-center gap-1.5">
+              <Activity className="size-3 animate-pulse" />
+              活跃 Workers ({currentActivities.length})
+            </span>
+            <div className="flex flex-col gap-1">
+              {currentActivities.map((act, actIdx) => {
+                const workerId =
+                  act.workerId ?? act.worker_id ?? `worker-${actIdx}`;
+                return (
+                  <div
+                    className="flex items-center justify-between gap-2 rounded-lg bg-surface-base/60 border border-theme-control-border/40 px-2.5 py-1 text-caption"
+                    key={workerId}
+                  >
+                    <div className="flex items-center gap-2 overflow-hidden">
+                      <span className="font-mono font-medium text-on-surface">
+                        [{workerId}]
+                      </span>
+                      <span className="text-on-surface-variant font-medium">
+                        {act.operation}
+                      </span>
+                      {act.path ? (
+                        <span
+                          className="font-mono text-on-surface-muted truncate max-w-[260px]"
+                          title={act.path}
+                        >
                           {act.path}
                         </span>
-                        {copied === act.path ? (
-                          <Check className="size-3 text-status-create" />
-                        ) : (
-                          <Copy className="size-3 opacity-0 group-hover:opacity-100" />
-                        )}
-                      </button>
+                      ) : null}
+                    </div>
+                    {act.current != null && act.total != null ? (
+                      <span className="shrink-0 font-mono text-outline">
+                        {act.current} / {act.total}
+                      </span>
                     ) : null}
                   </div>
-
-                  {act.current != null && act.total != null ? (
-                    <span className="shrink-0 text-outline">
-                      {act.current} / {act.total}
-                    </span>
-                  ) : null}
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {/* 阶段指标 */}
-      {metrics.length > 0 ? (
-        <div className="flex flex-wrap gap-2 pt-1">
-          {metrics.map((m) => (
-            <span
-              className="inline-flex items-center gap-1 rounded-full border border-theme-control-border/60 bg-theme-control/40 px-2.5 py-0.5 text-caption text-on-surface-variant"
-              key={m.code}
+        {/* 展开/收起流程历史记录 (完成状态后亦可常驻展开回放) */}
+        {steps.length > 0 ? (
+          <div className="flex flex-col gap-2 pt-1">
+            <button
+              className="flex items-center gap-1.5 text-caption font-medium text-primary hover:text-primary-hover transition-colors self-start"
+              onClick={() => setExpanded(!expanded)}
+              type="button"
             >
-              <span>{m.code}:</span>
-              <strong className="text-on-surface">{m.value}</strong>
-            </span>
-          ))}
-        </div>
-      ) : null}
+              <ChevronDown
+                className={clsx(
+                  "size-3.5 transition-transform duration-200",
+                  !expanded && "-rotate-90",
+                )}
+              />
+              <span>
+                {expanded
+                  ? "收起流程明细"
+                  : `查看详细流程 (${steps.length} 步)`}
+              </span>
+            </button>
+
+            {expanded ? (
+              <div className="flex flex-col gap-1.5 rounded-xl border border-theme-control-border/60 bg-surface-base/60 p-2.5">
+                <span className="text-code-xs text-on-surface-variant font-medium px-1">
+                  历史执行流程记录 ({steps.length})
+                </span>
+                <div className="max-h-60 overflow-y-auto pr-1 flex flex-col gap-1">
+                  {steps.map((step, sIdx) => {
+                    const timeStr = step.timestamp
+                      ? new Date(step.timestamp).toLocaleTimeString()
+                      : "";
+                    return (
+                      <div
+                        className="flex items-start justify-between gap-2 rounded-lg bg-theme-control/10 px-2.5 py-1 text-caption hover:bg-theme-control/20 transition-colors"
+                        key={sIdx}
+                      >
+                        <div className="flex items-start gap-2 overflow-hidden">
+                          <span className="shrink-0 text-code-xs text-on-surface-muted font-mono pt-0.5">
+                            {timeStr || `#${sIdx + 1}`}
+                          </span>
+                          <span className="shrink-0 font-mono text-primary font-medium">
+                            [{step.operation}]
+                          </span>
+                          {step.detail ? (
+                            <span
+                              className="font-mono text-on-surface-variant break-all"
+                              title={step.detail}
+                            >
+                              {step.detail}
+                            </span>
+                          ) : null}
+                        </div>
+                        {step.current != null && step.total != null ? (
+                          <span className="shrink-0 font-mono text-outline text-code-xs pt-0.5">
+                            {step.current}/{step.total}
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* 阶段指标 */}
+        {metrics.length > 0 ? (
+          <div className="flex flex-wrap gap-2 pt-1">
+            {metrics.map((m) => (
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-theme-control-border/60 bg-theme-control/40 px-2.5 py-0.5 text-caption text-on-surface-variant"
+                key={m.code}
+              >
+                <span>{m.code}:</span>
+                <strong className="text-on-surface">{m.value}</strong>
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -814,49 +1010,49 @@ function StageStatusBadge({ status }: { status: string }) {
   switch (status) {
     case "running":
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-caption font-medium text-primary">
+        <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-caption font-medium text-primary">
           <Loader2 className="size-3 animate-spin" />
           运行中
         </span>
       );
     case "succeeded":
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-status-create/30 bg-status-create/10 px-2 py-0.5 text-caption font-medium text-status-create">
+        <span className="inline-flex items-center gap-1 rounded-full border border-status-create/30 bg-status-create/10 px-2.5 py-0.5 text-caption font-medium text-status-create">
           <CheckCircle2 className="size-3" />
-          完成
+          已完成
         </span>
       );
     case "partial_success":
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-status-warning/30 bg-status-warning/10 px-2 py-0.5 text-caption font-medium text-status-warning">
+        <span className="inline-flex items-center gap-1 rounded-full border border-status-warning/30 bg-status-warning/10 px-2.5 py-0.5 text-caption font-medium text-status-warning">
           <AlertTriangle className="size-3" />
           部分成功
         </span>
       );
     case "failed":
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-status-conflict/30 bg-status-conflict/10 px-2 py-0.5 text-caption font-medium text-status-conflict">
+        <span className="inline-flex items-center gap-1 rounded-full border border-status-conflict/30 bg-status-conflict/10 px-2.5 py-0.5 text-caption font-medium text-status-conflict">
           <XCircle className="size-3" />
           失败
         </span>
       );
     case "canceled":
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/40 px-2 py-0.5 text-caption font-medium text-on-surface-variant">
+        <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/40 px-2.5 py-0.5 text-caption font-medium text-on-surface-variant">
           <Ban className="size-3" />
           已取消
         </span>
       );
     case "skipped":
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/20 px-2 py-0.5 text-caption font-medium text-outline">
-          <ChevronRight className="size-3" />
+        <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/20 px-2.5 py-0.5 text-caption font-medium text-outline">
+          <Minus className="size-3" />
           已跳过
         </span>
       );
     default:
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/30 px-2 py-0.5 text-caption text-outline">
+        <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/30 px-2.5 py-0.5 text-caption text-outline">
           <Clock className="size-3" />
           等待
         </span>
