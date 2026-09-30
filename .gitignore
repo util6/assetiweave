@@ -92,3 +92,6 @@ pnpm-debug.log*
 
 # Conversation/tool metadata generated outside the builtin asset sources
 **/.specstory/
+
+# Scratch and one-off debug scripts
+scratch/
