@@ -163,6 +163,50 @@ describe("ConversationTurn", () => {
     expect(html).toContain('data-conversation-card-id="part-1"');
   });
 
+  it("renders the model badge when model is present on the turn", () => {
+    const questionWithModel: ConversationQuestionDetail = {
+      ...question,
+      turns: [
+        {
+          ...question.turns[0]!,
+          model: "claude-3-7-sonnet",
+        },
+      ],
+      question_turns: [question.question_turns[0]!],
+    };
+    const [model] = buildConversationTurnPresentations(questionWithModel);
+    const controller: ConversationContentController = {
+      cancelTranslation: async () => undefined,
+      copyBlock: async () => undefined,
+      expandedBlockIds: new Set(),
+      getTranslatedText: () => undefined,
+      getTranslationPhase: () => undefined,
+      isCopied: () => false,
+      isTranslating: () => false,
+      toggleExpanded: () => undefined,
+      translateBlock: async () => undefined,
+      translationAvailability: "unavailable",
+    };
+
+    const html = renderToStaticMarkup(
+      <ConversationTurn
+        controller={controller}
+        index={0}
+        model={model!}
+        recordKind="session"
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+    expect(html).toContain("claude-3-7-sonnet");
+  });
+
   it("projects one raw command Part into ephemeral display nodes with one shared Part ID", () => {
     const executionQuestion: ConversationQuestionDetail = {
       ...question,

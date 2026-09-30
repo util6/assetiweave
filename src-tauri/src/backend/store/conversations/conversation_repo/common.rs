@@ -125,6 +125,7 @@ pub(super) fn conversation_turn_from_normalized(
         fingerprint: conversation_turn_fingerprint(normalized),
         missing: false,
         imported_at: now.to_string(),
+        model: normalized.model.clone(),
     }
 }
 

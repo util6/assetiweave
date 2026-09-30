@@ -242,6 +242,7 @@ type NormalizedConversationTurn struct {
 	Title      *string                      `json:"title"`
 	StartedAt  *string                      `json:"started_at"`
 	EndedAt    *string                      `json:"ended_at"`
+	Model      *string                      `json:"model,omitempty"`
 	Parts      []NormalizedConversationPart `json:"parts"`
 }
 

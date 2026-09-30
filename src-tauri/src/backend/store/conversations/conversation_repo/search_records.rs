@@ -165,7 +165,7 @@ pub(super) async fn load_search_turns_sqlx(
     let query = format!(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
-               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
+               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
                qt.question_id
         FROM {turns} t
         JOIN {question_turns} qt ON qt.tenant_id = t.tenant_id AND qt.turn_id = t.id

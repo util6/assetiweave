@@ -281,13 +281,14 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
         pub(crate) missing: i64,
         pub(crate) imported_at: String,
         pub(crate) question_id: String,
+        pub(crate) model: Option<String>,
     }
 
     let turn_rows = sqlx::query_as::<_, WebRecordDetailTurnRow>(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
                t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
-               qt.question_id
+               qt.question_id, t.model
         FROM web_record_question_turns qt
         JOIN web_record_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
         JOIN web_record_questions q ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
@@ -320,6 +321,7 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
                 fingerprint: row.fingerprint,
                 missing: row.missing == 1,
                 imported_at: row.imported_at,
+                model: row.model,
             });
     }
 

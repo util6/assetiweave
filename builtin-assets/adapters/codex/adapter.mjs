@@ -1519,6 +1519,7 @@ function normalizeTurns(text) {
   let projectPath = patchExecutions.projectPath;
   let pendingSkillRead = null;
   const planCallIds = new Set();
+  let currentModel = null;
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
     let parsed;
@@ -1531,6 +1532,16 @@ function normalizeTurns(text) {
     projectPath ??= cwdFromPayload(parsed) ?? cwdFromPayload(payload);
     const role = payload.role;
     const type = payload.type;
+    if (parsed.type === "turn_context" || payload.type === "turn_context") {
+      const model = payload.model || parsed.model;
+      if (model) {
+        currentModel = String(model);
+        if (current && !current.model) current.model = currentModel;
+      }
+    } else if (parsed.type === "session_meta" || payload.type === "session_meta") {
+      const model = payload.model || parsed.model;
+      if (model) currentModel = String(model);
+    }
     if (type === "message" && role === "user") {
       const userText = contentText(payload.content);
       const userMessage = parseUserMessage(userText);
@@ -1550,6 +1561,7 @@ function normalizeTurns(text) {
         title: null,
         started_at: parsed.timestamp ?? payload.timestamp ?? null,
         ended_at: null,
+        model: currentModel,
         parts: [],
       };
       appendSkillParts(current, userMessage.skills);
@@ -1834,7 +1846,7 @@ function readSession() {
       title: row.title == null ? null : String(row.title),
       project_path: parsed.projectPath ?? inferProjectPath(turns),
       started_at: turns[0]?.started_at ?? null,
-      updated_at: row.updated_at == null ? null : String(row.updated_at),
+      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),
       source_locator: files.length > 1 ? files[files.length - 1] : rolloutPath,
       source_fingerprint: versionToken,
       turns,

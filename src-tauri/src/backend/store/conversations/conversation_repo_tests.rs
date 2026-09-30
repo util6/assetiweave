@@ -2803,6 +2803,7 @@ fn fixture_turn(id: &str, index: i64, user_text: &str) -> NormalizedConversation
         title: None,
         started_at: None,
         ended_at: None,
+        model: None,
         parts: vec![NormalizedConversationPart {
             role: ConversationPartRole::Assistant,
             kind: ConversationPartKind::Text,

@@ -373,6 +373,7 @@ export interface ConversationTurn {
   title?: string | null;
   started_at?: string | null;
   ended_at?: string | null;
+  model?: string | null;
   fingerprint: string;
   missing: boolean;
   imported_at: string;

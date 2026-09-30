@@ -570,9 +570,13 @@ function loadTurns(dbPath, sessionId) {
         title: null,
         started_at: createdAt,
         ended_at: null,
+        model: null,
         parts: [],
       };
     } else if (current !== null) {
+      if (!current.model) {
+        current.model = data.modelID || data.model || null;
+      }
       for (const part of messageParts) {
         current.parts.push(...normalizeAssistantPart(part.data, part.sourceExecutionId));
       }
@@ -1101,7 +1105,7 @@ function run(request) {
       title: row.title != null ? String(row.title) : null,
       project_path: row.project_path != null ? String(row.project_path) : null,
       started_at: turns[0]?.started_at ?? null,
-      updated_at: timestamp(row.time_updated),
+      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? timestamp(row.time_updated),
       source_locator: dbPath,
       source_fingerprint: sessionVersionToken(row),
       turns,

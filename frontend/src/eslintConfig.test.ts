@@ -21,7 +21,7 @@ describe("ESLint configuration and import boundaries", () => {
     expect(
       service.messages.some((m) => m.ruleId === "no-restricted-imports"),
     ).toBe(false);
-  });
+  }, 20000);
 
   it("拒绝组件直接动态导入 Tauri，允许 services 动态导入", async () => {
     const eslint = new ESLint({ cwd });

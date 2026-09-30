@@ -712,6 +712,7 @@ function buildTurnsFromSteps(steps) {
   const turns = [];
   let current = null;
   let projectPath = null;
+  let currentModel = null;
   const pendingFileOperations = [];
   const pendingExecutionIds = [];
   const knownFileContents = new Map();
@@ -721,6 +722,18 @@ function buildTurnsFromSteps(steps) {
     const source = step.source ?? "";
     const type = step.type ?? "";
     const timestamp = step.created_at ?? null;
+
+    if (typeof step.content === "string") {
+      const match = step.content.match(/The user changed setting [`']?Model Selection[`']? from .+? to (.+?)(?:\.\s+[A-Z]|\n|$)/i);
+      if (match) {
+        currentModel = match[1].replace(/\.+$/, "").trim();
+        if (current && !current.model) current.model = currentModel;
+      }
+    }
+    if (step.model) {
+      currentModel = String(step.model);
+      if (current && !current.model) current.model = currentModel;
+    }
 
     // Skip system-only noise
     if (source === "SYSTEM" && IGNORED_STEP_TYPES.has(type)) continue;
@@ -739,6 +752,7 @@ function buildTurnsFromSteps(steps) {
         title: null,
         started_at: timestamp,
         ended_at: null,
+        model: currentModel,
         parts: [],
       };
       continue;
@@ -1211,7 +1225,7 @@ function readSession() {
           title: titleFromUserText(turns[0]?.user_text),
           project_path: parsed.projectPath ?? inferProjectPath(turns),
           started_at: turns[0]?.started_at ?? null,
-          updated_at: turns.at(-1)?.ended_at ?? null,
+          updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
           source_locator: location,
           source_fingerprint: sourceFingerprint(`${stat.size}:${stat.mtimeMs}`),
           turns,
@@ -1235,7 +1249,7 @@ function readSession() {
         title: titleFromUserText(turns[0]?.user_text),
         project_path: parsed.projectPath ?? inferProjectPath(turns),
         started_at: turns[0]?.started_at ?? null,
-        updated_at: turns.at(-1)?.ended_at ?? null,
+        updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
         source_locator: location,
         source_fingerprint: sourceFingerprint(text),
         turns,
@@ -1265,7 +1279,7 @@ function readSession() {
       title: titleFromUserText(turns[0]?.user_text),
       project_path: parsed.projectPath ?? inferProjectPath(turns),
       started_at: turns[0]?.started_at ?? null,
-      updated_at: turns.at(-1)?.ended_at ?? null,
+      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
       source_locator: transcriptInDir,
       source_fingerprint: sourceFingerprint(text),
       turns,
@@ -1330,7 +1344,7 @@ function readSession() {
       title: titleFromUserText(turns[0]?.user_text),
       project_path: parsed.projectPath ?? inferProjectPath(turns),
       started_at: turns[0]?.started_at ?? null,
-      updated_at: turns.at(-1)?.ended_at ?? null,
+      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
       source_locator: transcriptPath,
       source_fingerprint: sourceFingerprint(text),
       turns,
@@ -1362,7 +1376,7 @@ function readSession() {
         title: titleFromUserText(turns[0]?.user_text),
         project_path: parsed.projectPath ?? inferProjectPath(turns),
         started_at: turns[0]?.started_at ?? null,
-        updated_at: turns.at(-1)?.ended_at ?? null,
+        updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
         source_locator: dbPath,
         source_fingerprint: sourceFingerprint(`${stat.size}:${stat.mtimeMs}`),
         turns,

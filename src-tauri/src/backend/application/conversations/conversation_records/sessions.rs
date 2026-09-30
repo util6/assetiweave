@@ -1,8 +1,11 @@
 use super::*;
 use crate::backend::application::prelude::*;
 use crate::backend::application::AppService;
-use crate::backend::domain::conversations::*;
-use crate::backend::domain::*;
+use crate::backend::domain::conversations::{
+    ConversationCardRunGroup, ConversationRecordKind, ConversationSessionOutline,
+    ConversationTurnOutline,
+};
+use crate::backend::domain::{ConversationPartKind, ConversationPartRole};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -220,6 +223,7 @@ impl AppService {
                     turn_id: crate::backend::domain::conversation_id_fragment(&turn.id),
                     turn_index: turn.turn_index.max(0) as usize,
                     user_question: turn.user_text.clone(),
+                    model: turn.model.clone(),
                     cards,
                 });
             }

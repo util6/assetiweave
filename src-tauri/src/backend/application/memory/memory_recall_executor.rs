@@ -435,6 +435,7 @@ impl AppService {
                     title: None,
                     started_at: Some(turn.created_at.clone()),
                     ended_at: Some(turn.updated_at.clone()),
+                    model: None,
                     parts,
                 }
             })

@@ -372,6 +372,8 @@ pub struct ConversationTurn {
     pub fingerprint: String,
     pub missing: bool,
     pub imported_at: String,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -453,6 +455,8 @@ pub struct NormalizedConversationTurn {
     pub title: Option<String>,
     pub started_at: Option<String>,
     pub ended_at: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
     pub parts: Vec<NormalizedConversationPart>,
 }
 

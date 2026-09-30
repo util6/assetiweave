@@ -235,6 +235,7 @@ async fn phase1_worker_honors_idle_boundary_persists_redacted_output_and_is_idem
             title: None,
             started_at: Some(timestamp.to_string()),
             ended_at: Some(timestamp.to_string()),
+            model: None,
             parts: vec![NormalizedConversationPart {
                 role: ConversationPartRole::Assistant,
                 kind: ConversationPartKind::Text,
@@ -638,6 +639,7 @@ async fn session_memory_uses_its_own_runtime_settings_snapshot() {
                 title: None,
                 started_at: Some("2026-08-30T23:00:00Z".to_string()),
                 ended_at: Some("2026-08-30T23:00:00Z".to_string()),
+                model: None,
                 parts: vec![NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,
                     kind: ConversationPartKind::Text,

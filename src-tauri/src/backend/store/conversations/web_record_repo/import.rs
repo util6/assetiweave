@@ -280,9 +280,9 @@ pub(crate) async fn insert_web_record_turn_sqlx_tx(
         r#"
         INSERT INTO web_record_turns (
             tenant_id, id, session_id, external_id, turn_index, user_text, title, started_at,
-            ended_at, fingerprint, missing, imported_at
+            ended_at, fingerprint, missing, imported_at, model
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
         "#,
     )
     .bind(tenant_id)
@@ -297,6 +297,7 @@ pub(crate) async fn insert_web_record_turn_sqlx_tx(
     .bind(&turn.fingerprint)
     .bind(if turn.missing { 1_i64 } else { 0_i64 })
     .bind(&turn.imported_at)
+    .bind(&turn.model)
     .execute(&mut **tx)
     .await
     .map_err(StoreError::external)?;

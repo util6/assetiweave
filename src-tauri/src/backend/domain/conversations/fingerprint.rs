@@ -56,6 +56,10 @@ pub fn conversation_turn_fingerprint(turn: &NormalizedConversationTurn) -> Strin
     hasher.update(turn.external_id.as_bytes());
     hasher.update(b"\0");
     hasher.update(turn.user_text.as_bytes());
+    if let Some(value) = &turn.model {
+        hasher.update(b"\0");
+        hasher.update(value.as_bytes());
+    }
     for part in &turn.parts {
         hasher.update(b"\0");
         hasher.update(format!("{:?}:{:?}", part.role, part.kind).as_bytes());

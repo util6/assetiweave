@@ -573,7 +573,7 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
          ELSE NULL
        END`
     : "NULL";
-  const msgSql = `SELECT ${quoteIdent(msgId)} AS id, ${quoteIdent(msgSession)} AS session_id, ${roleExpr} AS role, ${timestampExpr} AS timestamp, NULL AS data, ${summaryDiffsExpr} AS summary_diffs FROM message WHERE ${quoteIdent(msgSession)} IN (${sessionList}) ORDER BY rowid ASC`;
+  const msgSql = `SELECT ${quoteIdent(msgId)} AS id, ${quoteIdent(msgSession)} AS session_id, ${roleExpr} AS role, ${timestampExpr} AS timestamp, ${dataCol ? quoteIdent(dataCol) : "NULL"} AS data, ${summaryDiffsExpr} AS summary_diffs FROM message WHERE ${quoteIdent(msgSession)} IN (${sessionList}) ORDER BY rowid ASC`;
   const currentBySession = new Map();
   const summaryDiffsBySession = new Map();
   for (const message of sqliteJson(dbPath, msgSql)) {
@@ -581,6 +581,7 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
     const data = parseJson(message.data);
     const role = message.role ?? valueText(data, ["role", "author"]) ?? "";
     const timestamp = message.timestamp ?? valueText(data, ["time", "created_at"]);
+    const model = valueText(data, ["modelID", "model", "model_id"]);
     const partKey = partSession
       ? messageKey(sessionId, String(message.id))
       : String(message.id);
@@ -608,10 +609,14 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
         title: null,
         started_at: timestamp == null ? null : String(timestamp),
         ended_at: null,
+        model: null,
         parts: parts.filter((part) => part.role !== "user"),
       });
     } else if (currentBySession.has(sessionId)) {
       const current = currentBySession.get(sessionId);
+      if (model && !current.model) {
+        current.model = model;
+      }
       if (attachSummaryDiff(parts, summaryDiffsBySession.get(sessionId))) {
         summaryDiffsBySession.delete(sessionId);
       }
@@ -667,7 +672,7 @@ function readSessions(includeTurns) {
       title: row.title == null ? null : String(row.title),
       project_path: row.project_path == null ? null : String(row.project_path),
       started_at: turns[0]?.started_at ?? null,
-      updated_at: row.updated_at == null ? null : String(row.updated_at),
+      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),
       source_locator: dbPath,
       source_fingerprint: sessionVersionToken(row),
       turns,

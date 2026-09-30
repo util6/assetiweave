@@ -7,6 +7,7 @@ import type {
   ConversationTurn as ConversationTurnRecord,
 } from "../../types";
 import type { Translator } from "../../i18n/I18nProvider";
+import { Badge } from "../foundation/Badge";
 import type {
   ConversationContentBlock,
   ConversationContentVisibility,
@@ -238,11 +239,22 @@ export const ConversationTurn = memo(function ConversationTurn({
         id={conversationCardDomId(model.promptBlockId)}
       >
         <div className="mb-2 flex items-center justify-between gap-3">
-          <h3 className="flex items-center gap-2 text-label-caps text-primary">
-            <span className="size-2 rounded-full bg-primary" />
-            {t("conversation.question.userPrompt")}
-          </h3>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
+              <span className="size-2 rounded-full bg-primary" />
+              {t("conversation.question.userPrompt")}
+            </h3>
+            {model.turn.model ? (
+              <Badge
+                tone="neutral"
+                className="font-mono text-xs normal-case tracking-normal px-2.5 py-0.5 truncate max-w-xs"
+                title={model.turn.model}
+              >
+                {model.turn.model}
+              </Badge>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
             <span
               className="select-text rounded-md border border-primary/25 bg-theme-card/45 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
               title={model.promptBlockId}

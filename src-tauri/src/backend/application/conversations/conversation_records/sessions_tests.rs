@@ -77,6 +77,7 @@ async fn test_conversation_session_outline_folding_and_universal_resolver() {
                 title: None,
                 started_at: Some(timestamp.to_string()),
                 ended_at: Some(timestamp.to_string()),
+                model: None,
                 parts: vec![
                     NormalizedConversationPart {
                         role: ConversationPartRole::Assistant,
@@ -143,6 +144,7 @@ async fn test_conversation_session_outline_folding_and_universal_resolver() {
                 title: None,
                 started_at: Some(timestamp.to_string()),
                 ended_at: Some(timestamp.to_string()),
+                model: None,
                 parts: vec![NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,
                     kind: ConversationPartKind::Text,
@@ -316,6 +318,7 @@ async fn test_conversation_session_get_roles_filter_and_short_id_block_get() {
             title: None,
             started_at: Some(timestamp.to_string()),
             ended_at: Some(timestamp.to_string()),
+            model: None,
             parts: vec![
                 NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,

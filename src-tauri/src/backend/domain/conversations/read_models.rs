@@ -155,6 +155,8 @@ pub struct ConversationTurnOutline {
     pub turn_id: String,
     pub turn_index: usize,
     pub user_question: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     pub cards: Vec<ConversationCardRunGroup>,
 }
 

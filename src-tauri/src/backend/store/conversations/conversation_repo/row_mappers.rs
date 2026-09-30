@@ -239,6 +239,7 @@ pub(super) struct ConversationTurnRow {
     fingerprint: String,
     missing: i64,
     imported_at: String,
+    model: Option<String>,
 }
 
 impl ConversationTurnRow {
@@ -255,6 +256,7 @@ impl ConversationTurnRow {
             fingerprint: self.fingerprint,
             missing: self.missing == 1,
             imported_at: self.imported_at,
+            model: self.model,
         }
     }
 }

@@ -61,7 +61,7 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
     let turn_rows = sqlx::query(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
-               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at
+               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at, t.model
         FROM conversation_question_turns qt
         JOIN conversation_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
         JOIN conversation_questions q
@@ -246,6 +246,7 @@ pub(super) struct ConversationTurnWithQuestionRow {
     title: Option<String>,
     started_at: Option<String>,
     ended_at: Option<String>,
+    model: Option<String>,
     fingerprint: String,
     missing: i64,
     imported_at: String,
@@ -264,6 +265,7 @@ impl ConversationTurnWithQuestionRow {
             title: self.title,
             started_at: self.started_at,
             ended_at: self.ended_at,
+            model: self.model,
             fingerprint: self.fingerprint,
             missing: self.missing == 1,
             imported_at: self.imported_at,
@@ -332,7 +334,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         let row = sqlx::query_as::<_, ConversationTurnWithQuestionRow>(AssertSqlSafe(format!(
             r#"
             SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
-                   t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
+                   t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
                    qt.question_id
             FROM {turns} t
             JOIN {question_turns} qt ON qt.tenant_id = t.tenant_id AND qt.turn_id = t.id

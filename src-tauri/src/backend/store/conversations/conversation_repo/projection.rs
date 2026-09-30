@@ -97,7 +97,7 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
     let turn_rows = sqlx::query_as::<_, ConversationTurnWithQuestionRow>(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
-               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
+               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
                qt.question_id
         FROM conversation_question_turns qt
         JOIN conversation_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id

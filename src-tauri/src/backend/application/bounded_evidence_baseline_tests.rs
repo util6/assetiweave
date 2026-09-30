@@ -166,6 +166,7 @@ mod tests {
                 title: None,
                 started_at: Some(timestamp.to_string()),
                 ended_at: Some(timestamp.to_string()),
+                model: None,
                 parts: vec![NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,
                     kind: ConversationPartKind::Text,
@@ -283,6 +284,7 @@ mod tests {
                 title: None,
                 started_at: Some("2026-09-09T10:00:00Z".to_string()),
                 ended_at: Some("2026-09-09T10:01:00Z".to_string()),
+                model: None,
                 parts: vec![NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,
                     kind: ConversationPartKind::Text,
@@ -319,6 +321,7 @@ mod tests {
                 title: None,
                 started_at: Some("2026-09-09T10:10:00Z".to_string()),
                 ended_at: Some("2026-09-09T10:11:00Z".to_string()),
+                model: None,
                 parts: vec![NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,
                     kind: ConversationPartKind::Text,
@@ -786,6 +789,7 @@ mod tests {
                 title: None,
                 started_at: None,
                 ended_at: None,
+                model: None,
                 parts: vec![NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,
                     kind: ConversationPartKind::Text,
@@ -874,6 +878,7 @@ mod tests {
                     title: None,
                     started_at: None,
                     ended_at: None,
+                    model: None,
                     parts: vec![],
                 },
                 NormalizedConversationTurn {
@@ -883,6 +888,7 @@ mod tests {
                     title: None,
                     started_at: None,
                     ended_at: None,
+                    model: None,
                     parts: vec![],
                 },
             ],
@@ -959,6 +965,7 @@ mod tests {
             title: None,
             started_at: None,
             ended_at: None,
+            model: None,
             parts: vec![NormalizedConversationPart {
                 role: ConversationPartRole::Assistant,
                 kind: ConversationPartKind::Text,
@@ -1054,6 +1061,7 @@ mod tests {
                 title: None,
                 started_at: None,
                 ended_at: None,
+                model: None,
                 parts: vec![NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,
                     kind: ConversationPartKind::Text,
@@ -1076,6 +1084,7 @@ mod tests {
                 title: None,
                 started_at: None,
                 ended_at: None,
+                model: None,
                 parts: vec![NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,
                     kind: ConversationPartKind::Text,
@@ -1183,6 +1192,7 @@ mod tests {
             title: None,
             started_at: None,
             ended_at: None,
+            model: None,
             parts: vec![NormalizedConversationPart {
                 role: ConversationPartRole::Assistant,
                 kind: ConversationPartKind::Text,
@@ -1283,6 +1293,7 @@ mod tests {
             title: None,
             started_at: None,
             ended_at: None,
+            model: None,
             parts: vec![NormalizedConversationPart {
                 role: ConversationPartRole::Assistant,
                 kind: ConversationPartKind::Text,
@@ -1382,6 +1393,7 @@ mod tests {
             title: None,
             started_at: None,
             ended_at: None,
+            model: None,
             parts: vec![NormalizedConversationPart {
                 role: ConversationPartRole::Assistant,
                 kind: ConversationPartKind::Text,
@@ -1474,6 +1486,7 @@ mod tests {
                 title: None,
                 started_at: Some(now.to_string()),
                 ended_at: Some(now.to_string()),
+                model: None,
                 parts: vec![NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,
                     kind: ConversationPartKind::Text,

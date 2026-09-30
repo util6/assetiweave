@@ -656,6 +656,7 @@ async fn sqlx_web_record_aggregates_only_declared_content_cards() {
         title: None,
         started_at: None,
         ended_at: None,
+        model: None,
         parts: vec![NormalizedConversationPart {
             role: ConversationPartRole::Assistant,
             kind: ConversationPartKind::Text,
@@ -975,6 +976,7 @@ fn fixture_session() -> NormalizedConversationSession {
             title: None,
             started_at: None,
             ended_at: None,
+            model: None,
             parts: vec![NormalizedConversationPart {
                 role: ConversationPartRole::Assistant,
                 kind: ConversationPartKind::Text,

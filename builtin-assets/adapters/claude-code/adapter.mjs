@@ -693,6 +693,7 @@ function parseJsonl(text) {
         title: null,
         started_at: timestamp,
         ended_at: null,
+        model: null,
         parts: [],
       };
       continue;
@@ -707,6 +708,9 @@ function parseJsonl(text) {
     if (role === "assistant") {
       current.parts.push(...assistantMessageParts(payload, value));
       current.ended_at = timestamp;
+      if (!current.model) {
+        current.model = stringField(payload?.message, ["model"]) ?? stringField(payload, ["model"]) ?? stringField(value?.message, ["model"]) ?? stringField(value, ["model"]) ?? null;
+      }
       continue;
     }
     if (recordType.includes("tool") || recordType.includes("shell") || recordType === "patch") {
@@ -757,7 +761,7 @@ function readSession() {
       title: titleFromFile(filePath),
       project_path: parsed.projectPath ?? inferProjectPathFromTurns(turns),
       started_at: turns[0]?.started_at ?? null,
-      updated_at: turns.at(-1)?.ended_at ?? null,
+      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
       source_locator: filePath,
       source_fingerprint: versionToken,
       turns,

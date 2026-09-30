@@ -184,7 +184,7 @@ pub(super) async fn load_session_turns_sqlx_tx(
     let rows = sqlx::query(
         r#"
         SELECT id, session_id, external_id, turn_index, user_text, title,
-               started_at, ended_at, fingerprint, missing, imported_at
+               started_at, ended_at, fingerprint, missing, imported_at, model
         FROM conversation_turns
         WHERE tenant_id = ?1 AND session_id = ?2
         ORDER BY turn_index ASC, id ASC, imported_at ASC
@@ -206,7 +206,7 @@ pub(super) async fn load_question_turns_sqlx_tx(
     let rows = sqlx::query(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
-               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at
+               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at, t.model
         FROM conversation_question_turns qt
         JOIN conversation_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
         WHERE qt.tenant_id = ?1 AND qt.question_id = ?2

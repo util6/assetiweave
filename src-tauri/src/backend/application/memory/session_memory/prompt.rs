@@ -134,6 +134,7 @@ pub(crate) fn session_detail_to_normalized(
                 title: turn.title.clone(),
                 started_at: turn.started_at.clone(),
                 ended_at: turn.ended_at.clone(),
+                model: turn.model.clone(),
                 parts,
             });
         }

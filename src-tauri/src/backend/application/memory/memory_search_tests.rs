@@ -79,6 +79,7 @@ async fn insert_test_source_and_session(
             title: None,
             started_at: Some(timestamp.to_string()),
             ended_at: Some(timestamp.to_string()),
+            model: None,
             parts: vec![NormalizedConversationPart {
                 role: ConversationPartRole::Assistant,
                 kind: ConversationPartKind::Text,

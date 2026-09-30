@@ -360,6 +360,7 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
                 title: None,
                 started_at: Some(updated_at.to_rfc3339()),
                 ended_at: Some(updated_at.to_rfc3339()),
+                model: None,
                 parts: vec![NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,
                     kind: ConversationPartKind::Text,
@@ -1560,6 +1561,7 @@ async fn upsert_conversation_export_fixture(
             title: None,
             started_at: None,
             ended_at: None,
+            model: None,
             parts: vec![NormalizedConversationPart {
                 role: ConversationPartRole::Assistant,
                 kind: ConversationPartKind::Text,
@@ -1853,7 +1855,7 @@ esac
                     mode,
                     dry_run: false,
                 },
-                |done, total, label| progress.push((done, total, label)),
+                |done, total, label, _completed_adapters| progress.push((done, total, label)),
             )
             .await
             .unwrap();
@@ -1945,7 +1947,9 @@ esac
             },
             Some(&cancellation),
             Some(&task_id),
-            &mut |done, total, label| progress_events.push((done, total, label)),
+            &mut |done, total, label, completed_adapters| {
+                progress_events.push((done, total, label, completed_adapters.to_vec()))
+            },
         )
         .await
         .unwrap();
@@ -1965,6 +1969,9 @@ esac
         snapshot.outcome,
         Some(crate::backend::infrastructure::tasks::TaskOutcome::Success)
     );
+    assert!(progress_events
+        .iter()
+        .any(|(_, _, _, adapters)| !adapters.is_empty()));
 
     drop(service);
     fs::remove_dir_all(root).ok();
@@ -5468,6 +5475,7 @@ async fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_
                 title: None,
                 started_at: None,
                 ended_at: None,
+                model: None,
                 parts: vec![NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,
                     kind: ConversationPartKind::Text,

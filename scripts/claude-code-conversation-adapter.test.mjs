@@ -162,6 +162,30 @@ test("Claude Code keeps a simple Bash execution boundary and omits persisted dis
   }
 });
 
+test("Claude Code extracts model identifier onto the turn object", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-model-"));
+  try {
+    const sessionPath = path.join(fixtureRoot, "session-model.jsonl");
+    writeFileSync(sessionPath, [
+      message("2026-08-05T00:00:00Z", "user", [{ type: "text", text: "测试模型提取" }]),
+      JSON.stringify({
+        timestamp: "2026-08-05T00:00:01Z",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          model: "claude-3-7-sonnet-20250219",
+          content: [{ type: "text", text: "模型回答测试" }],
+        },
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    assert.equal(session.turns[0].model, "claude-3-7-sonnet-20250219");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 function message(timestamp, role, content, extra = {}) {
   return JSON.stringify({ timestamp, type: role, message: { role, content }, ...extra });
 }
