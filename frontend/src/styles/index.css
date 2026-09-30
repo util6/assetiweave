@@ -1840,3 +1840,22 @@
   position: relative;
   top: auto;
 }
+
+/* Fluid collapsible header for bounded routes */
+.collapsible-header-shell {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 300ms cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 240ms cubic-bezier(0.16, 1, 0.3, 1),
+              margin 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: grid-template-rows, opacity;
+}
+
+.collapsible-header-shell[data-collapsed="true"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  pointer-events: none;
+}
+

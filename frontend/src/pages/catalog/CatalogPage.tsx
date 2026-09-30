@@ -25,6 +25,10 @@ import {
 } from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
 import { PageHeader } from "../../components/foundation/PageHeader";
+import {
+  CollapsibleHeader,
+  useCollapsibleHeaderState,
+} from "../../components/common/CollapsibleHeader";
 import { AppSkeleton } from "../../components/foundation/skeleton";
 import { DeploymentPlanPanel } from "../../components/plans/DeploymentPlanPanel";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
@@ -258,34 +262,42 @@ export function CatalogPage({
     }
   }
 
+  const { visible: headerVisible, onScroll: onHeaderScroll } =
+    useCollapsibleHeaderState();
+
   return (
-    <section className="app-bounded-route flex flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
-      <PageHeader
-        actions={
-          <PageMetrics
-            metrics={[
-              {
-                label: t("metric.sources"),
-                value:
-                  catalog.sources.length > 0
-                    ? catalog.sources.length
-                    : (catalog.overview?.source_count ?? 0),
-              },
-              {
-                label: t("metric.supportedApps"),
-                value:
-                  catalog.profiles.length > 0
-                    ? catalog.profiles.length
-                    : (catalog.overview?.profile_count ?? 0),
-              },
-            ]}
-          />
-        }
-        eyebrow={t("catalog.page.subtitle")}
-        icon={<Sparkles size={21} />}
-        title={t("catalog.page.title")}
-        titleAction={<ManualHelpButton onOpen={onManualOpen} />}
-      />
+    <section
+      className="app-bounded-route flex flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]"
+      onScrollCapture={onHeaderScroll}
+    >
+      <CollapsibleHeader visible={headerVisible}>
+        <PageHeader
+          actions={
+            <PageMetrics
+              metrics={[
+                {
+                  label: t("metric.sources"),
+                  value:
+                    catalog.sources.length > 0
+                      ? catalog.sources.length
+                      : (catalog.overview?.source_count ?? 0),
+                },
+                {
+                  label: t("metric.supportedApps"),
+                  value:
+                    catalog.profiles.length > 0
+                      ? catalog.profiles.length
+                      : (catalog.overview?.profile_count ?? 0),
+                },
+              ]}
+            />
+          }
+          eyebrow={t("catalog.page.subtitle")}
+          icon={<Sparkles size={21} />}
+          title={t("catalog.page.title")}
+          titleAction={<ManualHelpButton onOpen={onManualOpen} />}
+        />
+      </CollapsibleHeader>
 
       <AssetToolbar
         actionGroups={[
@@ -402,6 +414,7 @@ export function CatalogPage({
         className="min-h-0 flex-1"
         tabIndex={0}
         aria-label={t("asset.list.aria")}
+        onScroll={onHeaderScroll}
       >
         {catalog.loading ? (
           <AppSkeleton
