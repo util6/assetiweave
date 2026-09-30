@@ -10,6 +10,7 @@ import {
   forwardRef,
   type ButtonHTMLAttributes,
   type ChangeEvent,
+  type ClipboardEvent,
   type CompositionEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -112,9 +113,12 @@ export function ToolbarSearch({
   defaultValue,
   inputRef,
   onChange,
+  onClick,
   onCompositionEnd,
   onCompositionStart,
+  onFocus,
   onKeyDown,
+  onPaste,
   placeholder,
   trailing,
   value,
@@ -124,9 +128,12 @@ export function ToolbarSearch({
   defaultValue?: string;
   inputRef?: Ref<HTMLInputElement>;
   onChange: (value: string, event: ChangeEvent<HTMLInputElement>) => void;
+  onClick?: (event: React.MouseEvent<HTMLInputElement>) => void;
   onCompositionEnd?: (event: CompositionEvent<HTMLInputElement>) => void;
   onCompositionStart?: (event: CompositionEvent<HTMLInputElement>) => void;
+  onFocus?: (event: React.FocusEvent<HTMLInputElement>) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
+  onPaste?: (event: ClipboardEvent<HTMLInputElement>) => void;
   placeholder: string;
   trailing?: ReactNode;
   value?: string;
@@ -146,9 +153,12 @@ export function ToolbarSearch({
         className="min-w-0 flex-1 whitespace-nowrap border-0 bg-transparent text-body-sm text-on-surface outline-none placeholder:text-outline"
         defaultValue={defaultValue}
         onChange={(event) => onChange(event.target.value, event)}
+        onClick={onClick}
         onCompositionEnd={onCompositionEnd}
         onCompositionStart={onCompositionStart}
+        onFocus={onFocus}
         onKeyDown={onKeyDown}
+        onPaste={onPaste}
         placeholder={placeholder}
         ref={inputRef}
         type="search"
@@ -165,6 +175,8 @@ export function DebouncedToolbarSearch({
   commitDelayMs,
   commitImmediatelyWhen,
   onChange,
+  onClick,
+  onFocus,
   placeholder,
   resetSignal,
   searching = false,
@@ -176,6 +188,8 @@ export function DebouncedToolbarSearch({
   commitDelayMs: number;
   commitImmediatelyWhen?: (value: string) => boolean;
   onChange: (value: string) => void;
+  onClick?: () => void;
+  onFocus?: () => void;
   placeholder: string;
   resetSignal?: string;
   searching?: boolean;
@@ -185,6 +199,7 @@ export function DebouncedToolbarSearch({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const committedValueRef = useRef(value);
   const composingRef = useRef(false);
+  const isPasteRef = useRef(false);
   const draftRef = useRef(value);
   const resetSignalRef = useRef(resetSignal);
   const onChangeRef = useRef(onChange);
@@ -203,6 +218,7 @@ export function DebouncedToolbarSearch({
     clearDebouncedSearchTimer(timerRef);
     setPending(false);
     composingRef.current = false;
+    isPasteRef.current = false;
     committedValueRef.current = value;
     draftRef.current = value;
     if (inputRef.current && inputRef.current.value !== value) {
@@ -237,16 +253,24 @@ export function DebouncedToolbarSearch({
     }, commitDelayMs);
   }
 
+  function handlePaste() {
+    isPasteRef.current = true;
+  }
+
   function handleChange(
     nextValue: string,
     event: ChangeEvent<HTMLInputElement>,
   ) {
+    const prevLength = draftRef.current.length;
     draftRef.current = nextValue;
     if (composingRef.current || inputEventIsComposing(event)) {
       clearDebouncedSearchTimer(timerRef);
       return;
     }
-    if (commitImmediatelyWhen?.(nextValue)) {
+    const isBulkOrPaste =
+      isPasteRef.current || Math.abs(nextValue.length - prevLength) !== 1;
+    isPasteRef.current = false;
+    if (isBulkOrPaste && commitImmediatelyWhen?.(nextValue)) {
       clearDebouncedSearchTimer(timerRef);
       commitDraft(nextValue);
       return;
@@ -268,7 +292,14 @@ export function DebouncedToolbarSearch({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== "Enter" || composingRef.current) return;
+    if (
+      event.key !== "Enter" ||
+      composingRef.current ||
+      (event.nativeEvent as globalThis.KeyboardEvent).isComposing ||
+      event.keyCode === 229
+    ) {
+      return;
+    }
     event.preventDefault();
     commitCurrentDraft();
   }
@@ -282,9 +313,12 @@ export function DebouncedToolbarSearch({
       defaultValue={value}
       inputRef={inputRef}
       onChange={handleChange}
+      onClick={onClick}
       onCompositionEnd={handleCompositionEnd}
       onCompositionStart={handleCompositionStart}
+      onFocus={onFocus}
       onKeyDown={handleKeyDown}
+      onPaste={handlePaste}
       placeholder={placeholder}
       trailing={
         submitLabel ? (

@@ -375,6 +375,52 @@ describe("MarkdownContent", () => {
     expect(groups[1].turnCount).toBe(7);
   });
 
+  it("filters unmatched orphan sessions according to recordKind", () => {
+    const groups = groupConversationSessionsByApp(
+      [],
+      [
+        {
+          ...sessionDetail.session,
+          id: "session-app",
+          adapter_id: "custom-app",
+          question_count: 1,
+          turn_count: 1,
+        },
+        {
+          ...sessionDetail.session,
+          id: "session-web",
+          adapter_id: "custom-web",
+          question_count: 1,
+          turn_count: 1,
+        },
+      ],
+      "session",
+    );
+    expect(groups.map((g) => g.app.id)).toEqual(["custom-app"]);
+
+    const webGroups = groupConversationSessionsByApp(
+      [],
+      [
+        {
+          ...sessionDetail.session,
+          id: "session-app",
+          adapter_id: "custom-app",
+          question_count: 1,
+          turn_count: 1,
+        },
+        {
+          ...sessionDetail.session,
+          id: "session-web",
+          adapter_id: "custom-web",
+          question_count: 1,
+          turn_count: 1,
+        },
+      ],
+      "web",
+    );
+    expect(webGroups.map((g) => g.app.id)).toEqual(["custom-web"]);
+  });
+
   it("groups app sessions by project folder before listing individual sessions", () => {
     const groups = groupConversationSessionsByApp(adapters, [
       {
@@ -554,7 +600,7 @@ describe("MarkdownContent", () => {
       />,
     );
 
-    const appChip = screen.getByText("Codex");
+    const appChip = screen.getByTitle("Codex");
 
     expect(appChip.className).toContain("rounded-md");
     expect(appChip.getAttribute("style")).toContain("rgb(16, 185, 129)");
@@ -604,7 +650,11 @@ describe("MarkdownContent", () => {
     );
 
     expect(screen.getAllByText("Reasoning").length).toBeGreaterThan(0);
-    expect(screen.getByText("比较两个执行路径。")).toBeTruthy();
+    expect(
+      screen.getAllByText(
+        (_, el) => el?.textContent?.trim() === "比较两个执行路径。",
+      )[0],
+    ).toBeTruthy();
   });
 
   it("omits project path UI when browsing web record sessions", () => {
