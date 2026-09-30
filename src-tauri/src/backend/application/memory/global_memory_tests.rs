@@ -133,6 +133,35 @@ fn context_budget_preserves_priority_and_stable_revision() {
     assert_eq!(first.references[0].kind, "global_memory");
 }
 
+#[test]
+fn compile_memory_context_includes_session_short_id() {
+    let mut session = crate::backend::domain::SessionMemory::default();
+    session.id = "session-memory-1".into();
+    session.session_id = "conversation-session-fcb638a9-4670-4f1f-827b-91d1e4ebaa0a".into();
+    session.status = crate::backend::domain::SessionMemoryStatus::Active;
+    session.summary = "Fix search debounce".into();
+    session.source_revision = 100;
+
+    let res = compile_memory_context(
+        "tenant",
+        Some("/project"),
+        "",
+        2000,
+        None,
+        None,
+        &[],
+        &[session],
+        &[],
+        &[],
+    );
+    assert!(res.text.contains("## Session Memory [Session: fcb638a9]"));
+    assert_eq!(res.references.len(), 1);
+    assert_eq!(
+        res.references[0].session_id.as_deref(),
+        Some("conversation-session-fcb638a9-4670-4f1f-827b-91d1e4ebaa0a")
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn failed_global_revision_keeps_last_success_and_documents() {
     let root = std::env::temp_dir().join(format!(

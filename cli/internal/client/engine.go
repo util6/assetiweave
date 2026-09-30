@@ -254,6 +254,20 @@ func engineSubtype(wireType string) errs.Subtype {
 	}
 }
 
+func IsDevelopmentMode() bool {
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("ASSETIWEAVE_ENV")))
+	if env == "development" || env == "dev" {
+		return true
+	}
+	devFlag := strings.ToLower(strings.TrimSpace(os.Getenv("ASSETIWEAVE_DEV")))
+	return devFlag == "1" || devFlag == "true"
+}
+
+func IsInstalledMode() bool {
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("ASSETIWEAVE_ENV")))
+	return env == "production" || env == "installed"
+}
+
 func (c *EngineClient) resolvePath() (string, error) {
 	if c.Path != "" {
 		return c.Path, nil
@@ -261,6 +275,28 @@ func (c *EngineClient) resolvePath() (string, error) {
 	if envPath := os.Getenv("ASSETIWEAVE_ENGINE"); envPath != "" {
 		return envPath, nil
 	}
+
+	if IsDevelopmentMode() {
+		if wsEngine := findWorkspaceEngine(); wsEngine != "" {
+			return wsEngine, nil
+		}
+		return "", fmt.Errorf("development engine not found in target/debug/assetiweave-engine; please run: cargo build -p assetiweave --bin assetiweave-engine")
+	}
+
+	if IsInstalledMode() {
+		if exe, err := os.Executable(); err == nil {
+			dir := filepath.Dir(exe)
+			candidate := filepath.Join(dir, executableName("assetiweave-engine"))
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return candidate, nil
+			}
+		}
+		if path, err := exec.LookPath("assetiweave-engine"); err == nil {
+			return path, nil
+		}
+		return "", fmt.Errorf("installed assetiweave-engine not found; please reinstall AssetIWeave")
+	}
+
 	if wsEngine := findWorkspaceEngine(); wsEngine != "" {
 		return wsEngine, nil
 	}
@@ -284,6 +320,38 @@ func (c *EngineClient) resolvePath() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("assetiweave-engine not found")
+}
+
+func FindWorkspaceCLI() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return findWorkspaceCLIFrom(cwd)
+}
+
+func findWorkspaceCLIFrom(startDir string) string {
+	dir := filepath.Clean(startDir)
+	for {
+		if isAssetIWeaveWorkspace(dir) {
+			candidates := []string{
+				filepath.Join(dir, "target", "debug", executableName("aiwc")),
+				filepath.Join(dir, "target", "debug", executableName("assetiweave-cli")),
+			}
+			for _, candidate := range candidates {
+				if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+					return candidate
+				}
+			}
+			return ""
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
 }
 
 func findWorkspaceEngine() string {

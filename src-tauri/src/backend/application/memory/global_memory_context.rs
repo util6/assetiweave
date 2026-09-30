@@ -122,42 +122,42 @@ pub(crate) fn compile_memory_context(
     let mut sections = Vec::new();
     if !l3_items.is_empty() {
         for item in l3_items {
-            sections.push(ContextSection {
-                kind: "global_memory_l3".to_string(),
-                id: item.revision_id.clone(),
-                source_revision: Some(item.revision_number),
-                content: format!(
+            sections.push(ContextSection::new(
+                "global_memory_l3",
+                item.revision_id.clone(),
+                Some(item.revision_number),
+                format!(
                     "## [Global] {}\n{}\n{}",
                     item.title, item.summary, item.rationale
                 ),
-            });
+            ));
         }
     } else if let Some(version) = global_version {
         let summary = version.summary_markdown.as_deref().unwrap_or_default();
         let memory = version.memory_markdown.as_deref().unwrap_or_default();
         if !summary.is_empty() || !memory.is_empty() {
-            sections.push(ContextSection {
-                kind: "global_memory".to_string(),
-                id: version.id.clone(),
-                source_revision: Some(version.source_watermark),
-                content: format!(
+            sections.push(ContextSection::new(
+                "global_memory",
+                version.id.clone(),
+                Some(version.source_watermark),
+                format!(
                     "## Global Memory\n{}\n\n## Project Index\n{}",
                     summary, memory
                 ),
-            });
+            ));
         }
     }
     if !l2_items.is_empty() {
         for item in l2_items {
-            sections.push(ContextSection {
-                kind: "project_memory_l2".to_string(),
-                id: item.revision_id.clone(),
-                source_revision: Some(item.revision_number),
-                content: format!(
+            sections.push(ContextSection::new(
+                "project_memory_l2",
+                item.revision_id.clone(),
+                Some(item.revision_number),
+                format!(
                     "### [{:?}] {}\n{}\n{}",
                     item.category, item.title, item.summary, item.rationale
                 ),
-            });
+            ));
         }
     } else if let Some(version) = project_version {
         if let Some(content) = version
@@ -165,12 +165,12 @@ pub(crate) fn compile_memory_context(
             .as_deref()
             .filter(|text| !text.is_empty())
         {
-            sections.push(ContextSection {
-                kind: "project_memory".to_string(),
-                id: version.id.clone(),
-                source_revision: Some(version.source_watermark),
-                content: format!("## Project Memory\n{content}"),
-            });
+            sections.push(ContextSection::new(
+                "project_memory",
+                version.id.clone(),
+                Some(version.source_watermark),
+                format!("## Project Memory\n{content}"),
+            ));
         }
     }
     let mut selected_sessions = sessions
@@ -202,20 +202,25 @@ pub(crate) fn compile_memory_context(
         });
     }
     for session in selected_sessions.into_iter().take(3) {
-        sections.push(ContextSection {
-            kind: "session_memory".to_string(),
-            id: session.id.clone(),
-            source_revision: Some(session.source_revision),
-            content: format!(
-                "## Session Memory\n### Summary\n{}\n\n### Goal\n{}\n\n### Result\n{}\n\n### Decisions\n{}\n\n### Verification\n{}\n\n### Follow-up\n{}",
-                session.summary,
-                session.goal,
-                session.result,
-                bullet_lines(&session.decisions),
-                bullet_lines(&session.verification),
-                bullet_lines(&session.follow_up),
-            ),
-        });
+        let short_id = session_short_id(&session.session_id);
+        sections.push(
+            ContextSection::new(
+                "session_memory",
+                session.id.clone(),
+                Some(session.source_revision),
+                format!(
+                    "## Session Memory [Session: {}]\n### Summary\n{}\n\n### Goal\n{}\n\n### Result\n{}\n\n### Decisions\n{}\n\n### Verification\n{}\n\n### Follow-up\n{}",
+                    short_id,
+                    session.summary,
+                    session.goal,
+                    session.result,
+                    bullet_lines(&session.decisions),
+                    bullet_lines(&session.verification),
+                    bullet_lines(&session.follow_up),
+                ),
+            )
+            .with_session_id(session.session_id.clone()),
+        );
     }
 
     let mut used_tokens = 0usize;
@@ -235,6 +240,7 @@ pub(crate) fn compile_memory_context(
             kind: section.kind,
             id: section.id,
             source_revision: section.source_revision,
+            session_id: section.session_id,
         });
         if used_tokens >= token_budget {
             break;
@@ -265,7 +271,30 @@ pub(crate) struct ContextSection {
     kind: String,
     id: String,
     source_revision: Option<i64>,
+    session_id: Option<String>,
     content: String,
+}
+
+impl ContextSection {
+    fn new(
+        kind: impl Into<String>,
+        id: impl Into<String>,
+        source_revision: Option<i64>,
+        content: String,
+    ) -> Self {
+        Self {
+            kind: kind.into(),
+            id: id.into(),
+            source_revision,
+            session_id: None,
+            content,
+        }
+    }
+
+    fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
 }
 
 pub(crate) fn fit_context_section(content: &str, budget: usize, used: usize) -> Option<String> {
@@ -300,6 +329,20 @@ pub(crate) fn bullet_lines(values: &[String]) -> String {
         .map(|value| format!("- {value}"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+pub(crate) fn session_short_id(session_id: &str) -> String {
+    let trimmed = session_id.trim();
+    let stripped = ["conversation-session-", "web-record-session-", "session-"]
+        .iter()
+        .find_map(|prefix| trimmed.strip_prefix(prefix))
+        .unwrap_or(trimmed);
+
+    if stripped.len() >= 8 {
+        stripped[..8].to_string()
+    } else {
+        stripped.to_string()
+    }
 }
 
 pub(crate) fn estimate_context_tokens(text: &str) -> usize {

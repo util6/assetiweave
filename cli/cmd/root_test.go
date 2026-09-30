@@ -535,3 +535,25 @@ func TestSkillDeleteRequiresYesBeforeCallingEngine(t *testing.T) {
 		t.Fatalf("stderr missing typed confirmation error: %s", stderr.String())
 	}
 }
+
+func TestMaybeTrampolineDisabledWhenNotDevMode(t *testing.T) {
+	t.Setenv("ASSETIWEAVE_ENV", "")
+	t.Setenv("ASSETIWEAVE_DEV", "")
+	t.Setenv("ASSETIWEAVE_NO_TRAMPOLINE", "")
+
+	_, handled := maybeTrampolineDevelopmentCLI()
+	if handled {
+		t.Fatal("expected trampoline not to be handled when not in dev mode")
+	}
+}
+
+func TestMaybeTrampolineDisabledWhenNoTrampolineEnvSet(t *testing.T) {
+	t.Setenv("ASSETIWEAVE_ENV", "development")
+	t.Setenv("ASSETIWEAVE_NO_TRAMPOLINE", "1")
+
+	_, handled := maybeTrampolineDevelopmentCLI()
+	if handled {
+		t.Fatal("expected trampoline not to be handled when ASSETIWEAVE_NO_TRAMPOLINE=1")
+	}
+}
+

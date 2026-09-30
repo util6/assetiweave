@@ -10,6 +10,8 @@ pub struct MemoryContextReference {
     pub kind: String,
     pub id: String,
     pub source_revision: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

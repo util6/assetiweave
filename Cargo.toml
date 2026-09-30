@@ -6,8 +6,6 @@ resolver = "2"
 debug = 1
 incremental = false
 
-[profile.dev.package."*"]
-debug = 0
 
 [profile.test]
 incremental = false

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -33,6 +35,9 @@ The CLI is designed for AI agents and scripts:
 const hideProfilesEnv = "ASSETIWEAVE_CLI_HIDE_PROFILES"
 
 func Execute() int {
+	if code, handled := maybeTrampolineDevelopmentCLI(); handled {
+		return code
+	}
 	f := cmdutil.NewDefault(cmdutil.SystemIO())
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -57,6 +62,51 @@ func Execute() int {
 		return handleError(f, runErr)
 	}
 	return 0
+}
+
+func maybeTrampolineDevelopmentCLI() (int, bool) {
+	if os.Getenv("ASSETIWEAVE_NO_TRAMPOLINE") == "1" {
+		return 0, false
+	}
+	if !engineclient.IsDevelopmentMode() {
+		return 0, false
+	}
+	wsCLI := engineclient.FindWorkspaceCLI()
+	if wsCLI == "" {
+		return 0, false
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return 0, false
+	}
+	realSelf, err := filepath.EvalSymlinks(self)
+	if err != nil {
+		realSelf = self
+	}
+	realWS, err := filepath.EvalSymlinks(wsCLI)
+	if err != nil {
+		realWS = wsCLI
+	}
+	if realSelf == realWS {
+		return 0, false
+	}
+
+	_ = os.Setenv("ASSETIWEAVE_NO_TRAMPOLINE", "1")
+	if err := syscall.Exec(wsCLI, os.Args, os.Environ()); err == nil {
+		return 0, true
+	}
+	cmd := exec.Command(wsCLI, os.Args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode(), true
+		}
+		return 1, true
+	}
+	return 0, true
 }
 
 func Build(ctx context.Context, f *cmdutil.Factory) *cobra.Command {

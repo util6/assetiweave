@@ -457,3 +457,129 @@ func TestCallTranslatesMigrationMissingError(t *testing.T) {
 	}
 }
 
+func TestResolvePathDevelopmentModeRequiresWorkspaceEngineAndRefusesGlobalFallback(t *testing.T) {
+	wsDir := t.TempDir()
+	pkgJSON := filepath.Join(wsDir, "package.json")
+	if err := os.WriteFile(pkgJSON, []byte(`{"name":"assetiweave"}`), 0o600); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	fakeBinDir := t.TempDir()
+	globalEngine := filepath.Join(fakeBinDir, executableName("assetiweave-engine"))
+	if err := os.WriteFile(globalEngine, []byte("global-engine"), 0o755); err != nil {
+		t.Fatalf("write fake global engine: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(wsDir); err != nil {
+		t.Fatalf("chdir wsDir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	t.Setenv("PATH", fakeBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ASSETIWEAVE_ENGINE", "")
+	t.Setenv("ASSETIWEAVE_ENV", "development")
+
+	client := &EngineClient{}
+
+	// Case 1: In development mode, without target/debug/assetiweave-engine, must NOT fallback to globalEngine!
+	_, err = client.resolvePath()
+	if err == nil {
+		t.Fatal("resolvePath() succeeded in development mode without workspace engine; want error refusing global fallback")
+	}
+	if !strings.Contains(err.Error(), "development engine not found in target/debug/assetiweave-engine") {
+		t.Fatalf("resolvePath() error = %v, want error indicating development engine missing", err)
+	}
+
+	// Case 2: When target/debug/assetiweave-engine exists in workspace, returns it
+	targetDir := filepath.Join(wsDir, "target", "debug")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("mkdir target/debug: %v", err)
+	}
+	wsEngine := filepath.Join(targetDir, executableName("assetiweave-engine"))
+	if err := os.WriteFile(wsEngine, []byte("ws-engine"), 0o755); err != nil {
+		t.Fatalf("write ws engine: %v", err)
+	}
+
+	resolved, err := client.resolvePath()
+	if err != nil {
+		t.Fatalf("resolvePath() unexpected error: %v", err)
+	}
+	realResolved, _ := filepath.EvalSymlinks(resolved)
+	realWSEngine, _ := filepath.EvalSymlinks(wsEngine)
+	if realResolved != realWSEngine {
+		t.Fatalf("resolvePath() = %q, want workspace engine %q", realResolved, realWSEngine)
+	}
+}
+
+func TestResolvePathInstalledModeIgnoresWorkspaceEngine(t *testing.T) {
+	wsDir := t.TempDir()
+	pkgJSON := filepath.Join(wsDir, "package.json")
+	if err := os.WriteFile(pkgJSON, []byte(`{"name":"assetiweave"}`), 0o600); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	targetDir := filepath.Join(wsDir, "target", "debug")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("mkdir target/debug: %v", err)
+	}
+	wsEngine := filepath.Join(targetDir, executableName("assetiweave-engine"))
+	if err := os.WriteFile(wsEngine, []byte("ws-engine"), 0o755); err != nil {
+		t.Fatalf("write ws engine: %v", err)
+	}
+
+	fakeBinDir := t.TempDir()
+	globalEngine := filepath.Join(fakeBinDir, executableName("assetiweave-engine"))
+	if err := os.WriteFile(globalEngine, []byte("global-engine"), 0o755); err != nil {
+		t.Fatalf("write fake global engine: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(wsDir); err != nil {
+		t.Fatalf("chdir wsDir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	t.Setenv("PATH", fakeBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ASSETIWEAVE_ENGINE", "")
+	t.Setenv("ASSETIWEAVE_ENV", "production")
+
+	client := &EngineClient{}
+	resolved, err := client.resolvePath()
+	if err != nil {
+		t.Fatalf("resolvePath() error = %v", err)
+	}
+	realResolved, _ := filepath.EvalSymlinks(resolved)
+	realGlobal, _ := filepath.EvalSymlinks(globalEngine)
+	if realResolved != realGlobal {
+		t.Fatalf("resolvePath() in production mode = %q, want installed engine %q (not workspace %q)", realResolved, realGlobal, wsEngine)
+	}
+}
+
+func TestFindWorkspaceCLIFindsWorkspaceBinaries(t *testing.T) {
+	wsDir := t.TempDir()
+	pkgJSON := filepath.Join(wsDir, "package.json")
+	if err := os.WriteFile(pkgJSON, []byte(`{"name":"assetiweave"}`), 0o600); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	targetDir := filepath.Join(wsDir, "target", "debug")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("mkdir target/debug: %v", err)
+	}
+	cliFile := filepath.Join(targetDir, executableName("aiwc"))
+	if err := os.WriteFile(cliFile, []byte("fake-cli"), 0o755); err != nil {
+		t.Fatalf("write fake cli: %v", err)
+	}
+
+	found := findWorkspaceCLIFrom(wsDir)
+	if found != cliFile {
+		t.Fatalf("findWorkspaceCLIFrom(wsDir) = %q, want %q", found, cliFile)
+	}
+}
+
+

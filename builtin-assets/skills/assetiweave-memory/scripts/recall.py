@@ -31,10 +31,39 @@ class RecallError(RuntimeError):
         self.detail = detail
 
 
+def find_workspace_cli() -> str | None:
+    current = Path.cwd().resolve()
+    for directory in [current, *current.parents]:
+        pkg = directory / "package.json"
+        if pkg.is_file():
+            try:
+                data = json.loads(pkg.read_text())
+                if data.get("name") == "assetiweave":
+                    candidates = [
+                        directory / "target" / "debug" / "aiwc",
+                        directory / "target" / "debug" / "assetiweave-cli",
+                    ]
+                    for cand in candidates:
+                        if cand.is_file() and os.access(cand, os.X_OK):
+                            return str(cand)
+            except Exception:
+                pass
+    return None
+
+
 def cli_path() -> str:
     configured = os.environ.get("ASSETIWEAVE_CLI")
     if configured:
         return configured
+    env_mode = os.environ.get("ASSETIWEAVE_ENV", "").lower().strip()
+    is_dev = env_mode in ["development", "dev"] or os.environ.get("ASSETIWEAVE_DEV") in ["1", "true"]
+    if is_dev:
+        ws_cli = find_workspace_cli()
+        if ws_cli:
+            return ws_cli
+        raise RecallError(
+            "ASSETIWEAVE_ENV is set to development, but workspace CLI was not found in target/debug/aiwc. Please run: pnpm cli:build"
+        )
     return shutil.which("assetiweave-cli") or shutil.which("aiwc") or "assetiweave-cli"
 
 

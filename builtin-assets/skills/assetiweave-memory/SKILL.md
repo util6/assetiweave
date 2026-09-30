@@ -7,19 +7,37 @@ description: 通过 AssetIWeave 的统一 Memory API 与会话逐级取证体系
 
 所有操作都通过 AssetIWeave CLI 的 Engine 合同完成。脚本不直接读写底层 SQLite，不绕过 Engine 访问第三方会话数据库，也不自行决定工具权限。
 
-## 1. 逐级取证与短 ID 优先规约 (Progressive Evidence & Short-ID-First)
+## 1. 逐级取证事实求证协议 (Progressive Evidence & Fact Verification Protocol)
 
 ### 乐观执行原则 (Optimistic Execution)
 - 默认假设运行时与合同环境正常，直接调用各业务命令执行，**严禁在启动时强制执行 `doctor` 诊断**！
 - 只有在遇到不可恢复的环境报错、CLI 缺失或版本/契约断裂时，才跳转至文末的“故障排查”章节。
 
-### 短 ID 优先规约 (Short-ID-First Rule)
-- 当用户 Prompt、问题输入或上下文中出现任何疑似卡片 ID、会话 ID 或 **8 位十六进制短 ID**（例如 `a1b2c3d4`）时，**坚决杜绝全局盲搜或全库 Recall 检索**！
-- 必须**第一步直接调用**骨架还原命令：
-  ```bash
-  aiwc conversation session outline <short-id-or-any-id>
-  ```
-  `outline` 自动根据传入的短 ID / 卡片 ID / 会话 ID 直达归属会话，并还原整场会话的骨架。
+### 双入口取证流 (Dual-Entry Verification Flow)
+用户的使用场景分为两种入口，**两者必须最终无缝汇入 4-Tier 逐级取证链路**：
+
+1. **入口 A：精确短 ID 入口 (Direct Short-ID Entry)**
+   - 当用户 Prompt、问题输入或上下文中已提供 8 位十六进制会话短 ID（例如 `2e003a42`）或完整 Session ID 时：
+   - **第一步直接调用**骨架还原命令：
+     ```bash
+     aiwc conversation session outline <short-id-or-any-id>
+     ```
+
+2. **入口 B：自然语言模糊回忆入口 (Natural Language Recall Entry · 用户核心场景)**
+   - 当用户用自然语言提问回忆历史事实、排查经过或技术方案时，用户**不可能预先知道短 ID**。
+   - **第 1 步：快速定位**：
+     ```bash
+     aiwc memory context resolve --current-project --query "<关键词/描述>" --token-budget 2000
+     ```
+     （或使用 `aiwc conversation search --query "<关键词>" --current-project --limit 5`）
+   - **第 2 步：提取 Session 短 ID 并立刻衔接取证**：
+     `context resolve` 输出包含明确的会话标记 `## Session Memory [Session: <short-id>]`（且 references 中附带 `session_id`）。
+     **强制规则**：一旦定位到候选会话，**必须当场提取其 8 位短 ID，并立即无缝触发 Tier 0 骨架还原**：
+     ```bash
+     aiwc conversation session outline <short-id>
+     ```
+   - **严禁二手摘要交差 (No Second-hand Summary)**：
+     对于任何涉及技术方案、Bug 修复细节、关键配置或历史讨论的提问，**严禁仅凭 `context resolve` 的 3 行粗略摘要草草回复**！必须在第 1 轮对话内完成取证核实，将原始验证细节连同 **Session 短 ID** 一同交付给用户！
 
 ### 4 级逐级取证梯级 (4-Tier Progressive Evidence Protocol)
 1. **Tier 0: 会话骨架还原 (Session Outline)**
@@ -45,6 +63,13 @@ description: 通过 AssetIWeave 的统一 Memory API 与会话逐级取证体系
      aiwc conversation block get <card-id>
      ```
    - **严禁全量 dump 会话正文**，每次仅查 1~2 张关键卡片，查完即止，按需取证。
+
+### 开发模式环境指引 (Development Mode Guidance)
+在 `assetiweave` 源码工作区内开发联调时，设置环境变量：
+```bash
+export ASSETIWEAVE_ENV=development
+```
+设置后，CLI、Engine 与脚本将强制锁定工作区 `./target/debug/` 编译产物，杜绝与系统全局安装版本冲突。
 
 ## 2. 严格防逃逸与爬虫熔断规约 (Anti-Crawling & Circuit Breaker)
 

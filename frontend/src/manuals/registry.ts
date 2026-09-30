@@ -1480,6 +1480,57 @@ export const manualDocuments = [
       ],
     },
   ),
+  manual(
+    "agent.workspace",
+    {
+      title: "Agent 工作区使用手册",
+      subtitle: "管理多智能体团队协作与账号会话",
+      overview:
+        "Agent 工作区用于统筹管理团队协作架构、多账号并发调度、并行会话处理与智能体执行监控。",
+      sections: [
+        {
+          heading: "团队与账号管理",
+          body: "支持根据任务规划构建 Agent 团队，指派 Leader 与队员角色，按平台配置认证账号并监控限流状态。",
+          outcomes: [
+            "便捷切换不同供应商与平台的认证凭据，支持限流自动规避。",
+            "构建多角色 Agent 团队流水线，协同处理复杂长任务。",
+          ],
+          items: [
+            "在顶栏账号切换器中快速切换当前使用的账号凭据。",
+            "在团队面板创建或编辑协作团队，分配各角色职责。",
+            "实时观察并行泳道执行活动与阶段进展。",
+          ],
+          cautions: ["被限流的账号应等待额度恢复或切换备用账号。"],
+          keywords: ["Agent", "团队", "多账号", "工作区"],
+        },
+      ],
+    },
+    {
+      title: "Agent Workspace Manual",
+      subtitle: "Manage multi-agent teams, accounts, and collaboration",
+      overview:
+        "The Agent Workspace coordinates multi-agent team structures, concurrent account scheduling, and task execution monitoring.",
+      sections: [
+        {
+          heading: "Team and Account Orchestration",
+          body: "Organize Agent teams with leaders and members, manage provider accounts, and track rate limits.",
+          outcomes: [
+            "Seamlessly switch provider credentials and avoid rate limits.",
+            "Form multi-agent teams to collaboratively execute long-running jobs.",
+          ],
+          items: [
+            "Quickly switch active account credentials from the header selector.",
+            "Create or edit collaborative teams and assign role responsibilities.",
+            "Monitor parallel lane activities and stage progress in real time.",
+          ],
+          cautions: [
+            "Rate-limited accounts should wait for quota reset or switch to backup accounts.",
+          ],
+          keywords: ["Agent", "Team", "Multi-account", "Workspace"],
+        },
+      ],
+    },
+  ),
 ];
 
 const manualByRouteKey = new Map(
