@@ -142,7 +142,10 @@ impl AppService {
                         dry_run: false,
                     },
                     cancellation,
-                    &mut |completed: usize, total: usize, note: Option<String>| {
+                    &mut |completed: usize,
+                          total: usize,
+                          note: Option<String>,
+                          _completed_adapters: &[String]| {
                         let stage = if total == 0 {
                             4
                         } else {

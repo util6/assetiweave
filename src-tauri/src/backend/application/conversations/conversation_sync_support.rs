@@ -8,7 +8,7 @@ impl AppService {
         &self,
         params: ConversationSyncParams,
     ) -> AppResult<Value> {
-        self.sync_conversations_with_progress(params, |_, _, _| {})
+        self.sync_conversations_with_progress(params, |_, _, _, _| {})
             .await
     }
 
@@ -18,7 +18,7 @@ impl AppService {
         mut on_progress: F,
     ) -> AppResult<Value>
     where
-        F: FnMut(usize, usize, Option<String>) + Send,
+        F: FnMut(usize, usize, Option<String>, &[String]) + Send,
     {
         self.sync_conversations_with_progress_and_cancellation(params, None, &mut on_progress)
             .await
@@ -31,7 +31,7 @@ impl AppService {
         on_progress: &mut F,
     ) -> AppResult<Value>
     where
-        F: FnMut(usize, usize, Option<String>) + Send,
+        F: FnMut(usize, usize, Option<String>, &[String]) + Send,
     {
         self.sync_conversations_with_control(params, cancellation, None, on_progress)
             .await

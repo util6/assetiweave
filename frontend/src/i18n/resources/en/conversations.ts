@@ -125,6 +125,15 @@ export const conversationsEn = {
   "conversation.toolbar.searchSubmit": "Search sessions",
   "conversation.search.contentPlaceholder":
     "Search content and jump to cards...",
+  "conversation.search.dialogTitle": "Search Conversation Content",
+  "conversation.search.dialogDescription":
+    "Search globally across sessions for questions, answers, code, file changes, and tools",
+  "conversation.search.dialogTrigger": "Search content and jump to cards...",
+  "conversation.search.dialogClose": "Close",
+  "conversation.search.shortcut": "⌘K",
+  "conversation.search.clear": "Clear",
+  "conversation.search.initialHint":
+    "Type keywords to search conversation content globally...",
   "conversation.search.submit": "Search content",
   "conversation.search.resultsTitle": "Content Search Results",
   "conversation.search.loading": "Searching content...",
@@ -138,6 +147,18 @@ export const conversationsEn = {
   "conversation.search.appChip": "{{app}}",
   "conversation.search.sessionChip": "{{sessionId}}",
   "conversation.search.card.question": "User question",
+  "conversation.search.previewTitle": "Card Content Preview",
+  "conversation.search.openSessionAndJump": "Open session & jump to card",
+  "conversation.search.shortcutNav": "Navigate",
+  "conversation.search.shortcutOpen": "Open",
+  "conversation.search.copySnippet": "Copy content",
+  "conversation.search.copied": "Copied",
+  "conversation.search.resetFilters": "Reset filters",
+  "conversation.search.noPreview":
+    "Select a card on the left to preview content",
+  "conversation.search.quickHintsTitle": "Search Tips",
+  "conversation.search.quickHintsDesc":
+    "Search questions, code snippets, commands, file changes, and skills",
   "conversation.toolbar.sync": "Sync",
   "conversation.toolbar.syncing": "Syncing...",
   "conversation.searchIndex.metric": "Local index",
@@ -241,6 +262,8 @@ export const conversationsEn = {
   "conversation.app.select": "Select an app to view its sessions.",
   "conversation.app.selectNamed": "Select app {{name}}",
   "conversation.app.sessionCount": "{{count}} sessions",
+  "conversation.app.syncing": "Syncing…",
+  "conversation.app.synced": "Synced",
   "conversation.app.summary":
     "{{sessions}} sessions · {{questions}} questions · {{turns}} turns",
   "conversation.project.select": "Select a project folder to view sessions.",

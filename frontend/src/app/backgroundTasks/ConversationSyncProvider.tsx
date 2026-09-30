@@ -243,11 +243,41 @@ export function mergeConversationTaskSnapshot(
     current.finished_at &&
     (!incoming.finished_at || (currentIsTerminal && !incomingIsTerminal));
 
+  const currentProgress = current.progress;
+  const incomingProgress = incoming.progress;
+  const mergedProgress =
+    incomingProgress || currentProgress
+      ? {
+          ...(currentProgress ?? {}),
+          ...(incomingProgress ?? {}),
+          phase: incomingProgress?.phase ?? currentProgress?.phase ?? "preparing",
+          completed_source_count:
+            incomingProgress?.completed_source_count ??
+            currentProgress?.completed_source_count ??
+            0,
+          total_source_count:
+            incomingProgress?.total_source_count ??
+            currentProgress?.total_source_count ??
+            0,
+          current_source_name:
+            incomingProgress?.current_source_name ??
+            currentProgress?.current_source_name ??
+            null,
+          completed_adapter_ids: Array.from(
+            new Set([
+              ...(currentProgress?.completed_adapter_ids ?? []),
+              ...(incomingProgress?.completed_adapter_ids ?? []),
+            ]),
+          ),
+        }
+      : undefined;
+
   return {
     ...current,
     ...incoming,
     status: effectiveStatus,
     record_kind: incomingKind ?? currentKind ?? fallbackKind ?? null,
+    progress: mergedProgress,
     finished_at: preserveFinishedAt
       ? current.finished_at
       : incoming.finished_at,

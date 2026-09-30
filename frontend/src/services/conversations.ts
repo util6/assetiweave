@@ -338,6 +338,7 @@ export interface ConversationSyncTaskProgress {
   completed_source_count: number;
   total_source_count: number;
   current_source_name: string | null;
+  completed_adapter_ids?: string[];
 }
 
 export type ConversationDataMaintenanceOperation = "audit" | "repair";

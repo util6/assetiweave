@@ -56,6 +56,14 @@ export async function loadAllConversationSessionPages(
   }
 }
 
+export function isWebRecordAdapter(
+  adapter: Pick<ConversationAdapter, "id" | "capabilities">,
+): boolean {
+  return (
+    adapter.capabilities.includes("web_records") || adapter.id.endsWith("-web")
+  );
+}
+
 export function conversationAdaptersQueryOptions(
   scope: QueryScope,
   recordKind: ConversationRecordKind,
@@ -66,7 +74,7 @@ export function conversationAdaptersQueryOptions(
       const isWeb = recordKind === "web";
       const adapters = await listConversationAdapters();
       return adapters.filter(
-        (adapter) => adapter.capabilities.includes("web_history") === isWeb,
+        (adapter) => isWebRecordAdapter(adapter) === isWeb,
       );
     },
     networkMode: "always",

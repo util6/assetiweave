@@ -14,7 +14,7 @@ impl AppService {
         on_progress: &mut F,
     ) -> AppResult<Value>
     where
-        F: FnMut(usize, usize, Option<String>) + Send,
+        F: FnMut(usize, usize, Option<String>, &[String]) + Send,
     {
         ensure_conversation_sync_not_cancelled(cancellation)?;
         let record_kind = normalize_sync_record_kind(params.record_kind.as_deref())?;
@@ -122,10 +122,12 @@ impl AppService {
 
         let total_source_count = adapter_groups.values().map(|g| g.len()).sum::<usize>();
         let completed_source_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let completed_adapter_ids =
+            std::sync::Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
         let on_progress_mutex = std::sync::Arc::new(tokio::sync::Mutex::new(on_progress));
         {
             let mut lock = on_progress_mutex.lock().await;
-            (**lock)(0, total_source_count, None);
+            (**lock)(0, total_source_count, None, &[]);
         }
 
         let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
@@ -134,6 +136,7 @@ impl AppService {
         for (adapter_id, group_sources) in adapter_groups {
             let semaphore = semaphore.clone();
             let completed_source_count = completed_source_count.clone();
+            let completed_adapter_ids = completed_adapter_ids.clone();
             let on_progress_mutex = on_progress_mutex.clone();
             let params = &params;
             let settings = &settings;
@@ -170,9 +173,13 @@ impl AppService {
                 for source in group_sources {
                     ensure_conversation_sync_not_cancelled(cancellation)?;
                     let completed = completed_source_count.load(std::sync::atomic::Ordering::Relaxed);
+                    let current_completed = {
+                        let lock = completed_adapter_ids.lock().await;
+                        lock.clone()
+                    };
                     {
                         let mut lock = on_progress_mutex.lock().await;
-                        (**lock)(completed, total_source_count, Some(source.name.clone()));
+                        (**lock)(completed, total_source_count, Some(source.name.clone()), &current_completed);
                     }
 
                     let worker_id = format!("{}:{}", adapter_id, source.id);
@@ -250,10 +257,33 @@ impl AppService {
 
                     let on_progress_mutex_detail = on_progress_mutex.clone();
                     let completed_detail = completed_source_count.clone();
+                    let completed_adapter_ids_detail = completed_adapter_ids.clone();
+                    let progress_task_runtime_detail = task_runtime.clone();
+                    let task_id_detail = task_id.map(|s| s.to_string());
+                    let sync_stage_id_detail = sync_stage_id.clone();
+                    let scan_stage_id_detail = scan_stage_id.clone();
+                    let worker_id_detail = worker_id.clone();
                     let mut on_detail = move |msg: String| {
                         let completed = completed_detail.load(std::sync::atomic::Ordering::Relaxed);
+                        let current_completed = {
+                            let lock = completed_adapter_ids_detail.try_lock();
+                            lock.map(|g| g.clone()).unwrap_or_default()
+                        };
                         if let Ok(mut lock) = on_progress_mutex_detail.try_lock() {
-                            (**lock)(completed, total_source_count, Some(msg));
+                            (**lock)(completed, total_source_count, Some(msg.clone()), &current_completed);
+                        }
+                        if let Some(ref tid) = task_id_detail {
+                            if msg.contains("写入会话") {
+                                let _ = progress_task_runtime_detail.remove_activity(tid, &sync_stage_id_detail, &worker_id_detail);
+                                let _ = progress_task_runtime_detail.remove_activity(tid, &scan_stage_id_detail, &worker_id_detail);
+                                let _ = progress_task_runtime_detail.set_stage_progress(
+                                    tid,
+                                    &sync_stage_id_detail,
+                                    0,
+                                    None,
+                                    Some(msg),
+                                );
+                            }
                         }
                     };
 
@@ -277,9 +307,13 @@ impl AppService {
 
                     let completed =
                         completed_source_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let current_completed = {
+                        let lock = completed_adapter_ids.lock().await;
+                        lock.clone()
+                    };
                     {
                         let mut lock = on_progress_mutex.lock().await;
-                        (**lock)(completed, total_source_count, None);
+                        (**lock)(completed, total_source_count, None, &current_completed);
                     }
 
                     match sync_result {
@@ -329,6 +363,20 @@ impl AppService {
                         Some("会话记录已安全入库，搜索索引更新完毕".to_string()),
                     );
                     let _ = task_runtime.update_stage_status(tid, &persist_stage_id, StageStatus::Succeeded);
+                }
+
+                // 该应用（adapter）已完成落库，加入 completed_adapter_ids 并立即通知外部触发前端增量刷新！
+                let current_completed = {
+                    let mut lock = completed_adapter_ids.lock().await;
+                    if !lock.contains(&adapter_id) {
+                        lock.push(adapter_id.clone());
+                    }
+                    lock.clone()
+                };
+                let completed = completed_source_count.load(std::sync::atomic::Ordering::Relaxed);
+                {
+                    let mut lock = on_progress_mutex.lock().await;
+                    (**lock)(completed, total_source_count, None, &current_completed);
                 }
 
                 Ok((group_results, group_errors))

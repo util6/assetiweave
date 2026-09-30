@@ -98,6 +98,9 @@ export function useConversationsController({
   >([]);
   const [contentSearchIncludesQuestions, setContentSearchIncludesQuestions] =
     useState(true);
+  const [contentSearchAdapterId, setContentSearchAdapterId] = useState<
+    string | null
+  >(null);
   const [sessionSortBy, setSessionSortBy] =
     useState<ConversationSessionSortBy>("updated");
   const [sessionSortDirection, setSessionSortDirection] = useState<
@@ -106,6 +109,8 @@ export function useConversationsController({
   const [contentSearchResult, setContentSearchResult] =
     useState<ConversationSearchResultState | null>(null);
   const [contentSearchLoading, setContentSearchLoading] = useState(false);
+  const [contentSearchLoadingMore, setContentSearchLoadingMore] =
+    useState(false);
   const [activeSearchTarget, setActiveSearchTarget] =
     useState<ConversationSearchTarget | null>(null);
 
@@ -293,11 +298,13 @@ export function useConversationsController({
     setSessionView("browser");
     setContentVisibility({ ...DEFAULT_CONVERSATION_CONTENT_VISIBILITY });
     setContentQuery("");
+    setContentSearchAdapterId(null);
     setContentSearchCardKinds([]);
     setContentSearchSemanticRoles([]);
     setContentSearchIncludesQuestions(true);
     setContentSearchResult(null);
     setContentSearchLoading(false);
+    setContentSearchLoadingMore(false);
     setActiveSearchTarget(null);
     setExportDialog(null);
     setImportDialogOpen(false);
@@ -314,9 +321,11 @@ export function useConversationsController({
     clearSessionDetail,
     closeSession,
     contentQuery,
+    contentSearchAdapterId,
     contentSearchCardKinds,
     contentSearchIncludesQuestions,
     contentSearchLoading,
+    contentSearchLoadingMore,
     contentSearchResult,
     contentSearchSemanticRoles,
     contentVisibility,
@@ -344,9 +353,13 @@ export function useConversationsController({
     sessionSortDirection,
     sessionView,
     setContentQuery,
+    setContentSearchAdapterId,
+    setContentSearchCardKinds,
     setContentSearchIncludesQuestions,
     setContentSearchLoading,
+    setContentSearchLoadingMore,
     setContentSearchResult,
+    setContentSearchSemanticRoles,
     setExportDialog,
     setExportVisibility,
     setExporting,

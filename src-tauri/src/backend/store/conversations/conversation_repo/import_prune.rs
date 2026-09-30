@@ -137,42 +137,7 @@ pub(super) async fn prune_conversation_turns_sqlx_tx(
             .await
             .map_err(StoreError::external)?;
     }
-    sqlx::query(
-        r#"
-        DELETE FROM conversation_question_fts
-        WHERE tenant_id = ?1
-          AND question_id IN (
-            SELECT q.id
-            FROM conversation_questions q
-            LEFT JOIN conversation_question_turns qt
-              ON qt.tenant_id = q.tenant_id AND qt.question_id = q.id
-            WHERE q.tenant_id = ?1 AND q.session_id = ?2
-            GROUP BY q.id
-            HAVING COUNT(qt.turn_id) = 0
-        )
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    sqlx::query(
-        r#"
-        DELETE FROM conversation_questions
-        WHERE tenant_id = ?1 AND session_id = ?2
-          AND id NOT IN (
-              SELECT DISTINCT question_id
-              FROM conversation_question_turns
-              WHERE tenant_id = ?1
-          )
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
+    prune_orphan_questions_for_session_sqlx_tx(tx, tenant_id, session_id).await?;
     renumber_questions_for_session_sqlx_tx(tx, tenant_id, session_id).await?;
     Ok(())
 }

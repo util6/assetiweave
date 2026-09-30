@@ -170,6 +170,16 @@ describe("ConversationsPage sync scope", () => {
     vi.clearAllMocks();
   });
 
+  function openContentSearchDialog() {
+    const trigger = screen.getByRole("button", {
+      name: "Search content and jump to cards...",
+    });
+    fireEvent.click(trigger);
+    return screen.getByPlaceholderText(
+      "Search content and jump to cards...",
+    ) as HTMLInputElement;
+  }
+
   it("syncs only conversation sessions from the conversations page", async () => {
     renderConversationsPage("session");
 
@@ -551,9 +561,7 @@ describe("ConversationsPage sync scope", () => {
       try {
         renderConversationsPage(recordKind);
 
-        const searchInput = screen.getByPlaceholderText(
-          "Search content and jump to cards...",
-        ) as HTMLInputElement;
+        const searchInput = openContentSearchDialog();
         fireEvent.change(searchInput, { target: { value: "d" } });
         await act(async () => {
           await vi.advanceTimersByTimeAsync(300);
@@ -599,9 +607,7 @@ describe("ConversationsPage sync scope", () => {
     try {
       renderConversationsPage("session");
 
-      const searchInput = screen.getByPlaceholderText(
-        "Search content and jump to cards...",
-      ) as HTMLInputElement;
+      const searchInput = openContentSearchDialog();
       fireEvent.change(searchInput, { target: { value: "deploy" } });
       fireEvent.keyDown(searchInput, { key: "Enter" });
 
@@ -657,9 +663,7 @@ describe("ConversationsPage sync scope", () => {
 
     renderConversationsPage("session");
 
-    const searchInput = screen.getByPlaceholderText(
-      "Search content and jump to cards...",
-    ) as HTMLInputElement;
+    const searchInput = openContentSearchDialog();
     fireEvent.change(searchInput, { target: { value: "deploy" } });
     fireEvent.keyDown(searchInput, { key: "Enter" });
 
@@ -759,9 +763,7 @@ describe("ConversationsPage sync scope", () => {
       }),
     ).toBeTruthy();
 
-    const searchInput = screen.getByPlaceholderText(
-      "Search content and jump to cards...",
-    ) as HTMLInputElement;
+    const searchInput = openContentSearchDialog();
     fireEvent.change(searchInput, { target: { value: "export" } });
     fireEvent.keyDown(searchInput, { key: "Enter" });
     fireEvent.click(
@@ -801,15 +803,13 @@ describe("ConversationsPage sync scope", () => {
 
     renderConversationsPage("session");
 
-    const searchInput = screen.getByPlaceholderText(
-      "Search content and jump to cards...",
-    ) as HTMLInputElement;
+    const searchInput = openContentSearchDialog();
     fireEvent.change(searchInput, { target: { value: "deploy" } });
     fireEvent.keyDown(searchInput, { key: "Enter" });
 
     const answerOne = await screen.findByText("answer match one");
     const answerTwo = screen.getByText("answer match two");
-    const command = screen.getByText("command match");
+    const command = screen.getAllByText("command match")[0];
 
     expect(
       answerOne.compareDocumentPosition(command) &
@@ -835,6 +835,7 @@ describe("ConversationsPage sync scope", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Commands" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用筛选" }));
 
     await waitFor(() =>
       expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
@@ -849,7 +850,7 @@ describe("ConversationsPage sync scope", () => {
       }),
     );
     expect(screen.queryByText("answer match one")).toBeNull();
-    expect(screen.getByText("command match")).toBeTruthy();
+    expect(screen.getAllByText("command match")[0]).toBeTruthy();
 
     let resolveCombinedSearch: (
       value: Awaited<ReturnType<typeof searchConversationRecordsMock>>,
@@ -861,6 +862,7 @@ describe("ConversationsPage sync scope", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Answer text" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用筛选" }));
 
     await waitFor(() =>
       expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
@@ -874,8 +876,8 @@ describe("ConversationsPage sync scope", () => {
         record_kind: "session",
       }),
     );
-    expect(screen.getByText("answer match one")).toBeTruthy();
-    expect(screen.getByText("command match")).toBeTruthy();
+    expect(screen.getAllByText("answer match one")[0]).toBeTruthy();
+    expect(screen.getAllByText("command match")[0]).toBeTruthy();
 
     resolveCommandSearch!({
       hits: [searchHit("command-hit", "command", "command match")],
@@ -896,9 +898,9 @@ describe("ConversationsPage sync scope", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("answer match one")).toBeTruthy();
+      expect(screen.getAllByText("answer match one")[0]).toBeTruthy();
     });
-    expect(screen.getByText("command match")).toBeTruthy();
+    expect(screen.getAllByText("command match")[0]).toBeTruthy();
   });
 
   it("sends semantic roles and question visibility independently from card kinds", async () => {
@@ -916,16 +918,13 @@ describe("ConversationsPage sync scope", () => {
     });
 
     renderConversationsPage("session");
-    const searchInput = screen.getByPlaceholderText(
-      "Search content and jump to cards...",
-    );
+    const searchInput = openContentSearchDialog();
     fireEvent.change(searchInput, { target: { value: "reasoning" } });
-    fireEvent.keyDown(searchInput, { key: "Enter" });
-
-    await screen.findByText("reasoning match");
+    await screen.findByRole("button", { name: /Reasoning search result/ });
     searchConversationRecordsMock.mockReturnValue(new Promise(() => undefined));
 
     fireEvent.click(screen.getByRole("button", { name: "role:reasoning" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用筛选" }));
     await waitFor(() =>
       expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
         card_kinds: [],
@@ -940,6 +939,7 @@ describe("ConversationsPage sync scope", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "User question" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用筛选" }));
     await waitFor(() =>
       expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
         card_kinds: [],
@@ -953,7 +953,11 @@ describe("ConversationsPage sync scope", () => {
       }),
     );
     expect(screen.queryByText("question match")).toBeNull();
-    expect(screen.getByText("reasoning match")).toBeTruthy();
+    expect(
+      screen.getAllByText(
+        (_, el) => el?.textContent?.includes("reasoning match") ?? false,
+      ).length,
+    ).toBeGreaterThan(0);
   });
 
   it.each(["session", "web"] as const)(
@@ -963,9 +967,7 @@ describe("ConversationsPage sync scope", () => {
       try {
         renderConversationsPage(recordKind);
 
-        const searchInput = screen.getByPlaceholderText(
-          "Search content and jump to cards...",
-        ) as HTMLInputElement;
+        const searchInput = openContentSearchDialog();
         fireEvent.compositionStart(searchInput);
         fireEvent.change(searchInput, {
           target: { value: "zhong" },
@@ -1060,6 +1062,37 @@ describe("ConversationsPage sync scope", () => {
       );
     });
     expect(screen.queryByText("Sync completed")).toBeNull();
+  });
+
+  it("triggers incremental catalog refresh when an individual app finishes sync even if the task is still running", async () => {
+    const initialRefreshCount = listConversationSessionsMock.mock.calls.length;
+    conversationSyncTaskMock.current = {
+      adapter_id: null,
+      dry_run: false,
+      error: null,
+      finished_at: null,
+      id: "sync-running-incremental",
+      record_kind: "session",
+      result: null,
+      source_id: null,
+      started_at: "2026-06-15T00:00:00Z",
+      status: "running",
+      progress: {
+        completed_adapter_ids: ["codex"],
+        completed_source_count: 1,
+        current_source_name: null,
+        phase: "syncing",
+        total_source_count: 2,
+      },
+    };
+
+    renderConversationsPage("session");
+
+    await waitFor(() => {
+      expect(listConversationSessionsMock.mock.calls.length).toBeGreaterThan(
+        initialRefreshCount,
+      );
+    });
   });
 });
 
