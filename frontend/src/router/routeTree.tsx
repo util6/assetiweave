@@ -45,6 +45,10 @@ const UnderConstructionPage = lazyRouteComponent(
   () => import("../pages/under-construction/UnderConstructionPage"),
   "UnderConstructionPage",
 );
+const AgentWorkspacePage = lazyRouteComponent(
+  () => import("../pages/agent-workspace/AgentWorkspacePage"),
+  "AgentWorkspacePage",
+);
 
 function ListPending() {
   return <AppSkeleton label="Loading" layout="list" />;
@@ -249,6 +253,10 @@ function MemoryRecallView() {
   );
 }
 
+function AgentWorkspaceView() {
+  return <AgentWorkspacePage />;
+}
+
 function UnderConstructionView() {
   const { onManualOpen } = useWorkspaceContext();
   return <UnderConstructionPage onManualOpen={onManualOpen} />;
@@ -339,6 +347,13 @@ export const memoryRecallRoute = createRoute({
   pendingComponent: ColumnsPending,
 });
 
+export const agentWorkspaceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/agent/workspace",
+  component: AgentWorkspaceView,
+  pendingComponent: ColumnsPending,
+});
+
 export const underConstructionRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/under-construction",
@@ -364,6 +379,7 @@ export const routeTree = rootRoute.addChildren([
   promptsOverviewRoute,
   memoryRecentRoute,
   memoryRecallRoute,
+  agentWorkspaceRoute,
   underConstructionRoute,
   wildcardRoute,
 ]);

@@ -26,4 +26,13 @@ export default defineConfig({
       ignored: ["**/src-tauri/**", "**/crates/**", "**/cli/**"],
     },
   },
+  test: {
+    pool: "forks",
+    poolOptions: {
+      forks: {
+        minForks: 1,
+        maxForks: 4,
+      },
+    },
+  },
 });

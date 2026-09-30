@@ -12,6 +12,7 @@ const routeKeyToPath: Record<string, string> = {
   "prompts.overview": "/prompts/overview",
   "memory.recent": "/memory/recent",
   "memory.recall": "/memory/recall",
+  "agent.workspace": "/agent/workspace",
 };
 
 const retiredRouteKeys = new Set([

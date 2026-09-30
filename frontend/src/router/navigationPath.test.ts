@@ -46,6 +46,14 @@ describe("navigationPath", () => {
     expect(navigationPath(model, "recall")).toBe("/memory/recall");
   });
 
+  it("maps agent workspace tab to its route path", () => {
+    const model = {
+      ...fallbackNavigationModel,
+      activeHeaderTabId: "agent",
+    };
+    expect(navigationPath(model, "workspace")).toBe("/agent/workspace");
+  });
+
   it("routes retired conversation tabs and unimplemented tabs to /under-construction", () => {
     const model = {
       ...fallbackNavigationModel,

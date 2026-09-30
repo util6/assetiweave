@@ -38,6 +38,12 @@ export const navigationModel: NavigationModel = {
     { id: "profiles", label: "Profiles", assetKind: "profile", enabled: true },
     { id: "conversations", label: "Conversations", enabled: true },
     { id: "memory", label: "Memory", enabled: true },
+    {
+      id: "agent",
+      label: "Agent",
+      labels: { zh: "智能体工作台", en: "Agent Workspace" },
+      enabled: true,
+    },
   ],
   subNavItems: {
     skills: [
@@ -178,6 +184,15 @@ export const navigationModel: NavigationModel = {
         id: "recall",
         label: "Recall",
         routeKey: "memory.recall",
+        enabled: true,
+      },
+    ],
+    agent: [
+      {
+        id: "workspace",
+        label: "Workspace",
+        labels: { zh: "会话与协同", en: "Workspace" },
+        routeKey: "agent.workspace",
         enabled: true,
       },
     ],
