@@ -222,6 +222,58 @@ function queryWorkbuddyDbTitles() {
   return map;
 }
 
+function extractToolOutputText(rawOutput) {
+  if (rawOutput == null) return "";
+  if (typeof rawOutput === "string") return rawOutput;
+  if (Array.isArray(rawOutput)) {
+    return rawOutput
+      .map((item) => {
+        if (!item) return "";
+        if (typeof item === "string") return item;
+        const text = item.text || item.content || item.output || "";
+        if (typeof text === "string" && text.trim().startsWith("{")) {
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed.type === "present_files_result") {
+              const expl = parsed.explanation || parsed.message || "";
+              const files = Array.isArray(parsed.files) ? parsed.files.join("\n") : "";
+              return [expl, files].filter(Boolean).join("\n");
+            }
+          } catch {}
+        }
+        return typeof text === "string" ? text : JSON.stringify(item);
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (typeof rawOutput === "object") {
+    if (typeof rawOutput.text === "string") return rawOutput.text;
+    if (typeof rawOutput.content === "string") return rawOutput.content;
+    return JSON.stringify(rawOutput);
+  }
+  return String(rawOutput);
+}
+
+function extractReasoningText(entry) {
+  if (!entry) return null;
+  if (Array.isArray(entry.rawContent)) {
+    const texts = entry.rawContent
+      .filter((c) => c && (c.type === "reasoning_text" || c.type === "thinking" || c.text))
+      .map((c) => c.text || c.thinking || "")
+      .filter(Boolean);
+    if (texts.length) return texts.join("\n\n");
+  }
+  if (Array.isArray(entry.content)) {
+    const texts = entry.content
+      .filter((c) => c && (c.type === "reasoning" || c.type === "thinking" || c.text))
+      .map((c) => c.text || c.thinking || "")
+      .filter(Boolean);
+    if (texts.length) return texts.join("\n\n");
+  }
+  if (typeof entry.text === "string" && entry.text.trim()) return entry.text.trim();
+  return null;
+}
+
 function extractUserPrompt(text) {
   if (!text || typeof text !== "string") return "";
   const queryMatch = text.match(/<user_query>([\s\S]*?)<\/user_query>/i);
@@ -297,6 +349,32 @@ function parseJsonl(text, sessionIdFallback, filePath) {
     }
 
     if (!currentTurn) continue;
+
+    if (entry.type === "reasoning") {
+      const reasoningText = extractReasoningText(entry);
+      if (reasoningText && reasoningText.trim()) {
+        currentTurn.parts.push({
+          role: "assistant",
+          kind: "text",
+          text: reasoningText.trim(),
+          language: null,
+          command: null,
+          cwd: entry.cwd || null,
+          status: null,
+          exit_code: null,
+          source_execution_id: null,
+          metadata_json: JSON.stringify({ source_type: "reasoning" }),
+          content_card: {
+            schema_version: 1,
+            kind: `${ADAPTER_ID}.reasoning`,
+            semantic_role: "reasoning",
+            renderer: "markdown",
+          },
+        });
+      }
+      if (entry.timestamp) currentTurn.ended_at = new Date(entry.timestamp).toISOString();
+      continue;
+    }
 
     if (
       entry.type === "function_call" ||
@@ -408,8 +486,8 @@ function parseJsonl(text, sessionIdFallback, filePath) {
         continue;
       }
 
-      // Read / Grep / Glob (Ambient Signal)
-      const isRead = toolName === "Read";
+      // Ambient Read / Search tools
+      const isRead = ["Read", "present_files", "show_widget", "widget_guidelines"].includes(toolName);
       const isSearch = ["Grep", "Glob", "WebSearch"].includes(toolName);
       const executionKind = isRead ? "read" : isSearch ? "search" : null;
       const signal = executionKind ? "ambient" : undefined;
@@ -463,14 +541,12 @@ function parseJsonl(text, sessionIdFallback, filePath) {
         continue;
       }
 
-      let outputText = typeof entry.output === "object"
-        ? (entry.output?.text ?? JSON.stringify(entry.output))
-        : String(entry.output || "");
+      let outputText = extractToolOutputText(entry.output);
 
       let status = entry.status === "failed" ? "failed" : "success";
       let exitCode = entry.providerData?.toolResult?.rawResponse?.exitCode;
 
-      const isRead = matchedTool === "Read";
+      const isRead = ["Read", "present_files", "show_widget", "widget_guidelines"].includes(matchedTool);
       const isSearch = ["Grep", "Glob", "WebSearch"].includes(matchedTool);
       const executionKind = isRead ? "read" : isSearch ? "search" : null;
       const signal = executionKind ? "ambient" : undefined;
@@ -506,7 +582,7 @@ function parseJsonl(text, sessionIdFallback, filePath) {
         content_card: {
           schema_version: 1,
           kind: `${ADAPTER_ID}.result`,
-          renderer: "terminal_output",
+          renderer: matchedTool === "Bash" ? "terminal_output" : "plain",
         },
       });
       if (entry.timestamp) currentTurn.ended_at = new Date(entry.timestamp).toISOString();
@@ -514,34 +590,22 @@ function parseJsonl(text, sessionIdFallback, filePath) {
     }
 
     if (entry.type === "message" && entry.role === "assistant") {
-      if (Array.isArray(entry.content)) {
-        for (const c of entry.content) {
-          if (c.type === "reasoning" || c.type === "thinking") {
-            const reasoningText = c.text || c.thinking || "";
-            if (reasoningText.trim()) {
-              currentTurn.parts.push({
-                role: "assistant",
-                kind: "text",
-                text: reasoningText,
-                language: null,
-                command: null,
-                cwd: entry.cwd || null,
-                status: null,
-                exit_code: null,
-                source_execution_id: null,
-                metadata_json: JSON.stringify({ source_type: c.type }),
-                content_card: {
-                  schema_version: 1,
-                  kind: `${ADAPTER_ID}.reasoning`,
-                  renderer: "markdown",
-                },
-              });
-            }
-          } else if (c.type === "text" && c.text?.trim()) {
+      const items = Array.isArray(entry.content)
+        ? entry.content
+        : (typeof entry.content === "string" && entry.content.trim()
+            ? [{ type: "output_text", text: entry.content }]
+            : (typeof entry.text === "string" && entry.text.trim()
+                ? [{ type: "output_text", text: entry.text }]
+                : []));
+
+      for (const c of items) {
+        if (!c) continue;
+        if (typeof c === "string") {
+          if (c.trim()) {
             currentTurn.parts.push({
               role: "assistant",
               kind: "text",
-              text: c.text,
+              text: c.trim(),
               language: null,
               command: null,
               cwd: entry.cwd || null,
@@ -552,6 +616,54 @@ function parseJsonl(text, sessionIdFallback, filePath) {
               content_card: {
                 schema_version: 1,
                 kind: `${ADAPTER_ID}.answer`,
+                semantic_role: "answer",
+                renderer: "markdown",
+              },
+            });
+          }
+          continue;
+        }
+
+        if (c.type === "reasoning" || c.type === "thinking") {
+          const reasoningText = c.text || c.thinking || "";
+          if (reasoningText.trim()) {
+            currentTurn.parts.push({
+              role: "assistant",
+              kind: "text",
+              text: reasoningText.trim(),
+              language: null,
+              command: null,
+              cwd: entry.cwd || null,
+              status: null,
+              exit_code: null,
+              source_execution_id: null,
+              metadata_json: JSON.stringify({ source_type: c.type }),
+              content_card: {
+                schema_version: 1,
+                kind: `${ADAPTER_ID}.reasoning`,
+                semantic_role: "reasoning",
+                renderer: "markdown",
+              },
+            });
+          }
+        } else if (c.type === "text" || c.type === "output_text" || !c.type) {
+          const answerText = typeof c.text === "string" ? c.text : (typeof c.content === "string" ? c.content : "");
+          if (answerText.trim()) {
+            currentTurn.parts.push({
+              role: "assistant",
+              kind: "text",
+              text: answerText,
+              language: null,
+              command: null,
+              cwd: entry.cwd || null,
+              status: null,
+              exit_code: null,
+              source_execution_id: null,
+              metadata_json: null,
+              content_card: {
+                schema_version: 1,
+                kind: `${ADAPTER_ID}.answer`,
+                semantic_role: "answer",
                 renderer: "markdown",
               },
             });
