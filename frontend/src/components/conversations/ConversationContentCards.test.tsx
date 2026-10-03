@@ -1588,6 +1588,44 @@ describe("ConversationContentCards", () => {
     expect(screen.getByTitle("Success")).toBeDefined();
   });
 
+  it("renders a subagent card with agent role, task, and status using subagent_tree renderer", () => {
+    const block: ConversationContentBlock = {
+      id: "part-subagent-1",
+      partId: "part-1",
+      role: "assistant",
+      type: "subagent",
+      kind: "antigravity.subagent",
+      renderer: "subagent_tree",
+      text: JSON.stringify({
+        agent_role: "Codebase Researcher",
+        task: "Analyze repository layout",
+        status: "invoked",
+        child_session_id: "sub-session-42",
+      }),
+      status: "invoked",
+    };
+
+    render(
+      <ConversationContentCards
+        blocks={[block]}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+          subagent: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Codebase Researcher")).toBeDefined();
+    expect(screen.getByText("Analyze repository layout")).toBeDefined();
+    expect(screen.getAllByText("invoked").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("sub-session-42")).toBeDefined();
+  });
+
   it("groups consecutive ambient cards into an AmbientActionGroup and allows expanding and collapsing", () => {
     const blocks: ConversationContentBlock[] = [
       {

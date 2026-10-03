@@ -199,7 +199,8 @@ pub(crate) async fn load_conversation_session_detail_sqlx(
         r#"
         SELECT id, source_id, adapter_id, external_id, title, project_path,
                started_at, updated_at, source_locator, source_fingerprint,
-               missing, created_at, imported_at
+               missing, created_at, imported_at,
+               execution_origin, execution_purpose, user_visible
         FROM conversation_sessions
         WHERE tenant_id = ?1 AND id = ?2
         "#,

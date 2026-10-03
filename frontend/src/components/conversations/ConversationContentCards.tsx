@@ -4,9 +4,11 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  ExternalLink,
   Eye,
   FileText,
   GitCompareArrows,
+  GitFork,
   Languages,
   Layers,
   Search,
@@ -1138,6 +1140,107 @@ function ConversationCardBody({
   );
 }
 
+interface SubagentPayload {
+  agent_role?: string;
+  task?: string;
+  child_session_id?: string;
+  status?: string;
+  model?: string;
+  type_name?: string;
+  total_subagents?: number;
+}
+
+function parseSubagentPayload(text: string): { payload: SubagentPayload | null; raw: string } {
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { payload: parsed as SubagentPayload, raw: text };
+    }
+  } catch {
+    // not JSON
+  }
+  return { payload: null, raw: text };
+}
+
+function SubagentTreeCard({
+  block,
+  label,
+  text,
+  t,
+}: {
+  block: ConversationContentBlock;
+  label: string;
+  text: string;
+  t: Translator;
+}) {
+  const [open, setOpen] = useState(true);
+  const { payload } = parseSubagentPayload(text);
+  const roleName = payload?.agent_role || payload?.type_name || label || "Subagent";
+  const taskText = payload?.task || (payload ? "" : text);
+  const status = payload?.status || block.status || "completed";
+  const childSessionId = payload?.child_session_id;
+
+  return (
+    <div className="rounded-2xl border border-border/60 bg-theme-card/45 p-3.5 space-y-3 transition-[border-color,background-color] duration-150">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="grid size-7 shrink-0 place-items-center rounded-xl bg-theme-control text-on-surface-variant border border-border/40">
+            <GitFork size={14} />
+          </span>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="truncate text-body-sm font-semibold text-on-surface">
+              {roleName}
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-label-caps bg-theme-control/80 text-on-surface-variant border border-border/30">
+              <span className="size-1.5 rounded-full bg-status-success" />
+              <span>{status}</span>
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          aria-label={open ? "Collapse subagent details" : "Expand subagent details"}
+          onClick={() => setOpen((prev) => !prev)}
+          className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-on-surface-variant hover:bg-theme-control-hover/70 transition-colors duration-150"
+        >
+          <ChevronDown
+            size={15}
+            className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          />
+        </button>
+      </div>
+
+      {taskText ? (
+        <div className="rounded-xl border border-border/40 bg-theme-card/30 p-2.5 text-body-sm text-on-surface-variant">
+          <div className="text-label-caps text-on-surface-muted mb-1 font-medium">Task</div>
+          {block.format === "markdown" ? (
+            <MarkdownContent value={taskText} />
+          ) : (
+            <div className="whitespace-pre-wrap break-words text-body-sm leading-relaxed">{taskText}</div>
+          )}
+        </div>
+      ) : null}
+
+      {childSessionId ? (
+        <div className="flex items-center gap-2 text-body-sm">
+          <span className="text-on-surface-muted text-label-caps">Child Session:</span>
+          <span className="font-mono text-code-sm text-on-surface-variant bg-theme-control px-2 py-0.5 rounded-md border border-border/30">
+            {childSessionId}
+          </span>
+        </div>
+      ) : null}
+
+      {open && (!taskText || payload) ? (
+        <div className="border-t border-border/30 pt-2.5 text-code-sm text-on-surface-variant">
+          <pre className="max-h-[24rem] overflow-auto whitespace-pre-wrap break-words rounded-xl bg-theme-card/25 p-2.5 font-mono leading-5">
+            <code>{text}</code>
+          </pre>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ConversationStandardCardBody({
   block,
   diffSummary,
@@ -1218,21 +1321,12 @@ function ConversationStandardCardBody({
       );
     case "subagent_tree":
       return (
-        <div className="rounded-xl border border-inherit bg-theme-card/35 p-3.5 space-y-2">
-          <div className="flex items-center gap-2 text-body-sm font-medium text-on-surface">
-            <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-label-caps bg-theme-control text-on-surface-variant border border-border/40">
-              Subagent
-            </span>
-            <span className="truncate">{label}</span>
-          </div>
-          {block.format === "markdown" ? (
-            <MarkdownContent value={text} />
-          ) : (
-            <pre className="overflow-auto whitespace-pre-wrap break-words text-code-sm leading-6 text-on-surface">
-              <code>{text}</code>
-            </pre>
-          )}
-        </div>
+        <SubagentTreeCard
+          block={block}
+          label={label}
+          text={text}
+          t={t}
+        />
       );
     default: {
       let prettyText = text;

@@ -667,16 +667,36 @@ function parseJsonl(text) {
     if (value.isSidechain === true) {
       const text = extractText(payload);
       if (current && text.trim()) {
+        const subagentPayload = {
+          agent_role: "Sidechain Subagent",
+          task: text.trim(),
+          status: "completed",
+        };
         current.parts.push({
           role: "assistant",
-          kind: "subagent",
-          text,
+          kind: "claude-code.subagent",
+          text: JSON.stringify(subagentPayload, null, 2),
           language: null,
           command: null,
           cwd: null,
-          status: null,
+          status: "completed",
           exit_code: null,
-          metadata_json: metadata({ type: "result", format: "plain" }, value),
+          content_card: {
+            schema_version: 1,
+            kind: "claude-code.subagent",
+            semantic_role: "subagent",
+            renderer: "subagent_tree",
+          },
+          metadata_json: metadata({
+            type: "subagent",
+            format: "json",
+            content_card: {
+              schema_version: 1,
+              kind: "claude-code.subagent",
+              semantic_role: "subagent",
+              renderer: "subagent_tree",
+            },
+          }, value),
         });
       }
       continue;

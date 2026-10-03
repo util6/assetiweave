@@ -3052,3 +3052,101 @@ fn resolved_content_card_for_part(
     )
     .ok()?
 }
+
+#[tokio::test]
+async fn subagent_session_hidden_from_main_list_but_readable_by_id() {
+    let db_path =
+        std::env::temp_dir().join(format!("assetiweave-subagent-{}.sqlite", Uuid::new_v4()));
+    let database = Database::open_async(&db_path).await.unwrap();
+    let adapter = test_conversation_adapter(
+        "subagent-adapter",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let pool = database.pool();
+
+    upsert_conversation_adapter_sqlx(pool, TEST_TENANT_ID, &adapter)
+        .await
+        .unwrap();
+    upsert_conversation_source_sqlx(pool, TEST_TENANT_ID, &source)
+        .await
+        .unwrap();
+
+    let mut main_session = fixture_session("main-session");
+    main_session.external_id = "main-session".to_string();
+    main_session.user_visible = Some(true);
+    main_session.execution_origin = Some("user".to_string());
+    // Attach a subagent anchor card to the main session turn
+    main_session.turns[0]
+        .parts
+        .push(NormalizedConversationPart {
+        role: ConversationPartRole::Assistant,
+        kind: ConversationPartKind::Text,
+        text: Some(
+            r#"{"agent_role":"Researcher","task":"read files","child_session_id":"sub-session-1"}"#
+                .to_string(),
+        ),
+        language: None,
+        command: None,
+        cwd: None,
+        status: Some("completed".to_string()),
+        exit_code: None,
+        command_label: None,
+        source_execution_id: None,
+        content_card: Some(ConversationContentCardDescriptor {
+            schema_version: 1,
+            kind: "subagent-adapter.subagent".to_string(),
+            semantic_role: Some("subagent".to_string()),
+            renderer: Some("subagent_tree".to_string()),
+        }),
+        metadata_json: None,
+    });
+
+    let mut sub_session = fixture_session("sub-session-1");
+    sub_session.external_id = "sub-session-1".to_string();
+    sub_session.user_visible = Some(false);
+    sub_session.execution_origin = Some("agent".to_string());
+    sub_session.execution_purpose = Some("subagent".to_string());
+
+    import_conversation_sessions_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        &source,
+        &[main_session.clone(), sub_session.clone()],
+        false,
+    )
+    .await
+    .unwrap();
+
+    // 1. list_conversation_sessions_sqlx must only return the user_visible main session
+    let list =
+        list_conversation_sessions_sqlx(pool, TEST_TENANT_ID, Some(&adapter.id), None, None, 50, 0)
+            .await
+            .unwrap();
+
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].session.external_id, "main-session");
+
+    // 2. load_conversation_session_detail_sqlx can load the hidden subagent session directly
+    let hidden_session_id: String = sqlx::query_scalar(
+        "SELECT id FROM conversation_sessions WHERE tenant_id = ?1 AND external_id = ?2",
+    )
+    .bind(TEST_TENANT_ID)
+    .bind("sub-session-1")
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
+    let detail = load_conversation_session_detail_sqlx(pool, TEST_TENANT_ID, &hidden_session_id)
+        .await
+        .expect("load hidden subagent session detail");
+
+    assert_eq!(detail.session.external_id, "sub-session-1");
+    assert!(!detail.session.user_visible);
+    assert_eq!(detail.session.execution_origin, "agent");
+    assert_eq!(
+        detail.session.execution_purpose.as_deref(),
+        Some("subagent")
+    );
+}

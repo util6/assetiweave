@@ -1776,22 +1776,22 @@ function sessionRows({ sessionId = null, includeTitle = true } = {}) {
   const sourceCol = pick(columns, ["source"]);
   const titleProjection = includeTitle && titleCol ? quoteIdent(titleCol) : "NULL";
 
-  const filters = [];
-  if (threadSourceCol && sourceCol) {
-    filters.push(`((${quoteIdent(threadSourceCol)} IS NULL OR ${quoteIdent(threadSourceCol)} != 'subagent') AND (${quoteIdent(sourceCol)} IS NULL OR ${quoteIdent(sourceCol)} NOT LIKE '%"subagent"%'))`);
-  } else if (threadSourceCol) {
-    filters.push(`(${quoteIdent(threadSourceCol)} IS NULL OR ${quoteIdent(threadSourceCol)} != 'subagent')`);
-  } else if (sourceCol) {
-    filters.push(`(${quoteIdent(sourceCol)} IS NULL OR ${quoteIdent(sourceCol)} NOT LIKE '%"subagent"%')`);
-  }
+  const isSubagentExpr = threadSourceCol && sourceCol
+    ? `((${quoteIdent(threadSourceCol)} = 'subagent') OR (${quoteIdent(sourceCol)} LIKE '%"subagent"%'))`
+    : threadSourceCol
+      ? `(${quoteIdent(threadSourceCol)} = 'subagent')`
+      : sourceCol
+        ? `(${quoteIdent(sourceCol)} LIKE '%"subagent"%')`
+        : "0";
 
+  const filters = [];
   if (sessionId != null) {
     filters.push(`${quoteIdent(idCol)} = ${quoteSqlString(sessionId)}`);
   }
 
   const whereClause = filters.length > 0 ? ` WHERE ${filters.join(" AND ")}` : "";
   const orderClause = sessionId == null ? " ORDER BY rowid DESC" : "";
-  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleProjection} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at FROM threads${whereClause}${orderClause}`;
+  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleProjection} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at, ${isSubagentExpr} AS is_subagent FROM threads${whereClause}${orderClause}`;
   emitProgress({
     stage: "scan",
     operation: "query_sqlite_threads",
@@ -1868,6 +1868,7 @@ function readSession() {
     if (!turns.length) return [];
 
     // 7. 组装 Session 基础元数据结构对象
+    const isSubagent = Boolean(row.is_subagent === 1 || row.is_subagent === true || row.is_subagent === "1");
     const rawSession = {
       external_id: String(row.id),
       title: row.title == null ? null : String(row.title),
@@ -1876,6 +1877,9 @@ function readSession() {
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),
       source_locator: files.length > 1 ? files[files.length - 1] : rolloutPath,
       source_fingerprint: versionToken,
+      user_visible: !isSubagent,
+      execution_origin: isSubagent ? "agent" : "user",
+      execution_purpose: isSubagent ? "subagent" : null,
       turns,
     };
 
