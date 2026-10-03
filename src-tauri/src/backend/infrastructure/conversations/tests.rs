@@ -423,18 +423,24 @@ fn adapter_output_aggregates_legacy_card_upgrades_once_per_run() {
 }
 
 #[test]
-fn adapter_output_rejects_undeclared_structured_content_card() {
+fn adapter_output_accepts_undeclared_structured_content_card_with_fallback() {
     let manifest = card_contract_manifest(json!([]));
 
-    let error = parse_external_adapter_output_with_manifest(
+    let result = parse_external_adapter_output_with_manifest(
         "read_session",
         structured_card_adapter_output("fixture.reasoning", "markdown"),
         Vec::new(),
         &manifest,
     )
-    .expect_err("undeclared kind must fail at the adapter boundary");
+    .expect("undeclared namespaced kind is accepted with fallback semantic role");
 
-    assert!(error.contains("undeclared conversation card kind"));
+    let card = result.sessions[0].turns[0].parts[0]
+        .content_card
+        .as_ref()
+        .expect("content card descriptor");
+    assert_eq!(card.kind, "fixture.reasoning");
+    assert_eq!(card.semantic_role.as_deref(), Some("tool"));
+    assert_eq!(card.renderer.as_deref(), Some("markdown"));
 }
 
 #[test]

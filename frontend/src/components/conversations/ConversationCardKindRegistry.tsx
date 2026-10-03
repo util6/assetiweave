@@ -7,6 +7,8 @@ import {
   FileText,
   FolderOpen,
   GitCompareArrows,
+  GitFork,
+  ListCollapse,
   Terminal,
   Wrench,
   type LucideIcon,
@@ -137,6 +139,10 @@ const iconHints: Record<string, LucideIcon> = {
   result: CheckCircle2,
   terminal: Terminal,
   tool: Wrench,
+  subagent: GitFork,
+  "subagent-tree": GitFork,
+  subagent_tree: GitFork,
+  accordion: ListCollapse,
 };
 
 const rendererIcons: Record<ConversationCardRenderer, LucideIcon> = {
@@ -149,6 +155,8 @@ const rendererIcons: Record<ConversationCardRenderer, LucideIcon> = {
   terminal_output: CheckCircle2,
   diff: GitCompareArrows,
   compact_action: Eye,
+  subagent_tree: GitFork,
+  accordion: ListCollapse,
 };
 
 const builtInKindIconHints: Record<string, keyof typeof iconHints> = {
@@ -157,6 +165,7 @@ const builtInKindIconHints: Record<string, keyof typeof iconHints> = {
   command: "command",
   code: "code",
   result: "result",
+  subagent: "subagent",
 };
 
 export function ConversationCardKindIcon({
@@ -173,6 +182,7 @@ export function ConversationCardKindIcon({
   const Icon =
     (iconHint ? iconHints[iconHint] : undefined) ??
     (kind ? iconHints[builtInKindIconHints[kind]] : undefined) ??
-    rendererIcons[renderer];
+    rendererIcons[renderer] ??
+    FileText;
   return <Icon aria-hidden="true" size={size} />;
 }

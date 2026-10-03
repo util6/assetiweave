@@ -59,10 +59,11 @@ export function ConversationBackgroundTaskIndicator({
 
 const contentFilterOptions: ConversationContentType[] = [
   "answer",
-  "tool",
   "command",
-  "code",
   "result",
+  "tool",
+  "ambient",
+  "code",
 ];
 
 export function ConversationContentFilter({
@@ -95,8 +96,8 @@ export function ConversationContentFilter({
         {t("conversation.content.visible")}
       </span>
       {types.map((type) => {
-        const label =
-          definitions.get(type)?.label ?? conversationCardLabel(type, t);
+        const definition = definitions.get(type);
+        const label = definition?.label ?? conversationCardLabel(type, t);
         return (
           <label
             className="inline-flex min-h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-1.5 text-body-sm text-on-surface-variant transition-[background-color,color] duration-200 hover:bg-theme-control-hover/70"
@@ -104,7 +105,13 @@ export function ConversationContentFilter({
           >
             <span
               className="size-2 rounded-full"
-              style={{ backgroundColor: conversationCardColor(type, colors) }}
+              style={{
+                backgroundColor: conversationCardColor(
+                  type,
+                  colors,
+                  definition?.semantic_role,
+                ),
+              }}
             />
             <span className="whitespace-nowrap">{label}</span>
             <Switch
@@ -128,5 +135,5 @@ function compareConversationContentTypes(
   if (leftIndex >= 0 && rightIndex >= 0) return leftIndex - rightIndex;
   if (leftIndex >= 0) return -1;
   if (rightIndex >= 0) return 1;
-  return 0;
+  return left.localeCompare(right);
 }

@@ -316,6 +316,8 @@ export const conversationsEn = {
   "conversation.content.command": "Commands",
   "conversation.content.code": "Code",
   "conversation.content.result": "Execution results",
+  "conversation.content.ambient": "Background reads",
+  "conversation.content.subagent": "Subagent",
   "conversation.content.resultSuccess": "success",
   "conversation.content.resultFailed": "failed",
   "conversation.content.changedFiles": "Changed files · {{count}} files",

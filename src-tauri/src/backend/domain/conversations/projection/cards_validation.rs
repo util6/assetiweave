@@ -53,31 +53,57 @@ pub(crate) fn validate_normalized_content_card(
         });
     }
     validate_card_kind(&descriptor.kind)?;
+    if let Some(semantic_role) = descriptor.semantic_role.as_deref() {
+        validate_card_kind(semantic_role)?;
+    }
     let declaration = card_kinds
         .iter()
-        .find(|declaration| declaration.id == descriptor.kind)
-        .ok_or_else(|| ProjectionError::UndeclaredCardKind {
-            adapter_id: adapter_id.to_string(),
-            kind: descriptor.kind.clone(),
-        })?;
-    let renderer_name = descriptor
-        .renderer
-        .as_deref()
-        .unwrap_or(&declaration.default_renderer);
-    let renderer = parse_renderer(renderer_name)?;
-    if !declaration
-        .allowed_renderers
-        .iter()
-        .any(|allowed| allowed == renderer_name)
-    {
-        return Err(ProjectionError::RendererNotAllowed {
-            kind: descriptor.kind.clone(),
-            renderer: renderer_name.to_string(),
-        });
-    }
+        .find(|declaration| declaration.id == descriptor.kind);
+
+    let (renderer, effective_semantic_role) = if let Some(declaration) = declaration {
+        let renderer_name = descriptor
+            .renderer
+            .as_deref()
+            .unwrap_or(&declaration.default_renderer);
+        let renderer = parse_renderer(renderer_name)?;
+        if !declaration
+            .allowed_renderers
+            .iter()
+            .any(|allowed| allowed == renderer_name)
+        {
+            return Err(ProjectionError::RendererNotAllowed {
+                kind: descriptor.kind.clone(),
+                renderer: renderer_name.to_string(),
+            });
+        }
+        (
+            renderer,
+            descriptor
+                .semantic_role
+                .clone()
+                .or_else(|| declaration.semantic_role.clone()),
+        )
+    } else {
+        let semantic_role = descriptor
+            .semantic_role
+            .clone()
+            .or_else(|| infer_semantic_role(&descriptor.kind).map(ToString::to_string));
+        let renderer = if let Some(renderer_name) = descriptor.renderer.as_deref() {
+            parse_renderer(renderer_name)?
+        } else {
+            default_renderer_for_semantic_role(semantic_role.as_deref())
+        };
+        (renderer, semantic_role)
+    };
+
     if let Some(legacy) = legacy {
         let kind_matches = legacy.kind == descriptor.kind
-            || declaration.semantic_role.as_deref() == Some(legacy.kind.as_str());
+            || effective_semantic_role.as_deref() == Some(legacy.kind.as_str())
+            || (legacy.kind == "tool"
+                && matches!(
+                    effective_semantic_role.as_deref(),
+                    Some("command" | "result" | "file_change" | "file-change")
+                ));
         if !kind_matches || legacy.renderer != renderer {
             return Err(ProjectionError::LegacyConflict {
                 descriptor_kind: descriptor.kind.clone(),
@@ -131,6 +157,16 @@ pub(crate) fn canonicalize_normalized_content_card(
                 part.content_card = Some(ConversationContentCardDescriptor {
                     schema_version: CONTENT_CARD_SCHEMA_VERSION as u32,
                     kind: declaration.id.clone(),
+                    semantic_role: declaration.semantic_role.clone(),
+                    renderer: Some(renderer_name.to_string()),
+                });
+                legacy_upgraded = true;
+            } else {
+                let core_kind = format!("{}.{}", adapter_id.trim(), legacy.kind);
+                part.content_card = Some(ConversationContentCardDescriptor {
+                    schema_version: CONTENT_CARD_SCHEMA_VERSION as u32,
+                    kind: core_kind,
+                    semantic_role: Some(legacy.kind.clone()),
                     renderer: Some(renderer_name.to_string()),
                 });
                 legacy_upgraded = true;
@@ -141,14 +177,33 @@ pub(crate) fn canonicalize_normalized_content_card(
         return Ok(legacy_upgraded);
     };
     if descriptor.renderer.is_none() {
-        let declaration = card_kinds
+        if let Some(declaration) = card_kinds
             .iter()
             .find(|declaration| declaration.id == descriptor.kind)
-            .ok_or_else(|| ProjectionError::UndeclaredCardKind {
-                adapter_id: adapter_id.to_string(),
-                kind: descriptor.kind.clone(),
-            })?;
-        descriptor.renderer = Some(declaration.default_renderer.clone());
+        {
+            descriptor.renderer = Some(declaration.default_renderer.clone());
+        } else {
+            let role = descriptor
+                .semantic_role
+                .as_deref()
+                .or_else(|| infer_semantic_role(&descriptor.kind));
+            descriptor.renderer = Some(
+                default_renderer_for_semantic_role(role)
+                    .as_str()
+                    .to_string(),
+            );
+        }
+    }
+    if descriptor.semantic_role.is_none() {
+        if let Some(declaration) = card_kinds
+            .iter()
+            .find(|declaration| declaration.id == descriptor.kind)
+        {
+            descriptor.semantic_role = declaration.semantic_role.clone();
+        } else {
+            descriptor.semantic_role =
+                infer_semantic_role(&descriptor.kind).map(ToString::to_string);
+        }
     }
     Ok(legacy_upgraded)
 }
@@ -322,12 +377,43 @@ pub(crate) fn parse_renderer(value: &str) -> Result<ConversationCardRenderer, Pr
         "json" => Ok(ConversationCardRenderer::Json),
         "code" => Ok(ConversationCardRenderer::Code),
         "command" => Ok(ConversationCardRenderer::Command),
-        "terminal_output" => Ok(ConversationCardRenderer::TerminalOutput),
+        "terminal" | "terminal_output" => Ok(ConversationCardRenderer::TerminalOutput),
         "diff" => Ok(ConversationCardRenderer::Diff),
         "compact_action" => Ok(ConversationCardRenderer::CompactAction),
+        "subagent_tree" => Ok(ConversationCardRenderer::SubagentTree),
+        "accordion" => Ok(ConversationCardRenderer::Accordion),
         other => Err(ProjectionError::UnsupportedRenderer {
             renderer: other.to_string(),
         }),
+    }
+}
+
+pub(crate) fn infer_semantic_role(kind: &str) -> Option<&'static str> {
+    let leaf = kind.split('.').last().unwrap_or(kind);
+    match leaf {
+        "answer" => Some("answer"),
+        "command" => Some("command"),
+        "result" => Some("result"),
+        "file_change" | "file-change" => Some("file_change"),
+        "tool" => Some("tool"),
+        "code" => Some("code"),
+        "subagent" => Some("subagent"),
+        _ => Some("tool"),
+    }
+}
+
+pub(crate) fn default_renderer_for_semantic_role(
+    semantic_role: Option<&str>,
+) -> ConversationCardRenderer {
+    match semantic_role {
+        Some("answer") => ConversationCardRenderer::Markdown,
+        Some("command") => ConversationCardRenderer::Command,
+        Some("result") => ConversationCardRenderer::TerminalOutput,
+        Some("file_change" | "file-change") => ConversationCardRenderer::Diff,
+        Some("code") => ConversationCardRenderer::Code,
+        Some("subagent") => ConversationCardRenderer::SubagentTree,
+        Some("tool") => ConversationCardRenderer::Plain,
+        _ => ConversationCardRenderer::Plain,
     }
 }
 

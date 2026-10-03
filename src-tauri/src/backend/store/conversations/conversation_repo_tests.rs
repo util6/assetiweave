@@ -161,6 +161,7 @@ fn question_aggregate_excludes_tool_result_and_diff_bodies() {
         content_card: Some(ConversationContentCardDescriptor {
             schema_version: 1,
             kind: format!("fixture.{card_kind}"),
+            semantic_role: None,
             renderer: Some(if card_kind == "diff" { "diff" } else { "plain" }.to_string()),
         }),
         metadata_json: None,
@@ -220,6 +221,7 @@ fn question_aggregate_indexes_the_raw_shell_part_for_fts_compatibility() {
         content_card: Some(ConversationContentCardDescriptor {
             schema_version: 1,
             kind: "fixture.command".to_string(),
+            semantic_role: None,
             renderer: Some("command".to_string()),
         }),
         metadata_json: Some(
@@ -2544,6 +2546,7 @@ async fn sqlx_round_trips_structured_cards_and_preserves_translation_on_reclassi
     first.turns[0].parts[0].content_card = Some(ConversationContentCardDescriptor {
         schema_version: 1,
         kind: "fixture-cards.reasoning".to_string(),
+        semantic_role: None,
         renderer: Some("markdown".to_string()),
     });
     first.turns[0].parts[0].command_label = Some("DEBUG".to_string());

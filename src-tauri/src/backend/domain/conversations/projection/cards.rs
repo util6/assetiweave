@@ -177,7 +177,10 @@ pub fn project_resolved_content_card(
         card.semantic_role = card_kinds
             .iter()
             .find(|definition| definition.id == card.kind)
-            .and_then(|definition| definition.semantic_role.clone());
+            .and_then(|definition| definition.semantic_role.clone())
+            .or_else(|| {
+                super::cards_validation::infer_semantic_role(&card.kind).map(ToString::to_string)
+            });
     }
     Ok(Some(card))
 }
@@ -219,9 +222,10 @@ pub(crate) fn resolve_content_card(
         ) else {
             return Ok(None);
         };
+        let semantic_role = descriptor.semantic_role.clone();
         return Ok(Some(ResolvedConversationContentCard {
             kind: descriptor.kind.clone(),
-            semantic_role: None,
+            semantic_role,
             renderer,
             legacy_suffix: legacy_suffix_from_metadata(source.metadata_json),
             body,

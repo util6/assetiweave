@@ -281,7 +281,9 @@ pub(crate) fn export_conversation_rendered_markdown(
                 | crate::backend::domain::conversations::ConversationCardRenderer::Path
                 | crate::backend::domain::conversations::ConversationCardRenderer::TerminalOutput
                 | crate::backend::domain::conversations::ConversationCardRenderer::Diff
-                | crate::backend::domain::conversations::ConversationCardRenderer::CompactAction => {
+                | crate::backend::domain::conversations::ConversationCardRenderer::CompactAction
+                | crate::backend::domain::conversations::ConversationCardRenderer::SubagentTree
+                | crate::backend::domain::conversations::ConversationCardRenderer::Accordion => {
                     output.push_str(&format!("```text\n{}\n```\n", node.content.trim_end()));
                 }
             }

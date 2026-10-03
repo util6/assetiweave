@@ -422,6 +422,7 @@ impl AppService {
                             crate::backend::domain::ConversationContentCardDescriptor {
                                 schema_version: 1,
                                 kind: "answer".to_string(),
+                                semantic_role: Some("answer".to_string()),
                                 renderer: Some("markdown".to_string()),
                             },
                         ),

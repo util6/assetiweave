@@ -872,6 +872,7 @@ async fn sqlx_web_records_round_trip_structured_cards_and_preserve_translation()
     first.turns[0].parts[0].content_card = Some(ConversationContentCardDescriptor {
         schema_version: 1,
         kind: "qwen-web.reasoning".to_string(),
+        semantic_role: None,
         renderer: Some("markdown".to_string()),
     });
     let mut second = first.clone();

@@ -298,6 +298,8 @@ export const conversationsZh = {
   "conversation.content.command": "命令执行",
   "conversation.content.code": "代码",
   "conversation.content.result": "命令执行结果",
+  "conversation.content.ambient": "翻查记录",
+  "conversation.content.subagent": "子代理",
   "conversation.content.resultSuccess": "成功",
   "conversation.content.resultFailed": "失败",
   "conversation.content.changedFiles": "Changed files · {{count}} 个文件",

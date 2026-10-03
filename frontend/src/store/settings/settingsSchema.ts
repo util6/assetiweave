@@ -254,6 +254,23 @@ export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardCo
     tool: "#46a4d5",
   };
 
+export const SEMANTIC_FALLBACK_CARD_COLORS: Record<string, string> = {
+  answer: "#b99545",
+  command: "#d08a19",
+  result: "#2f9d78",
+  tool: "#46a4d5",
+  code: "#4f8bd9",
+  subagent: "#9065b0",
+  ambient: "#71717a",
+  diff: "#2f9d78",
+  "file-change": "#2f9d78",
+  file_change: "#2f9d78",
+  plan: "#4f8bd9",
+  reasoning: "#a07855",
+};
+
+export const DEFAULT_FALLBACK_CARD_COLOR = "#78716c";
+
 export interface AppSettings {
   agentAssignments: AgentAssignments;
   columnMinWidth: number;

@@ -38,7 +38,9 @@ import {
   DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
   DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
+  DEFAULT_FALLBACK_CARD_COLOR,
   DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
+  SEMANTIC_FALLBACK_CARD_COLORS,
   normalizeConversationTranslationTargetLanguage,
   type ConversationContentCardColorSettings,
   type ResolvedConversationTranslationSettings,
@@ -887,7 +889,7 @@ function ConversationContentCard({
       : undefined;
   const label = definition?.label ?? conversationCardLabel(block.type, t);
   const role = t(`conversation.part.role.${block.role}` as TranslationKey);
-  const accentColor = conversationCardColor(block.type, colors);
+  const accentColor = conversationCardColor(block.type, colors, definition?.semantic_role);
   const copyLabel = copied
     ? t("conversation.content.copied")
     : t("conversation.content.copy", { type: label });
@@ -1196,6 +1198,60 @@ function ConversationStandardCardBody({
           t={t}
         />
       );
+    case "accordion":
+      return (
+        <details className="group rounded-xl border border-inherit bg-theme-card/35 p-3 transition-colors duration-150 open:bg-theme-card/55">
+          <summary className="cursor-pointer list-none flex items-center justify-between text-body-sm font-medium text-on-surface select-none">
+            <span>{label}</span>
+            <ChevronDown className="size-4 text-on-surface-variant transition-transform duration-200 group-open:rotate-180" />
+          </summary>
+          <div className="mt-2.5 pt-2 border-t border-border/40 text-body-sm text-on-surface-variant">
+            {block.format === "markdown" ? (
+              <MarkdownContent value={text} />
+            ) : (
+              <pre className="overflow-auto whitespace-pre-wrap break-words text-code-sm leading-6 text-on-surface">
+                <code>{text}</code>
+              </pre>
+            )}
+          </div>
+        </details>
+      );
+    case "subagent_tree":
+      return (
+        <div className="rounded-xl border border-inherit bg-theme-card/35 p-3.5 space-y-2">
+          <div className="flex items-center gap-2 text-body-sm font-medium text-on-surface">
+            <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-label-caps bg-theme-control text-on-surface-variant border border-border/40">
+              Subagent
+            </span>
+            <span className="truncate">{label}</span>
+          </div>
+          {block.format === "markdown" ? (
+            <MarkdownContent value={text} />
+          ) : (
+            <pre className="overflow-auto whitespace-pre-wrap break-words text-code-sm leading-6 text-on-surface">
+              <code>{text}</code>
+            </pre>
+          )}
+        </div>
+      );
+    default: {
+      let prettyText = text;
+      try {
+        prettyText = JSON.stringify(JSON.parse(text), null, 2);
+      } catch {
+        // keep text as is
+      }
+      return (
+        <div className="rounded-xl border border-border/50 bg-theme-card/30 p-3 space-y-1.5 text-body-sm">
+          <div className="flex items-center gap-1.5 text-label-caps text-on-surface-variant font-mono">
+            <span>[inspect: {String(renderer)}]</span>
+          </div>
+          <pre className="max-h-[30rem] overflow-auto whitespace-pre-wrap break-words text-code-sm leading-5 text-on-surface font-mono">
+            <code>{prettyText}</code>
+          </pre>
+        </div>
+      );
+    }
   }
 }
 
@@ -1409,6 +1465,8 @@ const builtInCardKinds = new Set([
   "command",
   "code",
   "result",
+  "ambient",
+  "subagent",
 ]);
 
 export function conversationCardLabel(kind: string, t: Translator) {
@@ -1429,43 +1487,25 @@ export function conversationCardLabel(kind: string, t: Translator) {
 export function conversationCardColor(
   kind: string,
   colors: ConversationContentCardColorSettings,
+  semanticRole?: string | null,
 ) {
-  const configured = colors[kind];
-  if (configured) return configured;
-  let hash = 0;
-  for (const character of kind) {
-    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  }
-  const hue = hash % 360;
-  return hslToHex(hue, 48, 52);
-}
+  if (colors[kind]) return colors[kind];
+  if (semanticRole && colors[semanticRole]) return colors[semanticRole];
 
-function hslToHex(hue: number, saturation: number, lightness: number) {
-  const s = saturation / 100;
-  const l = lightness / 100;
-  const chroma = (1 - Math.abs(2 * l - 1)) * s;
-  const segment = hue / 60;
-  const x = chroma * (1 - Math.abs((segment % 2) - 1));
-  const [red, green, blue] =
-    segment < 1
-      ? [chroma, x, 0]
-      : segment < 2
-        ? [x, chroma, 0]
-        : segment < 3
-          ? [0, chroma, x]
-          : segment < 4
-            ? [0, x, chroma]
-            : segment < 5
-              ? [x, 0, chroma]
-              : [chroma, 0, x];
-  const match = l - chroma / 2;
-  return `#${[red, green, blue]
-    .map((channel) =>
-      Math.round((channel + match) * 255)
-        .toString(16)
-        .padStart(2, "0"),
-    )
-    .join("")}`;
+  const leaf = kind.includes(".") ? kind.slice(kind.lastIndexOf(".") + 1) : kind;
+  if (colors[leaf]) return colors[leaf];
+
+  if (semanticRole && SEMANTIC_FALLBACK_CARD_COLORS[semanticRole]) {
+    return SEMANTIC_FALLBACK_CARD_COLORS[semanticRole];
+  }
+  if (SEMANTIC_FALLBACK_CARD_COLORS[leaf]) {
+    return SEMANTIC_FALLBACK_CARD_COLORS[leaf];
+  }
+  if (SEMANTIC_FALLBACK_CARD_COLORS[kind]) {
+    return SEMANTIC_FALLBACK_CARD_COLORS[kind];
+  }
+
+  return DEFAULT_FALLBACK_CARD_COLOR;
 }
 
 function translationButtonLabel({
@@ -1797,7 +1837,9 @@ function rendererValue(value: unknown): ConversationCardRenderer | undefined {
     value === "command" ||
     value === "terminal_output" ||
     value === "diff" ||
-    value === "compact_action"
+    value === "compact_action" ||
+    value === "subagent_tree" ||
+    value === "accordion"
     ? value
     : undefined;
 }

@@ -65,6 +65,7 @@ fn conversation_card_contract_accepts_explicit_diff_renderer() {
     part.content_card = Some(ConversationContentCardDescriptor {
         schema_version: 1,
         kind: "opencode.result".to_string(),
+        semantic_role: None,
         renderer: Some("diff".to_string()),
     });
     let declarations = vec![ConversationCardKindDefinition {
@@ -112,6 +113,7 @@ fn conversation_card_contract_accepts_a_declared_local_path_renderer() {
     part.content_card = Some(ConversationContentCardDescriptor {
         schema_version: 1,
         kind: "codex.skill".to_string(),
+        semantic_role: None,
         renderer: Some("path".to_string()),
     });
     let declarations = vec![ConversationCardKindDefinition {
@@ -163,6 +165,7 @@ fn conversation_card_contract_upgrades_legacy_metadata_to_namespaced_descriptor(
         Some(ConversationContentCardDescriptor {
             schema_version: 1,
             kind: "claude-code.answer".to_string(),
+            semantic_role: Some("answer".to_string()),
             renderer: Some("markdown".to_string()),
         })
     );
@@ -176,6 +179,7 @@ fn conversation_card_contract_preserves_legacy_type_anchor_after_namespacing() {
     part.content_card = Some(ConversationContentCardDescriptor {
         schema_version: 1,
         kind: "claude-code.answer".to_string(),
+        semantic_role: None,
         renderer: Some("markdown".to_string()),
     });
     let definitions = vec![ConversationCardKindDefinition {
@@ -244,6 +248,7 @@ fn historical_shell_projection_metadata_does_not_split_the_raw_part() {
     part.content_card = Some(ConversationContentCardDescriptor {
         schema_version: 1,
         kind: "codex.command".to_string(),
+        semantic_role: None,
         renderer: Some("command".to_string()),
     });
 
@@ -268,6 +273,7 @@ fn conversation_card_contract_rejects_structured_legacy_semantic_conflict() {
     part.content_card = Some(ConversationContentCardDescriptor {
         schema_version: 1,
         kind: "fixture.reasoning".to_string(),
+        semantic_role: None,
         renderer: Some("markdown".to_string()),
     });
     let declarations = vec![ConversationCardKindDefinition {
@@ -314,6 +320,64 @@ fn conversation_card_contract_rejects_unknown_new_renderer_but_reads_history_saf
         .expect("historical card");
     assert_eq!(card.kind, "future-card");
     assert_eq!(card.renderer, ConversationCardRenderer::Plain);
+}
+
+#[test]
+fn conversation_card_contract_accepts_undeclared_namespaced_kind_with_fallback_role() {
+    let mut part = normalized_part_with_metadata(r#"{"source_type":"tool"}"#);
+    part.content_card = Some(ConversationContentCardDescriptor {
+        schema_version: 1,
+        kind: "antigravity.ambient".to_string(),
+        semantic_role: None,
+        renderer: Some("compact_action".to_string()),
+    });
+
+    validate_normalized_content_card(&part, "antigravity", Some(1), &[])
+        .expect("undeclared namespaced kind should pass open validation");
+
+    let card = project_resolved_content_card(
+        ConversationCardProjectionSource {
+            content_card: part.content_card.as_ref(),
+            text: part.text.as_deref(),
+            metadata_json: part.metadata_json.as_deref(),
+            ..Default::default()
+        },
+        &[],
+    )
+    .expect("project card")
+    .expect("declared card");
+
+    assert_eq!(card.kind, "antigravity.ambient");
+    assert_eq!(card.renderer, ConversationCardRenderer::CompactAction);
+    assert_eq!(card.semantic_role.as_deref(), Some("tool"));
+}
+
+#[test]
+fn conversation_card_contract_accepts_subagent_tree_and_accordion_renderers() {
+    let mut part = normalized_part_with_metadata(r#"{}"#);
+    part.content_card = Some(ConversationContentCardDescriptor {
+        schema_version: 1,
+        kind: "antigravity.subagent_step".to_string(),
+        semantic_role: Some("subagent".to_string()),
+        renderer: Some("subagent_tree".to_string()),
+    });
+
+    validate_normalized_content_card(&part, "antigravity", Some(1), &[])
+        .expect("validate subagent_tree card");
+
+    let card = project_resolved_content_card(
+        ConversationCardProjectionSource {
+            content_card: part.content_card.as_ref(),
+            text: part.text.as_deref(),
+            metadata_json: part.metadata_json.as_deref(),
+            ..Default::default()
+        },
+        &[],
+    )
+    .expect("project card")
+    .expect("declared card");
+    assert_eq!(card.renderer, ConversationCardRenderer::SubagentTree);
+    assert_eq!(card.semantic_role.as_deref(), Some("subagent"));
 }
 
 #[test]

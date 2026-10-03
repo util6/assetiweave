@@ -13,6 +13,8 @@ pub enum ConversationCardRenderer {
     TerminalOutput,
     Diff,
     CompactAction,
+    SubagentTree,
+    Accordion,
 }
 
 impl ConversationCardRenderer {
@@ -27,6 +29,8 @@ impl ConversationCardRenderer {
             Self::TerminalOutput => "terminal_output",
             Self::Diff => "diff",
             Self::CompactAction => "compact_action",
+            Self::SubagentTree => "subagent_tree",
+            Self::Accordion => "accordion",
         }
     }
 }

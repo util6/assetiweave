@@ -405,6 +405,7 @@ export interface ConversationPart {
 export interface ConversationContentCardDescriptor {
   schema_version: number;
   kind: string;
+  semantic_role?: string | null;
   renderer?: ConversationCardRenderer | null;
 }
 
@@ -417,7 +418,9 @@ export type ConversationCardRenderer =
   | "command"
   | "terminal_output"
   | "diff"
-  | "compact_action";
+  | "compact_action"
+  | "subagent_tree"
+  | "accordion";
 
 export interface ConversationContentNodeLocator {
   question_id: string;
