@@ -82,7 +82,10 @@ function resolveCandidateRoots(startLocation) {
   const roots = new Set();
   if (startLocation) {
     const resolved = expandPath(startLocation);
-    if (existsSync(resolved)) roots.add(resolved);
+    if (existsSync(resolved)) {
+      roots.add(resolved);
+      return Array.from(roots);
+    }
   }
   const defaultCli = path.join(homedir(), ".codebuddy");
   const defaultGui = path.join(homedir(), ".workbuddy");
@@ -105,25 +108,93 @@ function collectJsonlFiles(location) {
       : resolved;
 
   const results = [];
+  function walk(dir, depth = 0) {
+    if (depth > 6 || !existsSync(dir)) return;
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(fullPath, depth + 1);
+        } else if (entry.isFile() && entry.name.endsWith(".jsonl") && !entry.name.endsWith(".ndjson")) {
+          results.push(fullPath);
+        }
+      }
+    } catch {}
+  }
+  walk(projectsDir);
+  return results;
+}
+
+function createUnifiedNewFileDiff(targetPath, content) {
+  const norm = String(targetPath || "file").replace(/^[/\\]+/, "");
+  const lines = String(content ?? "").replace(/\r\n/g, "\n").split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return [
+    `diff --git a/${norm} b/${norm}`,
+    "new file mode 100644",
+    "--- /dev/null",
+    `+++ b/${norm}`,
+    `@@ -0,0 +1,${lines.length} @@`,
+    ...lines.map((l) => `+${l}`),
+  ].join("\n");
+}
+
+function createUnifiedReplaceDiff(targetPath, oldStr, newStr) {
+  const norm = String(targetPath || "file").replace(/^[/\\]+/, "");
+  const oldLines = String(oldStr ?? "").replace(/\r\n/g, "\n").split("\n");
+  const newLines = String(newStr ?? "").replace(/\r\n/g, "\n").split("\n");
+  if (oldLines.length > 0 && oldLines[oldLines.length - 1] === "") oldLines.pop();
+  if (newLines.length > 0 && newLines[newLines.length - 1] === "") newLines.pop();
+  return [
+    `diff --git a/${norm} b/${norm}`,
+    `--- a/${norm}`,
+    `+++ b/${norm}`,
+    `@@ -1,${oldLines.length} +1,${newLines.length} @@`,
+    ...oldLines.map((l) => `-${l}`),
+    ...newLines.map((l) => `+${l}`),
+  ].join("\n");
+}
+
+function extractBashOutput(text) {
+  const stdoutM = text.match(/Stdout:\s*([\s\S]*?)(?:\nStderr:|$)/i);
+  const stderrM = text.match(/Stderr:\s*([\s\S]*?)(?:\nExit Code:|$)/i);
+  const out = (stdoutM ? stdoutM[1].trim() : "").replace(/^\(empty\)$/, "");
+  const err = (stderrM ? stderrM[1].trim() : "").replace(/^\(empty\)$/, "");
+  if (out && err) return `${out}\n${err}`;
+  if (out) return out;
+  if (err) return err;
+  return text.replace(/^Command:.*?\n/i, "").replace(/Exit Code:.*$/i, "").trim();
+}
+
+function findSubagentsForSession(filePath, sessionId) {
+  if (!filePath || !sessionId) return [];
+  const subagentsDir = path.join(path.dirname(filePath), sessionId, "subagents");
+  if (!existsSync(subagentsDir)) return [];
+  const list = [];
   try {
-    const entries = readdirSync(projectsDir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(projectsDir, entry.name);
-      if (entry.isDirectory()) {
+    for (const entry of readdirSync(subagentsDir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+        const subPath = path.join(subagentsDir, entry.name);
+        const id = path.basename(entry.name, ".jsonl");
+        let promptSnippet = "";
         try {
-          const subEntries = readdirSync(fullPath, { withFileTypes: true });
-          for (const sub of subEntries) {
-            if (sub.isFile() && sub.name.endsWith(".jsonl") && !sub.name.endsWith(".ndjson")) {
-              results.push(path.join(fullPath, sub.name));
-            }
+          const firstLine = readFileSync(subPath, "utf8").split("\n")[0];
+          if (firstLine) {
+            const first = JSON.parse(firstLine);
+            promptSnippet = first.content?.[0]?.text || "";
           }
         } catch {}
-      } else if (entry.isFile() && entry.name.endsWith(".jsonl") && !entry.name.endsWith(".ndjson")) {
-        results.push(fullPath);
+        list.push({ id, path: subPath, prompt: promptSnippet });
       }
     }
   } catch {}
-  return results;
+  return list;
+}
+
+function isSubagentSessionPath(filePath) {
+  if (!filePath) return false;
+  return filePath.includes("/subagents/") || path.basename(path.dirname(filePath)) === "subagents";
 }
 
 function queryWorkbuddyDbTitles() {
@@ -171,6 +242,9 @@ function parseJsonl(text, sessionIdFallback, filePath) {
   let sessionTitle = null;
   const turns = [];
   let currentTurn = null;
+  const pendingToolCalls = new Map();
+  const subagentFiles = findSubagentsForSession(filePath, sessionIdFallback);
+  let subagentIndex = 0;
 
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -231,13 +305,118 @@ function parseJsonl(text, sessionIdFallback, filePath) {
       const toolUseItem = entry.content?.find((c) => c.type === "tool_use");
       const toolName = entry.name || toolUseItem?.name || "tool";
       const callId = entry.callId || entry.id || toolUseItem?.id;
-      let command = null;
-      let desc = null;
-      let kind = "tool";
       let args = entry.arguments || toolUseItem?.input;
       if (typeof args === "string") {
         try { args = JSON.parse(args); } catch {}
       }
+      pendingToolCalls.set(callId, { toolName, args });
+
+      // Subagent dispatch (Agent tool)
+      if (toolName === "Agent") {
+        let matchedChildId = null;
+        if (subagentFiles.length > 0) {
+          const desc = args?.description || "";
+          const p = args?.prompt || "";
+          const found = subagentFiles.find((s) => (desc && s.prompt.includes(desc)) || (p && s.prompt.includes(p.slice(0, 30))));
+          if (found) {
+            matchedChildId = found.id;
+          } else if (subagentIndex < subagentFiles.length) {
+            matchedChildId = subagentFiles[subagentIndex].id;
+            subagentIndex += 1;
+          }
+        }
+        const agentData = {
+          agent_role: args?.subagent_type || "Explore",
+          description: args?.description || "Subagent Task",
+          task: args?.prompt || args?.description || "",
+          child_session_id: matchedChildId || undefined,
+        };
+        currentTurn.parts.push({
+          role: "tool",
+          kind: "subagent",
+          text: JSON.stringify(agentData, null, 2),
+          language: null,
+          command: null,
+          cwd: entry.cwd || null,
+          status: "completed",
+          exit_code: 0,
+          source_execution_id: callId,
+          metadata_json: JSON.stringify({
+            tool_name: "Agent",
+            agent_role: args?.subagent_type || "Explore",
+            child_session_id: matchedChildId,
+            description: args?.description,
+          }),
+          content_card: {
+            schema_version: 1,
+            kind: `${ADAPTER_ID}.subagent`,
+            semantic_role: "subagent",
+            renderer: "subagent_tree",
+          },
+        });
+        if (entry.timestamp) currentTurn.ended_at = new Date(entry.timestamp).toISOString();
+        continue;
+      }
+
+      // Write (Create file diff)
+      if (toolName === "Write" && args?.path && args?.content != null) {
+        const diffText = createUnifiedNewFileDiff(args.path, args.content);
+        currentTurn.parts.push({
+          role: "tool",
+          kind: "file_change",
+          text: diffText,
+          language: null,
+          command: null,
+          cwd: entry.cwd || null,
+          status: "success",
+          exit_code: 0,
+          source_execution_id: callId,
+          metadata_json: JSON.stringify({ tool_name: toolName, execution_kind: "file_change", file_path: args.path }),
+          content_card: {
+            schema_version: 1,
+            kind: `${ADAPTER_ID}.file-change`,
+            semantic_role: "file-change",
+            renderer: "diff",
+          },
+        });
+        if (entry.timestamp) currentTurn.ended_at = new Date(entry.timestamp).toISOString();
+        continue;
+      }
+
+      // Edit (Replace content diff)
+      if (toolName === "Edit" && args?.path && args?.old_string != null && args?.new_string != null) {
+        const diffText = createUnifiedReplaceDiff(args.path, args.old_string, args.new_string);
+        currentTurn.parts.push({
+          role: "tool",
+          kind: "file_change",
+          text: diffText,
+          language: null,
+          command: null,
+          cwd: entry.cwd || null,
+          status: "success",
+          exit_code: 0,
+          source_execution_id: callId,
+          metadata_json: JSON.stringify({ tool_name: toolName, execution_kind: "file_change", file_path: args.path }),
+          content_card: {
+            schema_version: 1,
+            kind: `${ADAPTER_ID}.file-change`,
+            semantic_role: "file-change",
+            renderer: "diff",
+          },
+        });
+        if (entry.timestamp) currentTurn.ended_at = new Date(entry.timestamp).toISOString();
+        continue;
+      }
+
+      // Read / Grep / Glob (Ambient Signal)
+      const isRead = toolName === "Read";
+      const isSearch = ["Grep", "Glob", "WebSearch"].includes(toolName);
+      const executionKind = isRead ? "read" : isSearch ? "search" : null;
+      const signal = executionKind ? "ambient" : undefined;
+
+      let command = null;
+      let desc = null;
+      let kind = "tool";
       if (toolName === "Bash" && args?.command) {
         kind = "command";
         command = args.command;
@@ -245,6 +424,7 @@ function parseJsonl(text, sessionIdFallback, filePath) {
       } else {
         desc = typeof args === "object" ? JSON.stringify(args) : String(args || "");
       }
+
       currentTurn.parts.push({
         role: "tool",
         kind,
@@ -255,7 +435,7 @@ function parseJsonl(text, sessionIdFallback, filePath) {
         status: null,
         exit_code: null,
         source_execution_id: callId,
-        metadata_json: JSON.stringify({ tool_name: toolName }),
+        metadata_json: JSON.stringify({ tool_name: toolName, execution_kind: executionKind, signal, file_path: args?.path }),
         content_card: {
           schema_version: 1,
           kind: kind === "command" ? `${ADAPTER_ID}.command` : `${ADAPTER_ID}.tool`,
@@ -268,11 +448,43 @@ function parseJsonl(text, sessionIdFallback, filePath) {
 
     if (entry.type === "function_call_result" || (entry.type === "message" && entry.role === "tool")) {
       const callId = entry.callId || entry.id;
-      const outputText = typeof entry.output === "object"
+      const matchedCall = pendingToolCalls.get(callId);
+      const matchedTool = matchedCall?.toolName;
+
+      // If matchedCall was Write or Edit, the file change diff was already emitted
+      if (matchedTool === "Write" || matchedTool === "Edit") {
+        if (entry.timestamp) currentTurn.ended_at = new Date(entry.timestamp).toISOString();
+        continue;
+      }
+
+      // If matchedCall was Agent, the subagent card was already emitted
+      if (matchedTool === "Agent") {
+        if (entry.timestamp) currentTurn.ended_at = new Date(entry.timestamp).toISOString();
+        continue;
+      }
+
+      let outputText = typeof entry.output === "object"
         ? (entry.output?.text ?? JSON.stringify(entry.output))
         : String(entry.output || "");
-      const status = entry.status === "failed" ? "failed" : "success";
-      const exitCode = entry.providerData?.toolResult?.rawResponse?.exitCode ?? (status === "failed" ? 1 : 0);
+
+      let status = entry.status === "failed" ? "failed" : "success";
+      let exitCode = entry.providerData?.toolResult?.rawResponse?.exitCode;
+
+      const isRead = matchedTool === "Read";
+      const isSearch = ["Grep", "Glob", "WebSearch"].includes(matchedTool);
+      const executionKind = isRead ? "read" : isSearch ? "search" : null;
+      const signal = executionKind ? "ambient" : undefined;
+
+      if (matchedTool === "Bash") {
+        if (exitCode == null) {
+          const m = outputText.match(/Exit Code:\s*(\d+)/i);
+          if (m) exitCode = parseInt(m[1], 10);
+        }
+        if (exitCode == null) exitCode = (status === "failed" ? 1 : 0);
+        status = exitCode === 0 ? "success" : "failed";
+        outputText = extractBashOutput(outputText);
+      }
+
       currentTurn.parts.push({
         role: "tool",
         kind: "tool",
@@ -283,7 +495,14 @@ function parseJsonl(text, sessionIdFallback, filePath) {
         status,
         exit_code: exitCode,
         source_execution_id: callId,
-        metadata_json: JSON.stringify({ status, exit_code: exitCode }),
+        metadata_json: JSON.stringify({
+          status,
+          exit_code: exitCode,
+          execution_kind: executionKind,
+          signal,
+          file_path: matchedCall?.args?.path,
+          tool_name: matchedTool,
+        }),
         content_card: {
           schema_version: 1,
           kind: `${ADAPTER_ID}.result`,
@@ -388,7 +607,10 @@ function listSessions() {
 
       const stat = statSync(filePath);
       const dbInfo = dbTitles.get(parsed.sessionId || sid);
-      const title = dbInfo?.title || parsed.sessionTitle || parsed.turns[0]?.user_text?.slice(0, 80) || "CodeBuddy 会话";
+      const isSubagent = isSubagentSessionPath(filePath);
+      const title = isSubagent
+        ? `[子代理] ${parsed.sessionTitle || parsed.turns[0]?.user_text?.slice(0, 40) || sid}`
+        : (dbInfo?.title || parsed.sessionTitle || parsed.turns[0]?.user_text?.slice(0, 80) || "CodeBuddy 会话");
       descriptors.push({
         external_id: parsed.sessionId || sid,
         title,
@@ -415,8 +637,13 @@ function readSession() {
     if (!parsed.turns.length) return null;
 
     const dbInfo = dbTitles.get(parsed.sessionId || sid);
-    const title = dbInfo?.title || parsed.sessionTitle || parsed.turns[0]?.user_text?.slice(0, 80) || "CodeBuddy 会话";
-    const origin = detectClientFlavor(filePath);
+    const isSubagent = isSubagentSessionPath(filePath);
+    const origin = isSubagent ? "subagent" : detectClientFlavor(filePath);
+    const title = isSubagent
+      ? `[子代理] ${parsed.sessionTitle || parsed.turns[0]?.user_text?.slice(0, 40) || sid}`
+      : (dbInfo?.title || parsed.sessionTitle || parsed.turns[0]?.user_text?.slice(0, 80) || "CodeBuddy 会话");
+    const userVisible = !isSubagent;
+
     const session = {
       external_id: parsed.sessionId || sid,
       title,
@@ -425,9 +652,9 @@ function readSession() {
       updated_at: parsed.turns.at(-1)?.ended_at ?? parsed.turns.at(-1)?.started_at ?? null,
       source_locator: filePath,
       source_fingerprint: versionToken,
-      execution_origin: "user",
-      execution_purpose: origin,
-      user_visible: true,
+      execution_origin: origin,
+      execution_purpose: isSubagent ? "Explore" : origin,
+      user_visible: userVisible,
       turns: parsed.turns,
     };
     return normalizeSessionPayload(session);

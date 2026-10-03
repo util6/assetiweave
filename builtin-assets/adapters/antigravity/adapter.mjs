@@ -546,13 +546,13 @@ function toolCallParts(toolCalls, turnId) {
 // Antigravity-specific: build tool result parts from step output
 // ---------------------------------------------------------------------------
 
-function toolResultPart(step, fileOperation = null, sourceExecutionId = null) {
+function toolResultPart(step, fileOperation = null, sourceExecutionId = null, matchedCall = null) {
   const type = step.type ?? "";
   const content = String(step.content ?? "").trim();
   if (!content) return [];
-  const status = step.status === "ERROR" ? "error" : step.status === "DONE" ? "success" : null;
+  const toolName = String(matchedCall?.name ?? "").toLowerCase();
 
-  const skillContent = skillContentFromViewFile(step, content);
+  const skillContent = skillContentFromViewFile(step, content, matchedCall);
   if (skillContent) {
     return [{
       role: "tool",
@@ -561,17 +561,111 @@ function toolResultPart(step, fileOperation = null, sourceExecutionId = null) {
       language: null,
       command: null,
       cwd: null,
-      status,
-      exit_code: null,
+      status: "success",
+      exit_code: 0,
       source_execution_id: sourceExecutionId,
+      content_card: {
+        schema_version: 1,
+        kind: "antigravity.skill-content",
+        semantic_role: "skill",
+        renderer: "markdown",
+      },
       metadata_json: metadata(
-        compactObject({ type: "skill-content", format: "markdown", status }),
+        compactObject({ type: "skill-content", format: "markdown", status: "success" }),
         { source_type: type, skill_path: skillContent.path, detected_from_view_file: true },
       ),
     }];
   }
 
-  if (type === "RUN_COMMAND") {
+  const isRunCommand = type === "RUN_COMMAND"
+    || toolName === "run_command"
+    || /(?:The command|Process)\s+exited\s+with\s+code/i.test(content);
+
+  if (isRunCommand) {
+    let exitCode = null;
+    const exitMatch = content.match(/(?:The command|Process)\s+exited\s+with\s+code\s+(-?\d+)/i);
+    if (exitMatch) {
+      exitCode = parseInt(exitMatch[1], 10);
+    }
+    const derivedStatus = exitCode !== null
+      ? (exitCode === 0 ? "success" : "failed")
+      : (step.status === "ERROR" ? "error" : "success");
+
+    const cleanText = normalizeTerminalText(stripExecutionEnvelope(content));
+    if (derivedStatus === "success" && !cleanText.trim()) {
+      return [];
+    }
+
+    return [{
+      role: "tool",
+      kind: "tool",
+      text: cleanText || content,
+      language: null,
+      command: null,
+      cwd: null,
+      status: derivedStatus,
+      exit_code: exitCode,
+      source_execution_id: sourceExecutionId,
+      content_card: {
+        schema_version: 1,
+        kind: "antigravity.result",
+        semantic_role: "result",
+        renderer: "terminal_output",
+      },
+      metadata_json: metadata(
+        compactObject({
+          type: "result",
+          format: "plain",
+          status: derivedStatus,
+          exit_code: exitCode,
+          source_execution_id: sourceExecutionId,
+        }),
+        { source_type: type, tool_name: "run_command" },
+      ),
+    }];
+  }
+
+  const isCodeAction = type === "CODE_ACTION"
+    || ["write_to_file", "replace_file_content"].includes(toolName);
+
+  if (isCodeAction) {
+    const diffText = materializeFileChangeText(content, fileOperation);
+    if (hasConcreteDiff(diffText)) {
+      return [{
+        role: "tool",
+        kind: "file_change",
+        text: diffText,
+        language: null,
+        command: null,
+        cwd: null,
+        status: "success",
+        exit_code: 0,
+        source_execution_id: sourceExecutionId,
+        content_card: {
+          schema_version: 1,
+          kind: "antigravity.file-change",
+          semantic_role: "file-change",
+          renderer: "diff",
+        },
+        metadata_json: metadata(
+          compactObject({
+            type: "result",
+            format: "plain",
+            status: "success",
+            execution_kind: "file_change",
+            source_execution_id: sourceExecutionId,
+          }),
+          { source_type: type, tool_name: toolName || "code_action" },
+        ),
+      }];
+    }
+  }
+
+  const isViewFile = type === "VIEW_FILE"
+    || ["view_file", "read_file", "read_url_content"].includes(toolName);
+
+  if (isViewFile) {
+    const filePath = viewFilePath(content) || firstString(matchedCall?.args?.AbsolutePath, matchedCall?.args?.TargetFile, matchedCall?.args?.Path, matchedCall?.args?.path, matchedCall?.args?.Url);
     return [{
       role: "tool",
       kind: "tool",
@@ -579,34 +673,94 @@ function toolResultPart(step, fileOperation = null, sourceExecutionId = null) {
       language: null,
       command: null,
       cwd: null,
-      status,
-      exit_code: null,
+      status: "success",
+      exit_code: 0,
       source_execution_id: sourceExecutionId,
+      content_card: {
+        schema_version: 1,
+        kind: "antigravity.result",
+        semantic_role: "result",
+        renderer: "terminal_output",
+      },
       metadata_json: metadata(
-        compactObject({ type: "result", format: "plain", status }),
-        { source_type: type },
+        compactObject({
+          type: "result",
+          format: "plain",
+          status: "success",
+          execution_kind: "read",
+          signal: "ambient",
+          file_path: filePath,
+          source_execution_id: sourceExecutionId,
+        }),
+        { source_type: type, tool_name: toolName || "view_file", file_path: filePath, signal: "ambient", execution_kind: "read" },
       ),
     }];
   }
 
-  if (type === "CODE_ACTION") {
+  const isSearch = type === "GREP_SEARCH"
+    || ["grep_search", "search_web", "search_docs", "find_files"].includes(toolName);
+
+  if (isSearch) {
     return [{
       role: "tool",
-      kind: "file_change",
-      text: materializeFileChangeText(content, fileOperation),
+      kind: "tool",
+      text: content,
       language: null,
       command: null,
       cwd: null,
-      status,
-      exit_code: null,
+      status: "success",
+      exit_code: 0,
+      source_execution_id: sourceExecutionId,
+      content_card: {
+        schema_version: 1,
+        kind: "antigravity.result",
+        semantic_role: "result",
+        renderer: "terminal_output",
+      },
       metadata_json: metadata(
-        compactObject({ type: "result", format: "plain", status }),
-        { source_type: type },
+        compactObject({
+          type: "result",
+          format: "plain",
+          status: "success",
+          execution_kind: "search",
+          signal: "ambient",
+          source_execution_id: sourceExecutionId,
+        }),
+        { source_type: type, tool_name: toolName || "search", signal: "ambient", execution_kind: "search" },
       ),
     }];
   }
 
-  if (type === "ERROR_MESSAGE") {
+  if (["invoke_subagent", "call_subagent"].includes(toolName)) {
+    return [{
+      role: "tool",
+      kind: "antigravity.subagent",
+      text: content,
+      language: null,
+      command: null,
+      cwd: null,
+      status: "success",
+      exit_code: 0,
+      source_execution_id: sourceExecutionId,
+      content_card: {
+        schema_version: 1,
+        kind: "antigravity.subagent",
+        semantic_role: "subagent",
+        renderer: "subagent_tree",
+      },
+      metadata_json: metadata(
+        compactObject({
+          type: "subagent",
+          format: "plain",
+          status: "success",
+          source_execution_id: sourceExecutionId,
+        }),
+        { source_type: type, tool_name: toolName },
+      ),
+    }];
+  }
+
+  if (type === "ERROR_MESSAGE" || step.status === "ERROR") {
     const errorText = step.error ?? content;
     return [{
       role: "tool",
@@ -616,15 +770,16 @@ function toolResultPart(step, fileOperation = null, sourceExecutionId = null) {
       command: null,
       cwd: null,
       status: "error",
-      exit_code: null,
+      exit_code: 1,
+      source_execution_id: sourceExecutionId,
       metadata_json: metadata(
-        compactObject({ type: "result", format: "plain", status: "error" }),
-        { source_type: type },
+        compactObject({ type: "result", format: "plain", status: "error", exit_code: 1, source_execution_id: sourceExecutionId }),
+        { source_type: type, tool_name: toolName || undefined },
       ),
     }];
   }
 
-  // VIEW_FILE, GREP_SEARCH, LIST_DIRECTORY, GENERIC
+  const status = step.status === "DONE" ? "success" : (step.status === "ERROR" ? "error" : "success");
   return [{
     role: "tool",
     kind: "tool",
@@ -637,7 +792,7 @@ function toolResultPart(step, fileOperation = null, sourceExecutionId = null) {
     source_execution_id: sourceExecutionId,
     metadata_json: metadata(
       compactObject({ type: "result", format: "plain", status, source_execution_id: sourceExecutionId }),
-      { source_type: type },
+      { source_type: type, tool_name: toolName || undefined },
     ),
   }];
 }
@@ -753,9 +908,15 @@ function replaceFileDiff(targetFile, oldContent, newContent) {
   ].join("\n");
 }
 
-function skillContentFromViewFile(step, content) {
-  if (step.type !== "VIEW_FILE") return null;
-  const filePath = viewFilePath(content);
+function operationFromMatchedCall(call, knownFileContents) {
+  if (!call || !call.args) return null;
+  return fileOperationFromToolCall(call, knownFileContents);
+}
+
+function skillContentFromViewFile(step, content, matchedCall = null) {
+  const isView = step.type === "VIEW_FILE" || matchedCall?.name === "view_file" || /File Path:\s*`.*?SKILL\.md`/i.test(content);
+  if (!isView) return null;
+  const filePath = viewFilePath(content) || firstString(matchedCall?.args?.AbsolutePath, matchedCall?.args?.TargetFile, matchedCall?.args?.Path, matchedCall?.args?.path);
   if (!filePath || !/\/SKILL\.md$/i.test(filePath)) return null;
   const body = viewFileBody(content);
   if (!body || !/^---\s*$/m.test(body)) return null;
@@ -882,15 +1043,12 @@ function buildTurnsFromSteps(steps) {
         "GREP_SEARCH", "LIST_DIRECTORY", "ERROR_MESSAGE", "GENERIC",
       ];
       if (resultTypes.includes(type)) {
-        const fileOperation = type === "CODE_ACTION"
-          ? matchPendingFileOperation(pendingFileOperations, step.content)
-          : null;
         let matchedIndex = -1;
-        if (type === "RUN_COMMAND") {
+        if (type === "RUN_COMMAND" || (type === "GENERIC" && /(?:The command|Process)\s+exited\s+with\s+code/i.test(step.content))) {
           matchedIndex = pendingToolCalls.findIndex((c) => c.name === "run_command");
-        } else if (type === "VIEW_FILE") {
+        } else if (type === "VIEW_FILE" || (type === "GENERIC" && /File Path:\s*`/i.test(step.content))) {
           matchedIndex = pendingToolCalls.findIndex((c) => /view_file|read_file|read_url/i.test(c.name));
-        } else if (type === "GREP_SEARCH") {
+        } else if (type === "GREP_SEARCH" || (type === "GENERIC" && /grep|search|find/i.test(step.content))) {
           matchedIndex = pendingToolCalls.findIndex((c) => /grep|search|find/i.test(c.name));
         } else if (type === "LIST_DIRECTORY") {
           matchedIndex = pendingToolCalls.findIndex((c) => /list_dir|list_directory/i.test(c.name));
@@ -902,7 +1060,13 @@ function buildTurnsFromSteps(steps) {
         }
         const matchedCall = matchedIndex >= 0 ? pendingToolCalls.splice(matchedIndex, 1)[0] : null;
         const sourceExecutionId = matchedCall?.executionId ?? null;
-        current.parts.push(...toolResultPart(step, fileOperation, sourceExecutionId));
+
+        const isCodeAction = type === "CODE_ACTION" || (matchedCall && /write|replace|edit|patch/i.test(matchedCall.name));
+        const fileOperation = isCodeAction
+          ? (matchPendingFileOperation(pendingFileOperations, step.content) || operationFromMatchedCall(matchedCall, knownFileContents))
+          : null;
+
+        current.parts.push(...toolResultPart(step, fileOperation, sourceExecutionId, matchedCall));
         current.ended_at = timestamp;
       }
     }

@@ -42,7 +42,7 @@
     "cli:test:e2e": "go test -C cli -tags=e2e ./tests/cli_e2e",
     "conversation-adapters:check": "node scripts/conversation-adapter-packages.mjs check",
     "conversation-adapters:build": "node scripts/conversation-adapter-packages.mjs build",
-    "conversation-adapters:test": "node --test scripts/conversation-payload-policy.test.mjs scripts/codex-conversation-adapter.test.mjs scripts/claude-code-conversation-adapter.test.mjs scripts/opencode-conversation-adapter.test.mjs scripts/antigravity-conversation-adapter.test.mjs scripts/web-conversation-adapter.test.mjs",
+    "conversation-adapters:test": "node --test scripts/conversation-payload-policy.test.mjs scripts/codex-conversation-adapter.test.mjs scripts/claude-code-conversation-adapter.test.mjs scripts/opencode-conversation-adapter.test.mjs scripts/antigravity-conversation-adapter.test.mjs scripts/codebuddy-conversation-adapter.test.mjs scripts/web-conversation-adapter.test.mjs",
     "preview": "vite preview --config frontend/vite.config.ts --host 127.0.0.1",
     "tauri": "tauri",
     "pretauri:dev": "pnpm artifacts:guard && node scripts/ensure-tauri-resources.mjs",

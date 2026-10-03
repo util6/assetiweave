@@ -95,6 +95,17 @@
         "plain"
       ],
       "icon_hint": "brain"
+    },
+    {
+      "id": "codebuddy.subagent",
+      "semantic_role": "subagent",
+      "label": "子代理",
+      "default_renderer": "subagent_tree",
+      "allowed_renderers": [
+        "subagent_tree",
+        "plain",
+        "json"
+      ]
     }
   ]
 }

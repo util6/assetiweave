@@ -609,6 +609,107 @@ test("Antigravity automatically discovers sibling ACP SQLite conversation databa
   }
 });
 
+test("Antigravity correctly extracts exit code and status from real GENERIC run_command output", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-generic-cmd-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-10-03T16:00:00Z",
+        content: "<USER_REQUEST>Run failing command</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-10-03T16:00:01Z",
+        tool_calls: [{
+          name: "run_command",
+          args: { CommandLine: "cargo test --bad-arg", Cwd: "/app" },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-10-03T16:00:02Z",
+        content: [
+          "Created At: 2026-10-03T16:00:01Z",
+          "Completed At: 2026-10-03T16:00:02Z",
+          "",
+          "The command exited with code 1.",
+          "Output:",
+          "error: unrecognized option '--bad-arg'",
+        ].join("\n"),
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    assert.equal(session.turns[0].parts.length, 2);
+    const cmdPart = session.turns[0].parts[0];
+    const resPart = session.turns[0].parts[1];
+
+    assert.equal(cmdPart.content_card?.kind, "antigravity.command");
+    assert.equal(resPart.content_card?.kind, "antigravity.result");
+    assert.equal(resPart.content_card?.renderer, "terminal_output");
+    assert.equal(resPart.exit_code, 1);
+    assert.equal(resPart.status, "failed");
+    assert.equal(resPart.source_execution_id, cmdPart.source_execution_id);
+    assert.match(resPart.text, /unrecognized option/);
+    assert.doesNotMatch(resPart.text, /Created At:/);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity reconstructs concrete diff from real GENERIC replace_file_content output", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-generic-replace-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    const targetFile = "/app/src/lib.rs";
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-10-03T16:10:00Z",
+        content: "<USER_REQUEST>Fix a bug</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-10-03T16:10:01Z",
+        tool_calls: [{
+          name: "replace_file_content",
+          args: {
+            TargetFile: targetFile,
+            TargetContent: "let x = 1;\n",
+            ReplacementContent: "let x = 2;\n",
+          },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-10-03T16:10:02Z",
+        content: `Successfully replaced content in ${targetFile}`,
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    const fileChange = session.turns[0].parts.find((part) => part.kind === "file_change");
+    assert.ok(fileChange);
+    assert.equal(fileChange.content_card?.kind, "antigravity.file-change");
+    assert.equal(fileChange.content_card?.renderer, "diff");
+    assert.match(fileChange.text, /^diff --git a\/app\/src\/lib\.rs b\/app\/src\/lib\.rs/m);
+    assert.match(fileChange.text, /-let x = 1;/);
+    assert.match(fileChange.text, /\+let x = 2;/);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 function readFixtureSession(transcriptPath) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",

@@ -93,6 +93,17 @@
         "markdown"
       ],
       "icon_hint": "book-open"
+    },
+    {
+      "id": "antigravity.subagent",
+      "semantic_role": "subagent",
+      "label": "子代理",
+      "default_renderer": "subagent_tree",
+      "allowed_renderers": [
+        "subagent_tree",
+        "plain",
+        "json"
+      ]
     }
   ]
 }
