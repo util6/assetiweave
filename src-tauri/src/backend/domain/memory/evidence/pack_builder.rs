@@ -157,12 +157,14 @@ pub fn build_bounded_evidence_initial_pack(
             }
 
             let is_env_dump = is_transient_environment_dump(raw_text);
+            let is_ambient = is_ambient_exploration_part(part);
+            let is_subagent = is_subagent_task_part(part);
             let has_command_or_exit = part.command.is_some() || part.exit_code.is_some();
             let kind = classify_assistant_node_kind(raw_text, has_command_or_exit);
 
             let is_high_priority = match kind {
                 EvidenceNodeKind::VerificationEvidence => true,
-                EvidenceNodeKind::ExecutionEvidence => !is_env_dump,
+                EvidenceNodeKind::ExecutionEvidence => (is_subagent || !is_ambient) && !is_env_dump,
                 _ => false,
             };
 
@@ -187,11 +189,17 @@ pub fn build_bounded_evidence_initial_pack(
                 current_chars += final_text.len();
                 read_nodes_count += 1;
 
+                let title = if is_subagent {
+                    format!("Turn {} Part {} (Subagent)", t_idx + 1, p_idx + 1)
+                } else {
+                    format!("Turn {} Part {} ({})", t_idx + 1, p_idx + 1, role)
+                };
+
                 outcomes_and_verifications.push(BoundedEvidenceNode {
                     ref_key: ref_key.clone(),
                     role: role.clone(),
                     kind,
-                    title: format!("Turn {} Part {} ({})", t_idx + 1, p_idx + 1, role),
+                    title,
                     text: final_text,
                     truncated,
                 });
@@ -325,3 +333,30 @@ fn is_transient_environment_dump(text: &str) -> bool {
         || lower.contains("npm list --depth=0")
         || (lower.contains("system info:") && lower.contains("kernel"))
 }
+
+fn is_ambient_exploration_part(part: &crate::backend::domain::NormalizedConversationPart) -> bool {
+    if let Some(ref meta) = part.metadata_json {
+        if meta.contains(r#""signal":"ambient""#) || meta.contains(r#""signal": "ambient""#) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_subagent_task_part(part: &crate::backend::domain::NormalizedConversationPart) -> bool {
+    if let Some(ref card) = part.content_card {
+        if card.kind == "subagent" {
+            return true;
+        }
+    }
+    if let Some(ref meta) = part.metadata_json {
+        if meta.contains(r#""subagent""#) {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+#[path = "pack_builder_tests.rs"]
+mod tests;

@@ -122,7 +122,7 @@ pub(crate) fn session_detail_to_normalized(
                     exit_code: p.exit_code,
                     command_label: p.command_label.clone(),
                     source_execution_id: p.source_execution_id.clone(),
-                    content_card: None,
+                    content_card: p.content_card.clone(),
                     metadata_json: p.metadata_json.clone(),
                 })
                 .collect();
