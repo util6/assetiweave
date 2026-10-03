@@ -210,6 +210,7 @@ impl AppService {
                         tokio::spawn(async move {
                             let mut interval =
                                 tokio::time::interval(std::time::Duration::from_secs(30));
+                            let mut consecutive_errors = 0usize;
                             loop {
                                 tokio::select! {
                                     _ = heartbeat_cancel.cancelled() => break,
@@ -222,8 +223,38 @@ impl AppService {
                                             &heartbeat_owner,
                                             &now,
                                         ).await {
-                                            Ok(true) => {}
-                                            Ok(false) | Err(_) => break,
+                                            Ok(true) => {
+                                                consecutive_errors = 0;
+                                            }
+                                            Ok(false) => {
+                                                tracing::warn!(
+                                                    action = "recent_memory.heartbeat.lost",
+                                                    tenant_id = %heartbeat_tenant,
+                                                    job_id = %heartbeat_job,
+                                                    "Recent Memory job lease was superseded or released"
+                                                );
+                                                break;
+                                            }
+                                            Err(error) => {
+                                                consecutive_errors += 1;
+                                                tracing::warn!(
+                                                    action = "recent_memory.heartbeat.retryable_error",
+                                                    tenant_id = %heartbeat_tenant,
+                                                    job_id = %heartbeat_job,
+                                                    consecutive_errors,
+                                                    error = %error,
+                                                    "Recent Memory heartbeat update failed due to db lock or error; will retry"
+                                                );
+                                                if consecutive_errors >= 5 {
+                                                    tracing::error!(
+                                                        action = "recent_memory.heartbeat.exceeded_retries",
+                                                        tenant_id = %heartbeat_tenant,
+                                                        job_id = %heartbeat_job,
+                                                        "Recent Memory heartbeat failed 5 consecutive times; aborting"
+                                                    );
+                                                    break;
+                                                }
+                                            }
                                         }
                                     }
                                 }

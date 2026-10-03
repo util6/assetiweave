@@ -35,6 +35,15 @@ pub(crate) async fn activate_tenant_with_fault(
                 "fault injected: after_load_request_context".to_string(),
             ));
         }
+        let builtin_adapters = runtime.builtin_conversation_adapters();
+        if !builtin_adapters.is_empty() {
+            let _ = crate::backend::application::system::bootstrap::seed_prepared_builtin_adapters(
+                &pool,
+                &next_context.tenant.id,
+                builtin_adapters.as_ref(),
+            )
+            .await;
+        }
         let adapters =
             crate::backend::store::list_conversation_adapters_sqlx(&pool, &next_context.tenant.id)
                 .await?;

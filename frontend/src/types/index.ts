@@ -238,6 +238,7 @@ export type AppKind =
   | "zcode"
   | "qoder"
   | "hermes"
+  | "codebuddy"
   | "custom";
 
 export type ConversationAdapterKind = "external";
@@ -357,6 +358,9 @@ export interface ConversationSession {
   missing: boolean;
   created_at: string;
   imported_at: string;
+  execution_origin?: string;
+  execution_purpose?: string | null;
+  user_visible?: boolean;
 }
 
 export interface ConversationSessionListItem extends ConversationSession {
@@ -412,7 +416,8 @@ export type ConversationCardRenderer =
   | "code"
   | "command"
   | "terminal_output"
-  | "diff";
+  | "diff"
+  | "compact_action";
 
 export interface ConversationContentNodeLocator {
   question_id: string;

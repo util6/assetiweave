@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeSessionPayload, PAYLOAD_POLICY_VERSION } from "../builtin-assets/adapters/opencode/payload-policy.mjs";
+import {
+  normalizeSessionPayload,
+  classifyExecution,
+  extractLocation,
+  PAYLOAD_POLICY_VERSION,
+} from "../builtin-assets/adapters/common/payload-policy.mjs";
 
 function card(type, renderer = type === "command" ? "command" : "terminal_output") {
   return { schema_version: 1, kind: `opencode.${type}`, renderer };
@@ -396,4 +401,84 @@ test("payload policy reduces one-megabyte read and successful stdout payloads by
   assert.equal(session.turns[0].parts[3].text, null);
   assert.equal(session.turns[0].parts[4].text, diff);
   assert.equal(session.turns[0].parts[4].content_card.kind, "opencode.file-change");
+});
+
+test("payload policy classifies structured tool calls and tags signal: ambient for read/search", () => {
+  assert.equal(classifyExecution({ toolName: "view_file" }), "read");
+  assert.equal(classifyExecution({ toolName: "grep_search" }), "search");
+  assert.equal(classifyExecution({ toolName: "list_dir" }), "read");
+  assert.equal(classifyExecution({ toolName: "write_to_file" }), "file_change");
+  assert.equal(classifyExecution({ toolName: "update_plan" }), "plan");
+  assert.equal(classifyExecution({ toolName: "invoke_subagent" }), "subagent");
+
+  const session = {
+    turns: [{
+      parts: [
+        part({
+          cardType: "command",
+          command: "view_file: /Users/test/main.rs",
+          source_execution_id: "tool-read-1",
+          metadata: {
+            tool_name: "view_file",
+            tool_input: { AbsolutePath: "/Users/test/main.rs", StartLine: 1, EndLine: 50 },
+          },
+        }),
+        part({
+          text: "1: fn main() {}\n" + "2: println!();\n".repeat(100),
+          source_execution_id: "tool-read-1",
+          status: "completed",
+          exit_code: 0,
+        }),
+      ],
+    }],
+  };
+
+  normalizeSessionPayload(session);
+
+  const [cmdPart, resPart] = session.turns[0].parts;
+  const cmdMeta = JSON.parse(cmdPart.metadata_json);
+  const resMeta = JSON.parse(resPart.metadata_json);
+
+  assert.equal(cmdMeta.execution_kind, "read");
+  assert.equal(cmdMeta.signal, "ambient");
+  assert.equal(cmdMeta.file_path, "/Users/test/main.rs");
+  assert.equal(cmdMeta.line_start, 1);
+  assert.equal(cmdMeta.line_end, 50);
+
+  // Result body must be stripped to null, and tagged as ambient
+  assert.equal(resPart.text, null);
+  assert.equal(resMeta.execution_kind, "read");
+  assert.equal(resMeta.signal, "ambient");
+});
+
+test("payload policy retains error diagnostic and focus signal for failed read", () => {
+  const session = {
+    turns: [{
+      parts: [
+        part({
+          cardType: "command",
+          command: "view_file: /Users/test/missing.rs",
+          source_execution_id: "tool-read-fail",
+          metadata: {
+            tool_name: "view_file",
+            tool_input: { AbsolutePath: "/Users/test/missing.rs" },
+          },
+        }),
+        part({
+          text: "Error: No such file or directory",
+          source_execution_id: "tool-read-fail",
+          status: "failed",
+          exit_code: 1,
+        }),
+      ],
+    }],
+  };
+
+  normalizeSessionPayload(session);
+
+  const [cmdPart, resPart] = session.turns[0].parts;
+  const resMeta = JSON.parse(resPart.metadata_json);
+
+  assert.equal(resPart.text, "Error: No such file or directory");
+  assert.equal(resMeta.signal, "focus");
 });

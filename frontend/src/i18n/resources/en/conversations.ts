@@ -328,6 +328,7 @@ export const conversationsEn = {
   "conversation.content.loadMoreCommands": "Load more commands",
   "conversation.content.loadMoreResults": "Load more results",
   "conversation.content.loadMoreActivities": "Load more activity",
+  "conversation.content.ambientActionCount": "{{count}} read & search operations",
   "conversation.content.projectionFailed":
     "Command display projection failed; raw command retained: {{message}}",
   "conversation.content.hidden": "All response blocks are currently hidden.",

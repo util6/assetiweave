@@ -126,6 +126,7 @@ function defaultAccentColor(appKind: AppKind) {
   const colors: Record<AppKind, string> = {
     antigravity: "#a78bfa",
     claude: "#d97757",
+    codebuddy: "#6c4dff",
     codex: "#10b981",
     cursor: "#94a3b8",
     custom: "#8c909f",

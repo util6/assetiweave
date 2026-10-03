@@ -12,6 +12,7 @@ pub enum ConversationCardRenderer {
     Command,
     TerminalOutput,
     Diff,
+    CompactAction,
 }
 
 impl ConversationCardRenderer {
@@ -25,6 +26,7 @@ impl ConversationCardRenderer {
             Self::Command => "command",
             Self::TerminalOutput => "terminal_output",
             Self::Diff => "diff",
+            Self::CompactAction => "compact_action",
         }
     }
 }

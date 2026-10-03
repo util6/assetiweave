@@ -104,161 +104,159 @@ pub(crate) async fn import_conversation_sessions_advanced_sqlx(
 
     let mut completed_session_count = 0;
     let mut all_changed_session_ids = Vec::new();
+    const SESSION_IMPORT_BATCH_SIZE: usize = 50;
 
-    for normalized in sessions {
+    for chunk in sessions.chunks(SESSION_IMPORT_BATCH_SIZE) {
         ensure_sync_import_active(cancellation)?;
-        let session = conversation_session_from_normalized(source, normalized, &now);
-        let mut tx = match pool.begin().await {
-            Ok(tx) => tx,
-            Err(err) => {
-                let sanitized = sanitize_store_sync_error_message(&err.to_string());
-                session_failures.push(crate::backend::domain::SessionSyncFailure {
-                    session_external_id: normalized.external_id.clone(),
-                    stage: "storage".to_string(),
-                    error_code: "transaction_begin_failed".to_string(),
-                    error_message: sanitized.clone(),
-                    retryable: true,
-                });
-                let _ = record_conversation_session_failure_sqlx(
-                    pool,
-                    tenant_id,
-                    &source.id,
-                    "session",
-                    &normalized.external_id,
-                    session.source_fingerprint.as_deref(),
-                    "transaction_begin_failed",
-                    &sanitized,
-                    "storage",
-                    true,
-                )
-                .await;
-                completed_session_count += 1;
-                on_progress(completed_session_count, sessions.len());
-                continue;
-            }
-        };
 
-        let session_import_res: StoreResult<Option<String>> = async {
-            let change_kind =
-                if conversation_session_exists_sqlx_tx(&mut tx, tenant_id, &session.id).await? {
-                    "updated"
-                } else {
-                    "new"
-                };
-            if conversation_session_is_unchanged_sqlx_tx(&mut tx, tenant_id, &session, normalized)
-                .await?
-            {
-                // 未变更会话：推进 observation clean (dirty = 0)
-                upsert_single_session_observation_clean_sqlx_tx(
-                    &mut tx,
+        // 优先尝试以批量事务导入当前批次，减少 SQLite 写锁争抢与频繁磁盘 fsync
+        let mut batch_success = false;
+        if let Ok(mut batch_tx) = pool.begin().await {
+            let mut chunk_changed = Vec::new();
+            let mut chunk_skipped = 0usize;
+            let mut chunk_ok = true;
+
+            for normalized in chunk {
+                let session = conversation_session_from_normalized(source, normalized, &now);
+                match import_single_session_sqlx_tx(
+                    &mut batch_tx,
                     tenant_id,
-                    &source.id,
-                    "session",
-                    &session.external_id,
-                    session.source_fingerprint.as_deref().unwrap_or(&now),
+                    source,
+                    normalized,
+                    &session,
                     &now,
+                    &sync_run_id,
                     adapter_content_hash,
                     card_contract_version,
                     payload_policy_version,
                 )
-                .await?;
-                tx.commit().await.map_err(StoreError::external)?;
-                return Ok(None);
-            }
-            sqlx::query(
-                "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND session_id = ?3 AND status = 'active'",
-            )
-            .bind(&now)
-            .bind(tenant_id)
-            .bind(&session.id)
-            .execute(&mut *tx)
-            .await
-            .map_err(StoreError::external)?;
-            upsert_conversation_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
-            for turn in &normalized.turns {
-                if turn.user_text.trim().is_empty() {
-                    continue;
+                .await
+                {
+                    Ok(Some(changed_id)) => {
+                        chunk_changed.push(changed_id);
+                    }
+                    Ok(None) => {
+                        chunk_skipped += 1;
+                    }
+                    Err(_) => {
+                        chunk_ok = false;
+                        break;
+                    }
                 }
-                let stored_turn = conversation_turn_from_normalized(&session.id, turn, &now);
-                upsert_conversation_turn_sqlx_tx(&mut tx, tenant_id, &stored_turn).await?;
-                replace_conversation_parts_sqlx_tx(
-                    &mut tx,
-                    tenant_id,
-                    &stored_turn.id,
-                    &turn.parts,
-                )
-                .await?;
             }
-            prune_conversation_turns_sqlx_tx(&mut tx, tenant_id, &session.id, normalized).await?;
-            ensure_question_groups_for_session_sqlx_tx(&mut tx, tenant_id, &session.id, &now)
-                .await?;
-            rebuild_session_question_aggregates_sqlx_tx(&mut tx, tenant_id, &session.id, &now)
-                .await?;
-            insert_conversation_sync_delta_sqlx_tx(
-                &mut tx,
-                tenant_id,
-                &sync_run_id,
-                "session",
-                &session.id,
-                change_kind,
-                &now,
-            )
-            .await?;
 
-            // 原子检查点：在同一事务中将 observation 标记为 clean
-            upsert_single_session_observation_clean_sqlx_tx(
-                &mut tx,
-                tenant_id,
-                &source.id,
-                "session",
-                &session.external_id,
-                session.source_fingerprint.as_deref().unwrap_or(&now),
-                &now,
-                adapter_content_hash,
-                card_contract_version,
-                payload_policy_version,
-            )
-            .await?;
-
-            tx.commit().await.map_err(StoreError::external)?;
-            Ok(Some(session.id.clone()))
-        }.await;
-
-        match session_import_res {
-            Ok(Some(changed_id)) => {
-                changed_session_count += 1;
-                all_changed_session_ids.push(changed_id);
-            }
-            Ok(None) => {
-                skipped_session_count += 1;
-            }
-            Err(err) => {
-                let err_str = err.to_string();
-                let sanitized = sanitize_store_sync_error_message(&err_str);
-                session_failures.push(crate::backend::domain::SessionSyncFailure {
-                    session_external_id: session.external_id.clone(),
-                    stage: "storage".to_string(),
-                    error_code: "storage_error".to_string(),
-                    error_message: sanitized.clone(),
-                    retryable: true,
-                });
-                let _ = record_conversation_session_failure_sqlx(
-                    pool,
-                    tenant_id,
-                    &source.id,
-                    "session",
-                    &session.external_id,
-                    session.source_fingerprint.as_deref(),
-                    "storage_error",
-                    &sanitized,
-                    "storage",
-                    true,
-                )
-                .await;
+            if chunk_ok && batch_tx.commit().await.is_ok() {
+                batch_success = true;
+                changed_session_count += chunk_changed.len();
+                skipped_session_count += chunk_skipped;
+                all_changed_session_ids.extend(chunk_changed);
+                completed_session_count += chunk.len();
+                on_progress(completed_session_count, sessions.len());
+                tokio::task::yield_now().await;
             }
         }
-        completed_session_count += 1;
-        on_progress(completed_session_count, sessions.len());
+
+        // 若批量事务失败（如遇到异常数据），平滑回滚并降级为逐条事务处理，确保精确定位故障并隔离错误
+        if !batch_success {
+            for normalized in chunk {
+                ensure_sync_import_active(cancellation)?;
+                let session = conversation_session_from_normalized(source, normalized, &now);
+                let mut tx = match pool.begin().await {
+                    Ok(tx) => tx,
+                    Err(err) => {
+                        let sanitized = sanitize_store_sync_error_message(&err.to_string());
+                        session_failures.push(crate::backend::domain::SessionSyncFailure {
+                            session_external_id: normalized.external_id.clone(),
+                            stage: "storage".to_string(),
+                            error_code: "transaction_begin_failed".to_string(),
+                            error_message: sanitized.clone(),
+                            retryable: true,
+                        });
+                        let _ = record_conversation_session_failure_sqlx(
+                            pool,
+                            tenant_id,
+                            &source.id,
+                            "session",
+                            &normalized.external_id,
+                            session.source_fingerprint.as_deref(),
+                            "transaction_begin_failed",
+                            &sanitized,
+                            "storage",
+                            true,
+                        )
+                        .await;
+                        completed_session_count += 1;
+                        on_progress(completed_session_count, sessions.len());
+                        continue;
+                    }
+                };
+
+                let session_res = import_single_session_sqlx_tx(
+                    &mut tx,
+                    tenant_id,
+                    source,
+                    normalized,
+                    &session,
+                    &now,
+                    &sync_run_id,
+                    adapter_content_hash,
+                    card_contract_version,
+                    payload_policy_version,
+                )
+                .await;
+
+                match session_res {
+                    Ok(changed_opt) => {
+                        if let Err(err) = tx.commit().await {
+                            let sanitized = sanitize_store_sync_error_message(&err.to_string());
+                            session_failures.push(crate::backend::domain::SessionSyncFailure {
+                                session_external_id: normalized.external_id.clone(),
+                                stage: "storage".to_string(),
+                                error_code: "transaction_commit_failed".to_string(),
+                                error_message: sanitized.clone(),
+                                retryable: true,
+                            });
+                        } else {
+                            match changed_opt {
+                                Some(changed_id) => {
+                                    changed_session_count += 1;
+                                    all_changed_session_ids.push(changed_id);
+                                }
+                                None => {
+                                    skipped_session_count += 1;
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        let err_str = err.to_string();
+                        let sanitized = sanitize_store_sync_error_message(&err_str);
+                        session_failures.push(crate::backend::domain::SessionSyncFailure {
+                            session_external_id: session.external_id.clone(),
+                            stage: "storage".to_string(),
+                            error_code: "storage_error".to_string(),
+                            error_message: sanitized.clone(),
+                            retryable: true,
+                        });
+                        let _ = record_conversation_session_failure_sqlx(
+                            pool,
+                            tenant_id,
+                            &source.id,
+                            "session",
+                            &session.external_id,
+                            session.source_fingerprint.as_deref(),
+                            "storage_error",
+                            &sanitized,
+                            "storage",
+                            true,
+                        )
+                        .await;
+                    }
+                }
+                completed_session_count += 1;
+                on_progress(completed_session_count, sessions.len());
+            }
+        }
     }
 
     let is_cancelled = cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled);
@@ -392,4 +390,89 @@ fn sanitize_store_sync_error_message(message: &str) -> String {
         home_paths.push(u);
     }
     crate::backend::domain::sanitize_sync_error_message(message, &home_paths)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn import_single_session_sqlx_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tenant_id: &str,
+    source: &ConversationSource,
+    normalized: &NormalizedConversationSession,
+    session: &ConversationSession,
+    now: &str,
+    sync_run_id: &str,
+    adapter_content_hash: Option<&str>,
+    card_contract_version: Option<u32>,
+    payload_policy_version: u32,
+) -> StoreResult<Option<String>> {
+    let change_kind =
+        if conversation_session_exists_sqlx_tx(&mut *tx, tenant_id, &session.id).await? {
+            "updated"
+        } else {
+            "new"
+        };
+    if conversation_session_is_unchanged_sqlx_tx(&mut *tx, tenant_id, session, normalized).await? {
+        upsert_single_session_observation_clean_sqlx_tx(
+            &mut *tx,
+            tenant_id,
+            &source.id,
+            "session",
+            &session.external_id,
+            session.source_fingerprint.as_deref().unwrap_or(now),
+            now,
+            adapter_content_hash,
+            card_contract_version,
+            payload_policy_version,
+        )
+        .await?;
+        return Ok(None);
+    }
+    sqlx::query(
+        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND session_id = ?3 AND status = 'active'",
+    )
+    .bind(now)
+    .bind(tenant_id)
+    .bind(&session.id)
+    .execute(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+    upsert_conversation_session_sqlx_tx(&mut *tx, tenant_id, session).await?;
+    for turn in &normalized.turns {
+        if turn.user_text.trim().is_empty() {
+            continue;
+        }
+        let stored_turn = conversation_turn_from_normalized(&session.id, turn, now);
+        upsert_conversation_turn_sqlx_tx(&mut *tx, tenant_id, &stored_turn).await?;
+        replace_conversation_parts_sqlx_tx(&mut *tx, tenant_id, &stored_turn.id, &turn.parts)
+            .await?;
+    }
+    prune_conversation_turns_sqlx_tx(&mut *tx, tenant_id, &session.id, normalized).await?;
+    ensure_question_groups_for_session_sqlx_tx(&mut *tx, tenant_id, &session.id, now).await?;
+    rebuild_session_question_aggregates_sqlx_tx(&mut *tx, tenant_id, &session.id, now).await?;
+    insert_conversation_sync_delta_sqlx_tx(
+        &mut *tx,
+        tenant_id,
+        sync_run_id,
+        "session",
+        &session.id,
+        change_kind,
+        now,
+    )
+    .await?;
+
+    upsert_single_session_observation_clean_sqlx_tx(
+        &mut *tx,
+        tenant_id,
+        &source.id,
+        "session",
+        &session.external_id,
+        session.source_fingerprint.as_deref().unwrap_or(now),
+        now,
+        adapter_content_hash,
+        card_contract_version,
+        payload_policy_version,
+    )
+    .await?;
+
+    Ok(Some(session.id.clone()))
 }

@@ -103,14 +103,21 @@ impl SessionMemoryLeaseGuard {
     ) -> Self {
         let task = tokio::spawn(async move {
             let pool = database.pool().clone();
+            let mut interval = tokio::time::interval(StdDuration::from_secs(15));
+            let mut consecutive_errors = 0usize;
+            interval.tick().await;
+
             loop {
                 tokio::select! {
-                    _ = tokio::time::sleep(StdDuration::from_secs(1)) => {
+                    _ = task_cancellation.cancelled() => {
+                        break;
+                    }
+                    _ = interval.tick() => {
                         if task_cancellation.is_cancelled() {
                             break;
                         }
                         let now = Utc::now().to_rfc3339();
-                        let healthy = store::heartbeat_session_memory_job_sqlx(
+                        match store::heartbeat_session_memory_job_sqlx(
                             &pool,
                             &tenant_id,
                             &job_id,
@@ -118,13 +125,40 @@ impl SessionMemoryLeaseGuard {
                             &now,
                             store::SESSION_MEMORY_JOB_LEASE,
                         )
-                        .await;
-                        if !healthy.unwrap_or(false) {
-                            break;
+                        .await {
+                            Ok(true) => {
+                                consecutive_errors = 0;
+                            }
+                            Ok(false) => {
+                                tracing::warn!(
+                                    action = "session_memory.heartbeat.lost",
+                                    tenant_id = %tenant_id,
+                                    job_id = %job_id,
+                                    "Session Memory job lease was superseded or released"
+                                );
+                                break;
+                            }
+                            Err(error) => {
+                                consecutive_errors += 1;
+                                tracing::warn!(
+                                    action = "session_memory.heartbeat.retryable_error",
+                                    tenant_id = %tenant_id,
+                                    job_id = %job_id,
+                                    consecutive_errors,
+                                    error = %error,
+                                    "Session Memory heartbeat update failed due to db lock or error; will retry"
+                                );
+                                if consecutive_errors >= 7 {
+                                    tracing::error!(
+                                        action = "session_memory.heartbeat.exceeded_retries",
+                                        tenant_id = %tenant_id,
+                                        job_id = %job_id,
+                                        "Session Memory heartbeat failed 7 consecutive times; aborting lease guard"
+                                    );
+                                    break;
+                                }
+                            }
                         }
-                    }
-                    _ = task_cancellation.cancelled() => {
-                        break;
                     }
                 }
             }
@@ -139,7 +173,7 @@ impl Drop for SessionMemoryLeaseGuard {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct SessionMemoryAgentOutput {
     #[serde(default)]
     pub(crate) summary: String,

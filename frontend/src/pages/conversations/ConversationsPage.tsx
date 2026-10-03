@@ -1094,13 +1094,19 @@ export function ConversationsPage({
   const syncingAdapterIds = useMemo(() => {
     if (!syncRunning || !syncTask) return new Set<string>();
     if (syncTask.adapter_id) {
-      return new Set([syncTask.adapter_id]);
+      return new Set([canonicalConversationAppId(syncTask.adapter_id)]);
     }
-    return new Set(adapters.map((adapter) => adapter.id));
+    return new Set(
+      adapters.map((adapter) => canonicalConversationAppId(adapter.id)),
+    );
   }, [adapters, syncRunning, syncTask]);
 
   const completedAdapterIds = useMemo(() => {
-    return new Set(syncTask?.progress?.completed_adapter_ids ?? []);
+    return new Set(
+      (syncTask?.progress?.completed_adapter_ids ?? []).map((id) =>
+        canonicalConversationAppId(id),
+      ),
+    );
   }, [syncTask?.progress?.completed_adapter_ids]);
 
   return (
@@ -1382,7 +1388,11 @@ export function ConversationsPage({
         <SessionQuestionWorkspace
           adapterVersion={
             adapters.find(
-              (adapter) => adapter.id === sessionDetail?.session.adapter_id,
+              (adapter) =>
+                canonicalConversationAppId(adapter.id) ===
+                canonicalConversationAppId(
+                  sessionDetail?.session.adapter_id ?? "",
+                ),
             )?.version ?? "unknown"
           }
           activeSearchTarget={activeSearchTarget}
@@ -1614,6 +1624,27 @@ export function conversationContentTypesForQuestions(
   );
 }
 
+export function canonicalConversationAppId(adapterId: string): string {
+  const normalized = adapterId.toLowerCase().replace(/_/g, "-");
+  if (
+    normalized === "codebuddy" ||
+    normalized === "code-buddy" ||
+    normalized === "workbuddy" ||
+    normalized === "work-buddy"
+  ) {
+    return "codebuddy";
+  }
+  return adapterId;
+}
+
+export function canonicalConversationAppName(
+  appId: string,
+  originalName?: string,
+): string {
+  if (appId === "codebuddy") return "CodeBuddy";
+  return originalName || appId;
+}
+
 export function groupConversationSessionsByApp(
   adapters: ConversationAdapter[],
   sessions: ConversationSessionListItem[],
@@ -1621,30 +1652,41 @@ export function groupConversationSessionsByApp(
 ): ConversationAppSessionGroup[] {
   const sessionsByApp = new Map<string, ConversationSessionListItem[]>();
   for (const session of sessions) {
-    const appSessions = sessionsByApp.get(session.adapter_id) ?? [];
+    const canonicalId = canonicalConversationAppId(session.adapter_id);
+    const appSessions = sessionsByApp.get(canonicalId) ?? [];
     appSessions.push(session);
-    sessionsByApp.set(session.adapter_id, appSessions);
+    sessionsByApp.set(canonicalId, appSessions);
   }
 
-  const groups = adapters.map((adapter) =>
-    createAppSessionGroup(
-      {
-        appKind: inferAppKindFromAdapterId(adapter.id),
-        id: adapter.id,
-        name: adapter.name,
-      },
-      sessionsByApp.get(adapter.id) ?? [],
-    ),
-  );
+  const appMap = new Map<string, ConversationAppSummary>();
+  for (const adapter of adapters) {
+    const canonicalId = canonicalConversationAppId(adapter.id);
+    if (!appMap.has(canonicalId)) {
+      appMap.set(canonicalId, {
+        appKind: inferAppKindFromAdapterId(canonicalId),
+        id: canonicalId,
+        name: canonicalConversationAppName(canonicalId, adapter.name),
+      });
+    }
+  }
+
+  const groups: ConversationAppSessionGroup[] = [];
+  for (const [appId, app] of appMap) {
+    groups.push(createAppSessionGroup(app, sessionsByApp.get(appId) ?? []));
+  }
 
   for (const [appId, appSessions] of sessionsByApp) {
-    if (adapters.some((adapter) => adapter.id === appId)) continue;
+    if (appMap.has(appId)) continue;
     const isWeb = appId.endsWith("-web");
     if (recordKind === "session" && isWeb) continue;
     if (recordKind === "web" && !isWeb) continue;
     groups.push(
       createAppSessionGroup(
-        { appKind: inferAppKindFromAdapterId(appId), id: appId, name: appId },
+        {
+          appKind: inferAppKindFromAdapterId(appId),
+          id: appId,
+          name: canonicalConversationAppName(appId),
+        },
         appSessions,
       ),
     );
@@ -2298,6 +2340,10 @@ function inferAppKindFromAdapterId(adapterId: string): AppKind {
   if (normalized === "antigravity") return "antigravity";
   if (normalized === "openclaw" || normalized === "open-claw")
     return "openclaw";
+  if (normalized === "codebuddy" || normalized === "code-buddy")
+    return "codebuddy";
+  if (normalized === "workbuddy" || normalized === "work-buddy")
+    return "codebuddy";
   return "custom";
 }
 
@@ -2328,8 +2374,11 @@ function SessionCard({
           </span>
         ) : null}
         <SessionMetaChips
+          executionOrigin={session.execution_origin}
+          executionPurpose={session.execution_purpose}
           idFragment={idFragment}
           questions={session.question_count}
+          sourceLocator={session.source_locator}
           t={t}
           turns={session.turn_count}
         />
@@ -2350,21 +2399,56 @@ function SessionCard({
 }
 
 function SessionMetaChips({
+  executionOrigin,
+  executionPurpose,
   idFragment,
   questions,
+  sourceLocator,
   t,
   turns,
 }: {
+  executionOrigin?: string;
+  executionPurpose?: string | null;
   idFragment: string;
   questions: number;
+  sourceLocator?: string | null;
   t: Translator;
   turns: number;
 }) {
+  const originBadge = useMemo(() => {
+    const raw = [executionOrigin, executionPurpose, sourceLocator]
+      .filter((v): v is string => Boolean(v))
+      .join(" ")
+      .toLowerCase();
+    if (raw.includes("workbuddy")) {
+      return {
+        label: "WorkBuddy",
+        className:
+          "border border-primary/20 bg-primary/10 text-primary",
+      };
+    }
+    if (raw.includes("codebuddy-cli") || raw.includes(".codebuddy") || (raw.includes("cli") && !raw.includes("client"))) {
+      return {
+        label: "CLI",
+        className:
+          "border border-theme-control-border bg-theme-control text-on-surface-variant",
+      };
+    }
+    return null;
+  }, [executionOrigin, executionPurpose, sourceLocator]);
+
   return (
     <span
       aria-label={t("conversation.session.counts", { questions, turns })}
       className="mt-3 flex min-w-0 flex-wrap items-center gap-1.5"
     >
+      {originBadge ? (
+        <span
+          className={`inline-flex h-7 items-center rounded-full px-2.5 text-code-sm font-medium ${originBadge.className}`}
+        >
+          {originBadge.label}
+        </span>
+      ) : null}
       <SessionMetaChip className="font-mono" label={idFragment} />
       <SessionMetaChip
         label={t("conversation.session.questionCountChip", {

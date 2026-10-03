@@ -54,6 +54,7 @@ fn every_builtin_app_icon_has_a_profile_and_shortcut() {
     let builtin_app_ids = [
         "antigravity",
         "claude",
+        "codebuddy",
         "codex",
         "cursor",
         "gemini",

@@ -14,6 +14,8 @@ struct OfficialAdapterAsset {
     payload_policy_script: Option<&'static str>,
 }
 
+const PAYLOAD_POLICY_SCRIPT: &str =
+    include_str!("../../../../../builtin-assets/adapters/common/payload-policy.mjs");
 const SHELL_PROJECTOR_SCRIPT: &str =
     include_str!("../../../../../builtin-assets/adapters/common/shell-projector.cjs");
 const SHELL_PROJECTOR_ADAPTER_SCRIPT: &str =
@@ -34,9 +36,7 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
             "../../../../../builtin-assets/adapters/codex/conversation-adapter-package.json"
         ),
         script: include_str!("../../../../../builtin-assets/adapters/codex/adapter.mjs"),
-        payload_policy_script: Some(include_str!(
-            "../../../../../builtin-assets/adapters/codex/payload-policy.mjs"
-        )),
+        payload_policy_script: Some(PAYLOAD_POLICY_SCRIPT),
     },
     OfficialAdapterAsset {
         manifest: "claude-code/conversation-adapter.json",
@@ -47,9 +47,7 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
             "../../../../../builtin-assets/adapters/claude-code/conversation-adapter-package.json"
         ),
         script: include_str!("../../../../../builtin-assets/adapters/claude-code/adapter.mjs"),
-        payload_policy_script: Some(include_str!(
-            "../../../../../builtin-assets/adapters/claude-code/payload-policy.mjs"
-        )),
+        payload_policy_script: Some(PAYLOAD_POLICY_SCRIPT),
     },
     OfficialAdapterAsset {
         manifest: "opencode/conversation-adapter.json",
@@ -60,9 +58,7 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
             "../../../../../builtin-assets/adapters/opencode/conversation-adapter-package.json"
         ),
         script: include_str!("../../../../../builtin-assets/adapters/opencode/adapter.mjs"),
-        payload_policy_script: Some(include_str!(
-            "../../../../../builtin-assets/adapters/opencode/payload-policy.mjs"
-        )),
+        payload_policy_script: Some(PAYLOAD_POLICY_SCRIPT),
     },
     OfficialAdapterAsset {
         manifest: "antigravity/conversation-adapter.json",
@@ -73,9 +69,7 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
             "../../../../../builtin-assets/adapters/antigravity/conversation-adapter-package.json"
         ),
         script: include_str!("../../../../../builtin-assets/adapters/antigravity/adapter.mjs"),
-        payload_policy_script: Some(include_str!(
-            "../../../../../builtin-assets/adapters/antigravity/payload-policy.mjs"
-        )),
+        payload_policy_script: Some(PAYLOAD_POLICY_SCRIPT),
     },
     OfficialAdapterAsset {
         manifest: "zcode/conversation-adapter.json",
@@ -87,6 +81,17 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
         ),
         script: include_str!("../../../../../builtin-assets/adapters/zcode/adapter.mjs"),
         payload_policy_script: None,
+    },
+    OfficialAdapterAsset {
+        manifest: "codebuddy/conversation-adapter.json",
+        manifest_text: include_str!(
+            "../../../../../builtin-assets/adapters/codebuddy/conversation-adapter.json"
+        ),
+        package_manifest_text: include_str!(
+            "../../../../../builtin-assets/adapters/codebuddy/conversation-adapter-package.json"
+        ),
+        script: include_str!("../../../../../builtin-assets/adapters/codebuddy/adapter.mjs"),
+        payload_policy_script: Some(PAYLOAD_POLICY_SCRIPT),
     },
 ];
 

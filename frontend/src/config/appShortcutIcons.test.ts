@@ -18,6 +18,7 @@ describe("app shortcut icon assets", () => {
       expect.arrayContaining([
         "antigravity",
         "claude",
+        "codebuddy",
         "codex",
         "cursor",
         "gemini",
@@ -29,7 +30,7 @@ describe("app shortcut icon assets", () => {
         "zcode",
       ]),
     );
-    expect(iconKeys.length).toBeGreaterThanOrEqual(11);
+    expect(iconKeys.length).toBeGreaterThanOrEqual(12);
   });
 
   it("preserves path data and legacy display icon compatibility", () => {

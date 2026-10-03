@@ -10,6 +10,8 @@ Desktop.ini
 **/.claude/settings.local.json
 .idea/
 *.iml
+.workbuddy/
+.codebuddy/
 
 # Environment files and signing material
 .env

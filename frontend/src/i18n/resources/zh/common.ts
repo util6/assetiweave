@@ -30,6 +30,8 @@ export const commonZh = {
   "common.save": "保存",
   "common.delete": "删除",
   "common.saving": "保存中...",
+  "common.expand": "展开",
+  "common.collapse": "收起",
   "app.close.title": "关闭 AssetIWeave",
   "app.close.message": "请选择关闭应用，或将应用最小化到后台。",
   "app.close.backupDatabase": "关闭前备份数据库",

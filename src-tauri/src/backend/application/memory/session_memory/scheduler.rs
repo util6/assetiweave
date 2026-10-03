@@ -284,15 +284,7 @@ impl AppService {
             let output = if execution.is_empty {
                 SessionMemoryAgentOutput {
                     summary: "No content available in this session.".to_string(),
-                    goal: String::new(),
-                    result: String::new(),
-                    decisions: Vec::new(),
-                    verification: Vec::new(),
-                    blockers: Vec::new(),
-                    follow_up: Vec::new(),
-                    topics: Vec::new(),
-                    source_references: Vec::new(),
-                    events: Vec::new(),
+                    ..Default::default()
                 }
             } else {
                 let parsed_output = parse_session_memory_agent_output(&execution.raw_text);
@@ -300,19 +292,18 @@ impl AppService {
                     Ok(out) => out,
                     Err(err) => {
                         drop(lease_guard);
-                        let line = err.line();
-                        let column = err.column();
                         let category = match err.classify() {
                             serde_json::error::Category::Io => "io",
                             serde_json::error::Category::Syntax => "syntax",
                             serde_json::error::Category::Data => "data",
                             serde_json::error::Category::Eof => "eof",
                         };
-                        let raw_len = execution.raw_text.len();
-                        let raw_sha256 = digest(&execution.raw_text);
                         let err_msg = format!(
-                            "Session Memory Agent output JSON validation failed: {err} (cat={category}, line={line}, col={column}, len={raw_len}, sha={:.8})",
-                            raw_sha256
+                            "Session Memory Agent output JSON validation failed: {err} (cat={category}, line={}, col={}, len={}, sha={:.8})",
+                            err.line(),
+                            err.column(),
+                            execution.raw_text.len(),
+                            digest(&execution.raw_text)
                         );
                         let safe_failure = sanitize_memory_failure(
                             "session_memory_validation_failed",
@@ -414,7 +405,23 @@ impl AppService {
         // Stage 5: publish
         {
             let mut guard = context.enter_stage("publish");
-            if let Err(error) = store::persist_session_memory_sqlx(&pool, &persist).await {
+            let mut persist_error = None;
+            for delay_ms in [0, 100, 250, 500, 1000] {
+                if delay_ms > 0 {
+                    tokio::time::sleep(StdDuration::from_millis(delay_ms)).await;
+                }
+                if context.is_cancelled() {
+                    break;
+                }
+                match store::persist_session_memory_sqlx(&pool, &persist).await {
+                    Ok(()) => {
+                        persist_error = None;
+                        break;
+                    }
+                    Err(err) => persist_error = Some(err),
+                }
+            }
+            if let Some(error) = persist_error {
                 drop(lease_guard);
                 if context.is_cancelled() {
                     context.set_outcome(
@@ -461,20 +468,11 @@ impl AppService {
             let mut guard = context.enter_stage("cleanup_session");
             match execution.session_cleanup {
                 SessionCleanupStatus::Deleted => {}
-                SessionCleanupStatus::Unsupported => {
+                SessionCleanupStatus::Unsupported | SessionCleanupStatus::Failed(_) => {
                     tracing::warn!(
                         action = "session_memory.cleanup_session",
                         job_id = %job.id,
-                        "Agent backend reported session deletion unsupported; continuing with partial success"
-                    );
-                    guard.finish_with_status(StageStatus::PartialSuccess);
-                }
-                SessionCleanupStatus::Failed(ref reason) => {
-                    tracing::warn!(
-                        action = "session_memory.cleanup_session",
-                        job_id = %job.id,
-                        reason = %reason,
-                        "Agent backend reported session cleanup warning; continuing with partial success"
+                        "Agent backend reported session cleanup warning or unsupported; continuing with partial success"
                     );
                     guard.finish_with_status(StageStatus::PartialSuccess);
                 }

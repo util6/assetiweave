@@ -324,6 +324,7 @@ pub(crate) fn parse_renderer(value: &str) -> Result<ConversationCardRenderer, Pr
         "command" => Ok(ConversationCardRenderer::Command),
         "terminal_output" => Ok(ConversationCardRenderer::TerminalOutput),
         "diff" => Ok(ConversationCardRenderer::Diff),
+        "compact_action" => Ok(ConversationCardRenderer::CompactAction),
         other => Err(ProjectionError::UnsupportedRenderer {
             renderer: other.to_string(),
         }),

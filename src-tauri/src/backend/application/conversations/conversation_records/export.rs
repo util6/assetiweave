@@ -280,7 +280,8 @@ pub(crate) fn export_conversation_rendered_markdown(
                 crate::backend::domain::conversations::ConversationCardRenderer::Plain
                 | crate::backend::domain::conversations::ConversationCardRenderer::Path
                 | crate::backend::domain::conversations::ConversationCardRenderer::TerminalOutput
-                | crate::backend::domain::conversations::ConversationCardRenderer::Diff => {
+                | crate::backend::domain::conversations::ConversationCardRenderer::Diff
+                | crate::backend::domain::conversations::ConversationCardRenderer::CompactAction => {
                     output.push_str(&format!("```text\n{}\n```\n", node.content.trim_end()));
                 }
             }

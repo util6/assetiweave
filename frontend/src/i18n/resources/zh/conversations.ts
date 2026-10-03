@@ -310,6 +310,7 @@ export const conversationsZh = {
   "conversation.content.loadMoreCommands": "继续加载命令",
   "conversation.content.loadMoreResults": "继续加载执行结果",
   "conversation.content.loadMoreActivities": "继续加载活动记录",
+  "conversation.content.ambientActionCount": "{{count}} 次只读探查与检索",
   "conversation.content.projectionFailed":
     "命令展示解析失败，已保留原始命令：{{message}}",
   "conversation.content.hidden": "当前回答板块已全部隐藏。",

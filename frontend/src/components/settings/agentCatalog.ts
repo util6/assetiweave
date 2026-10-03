@@ -40,6 +40,7 @@ const agentPresentationMetadata: Record<
   hermes: { name: "Hermes", icon: Bot },
   pi: { name: "Pi", icon: Code2 },
   qoder: { name: "Qoder", icon: Cpu },
+  codebuddy: { name: "CodeBuddy", icon: Code2 },
 };
 
 const legacyPresentationItems: Array<[string, string]> = [
@@ -52,6 +53,7 @@ const legacyPresentationItems: Array<[string, string]> = [
   ["hermes", "ACP Agent"],
   ["pi", "ACP Agent"],
   ["qoder", "ACP Agent"],
+  ["codebuddy", "ACP Agent"],
 ];
 
 /**
@@ -84,6 +86,7 @@ export const initialConnectionStates: Record<AgentId, AgentConnectionState> = {
   hermes: "checking",
   pi: "checking",
   qoder: "checking",
+  codebuddy: "checking",
 };
 
 export const registryAgentIds = agentCatalog

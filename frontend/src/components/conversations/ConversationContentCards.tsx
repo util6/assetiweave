@@ -4,8 +4,12 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Eye,
+  FileText,
   GitCompareArrows,
   Languages,
+  Layers,
+  Search,
   XCircle,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -89,6 +93,9 @@ export interface ConversationContentBlock {
   exitCode?: number | null;
   translatedText?: string | null;
   commandLabel?: string | null;
+  signal?: "ambient" | "focus" | string | null;
+  filePath?: string | null;
+  toolName?: string | null;
 }
 
 export type ConversationContentBlockSeed = {
@@ -216,6 +223,7 @@ function conversationContentBlockSeedToBlock(
     commandLabel: card.command_label,
     translatedText: card.translated_body,
     format: card.renderer === "markdown" ? "markdown" : "plain",
+    signal: card.renderer === "compact_action" || card.semantic_role === "ambient" ? "ambient" : undefined,
   };
 }
 
@@ -238,7 +246,206 @@ function conversationContentNodeToBlock(
     commandLabel: node.command_label,
     translatedText: node.translated_content,
     format: node.renderer === "markdown" ? "markdown" : "plain",
+    signal: node.renderer === "compact_action" || node.semantic_role === "ambient" ? "ambient" : undefined,
   };
+}
+
+interface ParsedCompactAction {
+  action: string;
+  target: string;
+  icon: "search" | "read" | "tool";
+  hasDetails: boolean;
+  details?: string;
+}
+
+function parseCompactActionText(text: string, block: ConversationContentBlock): ParsedCompactAction {
+  const trimmed = text.trim();
+  const colonMatch = trimmed.match(/^([a-zA-Z0-9_-]+):\s*(.+)$/s);
+  if (colonMatch) {
+    const act = colonMatch[1];
+    const rest = colonMatch[2].trim();
+    const isSearch = /grep|search|find/i.test(act);
+    const isRead = /view|read|cat|head|tail/i.test(act);
+    return {
+      action: act,
+      target: rest.split("\n", 1)[0],
+      icon: isSearch ? "search" : isRead ? "read" : "tool",
+      hasDetails: rest.includes("\n"),
+      details: rest.includes("\n") ? rest.slice(rest.indexOf("\n") + 1).trim() : undefined,
+    };
+  }
+
+  if (trimmed.startsWith("Tool: ")) {
+    const lines = trimmed.split("\n").filter(Boolean);
+    const firstLine = lines[0].replace(/^Tool:\s*/, "").trim();
+    const details = lines.slice(1).join("\n").trim();
+    const isSearch = /grep|search|find/i.test(firstLine);
+    const isRead = /view|read|cat|head|tail/i.test(firstLine);
+    const pathMatch = details.match(/(?:AbsolutePath|path|TargetFile):\s*(.+)$/m);
+    const target = pathMatch ? pathMatch[1].trim() : (block.filePath || firstLine);
+    return {
+      action: block.toolName || firstLine,
+      target,
+      icon: isSearch ? "search" : isRead ? "read" : "tool",
+      hasDetails: details.length > 0,
+      details: details.length > 0 ? details : undefined,
+    };
+  }
+
+  const isSearch = /grep|search|find|rg/i.test(trimmed) || /search/i.test(block.kind || "");
+  return {
+    action: block.commandLabel || (isSearch ? "search" : "read"),
+    target: block.filePath || trimmed.split("\n", 1)[0],
+    icon: isSearch ? "search" : "read",
+    hasDetails: trimmed.includes("\n"),
+    details: trimmed.includes("\n") ? trimmed.slice(trimmed.indexOf("\n") + 1).trim() : undefined,
+  };
+}
+
+function isAmbientBlock(block: ConversationContentBlock): boolean {
+  if (block.renderer === "compact_action") return true;
+  if (block.signal === "ambient") return true;
+  const kind = (block.kind || "").toLowerCase();
+  const cmd = (block.text || "").toLowerCase();
+  if (kind.includes("read") || kind.includes("search")) return true;
+  if (/^(?:view_file|read_file|grep_search|list_directory|read_url_content):/i.test(cmd)) return true;
+  return false;
+}
+
+function isAmbientNode(node: ConversationDisplayNode): boolean {
+  if (node.type === "card") {
+    return isAmbientBlock(node.block);
+  }
+  return (
+    node.commands.length > 0 &&
+    node.commands.every(isAmbientBlock) &&
+    node.results.every((r) => isAmbientBlock(r) || !r.text?.trim())
+  );
+}
+
+function CompactActionCard({
+  block,
+  copied,
+  onCopy,
+  t,
+}: {
+  block: ConversationContentBlock;
+  copied?: boolean;
+  onCopy?: () => void;
+  t: Translator;
+}) {
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const parsed = parseCompactActionText(block.text || block.commandLabel || "", block);
+  const isSuccess = block.status !== "failed" && (!block.exitCode || block.exitCode === 0);
+
+  return (
+    <div
+      className="group relative flex flex-col rounded-xl border border-theme-card-border/60 bg-theme-card/50 backdrop-blur-xs transition-all hover:border-theme-control-border hover:bg-theme-card/80 shadow-xs"
+      data-content-type="compact_action"
+      data-conversation-card-id={block.id}
+      id={conversationCardDomId(block.id)}
+    >
+      <div className="flex h-9 items-center justify-between gap-2.5 px-3">
+        <div className="flex min-w-0 items-center gap-2">
+          {parsed.icon === "search" ? (
+            <Search className="h-3.5 w-3.5 shrink-0 text-on-surface-muted group-hover:text-primary transition-colors" />
+          ) : (
+            <Eye className="h-3.5 w-3.5 shrink-0 text-on-surface-muted group-hover:text-primary transition-colors" />
+          )}
+          <span className="shrink-0 rounded-full bg-theme-control/60 px-2 py-0.5 text-label-caps font-mono text-on-surface-variant">
+            {parsed.action}
+          </span>
+          <span
+            className="truncate font-mono text-code-xs text-on-surface/90"
+            title={parsed.target}
+          >
+            {parsed.target}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {isSuccess ? (
+            <span className="h-1.5 w-1.5 rounded-full bg-status-create" title="Success" />
+          ) : (
+            <span className="flex items-center gap-1 font-mono text-label-caps text-status-remove">
+              <span className="h-1.5 w-1.5 rounded-full bg-status-remove" />
+              error
+            </span>
+          )}
+          {onCopy && (
+            <button
+              className="opacity-0 group-hover:opacity-100 rounded p-1 text-on-surface-muted hover:text-on-surface hover:bg-theme-control/50 transition-all"
+              onClick={onCopy}
+              title={copied ? t("conversation.content.copied") : t("common.copy")}
+              type="button"
+            >
+              {copied ? <Check className="h-3 w-3 text-status-create" /> : <Copy className="h-3 w-3" />}
+            </button>
+          )}
+          {parsed.hasDetails && (
+            <button
+              className="rounded p-1 text-on-surface-muted hover:text-on-surface hover:bg-theme-control/50 transition-all"
+              onClick={() => setDetailsExpanded((prev) => !prev)}
+              type="button"
+            >
+              {detailsExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            </button>
+          )}
+        </div>
+      </div>
+      {detailsExpanded && parsed.details ? (
+        <div className="border-t border-theme-card-border/40 px-3 py-2 text-code-xs font-mono text-on-surface-variant bg-theme-card/30 whitespace-pre-wrap break-all">
+          {parsed.details}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AmbientActionGroup({
+  nodes,
+  renderNode,
+  t,
+}: {
+  nodes: ConversationDisplayNode[];
+  renderNode: (node: ConversationDisplayNode) => ReactNode;
+  t: Translator;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const count = nodes.length;
+
+  return (
+    <div className="flex flex-col gap-1.5 rounded-2xl border border-theme-card-border/70 bg-theme-card/35 p-2 backdrop-blur-xs transition-all shadow-xs">
+      <div
+        className="flex h-8 cursor-pointer items-center justify-between rounded-xl px-2.5 transition-colors hover:bg-theme-card/60"
+        onClick={() => setExpanded((prev) => !prev)}
+      >
+        <div className="flex items-center gap-2">
+          <Layers className="h-3.5 w-3.5 text-on-surface-muted" />
+          <span className="text-body-xs font-medium text-on-surface-variant">
+            {t("conversation.content.ambientActionCount", { count })}
+          </span>
+        </div>
+        <button
+          className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-body-xs font-medium text-theme-control-fg hover:bg-theme-control/40 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((prev) => !prev);
+          }}
+          type="button"
+        >
+          <span>{expanded ? t("common.collapse") : t("common.expand")}</span>
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        </button>
+      </div>
+      {expanded ? (
+        <div className="flex flex-col gap-1.5 pt-1">
+          {nodes.map((n, idx) => (
+            <div key={idx}>{renderNode(n)}</div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function ConversationContentCards({
@@ -368,21 +575,53 @@ export function ConversationContentCards({
     );
   }
 
+  const groupedDisplayItems: (
+    | { type: "single"; node: ConversationDisplayNode }
+    | { type: "ambient_group"; key: string; nodes: ConversationDisplayNode[] }
+  )[] = [];
+
+  let currentAmbientGroup: ConversationDisplayNode[] = [];
+  for (const node of renderedNodes) {
+    if (isAmbientNode(node)) {
+      currentAmbientGroup.push(node);
+    } else {
+      if (currentAmbientGroup.length >= 2) {
+        groupedDisplayItems.push({
+          type: "ambient_group",
+          key: `ambient-group-${groupedDisplayItems.length}`,
+          nodes: [...currentAmbientGroup],
+        });
+      } else if (currentAmbientGroup.length === 1) {
+        groupedDisplayItems.push({ type: "single", node: currentAmbientGroup[0] });
+      }
+      currentAmbientGroup = [];
+      groupedDisplayItems.push({ type: "single", node });
+    }
+  }
+  if (currentAmbientGroup.length >= 2) {
+    groupedDisplayItems.push({
+      type: "ambient_group",
+      key: `ambient-group-${groupedDisplayItems.length}`,
+      nodes: [...currentAmbientGroup],
+    });
+  } else if (currentAmbientGroup.length === 1) {
+    groupedDisplayItems.push({ type: "single", node: currentAmbientGroup[0] });
+  }
+
   return (
     <div className="grid gap-3">
-      {renderedNodes.map((node) => {
-        if (node.type === "card") {
-          return renderContentCard(node.block);
+      {groupedDisplayItems.map((item) => {
+        if (item.type === "ambient_group") {
+          return (
+            <AmbientActionGroup
+              key={item.key}
+              nodes={item.nodes}
+              renderNode={renderDisplayNode}
+              t={t}
+            />
+          );
         }
-        const executionKey = `${node.turnId}:${node.sourceExecutionId}`;
-        return (
-          <ConversationExecutionContent
-            key={executionKey}
-            node={node}
-            renderContentCard={renderContentCard}
-            t={t}
-          />
-        );
+        return renderDisplayNode(item.node);
       })}
       {hasMoreNodes ? (
         <div className="flex justify-center py-2" ref={nodeLoadMoreRef}>
@@ -401,6 +640,46 @@ export function ConversationContentCards({
       ) : null}
     </div>
   );
+
+  function renderDisplayNode(node: ConversationDisplayNode) {
+    if (node.type === "card") {
+      if (isAmbientBlock(node.block)) {
+        return (
+          <CompactActionCard
+            block={node.block}
+            copied={contentController.isCopied(node.block.id)}
+            key={node.block.id}
+            onCopy={() => void contentController.copyBlock(node.block)}
+            t={t}
+          />
+        );
+      }
+      return renderContentCard(node.block);
+    }
+    const executionKey = `${node.turnId}:${node.sourceExecutionId}`;
+    if (isAmbientNode(node)) {
+      const firstCommand = node.commands[0];
+      if (firstCommand) {
+        return (
+          <CompactActionCard
+            block={firstCommand}
+            copied={contentController.isCopied(firstCommand.id)}
+            key={executionKey}
+            onCopy={() => void contentController.copyBlock(firstCommand)}
+            t={t}
+          />
+        );
+      }
+    }
+    return (
+      <ConversationExecutionContent
+        key={executionKey}
+        node={node}
+        renderContentCard={renderContentCard}
+        t={t}
+      />
+    );
+  }
 
   function renderContentCard(block: ConversationContentBlock) {
     return (
@@ -910,6 +1189,13 @@ function ConversationStandardCardBody({
           <code>{text}</code>
         </pre>
       );
+    case "compact_action":
+      return (
+        <CompactActionCard
+          block={block}
+          t={t}
+        />
+      );
   }
 }
 
@@ -1381,6 +1667,20 @@ function createBlock(
     (status != null || exitCode != null || renderer === "diff");
   if (!text && !statusOnlyResult) return [];
 
+  let signal = overrides.signal;
+  let filePath = overrides.filePath;
+  let toolName = overrides.toolName;
+  if (part.metadata_json) {
+    try {
+      const meta = JSON.parse(part.metadata_json);
+      if (typeof meta === "object" && meta !== null) {
+        if (!signal && typeof meta.signal === "string") signal = meta.signal;
+        if (!filePath && typeof meta.file_path === "string") filePath = meta.file_path;
+        if (!toolName && typeof meta.tool_name === "string") toolName = meta.tool_name;
+      }
+    } catch {}
+  }
+
   return [
     {
       id: `${part.id}-${suffix}`,
@@ -1392,6 +1692,9 @@ function createBlock(
       commandLabel: part.command_label,
       translatedText: part.translated_text,
       format: overrides.format,
+      signal,
+      filePath,
+      toolName,
       language: hasOverride("language")
         ? overrides.language
         : metadataMode === "result"
@@ -1493,7 +1796,8 @@ function rendererValue(value: unknown): ConversationCardRenderer | undefined {
     value === "code" ||
     value === "command" ||
     value === "terminal_output" ||
-    value === "diff"
+    value === "diff" ||
+    value === "compact_action"
     ? value
     : undefined;
 }

@@ -52,6 +52,19 @@ pub(super) fn builtin_sources(now: &str) -> Vec<ConversationSource> {
             created_at: now.to_string(),
             updated_at: now.to_string(),
         },
+        ConversationSource {
+            id: "codebuddy-live".to_string(),
+            adapter_id: "codebuddy".to_string(),
+            name: "CodeBuddy local sessions".to_string(),
+            kind: ConversationSourceKind::Live,
+            location: "~/.codebuddy".to_string(),
+            config_json: None,
+            enabled: true,
+            last_synced_at: None,
+            last_sync_status: None,
+            created_at: now.to_string(),
+            updated_at: now.to_string(),
+        },
     ]
 }
 
@@ -77,7 +90,7 @@ pub(super) fn conversation_session_from_normalized(
     let execution_purpose = normalized.execution_purpose.clone();
     let user_visible = normalized
         .user_visible
-        .unwrap_or_else(|| execution_origin == "user" || execution_origin == "recall");
+        .unwrap_or_else(|| !execution_origin.starts_with("internal_"));
 
     ConversationSession {
         id: stable_id(

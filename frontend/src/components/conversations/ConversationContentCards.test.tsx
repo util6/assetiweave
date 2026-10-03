@@ -1551,6 +1551,104 @@ describe("ConversationContentCards", () => {
     });
     expect((translateButton as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("renders a single ambient card as a compact_action capsule", () => {
+    const block: ConversationContentBlock = {
+      id: "part-ambient-1",
+      partId: "part-1",
+      role: "tool",
+      type: "tool",
+      kind: "antigravity.ambient",
+      renderer: "compact_action",
+      text: "view_file: src/main.rs",
+      signal: "ambient",
+      status: "completed",
+    };
+
+    render(
+      <ConversationContentCards
+        blocks={[block]}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    const compactCard = document.querySelector(
+      '[data-content-type="compact_action"]',
+    );
+    expect(compactCard).not.toBeNull();
+    expect(screen.getByText("view_file")).toBeDefined();
+    expect(screen.getByText("src/main.rs")).toBeDefined();
+    expect(screen.getByTitle("Success")).toBeDefined();
+  });
+
+  it("groups consecutive ambient cards into an AmbientActionGroup and allows expanding and collapsing", () => {
+    const blocks: ConversationContentBlock[] = [
+      {
+        id: "part-ambient-1",
+        partId: "part-1",
+        role: "tool",
+        type: "tool",
+        kind: "antigravity.ambient",
+        renderer: "compact_action",
+        text: "view_file: src/main.rs",
+        signal: "ambient",
+        status: "completed",
+      },
+      {
+        id: "part-ambient-2",
+        partId: "part-2",
+        role: "tool",
+        type: "tool",
+        kind: "antigravity.ambient",
+        renderer: "compact_action",
+        text: "grep_search: fn main",
+        signal: "ambient",
+        status: "completed",
+      },
+    ];
+
+    render(
+      <ConversationContentCards
+        blocks={blocks}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    // Group should display aggregate count header
+    expect(screen.getByText("2 次只读探查与检索")).toBeDefined();
+    // Default collapsed: the individual action texts are not in DOM
+    expect(screen.queryByText("src/main.rs")).toBeNull();
+    expect(screen.queryByText("fn main")).toBeNull();
+
+    // Click expand
+    const expandButton = screen.getByRole("button", { name: "展开" });
+    fireEvent.click(expandButton);
+
+    // Now actions should be rendered
+    expect(screen.getByText("src/main.rs")).toBeDefined();
+    expect(screen.getByText("fn main")).toBeDefined();
+
+    // Click collapse
+    const collapseButton = screen.getByRole("button", { name: "收起" });
+    fireEvent.click(collapseButton);
+
+    expect(screen.queryByText("src/main.rs")).toBeNull();
+    expect(screen.queryByText("fn main")).toBeNull();
+  });
 });
 
 const t: Translator = (key, params) =>

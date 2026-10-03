@@ -377,6 +377,7 @@ describe("conversation services", () => {
       "codex-session",
       "opencode-session",
       "claude-code-session",
+      "codebuddy-session",
       "zcode-session",
       "chatgpt-web",
       "qwen-web",

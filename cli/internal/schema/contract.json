@@ -2591,6 +2591,7 @@
                   "zcode",
                   "qoder",
                   "hermes",
+                  "codebuddy",
                   "custom",
                   null
                 ]
@@ -2841,6 +2842,7 @@
                   "zcode",
                   "qoder",
                   "hermes",
+                  "codebuddy",
                   "custom",
                   null
                 ],
@@ -4235,6 +4237,7 @@
               "zcode",
               "qoder",
               "hermes",
+              "codebuddy",
               "custom"
             ],
             "description": "Origin application kind",
@@ -5937,6 +5940,7 @@
                   "zcode",
                   "qoder",
                   "hermes",
+                  "codebuddy",
                   "custom",
                   null
                 ]
@@ -6091,6 +6095,7 @@
                   "zcode",
                   "qoder",
                   "hermes",
+                  "codebuddy",
                   "custom",
                   null
                 ]

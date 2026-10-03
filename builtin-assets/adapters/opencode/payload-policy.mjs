@@ -1,9 +1,29 @@
 import path from "node:path";
 
-export const PAYLOAD_POLICY_VERSION = 10;
+export const PAYLOAD_POLICY_VERSION = 13;
 
 const SUCCESS_STATUSES = new Set(["success", "succeeded", "completed", "complete", "done", "ok"]);
 const FAILURE_STATUS = /^(error|failed|failure|cancelled|canceled|interrupted|timeout|timed_out)$/i;
+
+const EXACT_READ_TOOLS = new Set([
+  "view_file", "read_file", "read_url_content", "list_dir", "list_directory", "read_dir", "read_resource", "fetch_web_page",
+]);
+
+const EXACT_SEARCH_TOOLS = new Set([
+  "grep_search", "search_web", "search_docs", "find_files", "file_search", "glob", "locate_files",
+]);
+
+const EXACT_FILE_CHANGE_TOOLS = new Set([
+  "write_to_file", "replace_file_content", "edit_file", "apply_patch", "create_file", "patch", "str_replace_editor", "code_action",
+]);
+
+const EXACT_PLAN_TOOLS = new Set([
+  "update_plan", "todo_list", "task_plan",
+]);
+
+const EXACT_SUBAGENT_TOOLS = new Set([
+  "invoke_subagent", "subagent", "agent_task", "spawn_agent",
+]);
 
 function compactObject(value) {
   return Object.fromEntries(
@@ -12,8 +32,9 @@ function compactObject(value) {
 }
 
 /**
- * Classifies and trims execution payloads. Raw shell commands remain one Part. Display-only command nodes are generated on demand by the external shell projector. Result/
- * command association is performed only with an exact source_execution_id.
+ * Classifies and trims execution payloads. A shell or tool execution remains one persisted command/invocation Part;
+ * display-only command fragments are recorded as a deterministic projection in metadata. Result/
+ * command association is performed with an exact source_execution_id.
  */
 export function normalizeSessionPayload(session) {
   for (const turn of Array.isArray(session?.turns) ? session.turns : []) {
@@ -22,13 +43,15 @@ export function normalizeSessionPayload(session) {
     const parts = originalParts;
     turn.parts = parts;
     const commands = new Map();
+    const invocations = new Map();
     const results = new Map();
 
     for (const part of parts) {
       const executionId = executionIdOf(part);
       if (!executionId) continue;
       if (isCommandPart(part)) commands.set(executionId, part);
-      else if (isResultPart(part)) results.set(executionId, part);
+      if (!isResultPart(part)) invocations.set(executionId, part);
+      else results.set(executionId, part);
     }
 
     for (const part of parts) {
@@ -45,9 +68,12 @@ export function normalizeSessionPayload(session) {
         if (location) {
           part.command = formatLocation(location);
           part.text = null;
-          setExecutionMetadata(part, metadata, executionKind, location);
-          continue;
         }
+        if (isSuccessful(part) || outcome.status === "completed") {
+          metadata.signal = "ambient";
+        }
+        setExecutionMetadata(part, metadata, executionKind, location);
+        continue;
       }
       if (executionKind === "unclassified") markUnclassified(part, metadata);
       else setExecutionMetadata(part, metadata, executionKind, null);
@@ -56,14 +82,15 @@ export function normalizeSessionPayload(session) {
     for (const part of parts) {
       if (!part || typeof part !== "object" || !isResultPart(part) || isCommandPart(part)) continue;
       const metadata = parseMetadata(part.metadata_json);
-      const command = commands.get(executionIdOf(part)) ?? null;
-      const commandMetadata = parseMetadata(command?.metadata_json);
-      const executionKind = classifyExecution(part, metadata, command, commandMetadata);
-      const outcome = inferOutcome(command, part, executionKind);
+      const invocation = invocations.get(executionIdOf(part)) ?? null;
+      const invocationMetadata = parseMetadata(invocation?.metadata_json);
+      const executionKind = classifyExecution(part, metadata, invocation, invocationMetadata);
+      const outcome = inferOutcome(invocation, part, executionKind);
       applyOutcome(part, outcome);
 
       if (isFailure(part)) {
         part.text = diagnosticText(part, metadata);
+        metadata.signal = "focus";
         setExecutionMetadata(part, metadata, executionKind, null);
       } else if (part.kind === "file_change" || executionKind === "file_change") {
         part.kind = "file_change";
@@ -77,6 +104,9 @@ export function normalizeSessionPayload(session) {
       )) {
         part.text = null;
         clearPayloadBudgetMetadata(metadata);
+        if (executionKind === "read" || executionKind === "search") {
+          metadata.signal = "ambient";
+        }
         setExecutionMetadata(part, metadata, executionKind, null);
       } else if (executionKind === "unclassified") {
         markUnclassified(part, metadata);
@@ -84,7 +114,13 @@ export function normalizeSessionPayload(session) {
         setExecutionMetadata(part, metadata, executionKind, null);
       }
     }
-    turn.parts = splitFileChangeParts(parts);
+
+    const shouldFilterEmpty = parts.some((p) => {
+      const k = p?.content_card?.kind ?? "";
+      return typeof k === "string" && (k.startsWith("codex.") || k.startsWith("antigravity."));
+    });
+    const splitParts = splitFileChangeParts(parts);
+    turn.parts = shouldFilterEmpty ? splitParts.filter((part) => !isEmptyResultPayload(part)) : splitParts;
   }
   return session;
 }
@@ -203,7 +239,12 @@ function isCommandPart(part) {
 }
 
 function isResultPart(part) {
-  return part?.kind === "file_change" || cardTypeOf(part) === "result";
+  if (part?.kind === "file_change" || cardTypeOf(part) === "result" || part?.kind === "result") {
+    return true;
+  }
+  const meta = parseMetadata(part?.metadata_json);
+  const type = meta.type ?? meta.source_type;
+  return type === "result" || type === "RUN_COMMAND" || type === "TOOL_RESULT";
 }
 
 function cardTypeOf(part, metadata = parseMetadata(part?.metadata_json)) {
@@ -212,28 +253,89 @@ function cardTypeOf(part, metadata = parseMetadata(part?.metadata_json)) {
   return typeof kind === "string" ? kind.slice(kind.lastIndexOf(".") + 1) : null;
 }
 
-function classifyExecution(part, metadata, peer, peerMetadata = {}) {
-  for (const candidate of [metadata.execution_kind, metadata.executionKind, peerMetadata.execution_kind, peerMetadata.executionKind]) {
-    if (["read", "search", "shell", "file_change"].includes(candidate)) return candidate;
+/**
+ * Classifies an execution part or pair into a semantic execution kind:
+ * "read" | "search" | "file_change" | "shell" | "plan" | "subagent" | "unclassified"
+ * Accepts either traditional (part, metadata, peer, peerMetadata) or a single options object { command, toolName, toolInput }.
+ */
+export function classifyExecution(part, metadata = {}, peer = null, peerMetadata = {}) {
+  // Support options object form: classifyExecution({ command, toolName, toolInput })
+  if (part && typeof part === "object" && !("metadata_json" in part) && !("command" in part && "role" in part)) {
+    const opts = part;
+    const toolName = String(opts.toolName ?? opts.tool_name ?? opts.name ?? "").toLowerCase().trim();
+    const command = String(opts.command ?? "").trim();
+
+    if (EXACT_READ_TOOLS.has(toolName)) return "read";
+    if (EXACT_SEARCH_TOOLS.has(toolName)) return "search";
+    if (EXACT_PLAN_TOOLS.has(toolName)) return "plan";
+    if (EXACT_SUBAGENT_TOOLS.has(toolName)) return "subagent";
+    if (EXACT_FILE_CHANGE_TOOLS.has(toolName)) return "file_change";
+
+    if (/^(cat|head|tail|less|more|bat|sed|awk)\b/i.test(command)) return "read";
+    if (/^(rg|grep|find|fd)\b/i.test(command)) return "search";
+    if (command) return "shell";
+    return "unclassified";
   }
+
+  // Traditional multi-argument form
+  for (const candidate of [
+    metadata.execution_kind,
+    metadata.executionKind,
+    peerMetadata?.execution_kind,
+    peerMetadata?.executionKind,
+  ]) {
+    if (["read", "search", "shell", "file_change", "plan", "subagent"].includes(candidate)) {
+      return candidate;
+    }
+  }
+
+  const toolName = String(
+    metadata.tool_name ??
+    metadata.toolName ??
+    metadata.name ??
+    metadata.tool ??
+    peerMetadata?.tool_name ??
+    peerMetadata?.toolName ??
+    peerMetadata?.name ??
+    peerMetadata?.tool ??
+    ""
+  ).toLowerCase().trim();
+
+  if (EXACT_READ_TOOLS.has(toolName)) return "read";
+  if (EXACT_SEARCH_TOOLS.has(toolName)) return "search";
+  if (EXACT_PLAN_TOOLS.has(toolName)) return "plan";
+  if (EXACT_SUBAGENT_TOOLS.has(toolName)) return "subagent";
+  if (EXACT_FILE_CHANGE_TOOLS.has(toolName)) return "file_change";
+
   const sourceType = [
     metadata.source_type,
     metadata.sourceType,
-    metadata.name,
-    metadata.tool,
-    peerMetadata.source_type,
-    peerMetadata.sourceType,
-    peerMetadata.name,
-    peerMetadata.tool,
+    peerMetadata?.source_type,
+    peerMetadata?.sourceType,
   ].filter(Boolean).join(" ").toLowerCase();
-  if (/view[_ -]?file|read[_ -]?file|list[_ -]?directory|\bread\b|\bls\b/.test(sourceType)) return "read";
-  if (/grep|search|find|glob/.test(sourceType)) return "search";
-  if (/(?:^|\s)(?:apply[_ -]?patch|patch|edit|multi[_ -]?edit|write(?:[_ -]?file)?|create[_ -]?file|str[_ -]?replace[_ -]?editor|file[_ -]?change|code[_ -]?action)(?:\s|$)/.test(sourceType)) return "file_change";
+
+  const combinedIdent = `${toolName} ${sourceType}`.trim();
+
+  if (/\b(?:view[_ -]?file|read[_ -]?file|read[_ -]?url|list[_ -]?directory|list[_ -]?dir|\bread\b|\bls\b)\b/.test(combinedIdent)) {
+    return "read";
+  }
+  if (/\b(?:grep|search|find|glob)\b/.test(combinedIdent)) {
+    return "search";
+  }
+  if (/\b(?:update[_ -]?plan|todo_list|task_plan)\b/.test(combinedIdent)) {
+    return "plan";
+  }
+  if (/\b(?:invoke_subagent|subagent|agent_task|spawn_agent)\b/.test(combinedIdent)) {
+    return "subagent";
+  }
+  if (/(?:^|\s)(?:apply[_ -]?patch|patch|edit|multi[_ -]?edit|write(?:[_ -]?file)?|create[_ -]?file|str[_ -]?replace[_ -]?editor|file[_ -]?change|code[_ -]?action)(?:\s|$)/.test(combinedIdent)) {
+    return "file_change";
+  }
 
   const command = String(part?.command ?? peer?.command ?? "").trim();
   if (/^(cat|head|tail|less|more|bat|sed|awk)\b/i.test(command)) return "read";
   if (/^(rg|grep|find|fd)\b/i.test(command)) return "search";
-  if (/shell|command|exec|run_command/.test(sourceType)) return "shell";
+  if (/shell|command|exec|run_command/.test(combinedIdent)) return "shell";
   if (part?.kind === "file_change" || peer?.kind === "file_change") return "file_change";
   if (isCommandPart(part) || isCommandPart(peer)) return "shell";
   return "unclassified";
@@ -277,8 +379,21 @@ function exitCodeFromText(value) {
   return match ? Number(match[1]) : null;
 }
 
-function extractLocation(command, cwd, metadata) {
-  const explicit = metadata.file_path ?? metadata.filePath ?? metadata.path ?? metadata.AbsolutePath;
+export function extractLocation(command, cwd, metadata = {}) {
+  const args = metadata.tool_input ?? metadata.args ?? metadata.arguments ?? {};
+  const explicit = (
+    metadata.file_path ??
+    metadata.filePath ??
+    metadata.path ??
+    metadata.AbsolutePath ??
+    args.AbsolutePath ??
+    args.TargetFile ??
+    args.target_file ??
+    args.file_path ??
+    args.path ??
+    args.Url ??
+    args.url
+  );
   const source = String(explicit ?? command ?? "").trim();
   if (!source) return null;
   const cleaned = source
@@ -291,9 +406,22 @@ function extractLocation(command, cwd, metadata) {
   if (!candidate) return null;
   const filePath = normalizePath(candidate, cwd);
   const range = String(command ?? "").match(/(?:sed\s+-n\s+['"]?)?(\d+)(?:,(\d+))?p?['"]?/i);
-  const lineStart = integer(metadata.line_start ?? metadata.lineStart ?? metadata.offset) ?? integer(range?.[1]);
-  const explicitEnd = integer(metadata.line_end ?? metadata.lineEnd);
-  const limit = integer(metadata.line_limit ?? metadata.lineLimit ?? metadata.limit);
+  const lineStart = integer(
+    metadata.line_start ??
+    metadata.lineStart ??
+    metadata.offset ??
+    args.StartLine ??
+    args.start_line ??
+    args.line_start
+  ) ?? integer(range?.[1]);
+  const explicitEnd = integer(
+    metadata.line_end ??
+    metadata.lineEnd ??
+    args.EndLine ??
+    args.end_line ??
+    args.line_end
+  );
+  const limit = integer(metadata.line_limit ?? metadata.lineLimit ?? metadata.limit ?? args.limit);
   const lineEnd = explicitEnd ?? (lineStart != null && limit != null && limit > 0 ? lineStart + limit - 1 : integer(range?.[2]));
   return { filePath, lineStart, lineEnd };
 }
@@ -371,6 +499,19 @@ function setEmptyFileChangeResultCard(part, metadata) {
 
 function isSuccessful(part) {
   return part?.exit_code === 0 || SUCCESS_STATUSES.has(String(part?.status ?? "").toLowerCase());
+}
+
+function isEmptyResultPayload(part) {
+  if (!part || typeof part !== "object" || isCommandPart(part) || !isResultPart(part)) return false;
+  const metadata = parseMetadata(part.metadata_json);
+  const executionKind = metadata.execution_kind ?? metadata.executionKind;
+  const text = cleanText(part.text);
+  const emptyPayload = !text
+    ? isSuccessful(part)
+    : /^(?:\{\}|\[\]|null|undefined)$/i.test(text)
+      || /(?:^|\n)Output:\s*(?:\{\}|\[\]|null|undefined)\s*$/i.test(text);
+  if (!emptyPayload || isFailure(part)) return false;
+  return executionKind === "shell" || executionKind === "unclassified" || executionKind === "plan";
 }
 
 function isFailure(part) {

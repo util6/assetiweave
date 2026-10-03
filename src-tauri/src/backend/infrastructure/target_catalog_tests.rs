@@ -16,6 +16,7 @@ fn builtin_descriptors_cover_legacy_app_kinds() {
         AppKind::Zcode,
         AppKind::Qoder,
         AppKind::Hermes,
+        AppKind::Codebuddy,
         AppKind::Custom,
     ] {
         let descriptor = catalog

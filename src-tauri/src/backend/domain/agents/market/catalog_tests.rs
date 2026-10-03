@@ -15,6 +15,7 @@ fn bundled_catalog_contains_all_initial_agents_without_execution_commands() {
         "gemini",
         "antigravity",
         "claude",
+        "codebuddy",
         "codex",
         "pi",
         "qoder",

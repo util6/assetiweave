@@ -70,6 +70,20 @@ pub(crate) async fn reconcile_app_conversation_adapters(
     let settings =
         crate::backend::infrastructure::app_settings::load_or_import_app_settings_sqlx(pool)
             .await?;
+    // Self-healing: prune obsolete standalone workbuddy adapter records and normalize to codebuddy
+    let _ = sqlx::query("DELETE FROM conversation_adapters WHERE id = 'workbuddy'")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query(
+        "DELETE FROM conversation_sources WHERE id = 'workbuddy-live' OR adapter_id = 'workbuddy'",
+    )
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "UPDATE conversation_sessions SET adapter_id = 'codebuddy' WHERE adapter_id = 'workbuddy'",
+    )
+    .execute(pool)
+    .await;
     let packages = store::list_conversation_adapter_packages_sqlx(pool).await?;
     for mut package in packages {
         if let Ok(install_dir) =

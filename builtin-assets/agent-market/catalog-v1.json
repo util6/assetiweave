@@ -423,6 +423,54 @@
           "nodeRange": ">=20"
         }
       ]
+    },
+    {
+      "id": "codebuddy",
+      "displayName": "CodeBuddy",
+      "description": "Tencent's AI coding assistant with ACP capabilities",
+      "protocol": "acp",
+      "version": "2.161.1",
+      "coreCompatibility": {
+        "min": "0.6.0",
+        "maxExclusive": "0.8.0"
+      },
+      "capabilities": {
+        "purposes": [
+          "card_translation",
+          "memory"
+        ],
+        "textPrompt": true,
+        "modelDiscovery": false,
+        "resume": true,
+        "historyReplay": true,
+        "teamTools": true,
+        "liveEvents": true,
+        "richHistoryReplay": false
+      },
+      "verification": {
+        "status": "experimental",
+        "testedAt": "2026-08-20T00:00:00Z",
+        "evidenceId": "acp-registry-066208e4-codebuddy-2.161.1-npx"
+      },
+      "upstream": {
+        "registryId": "codebuddy",
+        "homepage": "https://cnb.cool/codebuddy/codebuddy-code",
+        "license": "proprietary"
+      },
+      "distributions": [
+        {
+          "id": "npx-codebuddy",
+          "type": "npx",
+          "priority": 30,
+          "package": "@tencent-ai/codebuddy-code",
+          "version": "2.161.1",
+          "bin": "codebuddy",
+          "launchArgs": [
+            "--acp"
+          ],
+          "nodeRange": ">=20"
+        }
+      ]
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
   "schema": "assetiweave.agent-market/release-evidence/v1",
   "catalogVersion": "2026.08.29.1",
-  "catalogContentSha256": "5e43fef88421414e58938420d9917ea46363e32ac838b1c1638caf230a381c2a",
+  "catalogContentSha256": "72a10a6ecc9c8647a0cb86a91764d9e8fde00851f993880e0cc9602e2b445a50",
   "coreVersion": "0.7.0",
   "capturedAt": "2026-09-06T12:20:40Z",
   "upstream": {
@@ -347,6 +347,27 @@
       "sourceAgentUrl": "https://raw.githubusercontent.com/agentclientprotocol/registry/066208e41d95e12108fcd7d282b601ed8b2b53c8/qoder/agent.json",
       "packageMetadataUrl": "https://registry.npmjs.org/@qoder-ai%2fqodercli/0.2.14",
       "packageIntegrity": "sha512-K3vrinxakPv0W8w+KAV1khtlEDjCvjJ8VbAkvxa6L9yLwiljBB4IrG5d7Xs0uge1n/C061FgmCm50WVqh8QRwg==",
+      "install": { "status": "passed", "method": "npm install --ignore-scripts --save-exact" },
+      "acpConformance": {
+        "status": "partial",
+        "initialize": "passed",
+        "sessionNew": "failed: authentication_required",
+        "sessionClose": "not_run",
+        "cleanShutdown": "passed"
+      }
+    },
+    {
+      "evidenceId": "acp-registry-066208e4-codebuddy-2.161.1-npx",
+      "catalogItemId": "codebuddy",
+      "upstreamAgentId": "codebuddy",
+      "agentVersion": "2.161.1",
+      "distributionId": "npx-codebuddy",
+      "distributionType": "npx",
+      "package": "@tencent-ai/codebuddy-code",
+      "bin": "codebuddy",
+      "sourceAgentUrl": "https://raw.githubusercontent.com/agentclientprotocol/registry/066208e41d95e12108fcd7d282b601ed8b2b53c8/codebuddy/agent.json",
+      "packageMetadataUrl": "https://registry.npmjs.org/@tencent-ai%2fcodebuddy-code/2.161.1",
+      "packageIntegrity": "sha512-Ii1ziKuvDlEj0e6/Re8tnKYU0CA9Lf73XtolPYVKUnugqNjPHBG2mxPxshB/tJy5Wy6NyDDB97enrnqFKjP3tQ==",
       "install": { "status": "passed", "method": "npm install --ignore-scripts --save-exact" },
       "acpConformance": {
         "status": "partial",

@@ -30,6 +30,8 @@ export const commonEn = {
   "common.save": "Save",
   "common.delete": "Delete",
   "common.saving": "Saving...",
+  "common.expand": "Expand",
+  "common.collapse": "Collapse",
   "app.close.title": "Close AssetIWeave",
   "app.close.message":
     "Choose whether to close the app or minimize it to the background.",

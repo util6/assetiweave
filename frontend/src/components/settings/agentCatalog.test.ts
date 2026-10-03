@@ -12,6 +12,15 @@ describe("agentCatalog presentation and projection", () => {
     expect(antigravity?.connectionMode).toBe("registry");
   });
 
+  it("legacy presentation presents codebuddy as ACP Agent", () => {
+    const codebuddy = agentCatalog.find(
+      (agent) => agent.id === "codebuddy",
+    );
+    expect(codebuddy).toBeDefined();
+    expect(codebuddy?.protocol).toBe("ACP Agent");
+    expect(codebuddy?.connectionMode).toBe("registry");
+  });
+
   it("projects official antigravity ACP market item to catalog item", () => {
     const marketItem: AgentMarketItem = {
       id: "antigravity",

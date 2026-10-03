@@ -3,6 +3,7 @@ import {
   Braces,
   Brain,
   CheckCircle2,
+  Eye,
   FileText,
   FolderOpen,
   GitCompareArrows,
@@ -147,6 +148,7 @@ const rendererIcons: Record<ConversationCardRenderer, LucideIcon> = {
   command: Terminal,
   terminal_output: CheckCircle2,
   diff: GitCompareArrows,
+  compact_action: Eye,
 };
 
 const builtInKindIconHints: Record<string, keyof typeof iconHints> = {

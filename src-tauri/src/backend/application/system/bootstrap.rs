@@ -36,12 +36,11 @@ impl AppService {
         .await
         .map_err(AppError::external)?
         .map_err(AppError::external)?;
-        seed_prepared_builtin_adapters(
-            &pool,
-            store::DEFAULT_TENANT_ID,
-            &builtin_conversation_adapters,
-        )
-        .await?;
+        let tenant_ids = store::load_all_tenant_ids_sqlx(&pool).await?;
+        for tenant_id in &tenant_ids {
+            seed_prepared_builtin_adapters(&pool, tenant_id, &builtin_conversation_adapters)
+                .await?;
+        }
 
         let runtime = AppRuntime::bootstrap(
             db_path.clone(),

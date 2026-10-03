@@ -266,12 +266,35 @@ function getSessionFilesMap(sessionsDir) {
 function rolloutFilesForSession(rolloutPath, sessionId) {
   const expanded = expandPath(rolloutPath);
   if (!expanded || !existsSync(expanded)) return [];
-  const sessionsRoot = findSessionsRoot(expanded);
-  if (sessionsRoot && sessionId) {
-    const map = getSessionFilesMap(sessionsRoot);
-    const files = map.get(sessionId);
-    if (files && files.length > 0) {
-      return files;
+  if (sessionId) {
+    const parentDir = path.dirname(expanded);
+    try {
+      if (existsSync(parentDir)) {
+        const localMatches = [];
+        for (const entry of readdirSync(parentDir, { withFileTypes: true })) {
+          if (
+            entry.isFile() &&
+            entry.name.startsWith("rollout-") &&
+            entry.name.includes(sessionId) &&
+            entry.name.endsWith(".jsonl")
+          ) {
+            localMatches.push(path.join(parentDir, entry.name));
+          }
+        }
+        if (localMatches.length > 0) {
+          localMatches.sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
+          return localMatches;
+        }
+      }
+    } catch {}
+
+    const sessionsRoot = findSessionsRoot(expanded);
+    if (sessionsRoot) {
+      const map = getSessionFilesMap(sessionsRoot);
+      const files = map.get(sessionId);
+      if (files && files.length > 0) {
+        return files;
+      }
     }
   }
   return [expanded];
@@ -1807,6 +1830,7 @@ function listSessions() {
 function readSession() {
   // 1. 获取 Rust 入参中指定的 session_id (若为 null，则代表需要读取全量会话)
   const requestedSessionId = input.params?.session_id ?? null;
+  const requestedLocator = expandPath(input.params?.source_locator);
 
   // 2. 查询 SQLite 获取数据库会话行，按请求 ID 过滤后，对每个 Session 执行格式化流水线
   const rows = sessionRows({ sessionId: requestedSessionId });
@@ -1816,7 +1840,10 @@ function readSession() {
   return rows.flatMap((row) => {
     current += 1;
     // 3. 展开并校验 `.jsonl` 会话日志文件的绝对路径，不存在则忽略
-    const rolloutPath = expandPath(row.rollout_path);
+    let rolloutPath = expandPath(row.rollout_path);
+    if ((!rolloutPath || !existsSync(rolloutPath)) && requestedLocator && existsSync(requestedLocator)) {
+      rolloutPath = requestedLocator;
+    }
     if (!rolloutPath || !existsSync(rolloutPath)) return [];
 
     const files = rolloutFilesForSession(rolloutPath, String(row.id));

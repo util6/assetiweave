@@ -26,6 +26,7 @@ pub(crate) const DEFAULT_APP_PROFILE_IDS: &[&str] = &[
     "zcode",
     "qoder",
     "hermes",
+    "codebuddy",
 ];
 
 pub(crate) fn is_default_app_profile_id(profile_id: &str) -> bool {
@@ -261,6 +262,7 @@ pub(crate) fn default_app_shortcuts() -> Vec<(&'static str, &'static str, &'stat
         ("zcode", "app:zcode", "#f59e0b", false),
         ("qoder", "app:qoder", "#14b8a6", false),
         ("hermes", "app:hermes", "#f97316", false),
+        ("codebuddy", "app:codebuddy", "#6c4dff", false),
         ("custom", "+", "#8c909f", false),
     ]
 }

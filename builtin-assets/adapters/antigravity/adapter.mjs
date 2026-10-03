@@ -8,6 +8,12 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+let DatabaseSync = null;
+try {
+  const sqliteModule = await import("node:sqlite");
+  DatabaseSync = sqliteModule.DatabaseSync ?? null;
+} catch {}
+
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 const CONTENT_CARD_SCHEMA_VERSION = "antigravity-content-cards-v9";
 const MAX_PART_TEXT_CHARS = 96 * 1024;
@@ -373,12 +379,13 @@ function inferProjectPathFromToolCalls(toolCalls) {
 // Antigravity-specific: build tool parts from PLANNER_RESPONSE tool_calls
 // ---------------------------------------------------------------------------
 
-function toolCallExecutionId(call, turnId, commandIndex) {
+function toolCallExecutionId(call, turnId, toolIndex) {
   for (const key of ["id", "call_id", "callId", "execution_id", "executionId"]) {
     const value = call?.[key];
     if (typeof value === "string" && value.trim()) return value.trim();
   }
-  return `${turnId}:run-command:${commandIndex}`;
+  const toolName = call?.name === "run_command" ? "run-command" : (call?.name || "tool");
+  return `${turnId}:${toolName}:${toolIndex}`;
 }
 
 function runCommandExecutionIds(toolCalls, turnId) {
@@ -394,16 +401,17 @@ function runCommandExecutionIds(toolCalls, turnId) {
 function toolCallParts(toolCalls, turnId) {
   if (!Array.isArray(toolCalls)) return [];
   const parts = [];
-  let commandIndex = 0;
+  let toolIndex = 0;
   for (const call of toolCalls) {
     const toolName = call?.name;
     if (!toolName) continue;
+    toolIndex += 1;
+    const executionId = toolCallExecutionId(call, turnId, toolIndex);
     const args = call?.args;
     const argsObj = args && typeof args === "object" ? args : null;
 
     // Reconstruct command for run_command calls
     if (toolName === "run_command") {
-      commandIndex += 1;
       const rawCmd = argsObj?.CommandLine;
       const command = typeof rawCmd === "string" ? rawCmd.replace(/^"|"$/g, "") : null;
       const rawCwd = argsObj?.Cwd;
@@ -418,18 +426,31 @@ function toolCallParts(toolCalls, turnId) {
           cwd,
           status: null,
           exit_code: null,
-          source_execution_id: toolCallExecutionId(call, turnId, commandIndex),
-          metadata_json: metadata(compactObject({ type: "command", cwd }), { name: toolName }),
+          source_execution_id: executionId,
+          metadata_json: metadata(
+            compactObject({ type: "command", cwd, source_execution_id: executionId, tool_name: toolName }),
+            { name: toolName, tool_name: toolName, tool_input: argsObj },
+          ),
         });
       }
       continue;
     }
 
-    // Generic tool call
+    // Generic / structured tool call
     const summary = typeof argsObj?.toolSummary === "string"
       ? argsObj.toolSummary.replace(/^"|"$/g, "")
       : null;
     const displayName = summary || toolName;
+
+    const isRead = /^(view_file|read_file|read_url_content|list_dir|list_directory|read_dir|read_resource)$/i.test(toolName);
+    const isSearch = /^(grep_search|search_web|search_docs|find_files)$/i.test(toolName);
+    const executionKind = isRead ? "read" : isSearch ? "search" : null;
+
+    let targetLocation = argsObj?.AbsolutePath ?? argsObj?.TargetFile ?? argsObj?.Path ?? argsObj?.path ?? argsObj?.Url ?? null;
+    if (typeof targetLocation === "string") {
+      targetLocation = targetLocation.replace(/^"|"$/g, "");
+    }
+
     const argEntries = argsObj
       ? Object.entries(argsObj)
           .filter(([k]) => !["toolAction", "toolSummary"].includes(k))
@@ -438,6 +459,7 @@ function toolCallParts(toolCalls, turnId) {
     const text = argEntries.length
       ? `Tool: ${displayName}\n\n${argEntries.join("\n")}`
       : `Tool: ${displayName}`;
+
     parts.push({
       role: "tool",
       kind: "tool",
@@ -447,7 +469,25 @@ function toolCallParts(toolCalls, turnId) {
       cwd: null,
       status: null,
       exit_code: null,
-      metadata_json: metadata({ type: "tool", format: "plain" }, { name: toolName }),
+      source_execution_id: executionId,
+      metadata_json: metadata(
+        compactObject({
+          type: "tool",
+          format: "plain",
+          tool_name: toolName,
+          execution_kind: executionKind,
+          signal: executionKind ? "ambient" : undefined,
+          file_path: targetLocation,
+          source_execution_id: executionId,
+        }),
+        {
+          name: toolName,
+          tool_name: toolName,
+          tool_input: argsObj,
+          execution_kind: executionKind,
+          signal: executionKind ? "ambient" : undefined,
+        },
+      ),
     });
   }
   return parts;
@@ -545,8 +585,9 @@ function toolResultPart(step, fileOperation = null, sourceExecutionId = null) {
     cwd: null,
     status,
     exit_code: null,
+    source_execution_id: sourceExecutionId,
     metadata_json: metadata(
-      compactObject({ type: "result", format: "plain", status }),
+      compactObject({ type: "result", format: "plain", status, source_execution_id: sourceExecutionId }),
       { source_type: type },
     ),
   }];
@@ -714,7 +755,7 @@ function buildTurnsFromSteps(steps) {
   let projectPath = null;
   let currentModel = null;
   const pendingFileOperations = [];
-  const pendingExecutionIds = [];
+  const pendingToolCalls = [];
   const knownFileContents = new Map();
 
   for (const step of steps) {
@@ -744,7 +785,7 @@ function buildTurnsFromSteps(steps) {
       if (!userText) continue;
       if (current) turns.push(current);
       pendingFileOperations.length = 0;
-      pendingExecutionIds.length = 0;
+      pendingToolCalls.length = 0;
       current = {
         external_id: `turn-${turns.length}`,
         turn_index: turns.length,
@@ -771,8 +812,14 @@ function buildTurnsFromSteps(steps) {
         pendingFileOperations.push(
           ...step.tool_calls.map((call) => fileOperationFromToolCall(call, knownFileContents)).filter(Boolean),
         );
+        let callIdx = 0;
+        for (const call of step.tool_calls) {
+          if (!call?.name) continue;
+          callIdx += 1;
+          const execId = toolCallExecutionId(call, current.external_id, callIdx);
+          pendingToolCalls.push({ executionId: execId, name: call.name, args: call.args });
+        }
         current.parts.push(...toolCallParts(step.tool_calls, current.external_id));
-        pendingExecutionIds.push(...runCommandExecutionIds(step.tool_calls, current.external_id));
         projectPath ??= inferProjectPathFromToolCalls(step.tool_calls);
       }
       current.ended_at = timestamp;
@@ -789,9 +836,23 @@ function buildTurnsFromSteps(steps) {
         const fileOperation = type === "CODE_ACTION"
           ? matchPendingFileOperation(pendingFileOperations, step.content)
           : null;
-        const sourceExecutionId = type === "RUN_COMMAND"
-          ? pendingExecutionIds.shift() ?? null
-          : null;
+        let matchedIndex = -1;
+        if (type === "RUN_COMMAND") {
+          matchedIndex = pendingToolCalls.findIndex((c) => c.name === "run_command");
+        } else if (type === "VIEW_FILE") {
+          matchedIndex = pendingToolCalls.findIndex((c) => /view_file|read_file|read_url/i.test(c.name));
+        } else if (type === "GREP_SEARCH") {
+          matchedIndex = pendingToolCalls.findIndex((c) => /grep|search|find/i.test(c.name));
+        } else if (type === "LIST_DIRECTORY") {
+          matchedIndex = pendingToolCalls.findIndex((c) => /list_dir|list_directory/i.test(c.name));
+        } else if (type === "CODE_ACTION") {
+          matchedIndex = pendingToolCalls.findIndex((c) => /write|replace|edit|patch/i.test(c.name));
+        }
+        if (matchedIndex < 0 && pendingToolCalls.length > 0) {
+          matchedIndex = 0;
+        }
+        const matchedCall = matchedIndex >= 0 ? pendingToolCalls.splice(matchedIndex, 1)[0] : null;
+        const sourceExecutionId = matchedCall?.executionId ?? null;
         current.parts.push(...toolResultPart(step, fileOperation, sourceExecutionId));
         current.ended_at = timestamp;
       }
@@ -799,6 +860,89 @@ function buildTurnsFromSteps(steps) {
   }
   if (current) turns.push(current);
   return { turns, projectPath };
+}
+
+function isInternalExecutionPath(cwd) {
+  if (!cwd || typeof cwd !== "string") return false;
+  const norm = cwd.replace(/\\/g, "/").toLowerCase();
+  return (
+    norm.includes("/agent-executions/") ||
+    norm.includes("/agent-runtimes/") ||
+    norm.includes("/smoke_workspace/") ||
+    norm.includes("/.system_generated/") ||
+    norm.includes("/test-scratch/") ||
+    norm.includes("/mock_")
+  );
+}
+
+function isInternalSessionMeta(metaPath) {
+  if (!metaPath || !existsSync(metaPath)) return false;
+  try {
+    const raw = readFileSync(metaPath, "utf8");
+    if (
+      raw.includes("agent-executions") ||
+      raw.includes("agent-runtimes") ||
+      raw.includes("smoke_workspace") ||
+      raw.includes(".system_generated") ||
+      raw.includes("test-scratch")
+    ) {
+      return true;
+    }
+    const meta = JSON.parse(raw);
+    if (isInternalExecutionPath(meta.cwd)) return true;
+  } catch {}
+  return false;
+}
+
+function isSyntheticWorkOrderText(text) {
+  if (!text || typeof text !== "string") return false;
+  const trimmed = text.trim();
+  if (
+    trimmed.startsWith("{") &&
+    (trimmed.includes('"work_order_id"') ||
+      trimmed.includes('"contract_version"') ||
+      trimmed.includes('"output_schema"') ||
+      trimmed.includes("memory.contract"))
+  ) {
+    return true;
+  }
+  if (trimmed.includes("Consolidate the successful Session Memory")) return true;
+  if (trimmed.includes("ASSETIWEAVE_ACP_OK")) return true;
+  return false;
+}
+
+function hasValidConversationSteps(dbPath) {
+  if (!existsSync(dbPath)) return false;
+  try {
+    const stat = statSync(dbPath);
+    if (stat.size === 0) return false;
+  } catch {
+    return false;
+  }
+
+  if (DatabaseSync) {
+    let db;
+    try {
+      db = new DatabaseSync(dbPath, { readOnly: true });
+      const stmt = db.prepare("SELECT count(*) as count FROM steps;");
+      const row = stmt.get();
+      return (row?.count ?? 0) > 0;
+    } catch {
+      return false;
+    } finally {
+      if (db) db.close();
+    }
+  } else {
+    try {
+      const raw = execFileSync("sqlite3", [dbPath, "SELECT count(*) FROM steps;"], {
+        encoding: "utf8",
+        timeout: 500,
+      });
+      return parseInt(raw.trim(), 10) > 0;
+    } catch {
+      return false;
+    }
+  }
 }
 
 function parseTranscript(text) {
@@ -811,7 +955,14 @@ function parseTranscript(text) {
       continue;
     }
   }
-  return buildTurnsFromSteps(steps);
+  const result = buildTurnsFromSteps(steps);
+  if (result.turns.length > 0 && isSyntheticWorkOrderText(result.turns[0]?.user_text)) {
+    return { turns: [], projectPath: null };
+  }
+  if (isInternalExecutionPath(result.projectPath)) {
+    return { turns: [], projectPath: null };
+  }
+  return result;
 }
 
 function decodeProto(buf) {
@@ -883,14 +1034,27 @@ function parseSqliteSteps(dbPath) {
     path: `${path.basename(dbPath)}: SELECT idx, step_type, hex(step_payload) FROM steps`,
   });
   let rows = [];
-  try {
-    const raw = execFileSync("sqlite3", ["-json", dbPath, "SELECT idx, step_type, hex(step_payload) as hex_payload FROM steps ORDER BY idx ASC;"], {
-      encoding: "utf8",
-      maxBuffer: 100 * 1024 * 1024,
-    });
-    rows = JSON.parse(raw || "[]");
-  } catch {
-    return [];
+  if (DatabaseSync) {
+    let db;
+    try {
+      db = new DatabaseSync(dbPath, { readOnly: true });
+      const stmt = db.prepare("SELECT idx, step_type, hex(step_payload) as hex_payload FROM steps ORDER BY idx ASC;");
+      rows = stmt.all();
+    } catch {
+      rows = [];
+    } finally {
+      if (db) db.close();
+    }
+  } else {
+    try {
+      const raw = execFileSync("sqlite3", ["-json", dbPath, "SELECT idx, step_type, hex(step_payload) as hex_payload FROM steps ORDER BY idx ASC;"], {
+        encoding: "utf8",
+        maxBuffer: 100 * 1024 * 1024,
+      });
+      rows = JSON.parse(raw || "[]");
+    } catch {
+      return [];
+    }
   }
   const steps = [];
   for (const r of rows) {
@@ -1022,19 +1186,32 @@ function parseSqliteSteps(dbPath) {
 }
 
 function parseSqliteDb(dbPath) {
-  const steps = parseSqliteSteps(dbPath);
+  const metaPath = dbPath.replace(/\.db$/, ".meta");
+  if (isInternalSessionMeta(metaPath)) {
+    return { turns: [], projectPath: null };
+  }
   let metaProjectPath = null;
   try {
-    const metaPath = dbPath.replace(/\.db$/, ".meta");
     if (existsSync(metaPath)) {
       const meta = JSON.parse(readFileSync(metaPath, "utf8"));
       if (meta.cwd && typeof meta.cwd === "string") {
+        if (isInternalExecutionPath(meta.cwd)) {
+          return { turns: [], projectPath: null };
+        }
         metaProjectPath = meta.cwd;
       }
     }
   } catch {}
+  const steps = parseSqliteSteps(dbPath);
   const { turns, projectPath } = buildTurnsFromSteps(steps);
-  return { turns, projectPath: metaProjectPath || projectPath };
+  if (turns.length > 0 && isSyntheticWorkOrderText(turns[0]?.user_text)) {
+    return { turns: [], projectPath: null };
+  }
+  const finalProjectPath = metaProjectPath || projectPath;
+  if (isInternalExecutionPath(finalProjectPath)) {
+    return { turns: [], projectPath: null };
+  }
+  return { turns, projectPath: finalProjectPath };
 }
 
 // ---------------------------------------------------------------------------
@@ -1070,117 +1247,129 @@ function discoverConversationDirs(brainDir) {
   return dirs;
 }
 
-function discoverBrainDirs(startLocation) {
-  if (!startLocation) return [];
-  const resolved = path.resolve(expandPath(startLocation));
-  const candidateDirs = new Set();
+function detectClientFlavor(targetPath) {
+  if (!targetPath) return "antigravity";
+  const norm = targetPath.toLowerCase();
+  if (norm.includes("antigravity-acp")) return "antigravity-acp";
+  if (norm.includes("antigravity-cli")) return "antigravity-cli";
+  if (norm.includes("antigravity-ide")) return "antigravity-ide";
+  if (norm.includes("antigravity")) return "antigravity";
+  return "antigravity-custom";
+}
 
-  function scanForBrains(targetDir) {
-    if (!existsSync(targetDir)) return;
-    try {
-      const stat = statSync(targetDir);
-      if (!stat.isDirectory()) return;
-    } catch {
-      return;
-    }
+function resolveCandidateRoots(startLocation) {
+  const candidateRoots = new Set();
+  const geminiDir = path.join(homedir(), ".gemini");
+  const standardFlavors = [
+    "antigravity",
+    "antigravity-cli",
+    "antigravity-ide",
+    "antigravity-acp",
+  ];
 
-    try {
-      const entries = readdirSync(targetDir, { withFileTypes: true });
-      const hasUuid = entries.some((e) => e.isDirectory() && isUuidDir(e.name));
-      if (hasUuid) {
-        candidateDirs.add(targetDir);
+  if (startLocation) {
+    const resolved = path.resolve(expandPath(startLocation));
+    if (existsSync(resolved)) {
+      let baseDir = resolved;
+      try {
+        const stat = statSync(resolved);
+        if (stat.isFile()) {
+          baseDir = path.dirname(resolved);
+        }
+      } catch {}
+
+      if (path.basename(baseDir) === "brain" || path.basename(baseDir) === "conversations") {
+        baseDir = path.dirname(baseDir);
       }
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        if (entry.name === "brain") {
-          candidateDirs.add(path.join(targetDir, "brain"));
-        } else if (entry.name.toLowerCase().includes("antigravity")) {
-          const subDir = path.join(targetDir, entry.name);
-          const subBrain = path.join(subDir, "brain");
-          if (existsSync(subBrain)) {
-            candidateDirs.add(subBrain);
-          } else {
-            candidateDirs.add(subDir);
-          }
+      candidateRoots.add(baseDir);
+
+      const parent = path.dirname(baseDir);
+      for (const f of standardFlavors) {
+        const full = path.join(parent, f);
+        if (existsSync(full)) candidateRoots.add(full);
+      }
+      const grandParent = path.dirname(parent);
+      for (const f of standardFlavors) {
+        const full = path.join(grandParent, f);
+        if (existsSync(full)) candidateRoots.add(full);
+      }
+    }
+  } else {
+    for (const f of standardFlavors) {
+      const full = path.join(geminiDir, f);
+      if (existsSync(full)) {
+        candidateRoots.add(full);
+      }
+    }
+  }
+
+  return Array.from(candidateRoots);
+}
+
+function discoverBrainDirs(startLocation) {
+  const roots = resolveCandidateRoots(startLocation);
+  const validBrainDirs = [];
+  const seen = new Set();
+
+  for (const root of roots) {
+    const directBrain = path.join(root, "brain");
+    const target = existsSync(directBrain) ? directBrain : root;
+    if (!existsSync(target)) continue;
+    try {
+      const entries = readdirSync(target, { withFileTypes: true });
+      if (entries.some((e) => e.isDirectory() && isUuidDir(e.name))) {
+        const p = path.resolve(target);
+        if (!seen.has(p)) {
+          seen.add(p);
+          validBrainDirs.push(target);
         }
       }
     } catch {}
   }
 
-  // 1. Scan the start location
-  scanForBrains(resolved);
-
-  // 2. Scan parent and grandparent for sibling environments (e.g. ~/.gemini/antigravity-ide/brain -> ~/.gemini)
-  const parent = path.dirname(resolved);
-  const grandParent = path.dirname(parent);
-  for (const ancestor of [parent, grandParent]) {
-    if (ancestor && ancestor !== "/" && ancestor !== path.dirname(ancestor)) {
-      scanForBrains(ancestor);
+  if (validBrainDirs.length === 0 && startLocation) {
+    const resolved = path.resolve(expandPath(startLocation));
+    if (existsSync(resolved) && statSync(resolved).isDirectory()) {
+      return [resolved];
     }
-  }
-
-  // Filter only those containing actual UUID conversation directories
-  const validBrainDirs = [];
-  for (const dir of candidateDirs) {
-    if (!existsSync(dir)) continue;
-    try {
-      const entries = readdirSync(dir, { withFileTypes: true });
-      if (entries.some((e) => e.isDirectory() && isUuidDir(e.name))) {
-        validBrainDirs.push(dir);
-      }
-    } catch {}
-  }
-
-  if (validBrainDirs.length === 0 && existsSync(resolved) && statSync(resolved).isDirectory()) {
-    return [resolved];
   }
   return validBrainDirs;
 }
 
 function discoverConversationDbFiles(startLocation) {
-  if (!startLocation) return [];
-  const resolved = path.resolve(expandPath(startLocation));
-  if (existsSync(resolved) && statSync(resolved).isFile()) {
-    if (resolved.endsWith(".db")) return [resolved];
-    return [];
+  if (startLocation) {
+    const resolved = path.resolve(expandPath(startLocation));
+    if (existsSync(resolved) && statSync(resolved).isFile() && resolved.endsWith(".db")) {
+      const metaP = resolved.replace(/\.db$/, ".meta");
+      if (isInternalSessionMeta(metaP) || !hasValidConversationSteps(resolved)) {
+        return [];
+      }
+      return [resolved];
+    }
   }
+  const roots = resolveCandidateRoots(startLocation);
   const dbFiles = new Set();
 
-  function scanDir(targetDir) {
-    if (!existsSync(targetDir)) return;
-    try {
-      const stat = statSync(targetDir);
-      if (!stat.isDirectory()) return;
-    } catch { return; }
-
+  for (const root of roots) {
+    const convDir = path.join(root, "conversations");
+    const targetDir = existsSync(convDir) ? convDir : root;
+    if (!existsSync(targetDir)) continue;
     try {
       const entries = readdirSync(targetDir, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.isFile() && entry.name.endsWith(".db")) {
           const baseName = entry.name.slice(0, -3);
           if (isUuidDir(baseName)) {
-            dbFiles.add(path.join(targetDir, entry.name));
-          }
-        } else if (entry.isDirectory()) {
-          if (entry.name === "conversations") {
-            scanDir(path.join(targetDir, "conversations"));
-          } else if (entry.name.toLowerCase().includes("antigravity")) {
-            scanDir(path.join(targetDir, entry.name));
+            const fullDbPath = path.join(targetDir, entry.name);
+            const metaP = path.join(targetDir, `${baseName}.meta`);
+            if (isInternalSessionMeta(metaP)) continue;
+            if (!hasValidConversationSteps(fullDbPath)) continue;
+            dbFiles.add(fullDbPath);
           }
         }
       }
     } catch {}
   }
-
-  scanDir(resolved);
-  const parent = path.dirname(resolved);
-  const grandParent = path.dirname(parent);
-  for (const ancestor of [parent, grandParent]) {
-    if (ancestor && ancestor !== "/" && ancestor !== path.dirname(ancestor)) {
-      scanDir(ancestor);
-    }
-  }
-
   return Array.from(dbFiles);
 }
 
@@ -1200,97 +1389,287 @@ function titleFromUserText(userText) {
   return `${firstLine.slice(0, 77)}...`;
 }
 
-function readSession() {
-  let location = expandPath(input.source?.location);
-  if (!location) return [];
-
-  // Determine if location points directly to a transcript file or sqlite db
+function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
+  if (!targetPath || !existsSync(targetPath)) return null;
+  const flavor = detectClientFlavor(targetPath);
   try {
-    const stat = statSync(location);
+    const stat = statSync(targetPath);
     if (stat.isFile()) {
-      if (location.endsWith(".db")) {
-        const externalId = path.basename(location, ".db");
+      if (targetPath.endsWith(".db")) {
+        const metaP = targetPath.replace(/\.db$/, ".meta");
+        if (isInternalSessionMeta(metaP) || !hasValidConversationSteps(targetPath)) return null;
+
+        const externalId = externalIdHint || path.basename(targetPath, ".db");
         emitProgress({
           stage: "parse",
           operation: "syncing_session_db",
-          path: `${externalId} (${path.basename(location)})`,
+          path: `${externalId} (${path.basename(targetPath)})`,
           current: 1,
           total: 1,
         });
-        const parsed = parseSqliteDb(location);
+        const parsed = parseSqliteDb(targetPath);
         const turns = displayTurns(parsed.turns);
-        if (!turns.length) return [];
-        return [applyTextBudgets(finalizeStructuredContentCards({
+        if (!turns.length) return null;
+        if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) {
+          return null;
+        }
+        return applyTextBudgets(finalizeStructuredContentCards({
           external_id: externalId,
           title: titleFromUserText(turns[0]?.user_text),
           project_path: parsed.projectPath ?? inferProjectPath(turns),
           started_at: turns[0]?.started_at ?? null,
           updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
-          source_locator: location,
+          source_locator: targetPath,
           source_fingerprint: sourceFingerprint(`${stat.size}:${stat.mtimeMs}`),
+          execution_origin: flavor,
           turns,
-        }))];
+        }));
       }
-      // Pointing to a transcript file directly
+
+      // Pointing to a transcript file directly (e.g. transcript.jsonl or transcript_full.jsonl)
       emitProgress({
         stage: "parse",
         operation: "parsing_transcript",
-        path: path.basename(location),
+        path: path.basename(targetPath),
         current: 1,
         total: 1,
       });
-      const text = readFileSync(location, "utf8");
+      const text = readFileSync(targetPath, "utf8");
       const parsed = parseTranscript(text);
       const turns = displayTurns(parsed.turns);
-      if (!turns.length) return [];
-      const externalId = path.basename(path.resolve(location, "../../..")) || "antigravity-session";
-      return [applyTextBudgets(finalizeStructuredContentCards({
+      if (!turns.length) return null;
+      if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) {
+        return null;
+      }
+      const externalId = externalIdHint || path.basename(path.resolve(targetPath, "../../..")) || "antigravity-session";
+      return applyTextBudgets(finalizeStructuredContentCards({
         external_id: externalId,
         title: titleFromUserText(turns[0]?.user_text),
         project_path: parsed.projectPath ?? inferProjectPath(turns),
         started_at: turns[0]?.started_at ?? null,
         updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
-        source_locator: location,
+        source_locator: targetPath,
         source_fingerprint: sourceFingerprint(text),
+        execution_origin: flavor,
         turns,
-      }))];
+      }));
     }
-  } catch {
-    return [];
+
+    // Check if targetPath is a conversation directory
+    const transcriptInDir = findTranscriptFile(targetPath);
+    if (transcriptInDir) {
+      const externalId = externalIdHint || path.basename(targetPath) || "antigravity-session";
+      emitProgress({
+        stage: "parse",
+        operation: "parsing_transcript",
+        path: `${externalId}/${path.basename(transcriptInDir)}`,
+        current: 1,
+        total: 1,
+      });
+      const text = readFileSync(transcriptInDir, "utf8");
+      const parsed = parseTranscript(text);
+      const turns = displayTurns(parsed.turns);
+      if (!turns.length) return null;
+      if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) {
+        return null;
+      }
+      return applyTextBudgets(finalizeStructuredContentCards({
+        external_id: externalId,
+        title: titleFromUserText(turns[0]?.user_text),
+        project_path: parsed.projectPath ?? inferProjectPath(turns),
+        started_at: turns[0]?.started_at ?? null,
+        updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
+        source_locator: transcriptInDir,
+        source_fingerprint: sourceFingerprint(text),
+        execution_origin: flavor,
+        turns,
+      }));
+    }
+  } catch {}
+  return null;
+}
+
+function listSessions() {
+  emitProgress({ stage: "reading", operation: "list_sessions" });
+  let location = expandPath(input.source?.location);
+  const roots = resolveCandidateRoots(location);
+  const seenExternalIds = new Set();
+  let count = 0;
+
+  for (const root of roots) {
+    const flavor = detectClientFlavor(root);
+    const sumDbPath = path.join(root, "conversation_summaries.db");
+
+    // 1. 尝试从 conversation_summaries.db 读取摘要
+    if (existsSync(sumDbPath)) {
+      let rows = [];
+      if (DatabaseSync) {
+        let db;
+        try {
+          db = new DatabaseSync(sumDbPath, { readOnly: true });
+          const stmt = db.prepare("SELECT conversation_id, title, last_modified_time FROM conversation_summaries;");
+          rows = stmt.all();
+        } catch {
+          rows = [];
+        } finally {
+          if (db) db.close();
+        }
+      } else {
+        try {
+          const raw = execFileSync("sqlite3", ["-json", sumDbPath, "SELECT conversation_id, title, last_modified_time FROM conversation_summaries;"], {
+            encoding: "utf8",
+            maxBuffer: 50 * 1024 * 1024,
+          });
+          rows = JSON.parse(raw || "[]");
+        } catch {
+          rows = [];
+        }
+      }
+
+      for (const row of rows) {
+        const id = row.conversation_id;
+        if (!id || seenExternalIds.has(id)) continue;
+        if (isSyntheticWorkOrderText(row.title)) continue;
+        seenExternalIds.add(id);
+
+        let locator = null;
+        const transcript = findTranscriptFile(path.join(root, "brain", id));
+        if (transcript) {
+          locator = transcript;
+        } else {
+          const dbF = path.join(root, "conversations", `${id}.db`);
+          if (existsSync(dbF)) locator = dbF;
+        }
+
+        const updatedAt = row.last_modified_time ? new Date(row.last_modified_time).toISOString() : new Date().toISOString();
+        const descriptor = {
+          external_id: id,
+          title: row.title || undefined,
+          updated_at: updatedAt,
+          source_locator: locator || undefined,
+          version_token: `summary-${row.last_modified_time || id}`,
+        };
+        emit("item", { item: { kind: "session_descriptor", ...descriptor } });
+        count++;
+      }
+    }
+
+    // 2. 从 brain/ 目录提取带 transcript 的会话
+    const brainDir = path.join(root, "brain");
+    if (existsSync(brainDir)) {
+      try {
+        for (const entry of readdirSync(brainDir, { withFileTypes: true })) {
+          if (!entry.isDirectory() || !isUuidDir(entry.name)) continue;
+          const id = entry.name;
+          if (seenExternalIds.has(id)) continue;
+          const transcript = findTranscriptFile(path.join(brainDir, id));
+          if (transcript) {
+            seenExternalIds.add(id);
+            const st = statSync(transcript);
+            const descriptor = {
+              external_id: id,
+              updated_at: st.mtime.toISOString(),
+              source_locator: transcript,
+              version_token: `${st.size}:${st.mtimeMs}`,
+            };
+            emit("item", { item: { kind: "session_descriptor", ...descriptor } });
+            count++;
+          }
+        }
+      } catch {}
+    }
+
+    // 3. 从 conversations/*.db 提取未被收录的会话（例如 ACP 会话）
+    const convDir = path.join(root, "conversations");
+    if (existsSync(convDir)) {
+      try {
+        for (const entry of readdirSync(convDir, { withFileTypes: true })) {
+          if (!entry.isFile() || !entry.name.endsWith(".db")) continue;
+          const id = entry.name.slice(0, -3);
+          if (!isUuidDir(id) || seenExternalIds.has(id)) continue;
+          const full = path.join(convDir, entry.name);
+          const metaP = path.join(convDir, `${id}.meta`);
+          if (isInternalSessionMeta(metaP)) continue;
+          if (!hasValidConversationSteps(full)) continue;
+
+          seenExternalIds.add(id);
+          const st = statSync(full);
+          const descriptor = {
+            external_id: id,
+            updated_at: st.mtime.toISOString(),
+            source_locator: full,
+            version_token: `${st.size}:${st.mtimeMs}`,
+          };
+          emit("item", { item: { kind: "session_descriptor", ...descriptor } });
+          count++;
+        }
+      } catch {}
+    }
   }
 
-  // Check if this is a single conversation dir (contains .system_generated)
-  const transcriptInDir = findTranscriptFile(location);
-  if (transcriptInDir) {
-    const externalId = path.basename(location) || "antigravity-session";
-    emitProgress({
-      stage: "parse",
-      operation: "parsing_transcript",
-      path: `${externalId}/transcript.jsonl`,
-      current: 1,
-      total: 1,
-    });
-    const text = readFileSync(transcriptInDir, "utf8");
-    const parsed = parseTranscript(text);
-    const turns = displayTurns(parsed.turns);
-    if (!turns.length) return [];
-    return [applyTextBudgets(finalizeStructuredContentCards({
-      external_id: externalId,
-      title: titleFromUserText(turns[0]?.user_text),
-      project_path: parsed.projectPath ?? inferProjectPath(turns),
-      started_at: turns[0]?.started_at ?? null,
-      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
-      source_locator: transcriptInDir,
-      source_fingerprint: sourceFingerprint(text),
-      turns,
-    }))];
+  emit("complete", { item: { snapshot_complete: true, session_count: count } });
+}
+
+function readSession(onSession = null) {
+  const requestedLocator = expandPath(input.params?.source_locator);
+  const requestedSessionId = input.params?.session_id ?? null;
+
+  // 1. 如果指定了 source_locator，优先直连定位解析
+  if (requestedLocator && existsSync(requestedLocator)) {
+    const single = parseSingleSessionFromTarget(requestedLocator, requestedSessionId);
+    if (single) {
+      if (onSession) onSession(single, 1, 1);
+      return [single];
+    }
   }
 
-  // Brain directories: enumerate conversation subdirectories across all discovered brain directories
+  let location = expandPath(input.source?.location);
+  const roots = resolveCandidateRoots(location);
+
+  // 2. 如果指定了 session_id，尝试快速候选探测（跨所有 candidate roots）
+  if (requestedSessionId) {
+    const candidates = [];
+    if (location) {
+      candidates.push(
+        path.join(location, "brain", requestedSessionId),
+        path.join(location, requestedSessionId),
+        path.join(location, "conversations", `${requestedSessionId}.db`),
+        path.join(location, `${requestedSessionId}.db`),
+      );
+    }
+    for (const root of roots) {
+      candidates.push(
+        path.join(root, "brain", requestedSessionId, ".system_generated", "logs", "transcript_full.jsonl"),
+        path.join(root, "brain", requestedSessionId, ".system_generated", "logs", "transcript.jsonl"),
+        path.join(root, "brain", requestedSessionId),
+        path.join(root, "conversations", `${requestedSessionId}.db`),
+      );
+    }
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        const single = parseSingleSessionFromTarget(candidate, requestedSessionId);
+        if (single) {
+          if (onSession) onSession(single, 1, 1);
+          return [single];
+        }
+      }
+    }
+  }
+
+  // 3. 判断 location 本身是否直接指向单条记录
+  if (location) {
+    const directSession = parseSingleSessionFromTarget(location, requestedSessionId);
+    if (directSession) {
+      if (onSession) onSession(directSession, 1, 1);
+      return [directSession];
+    }
+  }
+
+  // 4. 全量遍历发现的所有脑区与 DB
   emitProgress({
     stage: "scan",
-    operation: "discovering_brain_dirs",
-    path: path.basename(location),
+    operation: "discovering_sessions",
+    path: path.basename(location || "all_flavors"),
   });
   const brainDirs = discoverBrainDirs(location);
   const seenDirPaths = new Set();
@@ -1314,11 +1693,12 @@ function readSession() {
 
   for (const convDir of allConvDirs) {
     currentItemIdx += 1;
+    const externalId = path.basename(convDir);
+    if (requestedSessionId && externalId !== requestedSessionId) continue;
+    if (seenExternalIds.has(externalId)) continue;
+
     const transcriptPath = findTranscriptFile(convDir);
     if (!transcriptPath) continue;
-
-    const externalId = path.basename(convDir);
-    if (seenExternalIds.has(externalId)) continue;
 
     emitProgress({
       stage: "parse",
@@ -1337,9 +1717,10 @@ function readSession() {
     const parsed = parseTranscript(text);
     const turns = displayTurns(parsed.turns);
     if (!turns.length) continue;
+    if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) continue;
     seenExternalIds.add(externalId);
 
-    sessions.push(applyTextBudgets(finalizeStructuredContentCards({
+    const s = applyTextBudgets(finalizeStructuredContentCards({
       external_id: externalId,
       title: titleFromUserText(turns[0]?.user_text),
       project_path: parsed.projectPath ?? inferProjectPath(turns),
@@ -1347,14 +1728,21 @@ function readSession() {
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
       source_locator: transcriptPath,
       source_fingerprint: sourceFingerprint(text),
+      execution_origin: detectClientFlavor(transcriptPath),
       turns,
-    })));
+    }));
+    if (onSession) onSession(s, currentItemIdx, totalItems);
+    sessions.push(s);
+    if (requestedSessionId && externalId === requestedSessionId) {
+      return [s];
+    }
   }
 
   // Conversation DB files (e.g. Antigravity ACP or standalone sqlite conversations)
   for (const dbPath of dbFiles) {
     currentItemIdx += 1;
     const externalId = path.basename(dbPath, ".db");
+    if (requestedSessionId && externalId !== requestedSessionId) continue;
     if (seenExternalIds.has(externalId)) continue;
 
     emitProgress({
@@ -1369,9 +1757,10 @@ function readSession() {
       const parsed = parseSqliteDb(dbPath);
       const turns = displayTurns(parsed.turns);
       if (!turns.length) continue;
+      if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) continue;
       seenExternalIds.add(externalId);
       const stat = statSync(dbPath);
-      sessions.push(applyTextBudgets(finalizeStructuredContentCards({
+      const s = applyTextBudgets(finalizeStructuredContentCards({
         external_id: externalId,
         title: titleFromUserText(turns[0]?.user_text),
         project_path: parsed.projectPath ?? inferProjectPath(turns),
@@ -1379,8 +1768,14 @@ function readSession() {
         updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
         source_locator: dbPath,
         source_fingerprint: sourceFingerprint(`${stat.size}:${stat.mtimeMs}`),
+        execution_origin: detectClientFlavor(dbPath),
         turns,
-      })));
+      }));
+      if (onSession) onSession(s, currentItemIdx, totalItems);
+      sessions.push(s);
+      if (requestedSessionId && externalId === requestedSessionId) {
+        return [s];
+      }
     } catch {}
   }
 
@@ -1572,11 +1967,29 @@ function readUsage() {
       }
 
       const externalId = path.basename(dbPath, ".db");
-      const raw = execFileSync("sqlite3", ["-json", dbPath, "SELECT idx, hex(data) as hex_data, size FROM gen_metadata WHERE size > 0 ORDER BY idx ASC;"], {
-        encoding: "utf8",
-        maxBuffer: 50 * 1024 * 1024,
-      });
-      const rows = JSON.parse(raw || "[]");
+      let rows = [];
+      if (DatabaseSync) {
+        let db;
+        try {
+          db = new DatabaseSync(dbPath, { readOnly: true });
+          const stmt = db.prepare("SELECT idx, hex(data) as hex_data, size FROM gen_metadata WHERE size > 0 ORDER BY idx ASC;");
+          rows = stmt.all();
+        } catch {
+          rows = [];
+        } finally {
+          if (db) db.close();
+        }
+      } else {
+        try {
+          const raw = execFileSync("sqlite3", ["-json", dbPath, "SELECT idx, hex(data) as hex_data, size FROM gen_metadata WHERE size > 0 ORDER BY idx ASC;"], {
+            encoding: "utf8",
+            maxBuffer: 50 * 1024 * 1024,
+          });
+          rows = JSON.parse(raw || "[]");
+        } catch {
+          rows = [];
+        }
+      }
 
       for (const r of rows) {
         if (!r.hex_data) continue;
@@ -1659,24 +2072,26 @@ try {
     const projections = projectCommandParts(input.params?.parts ?? input.params?.command_parts);
     for (const projection of projections) emit("item", { item: { kind: "command_projection", ...projection } });
     emit("complete", { item: { projection_count: projections.length, projector_version: SHELL_PROJECTOR_VERSION } });
-  } else if (input.method === "probe" || input.method === "list_sessions") {
-    emitProgress({ stage: "reading", operation: "list_sessions" });
-    emit("complete", { item: { session_count: 0 } });
+  } else if (input.method === "list_sessions") {
+    listSessions();
+  } else if (input.method === "probe") {
+    emitProgress({ stage: "reading", operation: "probe" });
+    listSessions();
   } else if (input.method === "read_session") {
     emitProgress({ stage: "reading", operation: "read_session" });
-    const sessions = readSession();
-    for (let i = 0; i < sessions.length; i += 1) {
-      const session = sessions[i];
+    let emittedCount = 0;
+    readSession((session, current, total) => {
+      emittedCount += 1;
       emitProgress({
         stage: "reading",
         operation: "read_session",
-        current: i + 1,
-        total: sessions.length,
+        current,
+        total,
         path: session.external_id,
       });
       emit("item", { item: { kind: "session", session: finalizeStructuredContentCards(session) } });
-    }
-    emit("complete", { item: { session_count: sessions.length } });
+    });
+    emit("complete", { item: { session_count: emittedCount } });
   } else if (input.method === "read_usage") {
     emitProgress({ stage: "reading", operation: "read_usage" });
     readUsage();

@@ -142,7 +142,12 @@ pub(crate) async fn read_source_sessions_with_progress_listener(
     let mut legacy_cards_upgraded = 0usize;
     for (index, descriptor) in active.iter().enumerate() {
         super::external::ensure_read_not_cancelled(cancellation)?;
-        let read_result = reader.read(Some(&descriptor.external_id)).await;
+        let read_result = reader
+            .read_session(
+                Some(&descriptor.external_id),
+                descriptor.source_locator.as_deref(),
+            )
+            .await;
         on_progress(index + 1, active.len());
         super::external::ensure_read_not_cancelled(cancellation)?;
         match read_result {

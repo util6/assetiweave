@@ -1,0 +1,19 @@
+{
+  "id": "codebuddy",
+  "name": "CodeBuddy",
+  "app_kind_compat": "codebuddy",
+  "default_targets": [
+    {
+      "asset_kind": "skill",
+      "path": "~/.codebuddy/skills"
+    }
+  ],
+  "supported_kinds": [
+    "skill",
+    "prompt",
+    "rule",
+    "custom"
+  ],
+  "deployment_strategy": "symlink_to_source",
+  "icon": null
+}

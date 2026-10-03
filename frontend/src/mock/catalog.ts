@@ -582,6 +582,14 @@ export const fallbackAppShortcuts: AppShortcut[] = [
     accentColor: appShortcutIconAccentColors.hermes,
     enabled: false,
   },
+  {
+    profileId: "codebuddy",
+    profileName: "CodeBuddy",
+    appKind: "codebuddy",
+    displayIcon: "app:codebuddy",
+    accentColor: appShortcutIconAccentColors.codebuddy,
+    enabled: false,
+  },
 ];
 
 export const fallbackNavigationModel: NavigationModel = navigationModel;

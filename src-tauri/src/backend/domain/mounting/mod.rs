@@ -32,6 +32,8 @@ pub enum AppKind {
     Zcode,
     Qoder,
     Hermes,
+    #[serde(rename = "codebuddy", alias = "code_buddy")]
+    Codebuddy,
     Custom,
 }
 

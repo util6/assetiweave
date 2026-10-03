@@ -318,9 +318,6 @@ impl AppService {
 
                     match sync_result {
                         Ok(Some(result)) => {
-                            if !params.dry_run {
-                                self.runtime.notify_domain_events();
-                            }
                             group_results.push(result);
                         }
                         Ok(None) => {}
@@ -397,6 +394,10 @@ impl AppService {
                     return Err(error);
                 }
             }
+        }
+
+        if !params.dry_run && !results.is_empty() {
+            self.runtime.notify_domain_events();
         }
 
         if results.is_empty() && errors.is_empty() {

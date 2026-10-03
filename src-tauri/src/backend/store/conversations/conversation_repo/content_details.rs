@@ -150,7 +150,7 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
     let turn_rows = sqlx::query(AssertSqlSafe(format!(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
-               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at
+               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at, t.model
         FROM {question_turns} qt
         JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
         WHERE qt.tenant_id = ?1 AND qt.question_id = ?2

@@ -44,3 +44,22 @@ fn managed_shell_projector_runtime_is_refreshed_and_validated() {
     );
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn official_adapters_contain_codebuddy() {
+    assert!(is_official_adapter_id("codebuddy"));
+
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-codebuddy-test-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let synced = sync_official_adapter_to_package_dir("codebuddy", &root)
+        .expect("sync codebuddy official adapter");
+    assert!(synced);
+    assert!(root.join("adapter.mjs").exists());
+    assert!(root.join("conversation-adapter.json").exists());
+    assert!(root.join("conversation-adapter-package.json").exists());
+    assert!(root.join("payload-policy.mjs").exists());
+    assert!(root.join("shell-projector.cjs").exists());
+    let _ = fs::remove_dir_all(root);
+}

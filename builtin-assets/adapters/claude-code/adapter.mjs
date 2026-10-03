@@ -749,6 +749,46 @@ function readSession() {
   const location = expandPath(input.source?.location);
   if (!location || !existsSync(location)) return [];
   const requestedSessionId = input.params?.session_id ?? null;
+  const requestedLocator = input.params?.source_locator ? expandPath(input.params.source_locator) : null;
+
+  if (requestedLocator && existsSync(requestedLocator)) {
+    const { text, versionToken } = readStableFile(requestedLocator);
+    const parsed = parseJsonl(text);
+    const turns = displayTurns(parsed.turns);
+    if (!turns.length) return [];
+    return [{
+      external_id: path.basename(requestedLocator, ".jsonl") || "claude-session",
+      title: titleFromFile(requestedLocator),
+      project_path: parsed.projectPath ?? inferProjectPathFromTurns(turns),
+      started_at: turns[0]?.started_at ?? null,
+      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
+      source_locator: requestedLocator,
+      source_fingerprint: versionToken,
+      turns,
+    }];
+  }
+
+  if (requestedSessionId) {
+    const directCandidate = path.join(location, `${requestedSessionId}.jsonl`);
+    if (existsSync(directCandidate)) {
+      const { text, versionToken } = readStableFile(directCandidate);
+      const parsed = parseJsonl(text);
+      const turns = displayTurns(parsed.turns);
+      if (turns.length) {
+        return [{
+          external_id: String(requestedSessionId),
+          title: titleFromFile(directCandidate),
+          project_path: parsed.projectPath ?? inferProjectPathFromTurns(turns),
+          started_at: turns[0]?.started_at ?? null,
+          updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
+          source_locator: directCandidate,
+          source_fingerprint: versionToken,
+          turns,
+        }];
+      }
+    }
+  }
+
   return collectJsonlFiles(location).filter((filePath) =>
     !requestedSessionId || path.basename(filePath, ".jsonl") === String(requestedSessionId)
   ).flatMap((filePath) => {

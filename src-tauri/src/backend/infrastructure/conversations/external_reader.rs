@@ -16,6 +16,11 @@ pub(crate) struct ExternalAdapterSourceReader<'a> {
     source: &'a ConversationSource,
     invocation: AdapterCommandInvocation,
     content_hash: String,
+    cached_validation: ExternalAdapterValidationResult,
+    manifest_mtime: Option<std::time::SystemTime>,
+    manifest_len: u64,
+    executable_mtime: Option<std::time::SystemTime>,
+    executable_len: Option<u64>,
     source_value: Value,
     cancellation: Option<&'a tokio_util::sync::CancellationToken>,
     progress_listener: Option<ExternalAdapterProgressListener>,
@@ -51,11 +56,24 @@ impl<'a> ExternalAdapterSourceReader<'a> {
             "config": source_config_value(source)?,
         });
         let invocation = prepare_adapter_invocation(&validation, settings).await?;
+        let (manifest_mtime, manifest_len) = std::fs::metadata(&validation.manifest_path)
+            .ok()
+            .map(|m| (m.modified().ok(), m.len()))
+            .unwrap_or((None, 0));
+        let (executable_mtime, executable_len) = std::fs::metadata(&validation.executable_path)
+            .ok()
+            .map(|m| (m.modified().ok(), Some(m.len())))
+            .unwrap_or((None, None));
         Ok(Self {
             adapter,
             source,
             invocation,
-            content_hash: validation.content_hash,
+            content_hash: validation.content_hash.clone(),
+            cached_validation: validation,
+            manifest_mtime,
+            manifest_len,
+            executable_mtime,
+            executable_len,
             source_value,
             cancellation,
             progress_listener: None,
@@ -109,12 +127,20 @@ impl<'a> ExternalAdapterSourceReader<'a> {
         &self,
         session_id: Option<&str>,
     ) -> InfraResult<ExternalAdapterRunResult> {
-        self.run(
-            "read_session",
-            json!({"session_id": session_id}),
-            DEFAULT_READ_TIMEOUT_MS,
-        )
-        .await
+        self.read_session(session_id, None).await
+    }
+
+    pub(super) async fn read_session(
+        &self,
+        session_id: Option<&str>,
+        source_locator: Option<&str>,
+    ) -> InfraResult<ExternalAdapterRunResult> {
+        let mut params = json!({"session_id": session_id});
+        if let Some(locator) = source_locator {
+            params["source_locator"] = json!(locator);
+        }
+        self.run("read_session", params, DEFAULT_READ_TIMEOUT_MS)
+            .await
     }
 
     pub(crate) async fn run(
@@ -125,14 +151,33 @@ impl<'a> ExternalAdapterSourceReader<'a> {
     ) -> InfraResult<ExternalAdapterRunResult> {
         ensure_read_not_cancelled(self.cancellation)?;
         validate_external_adapter_for_method(self.adapter, self.source, method)?;
-        let validation =
-            validate_external_adapter_manifest(self.adapter.manifest_path.as_deref().unwrap())?;
-        validate_external_adapter_manifest_for_method(self.adapter, &validation, method)?;
-        if validation.content_hash != self.content_hash {
-            return Err(InfraError::Conflict(
-                "conversation adapter changed during sync".to_string(),
-            ));
-        }
+        let is_modified = {
+            let curr_manifest = std::fs::metadata(&self.cached_validation.manifest_path).ok();
+            let curr_manifest_mtime = curr_manifest.as_ref().and_then(|m| m.modified().ok());
+            let curr_manifest_len = curr_manifest.as_ref().map(|m| m.len()).unwrap_or(0);
+
+            let curr_exec = std::fs::metadata(&self.cached_validation.executable_path).ok();
+            let curr_exec_mtime = curr_exec.as_ref().and_then(|m| m.modified().ok());
+            let curr_exec_len = curr_exec.as_ref().map(|m| m.len());
+
+            curr_manifest_mtime != self.manifest_mtime
+                || curr_manifest_len != self.manifest_len
+                || curr_exec_mtime != self.executable_mtime
+                || curr_exec_len != self.executable_len
+        };
+        let validation = if is_modified {
+            let revalidated =
+                validate_external_adapter_manifest(self.adapter.manifest_path.as_deref().unwrap())?;
+            validate_external_adapter_manifest_for_method(self.adapter, &revalidated, method)?;
+            if revalidated.content_hash != self.content_hash {
+                return Err(InfraError::Conflict(
+                    "conversation adapter changed during sync".to_string(),
+                ));
+            }
+            revalidated
+        } else {
+            self.cached_validation.clone()
+        };
         run_prepared_adapter(
             &validation,
             &self.invocation,

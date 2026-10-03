@@ -43,7 +43,7 @@ impl AppService {
         }
 
         let recent_failures: Vec<Option<String>> = sqlx::query_scalar(
-            "SELECT last_error FROM session_memory_jobs WHERE tenant_id = ?1 AND status = 'failed' AND retry_at IS NOT NULL AND updated_at >= ?2 AND last_error IS NOT NULL ORDER BY updated_at DESC LIMIT 3",
+            "SELECT last_error FROM session_memory_jobs WHERE tenant_id = ?1 AND status = 'failed' AND retry_at IS NOT NULL AND updated_at >= ?2 AND last_error IS NOT NULL AND last_error NOT IN ('lease_expired', 'session_memory_persist_failed') ORDER BY updated_at DESC LIMIT 3",
         )
         .bind(tenant_id)
         .bind(&one_hour_ago)

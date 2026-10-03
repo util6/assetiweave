@@ -375,6 +375,69 @@ describe("MarkdownContent", () => {
     expect(groups[1].turnCount).toBe(7);
   });
 
+  it("merges codebuddy and workbuddy into a single unified codebuddy app group with combined sessions", () => {
+    const mixedAdapters = [
+      {
+        id: "codebuddy",
+        name: "CodeBuddy",
+        kind: "external" as const,
+        version: "1.1.0",
+        enabled: true,
+        trust_state: "built_in" as const,
+        capabilities: ["read_session" as const],
+        input_kinds: ["directory" as const],
+        created_at: "2026-10-03T00:00:00Z",
+        updated_at: "2026-10-03T00:00:00Z",
+        card_kinds: [],
+      },
+      {
+        id: "workbuddy",
+        name: "WorkBuddy",
+        kind: "external" as const,
+        version: "1.1.0",
+        enabled: true,
+        trust_state: "built_in" as const,
+        capabilities: ["read_session" as const],
+        input_kinds: ["directory" as const],
+        created_at: "2026-10-03T00:00:00Z",
+        updated_at: "2026-10-03T00:00:00Z",
+        card_kinds: [],
+      },
+    ];
+
+    const groups = groupConversationSessionsByApp(mixedAdapters, [
+      {
+        ...sessionDetail.session,
+        id: "cb-cli-1",
+        adapter_id: "codebuddy",
+        execution_origin: "codebuddy-cli",
+        question_count: 1,
+        turn_count: 2,
+      },
+      {
+        ...sessionDetail.session,
+        id: "wb-gui-1",
+        adapter_id: "workbuddy",
+        execution_origin: "workbuddy",
+        question_count: 3,
+        turn_count: 4,
+      },
+    ]);
+
+    expect(groups.length).toBe(1);
+    expect(groups[0].app).toEqual({
+      appKind: "codebuddy",
+      id: "codebuddy",
+      name: "CodeBuddy",
+    });
+    expect(groups[0].sessions.map((s) => s.id)).toEqual([
+      "cb-cli-1",
+      "wb-gui-1",
+    ]);
+    expect(groups[0].questionCount).toBe(4);
+    expect(groups[0].turnCount).toBe(6);
+  });
+
   it("filters unmatched orphan sessions according to recordKind", () => {
     const groups = groupConversationSessionsByApp(
       [],

@@ -2079,6 +2079,22 @@ const fallbackAdapters: ConversationAdapter[] = [
     updated_at: now,
   },
   {
+    id: "codebuddy",
+    name: "CodeBuddy",
+    kind: "external",
+    version: "1.1.0",
+    enabled: true,
+    manifest_path:
+      "~/.assetiweave/conversation-adapters/codebuddy/conversation-adapter.json",
+    executable_path:
+      "~/.assetiweave/conversation-adapters/codebuddy/adapter.mjs",
+    trust_state: "built_in",
+    capabilities: ["probe", "list_sessions", "read_session"],
+    input_kinds: ["live", "directory", "file", "sqlite"],
+    created_at: now,
+    updated_at: now,
+  },
+  {
     id: "qwen-web",
     name: "Qwen Web",
     kind: "external",
@@ -2204,6 +2220,24 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       source: {
         type: "github",
         url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code",
+      },
+    },
+    {
+      id: "codebuddy-session",
+      name: "CodeBuddy Session Parser",
+      version: repositoryCatalogVersion("codebuddy", "1.1.0"),
+      record_kind: "session",
+      provider: "codebuddy",
+      adapter_id: "codebuddy",
+      description:
+        "Reads CodeBuddy CLI and WorkBuddy GUI conversations, exporting normalized turns.",
+      repository_url: "https://github.com/util6/assetiweave",
+      tags: ["session", "codebuddy", "workbuddy", "sqlite", "node"],
+      expected_package_hash: "",
+      expected_content_hash: "",
+      source: {
+        type: "github",
+        url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codebuddy",
       },
     },
     {
