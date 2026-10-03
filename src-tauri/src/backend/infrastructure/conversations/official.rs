@@ -95,10 +95,22 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
     },
 ];
 
-fn should_refresh_official_adapter(manifest_path: &Path, bundled_manifest_text: &str) -> bool {
+fn should_refresh_official_adapter(
+    manifest_path: &Path,
+    bundled_manifest_text: &str,
+    target_dir: &Path,
+    bundled_script: &str,
+) -> bool {
     let Ok(existing_text) = fs::read_to_string(manifest_path) else {
         return true;
     };
+    let script_path = target_dir.join("adapter.mjs");
+    let Ok(existing_script) = fs::read_to_string(&script_path) else {
+        return true;
+    };
+    if existing_script != bundled_script {
+        return true;
+    }
     let Ok(existing): Result<serde_json::Value, _> = serde_json::from_str(&existing_text) else {
         return true;
     };
@@ -142,7 +154,12 @@ pub(crate) fn sync_official_adapter_to_package_dir(
         return Ok(false);
     };
     let target_manifest = target_dir.join("conversation-adapter.json");
-    if !should_refresh_official_adapter(&target_manifest, asset.manifest_text) {
+    if !should_refresh_official_adapter(
+        &target_manifest,
+        asset.manifest_text,
+        target_dir,
+        asset.script,
+    ) {
         return Ok(false);
     }
     fs::create_dir_all(target_dir)?;
@@ -179,7 +196,12 @@ pub(crate) fn ensure_official_conversation_adapters() -> InfraResult<Vec<Convers
             InfraError::Validation("official adapter manifest has no parent directory".to_string())
         })?;
         fs::create_dir_all(adapter_dir)?;
-        let refresh = should_refresh_official_adapter(&manifest_path, asset.manifest_text);
+        let refresh = should_refresh_official_adapter(
+            &manifest_path,
+            asset.manifest_text,
+            adapter_dir,
+            asset.script,
+        );
         let write_fn = if refresh {
             write_managed_runtime_file
         } else {

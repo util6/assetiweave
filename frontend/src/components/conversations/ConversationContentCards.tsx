@@ -886,9 +886,8 @@ function ConversationContentCard({
   const renderer = block.renderer ?? legacyRenderer(block.type, block.format);
   const { definitions } = useConversationCardKindRegistry();
   const definition =
-    block.kind && block.kind === block.type
-      ? definitions.get(block.kind)
-      : undefined;
+    (block.kind ? definitions.get(block.kind) : undefined) ??
+    (block.type ? definitions.get(block.type) : undefined);
   const label = definition?.label ?? conversationCardLabel(block.type, t);
   const role = t(`conversation.part.role.${block.role}` as TranslationKey);
   const accentColor = conversationCardColor(block.type, colors, definition?.semantic_role);
@@ -958,14 +957,22 @@ function ConversationContentCard({
           ) : (
             <ConversationCardKindIcon
               iconHint={definition?.icon_hint}
-              kind={block.type}
+              kind={block.kind ?? block.type}
               renderer={renderer}
             />
           )}
           <span>{label}</span>
+          {block.toolName ? (
+            <span
+              className="inline-flex items-center rounded-full border border-inherit bg-theme-control/80 px-2 py-0.5 font-mono text-label-caps text-on-surface-variant"
+              title={block.toolName}
+            >
+              {block.toolName}
+            </span>
+          ) : null}
           {block.commandLabel ? (
             <span
-              className="max-w-48 truncate rounded-sm border border-status-create/55 bg-status-create/10 px-2 py-0.5 text-label-caps text-status-create"
+              className="max-w-48 truncate rounded-full border border-status-create/55 bg-status-create/10 px-2.5 py-0.5 text-label-caps text-status-create"
               data-command-label={block.commandLabel}
               title={block.commandLabel}
             >
@@ -973,14 +980,14 @@ function ConversationContentCard({
             </span>
           ) : null}
           {block.type === "command" && block.exitCode != null ? (
-            <span className="rounded-sm border border-inherit bg-theme-card/45 px-2 py-0.5 font-mono text-code-sm normal-case text-on-surface-variant">
+            <span className="rounded-full border border-inherit bg-theme-card/45 px-2 py-0.5 font-mono text-code-sm normal-case text-on-surface-variant">
               {t("conversation.content.exitCode", { code: block.exitCode })}
             </span>
           ) : null}
         </div>
         <div className="flex items-center gap-1.5 text-label-caps">
           <span
-            className="select-text rounded-md border border-inherit bg-theme-card/45 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
+            className="select-text rounded-full border border-inherit bg-theme-card/45 px-2 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
             title={block.partId ?? block.id}
           >
             {conversationIdFragment(block.partId ?? block.id)}

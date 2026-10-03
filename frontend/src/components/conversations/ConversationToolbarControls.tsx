@@ -59,9 +59,14 @@ export function ConversationBackgroundTaskIndicator({
 
 const contentFilterOptions: ConversationContentType[] = [
   "answer",
+  "reasoning",
   "command",
   "result",
+  "file-change",
+  "file_change",
   "tool",
+  "subagent",
+  "skill",
   "ambient",
   "code",
 ];

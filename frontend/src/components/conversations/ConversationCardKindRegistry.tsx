@@ -143,6 +143,9 @@ const iconHints: Record<string, LucideIcon> = {
   "subagent-tree": GitFork,
   subagent_tree: GitFork,
   accordion: ListCollapse,
+  diff: GitCompareArrows,
+  "file-change": GitCompareArrows,
+  skill: BookOpen,
 };
 
 const rendererIcons: Record<ConversationCardRenderer, LucideIcon> = {
@@ -166,6 +169,11 @@ const builtInKindIconHints: Record<string, keyof typeof iconHints> = {
   code: "code",
   result: "result",
   subagent: "subagent",
+  "file-change": "file-change",
+  file_change: "file-change",
+  reasoning: "brain",
+  skill: "skill",
+  "skill-content": "skill",
 };
 
 export function ConversationCardKindIcon({
