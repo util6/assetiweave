@@ -1812,7 +1812,9 @@ function createBlock(
         if (!filePath && typeof meta.file_path === "string") filePath = meta.file_path;
         if (!toolName && typeof meta.tool_name === "string") toolName = meta.tool_name;
       }
-    } catch {}
+    } catch {
+      // Ignore JSON parse error in non-critical metadata inspection
+    }
   }
 
   return [

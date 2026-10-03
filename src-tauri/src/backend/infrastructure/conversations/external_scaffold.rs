@@ -54,6 +54,7 @@ pub(crate) fn scaffold_external_adapter(
             ConversationSourceKind::File,
         ],
         card_contract_version: None,
+        projection_version: Some(1),
         card_kinds: Vec::new(),
     };
     fs::write(

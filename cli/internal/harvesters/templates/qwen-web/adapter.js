@@ -65,13 +65,13 @@ try {
   process.exit(0);
 }
 
-const sessions = Array.isArray(payload.sessions)
-  ? payload.sessions.map(normalizeSessionCards).filter(Boolean)
-  : [];
-for (const session of sessions) {
-  session.source_fingerprint = sessionVersionToken(session);
-}
+const rawSessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+
 if (request.method === "list_sessions") {
+  const sessions = rawSessions.map(normalizeSessionCards).filter(Boolean);
+  for (const session of sessions) {
+    session.source_fingerprint = sessionVersionToken(session);
+  }
   emitProgress({ stage: "reading", operation: "list_sessions" });
   for (let i = 0; i < sessions.length; i += 1) {
     const session = sessions[i];
@@ -94,9 +94,22 @@ if (request.method !== "read_session") {
   process.exit(0);
 }
 const requestedSessionID = request.params && request.params.session_id;
-const selectedSessions = requestedSessionID
-  ? sessions.filter((session) => String(session.external_id) === String(requestedSessionID))
-  : sessions;
+let selectedSessions = [];
+if (requestedSessionID) {
+  const raw = rawSessions.find((s) => String(s.external_id) === String(requestedSessionID));
+  if (raw) {
+    const normalized = normalizeSessionCards(raw);
+    if (normalized) {
+      normalized.source_fingerprint = sessionVersionToken(normalized);
+      selectedSessions = [normalized];
+    }
+  }
+} else {
+  selectedSessions = rawSessions.map(normalizeSessionCards).filter(Boolean);
+  for (const session of selectedSessions) {
+    session.source_fingerprint = sessionVersionToken(session);
+  }
+}
 emitProgress({ stage: "reading", operation: "read_session" });
 for (let i = 0; i < selectedSessions.length; i += 1) {
   const session = selectedSessions[i];

@@ -4,7 +4,7 @@ pub(super) const LIST_CONVERSATION_ADAPTERS_SQL: &str = r#"
     SELECT id, name, kind, version, enabled, manifest_path, executable_path,
            content_hash, trusted_hash, trust_state, protocol_version,
            capabilities, input_kinds, card_contract_version, card_kinds_json,
-           created_at, updated_at
+           projection_version, created_at, updated_at
     FROM conversation_adapters
     WHERE tenant_id = ?1
     ORDER BY kind ASC, name ASC
@@ -14,7 +14,7 @@ pub(super) const LOAD_CONVERSATION_ADAPTER_SQL: &str = r#"
     SELECT id, name, kind, version, enabled, manifest_path, executable_path,
            content_hash, trusted_hash, trust_state, protocol_version,
            capabilities, input_kinds, card_contract_version, card_kinds_json,
-           created_at, updated_at
+           projection_version, created_at, updated_at
     FROM conversation_adapters
     WHERE tenant_id = ?1 AND id = ?2
     "#;
@@ -24,9 +24,9 @@ pub(super) const UPSERT_CONVERSATION_ADAPTER_SQL: &str = r#"
         tenant_id, id, name, kind, version, enabled, manifest_path, executable_path,
         content_hash, trusted_hash, trust_state, protocol_version,
         capabilities, input_kinds, card_contract_version, card_kinds_json,
-        created_at, updated_at
+        projection_version, created_at, updated_at
     )
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
     ON CONFLICT(tenant_id, id) DO UPDATE SET
         name = excluded.name,
         kind = excluded.kind,
@@ -42,6 +42,7 @@ pub(super) const UPSERT_CONVERSATION_ADAPTER_SQL: &str = r#"
         input_kinds = excluded.input_kinds,
         card_contract_version = excluded.card_contract_version,
         card_kinds_json = excluded.card_kinds_json,
+        projection_version = excluded.projection_version,
         updated_at = excluded.updated_at
     "#;
 

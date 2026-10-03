@@ -351,6 +351,11 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
+        canonical_method: "conversation.session.reproject",
+        tauri_command: Some("replay_conversation_session_projection"),
+        note: None,
+    },
+    SurfaceMapping {
         canonical_method: "conversation.source.add",
         tauri_command: Some("upsert_conversation_source"),
         note: None,

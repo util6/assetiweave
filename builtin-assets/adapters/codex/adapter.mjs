@@ -1785,6 +1785,9 @@ function sessionRows({ sessionId = null, includeTitle = true } = {}) {
         : "0";
 
   const filters = [];
+  if (threadSourceCol || sourceCol) {
+    filters.push(`NOT (${isSubagentExpr})`);
+  }
   if (sessionId != null) {
     filters.push(`${quoteIdent(idCol)} = ${quoteSqlString(sessionId)}`);
   }

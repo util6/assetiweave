@@ -109,6 +109,7 @@ fn adapter(id: &str, version: &str) -> ConversationAdapter {
         input_kinds: Vec::new(),
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     }

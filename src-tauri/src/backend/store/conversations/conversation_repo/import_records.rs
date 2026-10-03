@@ -395,12 +395,53 @@ pub(super) async fn replace_conversation_parts_sqlx_tx(
         .into_iter()
         .filter(|id| !incoming_ids.contains(id))
     {
+        sqlx::query("DELETE FROM conversation_part_links WHERE tenant_id = ?1 AND part_id = ?2")
+            .bind(tenant_id)
+            .bind(&stale_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(StoreError::external)?;
         sqlx::query("DELETE FROM conversation_parts WHERE tenant_id = ?1 AND id = ?2")
             .bind(tenant_id)
             .bind(stale_id)
             .execute(&mut **tx)
             .await
             .map_err(StoreError::external)?;
+    }
+    sqlx::query(
+        r#"
+        DELETE FROM conversation_part_links
+        WHERE tenant_id = ?1 AND part_id IN (
+            SELECT id FROM conversation_parts WHERE tenant_id = ?1 AND turn_id = ?2
+        )
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(turn_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+    let links = extract_part_links_for_turn(turn_id, parts);
+    for link in links {
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_part_links (
+                tenant_id, part_id, relation, target_kind, target_id, metadata_json
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(tenant_id, part_id, relation, target_id) DO UPDATE SET
+                metadata_json = excluded.metadata_json
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(&link.part_id)
+        .bind(&link.relation)
+        .bind(&link.target_kind)
+        .bind(&link.target_id)
+        .bind(&link.metadata_json)
+        .execute(&mut **tx)
+        .await
+        .map_err(StoreError::external)?;
     }
     Ok(())
 }

@@ -17,6 +17,7 @@ pub(super) struct ConversationAdapterRow {
     input_kinds: String,
     card_contract_version: Option<i64>,
     card_kinds_json: String,
+    projection_version: Option<i64>,
     created_at: String,
     updated_at: String,
 }
@@ -38,6 +39,14 @@ impl ConversationAdapterRow {
                 })
             })
             .transpose()?;
+        let projection_version = self
+            .projection_version
+            .map(|value| {
+                u32::try_from(value).map_err(|_| {
+                    StoreError::external(format!("invalid projection_version: {value}"))
+                })
+            })
+            .transpose()?;
         Ok(ConversationAdapter {
             id: self.id,
             name: self.name,
@@ -54,6 +63,7 @@ impl ConversationAdapterRow {
             input_kinds: decode_json(self.input_kinds)?,
             card_contract_version,
             card_kinds: decode_json(self.card_kinds_json)?,
+            projection_version,
             created_at: self.created_at,
             updated_at: self.updated_at,
         })

@@ -310,6 +310,97 @@ impl AppService {
         self.search_conversation_records_with_recent_deltas(params, None)
             .await
     }
+
+    pub(crate) async fn replay_conversation_session_projection(
+        &self,
+        session_id: &str,
+    ) -> AppResult<crate::backend::domain::conversations::ConversationSessionDetail> {
+        let pool = self.pool();
+        let tenant_id = self.tenant_id();
+        let resolved_id = crate::backend::store::resolve_conversation_session_id_prefix_sqlx(
+            pool, tenant_id, session_id,
+        )
+        .await?;
+
+        let detail = crate::backend::store::load_conversation_session_detail_sqlx(
+            pool,
+            tenant_id,
+            &resolved_id,
+        )
+        .await
+        .map_err(AppError::external)?;
+
+        let source = crate::backend::store::load_conversation_source_sqlx(
+            pool,
+            tenant_id,
+            &detail.session.source_id,
+        )
+        .await?
+        .ok_or_else(|| {
+            AppError::NotFound(format!(
+                "conversation source '{}' not found",
+                detail.session.source_id
+            ))
+        })?;
+
+        let adapter = crate::backend::store::load_conversation_adapter_sqlx(
+            pool,
+            tenant_id,
+            &source.adapter_id,
+        )
+        .await?;
+
+        let adapter_ref = adapter.as_ref().ok_or_else(|| {
+            AppError::NotFound(format!(
+                "conversation adapter '{}' not found for source '{}'",
+                source.adapter_id, source.id
+            ))
+        })?;
+
+        let settings = self.app_settings_value();
+        let read_result =
+            crate::backend::infrastructure::conversations::run_external_adapter_read_session(
+                adapter_ref,
+                &source,
+                Some(&detail.session.external_id),
+                &settings,
+            )
+            .await
+            .map_err(|e| AppError::External(e.to_string()))?;
+
+        let normalized = read_result
+            .sessions
+            .into_iter()
+            .find(|s| s.external_id == detail.session.external_id)
+            .ok_or_else(|| {
+                AppError::NotFound(format!(
+                    "session '{}' not found in adapter source output",
+                    detail.session.external_id
+                ))
+            })?;
+
+        let adapter_content_hash = adapter_ref.content_hash.clone();
+        let card_contract_version = adapter_ref.card_contract_version;
+        let payload_policy_version =
+            crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION;
+        let projection_version = adapter_ref.projection_version;
+
+        crate::backend::store::reproject_conversation_session_sqlx(
+            pool,
+            tenant_id,
+            &source,
+            &normalized,
+            adapter_content_hash.as_deref(),
+            card_contract_version,
+            payload_policy_version,
+            projection_version,
+        )
+        .await?;
+
+        crate::backend::store::load_conversation_session_detail_sqlx(pool, tenant_id, &resolved_id)
+            .await
+            .map_err(AppError::external)
+    }
 }
 
 #[cfg(test)]

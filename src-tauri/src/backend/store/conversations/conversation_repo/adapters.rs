@@ -72,6 +72,7 @@ where
         .bind(encode_json(&adapter.input_kinds)?)
         .bind(adapter.card_contract_version.map(i64::from))
         .bind(encode_json(&adapter.card_kinds)?)
+        .bind(adapter.projection_version.map(i64::from))
         .bind(&adapter.created_at)
         .bind(&adapter.updated_at)
         .execute(executor)

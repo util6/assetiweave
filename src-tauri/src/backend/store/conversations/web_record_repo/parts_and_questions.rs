@@ -49,6 +49,41 @@ pub(crate) async fn insert_web_record_parts_sqlx_tx(
         .await
         .map_err(StoreError::external)?;
     }
+    sqlx::query(
+        r#"
+        DELETE FROM web_record_part_links
+        WHERE tenant_id = ?1 AND part_id IN (
+            SELECT id FROM web_record_parts WHERE tenant_id = ?1 AND turn_id = ?2
+        )
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(turn_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+    let links = crate::backend::store::extract_part_links_for_turn(turn_id, parts);
+    for link in links {
+        sqlx::query(
+            r#"
+            INSERT INTO web_record_part_links (
+                tenant_id, part_id, relation, target_kind, target_id, metadata_json
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(tenant_id, part_id, relation, target_id) DO UPDATE SET
+                metadata_json = excluded.metadata_json
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(&link.part_id)
+        .bind(&link.relation)
+        .bind(&link.target_kind)
+        .bind(&link.target_id)
+        .bind(&link.metadata_json)
+        .execute(&mut **tx)
+        .await
+        .map_err(StoreError::external)?;
+    }
     Ok(())
 }
 

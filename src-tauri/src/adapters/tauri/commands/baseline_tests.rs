@@ -11,12 +11,12 @@ fn load_baseline_commands() -> BTreeSet<&'static str> {
 }
 
 #[test]
-fn baseline_contains_exactly_191_unique_commands() {
+fn baseline_contains_exactly_192_unique_commands() {
     let baseline = load_baseline_commands();
     assert_eq!(
         baseline.len(),
-        191,
-        "Baseline commands count should be exactly 191"
+        192,
+        "Baseline commands count should be exactly 192"
     );
 }
 
@@ -57,7 +57,7 @@ fn commands_mod_handler_matches_baseline_commands() {
     );
     assert_eq!(
         registered_commands.len(),
-        191,
-        "Total registered commands in commands.rs should be exactly 191"
+        192,
+        "Total registered commands in commands.rs should be exactly 192"
     );
 }

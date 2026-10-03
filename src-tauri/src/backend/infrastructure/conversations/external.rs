@@ -304,6 +304,7 @@ pub(crate) async fn register_external_adapter_with_settings(
         input_kinds: validation.manifest.input_kinds.clone(),
         card_contract_version: validation.manifest.card_contract_version,
         card_kinds: validation.manifest.card_kinds.clone(),
+        projection_version: validation.manifest.projection_version,
         created_at: now.clone(),
         updated_at: now,
     };

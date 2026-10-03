@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-09-28T00:00:00Z",
+  "updated_at": "2026-10-03T00:00:00Z",
   "items": [
     {
       "id": "io.github.util6.codex-session",
@@ -16,7 +16,7 @@
         "codex",
         "node"
       ],
-      "expected_package_hash": "acbdbe385670b60b868ff36b06ac752a792f91481fed2178e974b188a19e8920",
+      "expected_package_hash": "a0277174ecc774b60ae7d8431c503bf38d6dd17d5cafb8327b40e2df349d9d1b",
       "expected_content_hash": "51053c265f4a4c158e2ac6a7f2f0671203e7001452f83b39a2694b832d4bdcc8",
       "source": {
         "type": "github",
@@ -38,7 +38,7 @@
         "sqlite",
         "node"
       ],
-      "expected_package_hash": "d0528ff4bac1427959cb4cf572feeef98aa039dea56c0f4d704c81b797c23bdf",
+      "expected_package_hash": "351e0be964252b8c44cac5a401b6ebfdae6891efecf3bddcdc527d494307e40f",
       "expected_content_hash": "c5a17ca30a1cce031528ecea7ed0bfa51ad1d748f098de44a394dac2c1d4e3b5",
       "source": {
         "type": "github",
@@ -59,7 +59,7 @@
         "claude-code",
         "node"
       ],
-      "expected_package_hash": "a5193267892d73b4bda699f6b6407c624ef654b615e1151878d751dea6d12c7d",
+      "expected_package_hash": "e161c8f363444c38ff4168dba8b8e740fceef677160b34e7d0fc814ad296f902",
       "expected_content_hash": "17aff181d7013a2f4dd696d582707ec0448aaf8e42db9aa0c71a7b15919553be",
       "source": {
         "type": "github",
@@ -81,7 +81,7 @@
         "sqlite",
         "node"
       ],
-      "expected_package_hash": "47127e3d5e0ec52bdef441fb6715a781e326a27e67dc63d8fe9ba0f562b71640",
+      "expected_package_hash": "608425108634989e9eb3104b2a60c26d6cb511cf3e7ce6dcb5c4d420b7e23967",
       "expected_content_hash": "fa7e1b0c5641bc9315d7e969d7b864ef4085a6cdc2301d9ec2d2e588c8fea49d",
       "source": {
         "type": "github",
@@ -103,7 +103,7 @@
         "node",
         "browser-cookie-auth"
       ],
-      "expected_package_hash": "8b43d11be7703805dfd07e737ba9892209832dc0e1bf0290f0932829236b17ca",
+      "expected_package_hash": "7d069bb22a08c5f77d7821f5c4dc92430263af503a12b5da6105cbf187f72526",
       "expected_content_hash": "4b8898eedf120ab640cc5cc6db7a03fb3ec8a1cf8a3f370cdd17c9a9a51a2ab1",
       "source": {
         "type": "github",
@@ -125,7 +125,7 @@
         "node",
         "browser-cookie-auth"
       ],
-      "expected_package_hash": "6de4ebf59dd9bd45bd5ed58cf3ee43d9bc5a5273c5448c69117f755e7b4a05e5",
+      "expected_package_hash": "a41216c29deb31be655afc707d09911520e3664f58aa98693a593902838cd58d",
       "expected_content_hash": "02b0159b1b8458dee17cbadb617c8ba9e4939211629d9223cc91c711a583b62f",
       "source": {
         "type": "github",
@@ -147,7 +147,7 @@
         "node",
         "browser-cookie-auth"
       ],
-      "expected_package_hash": "24b40821791bfc5b0daf02b7cf7019080740003801cd10a64a4145d901c77ca7",
+      "expected_package_hash": "60bd8b70ae673cd5bf99dcd912b35780850e7c62fe31bc22a9e71d32e0f4e8dc",
       "expected_content_hash": "1d456c5f66703228492755d295555b3f3c12b17caf0ab3308f274617c8ffa365",
       "source": {
         "type": "github",

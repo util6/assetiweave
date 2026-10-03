@@ -8,6 +8,7 @@ pub(crate) async fn load_conversation_session_versions_sqlx(
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
     payload_policy_version: u32,
+    projection_version: Option<u32>,
 ) -> StoreResult<std::collections::BTreeMap<String, String>> {
     let kind_str = match record_kind {
         ConversationRecordKind::Session => "session",
@@ -23,6 +24,7 @@ pub(crate) async fn load_conversation_session_versions_sqlx(
           AND COALESCE(hydrated_adapter_hash, '') = COALESCE(?4, '')
           AND COALESCE(hydrated_card_contract_version, 0) = COALESCE(?5, 0)
           AND COALESCE(hydrated_payload_policy_version, 0) = ?6
+          AND COALESCE(hydrated_projection_version, 0) = COALESCE(?7, 0)
         "#,
     )
     .bind(tenant_id)
@@ -31,6 +33,7 @@ pub(crate) async fn load_conversation_session_versions_sqlx(
     .bind(adapter_content_hash)
     .bind(card_contract_version.map(i64::from))
     .bind(i64::from(payload_policy_version))
+    .bind(projection_version.map(i64::from))
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
@@ -184,6 +187,7 @@ pub(crate) async fn upsert_single_session_observation_clean_sqlx_tx(
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
     payload_policy_version: u32,
+    projection_version: Option<u32>,
 ) -> StoreResult<()> {
     sqlx::query(
         r#"
@@ -191,10 +195,10 @@ pub(crate) async fn upsert_single_session_observation_clean_sqlx_tx(
             tenant_id, source_id, record_kind, external_id, observed_version,
             hydrated_version, last_seen_at, source_presence, dirty,
             hydrated_adapter_hash, hydrated_card_contract_version,
-            hydrated_payload_policy_version,
+            hydrated_payload_policy_version, hydrated_projection_version,
             error_code, error_message, error_stage, retryable,
             attempt_count, last_attempt_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, 'present', 0, ?7, ?8, ?9, NULL, NULL, NULL, NULL, 1, ?6)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, 'present', 0, ?7, ?8, ?9, ?10, NULL, NULL, NULL, NULL, 1, ?6)
         ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
             observed_version = excluded.observed_version,
             hydrated_version = excluded.hydrated_version,
@@ -204,6 +208,7 @@ pub(crate) async fn upsert_single_session_observation_clean_sqlx_tx(
             hydrated_adapter_hash = excluded.hydrated_adapter_hash,
             hydrated_card_contract_version = excluded.hydrated_card_contract_version,
             hydrated_payload_policy_version = excluded.hydrated_payload_policy_version,
+            hydrated_projection_version = excluded.hydrated_projection_version,
             error_code = NULL,
             error_message = NULL,
             error_stage = NULL,
@@ -221,6 +226,7 @@ pub(crate) async fn upsert_single_session_observation_clean_sqlx_tx(
     .bind(adapter_content_hash)
     .bind(card_contract_version.map(i64::from))
     .bind(i64::from(payload_policy_version))
+    .bind(projection_version.map(i64::from))
     .execute(&mut **tx)
     .await
     .map_err(StoreError::external)?;
@@ -238,6 +244,7 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
     payload_policy_version: u32,
+    projection_version: Option<u32>,
 ) -> StoreResult<usize> {
     let kind_str = match record_kind {
         ConversationRecordKind::Session => "session",
@@ -263,10 +270,10 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
                     tenant_id, source_id, record_kind, external_id, observed_version,
                     hydrated_version, last_seen_at, source_presence, dirty,
                     hydrated_adapter_hash, hydrated_card_contract_version,
-                    hydrated_payload_policy_version,
+                    hydrated_payload_policy_version, hydrated_projection_version,
                     error_code, error_message, error_stage, retryable,
                     attempt_count, last_attempt_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11, NULL, NULL, NULL, NULL, 1, ?7)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11, ?12, NULL, NULL, NULL, NULL, 1, ?7)
                 ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
                     observed_version = excluded.observed_version,
                     hydrated_version = excluded.hydrated_version,
@@ -275,6 +282,7 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
                     hydrated_adapter_hash = excluded.hydrated_adapter_hash,
                     hydrated_card_contract_version = excluded.hydrated_card_contract_version,
                     hydrated_payload_policy_version = excluded.hydrated_payload_policy_version,
+                    hydrated_projection_version = excluded.hydrated_projection_version,
                     error_code = NULL,
                     error_message = NULL,
                     error_stage = NULL,
@@ -293,6 +301,7 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
             .bind(adapter_content_hash)
             .bind(card_contract_version.map(i64::from))
             .bind(i64::from(payload_policy_version))
+            .bind(projection_version.map(i64::from))
             .execute(&mut *tx)
             .await
             .map_err(StoreError::external)?;
@@ -304,15 +313,16 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
                     tenant_id, source_id, record_kind, external_id, observed_version,
                     last_seen_at, source_presence, dirty, hydrated_adapter_hash,
                     hydrated_card_contract_version,
-                    hydrated_payload_policy_version
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10)
+                    hydrated_payload_policy_version, hydrated_projection_version
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10, ?11)
                 ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
                     observed_version = excluded.observed_version,
                     last_seen_at = excluded.last_seen_at,
                     source_presence = excluded.source_presence,
                     hydrated_adapter_hash = excluded.hydrated_adapter_hash,
                     hydrated_card_contract_version = excluded.hydrated_card_contract_version,
-                    hydrated_payload_policy_version = excluded.hydrated_payload_policy_version
+                    hydrated_payload_policy_version = excluded.hydrated_payload_policy_version,
+                    hydrated_projection_version = excluded.hydrated_projection_version
                 "#,
             )
             .bind(tenant_id)
@@ -325,6 +335,7 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
             .bind(adapter_content_hash)
             .bind(card_contract_version.map(i64::from))
             .bind(i64::from(payload_policy_version))
+            .bind(projection_version.map(i64::from))
             .execute(&mut *tx)
             .await
             .map_err(StoreError::external)?;

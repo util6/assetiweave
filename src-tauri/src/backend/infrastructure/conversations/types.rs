@@ -29,6 +29,8 @@ pub(crate) struct ConversationAdapterManifest {
     pub(crate) card_contract_version: Option<u32>,
     #[serde(default, alias = "cardKinds")]
     pub(crate) card_kinds: Vec<ConversationCardKindDefinition>,
+    #[serde(default, alias = "projectionVersion")]
+    pub(crate) projection_version: Option<u32>,
 }
 
 impl ConversationAdapterManifest {

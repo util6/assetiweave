@@ -12,6 +12,7 @@ pub(crate) async fn import_conversation_sessions_advanced_sqlx(
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
     payload_policy_version: u32,
+    projection_version: Option<u32>,
     dry_run: bool,
     cancellation: Option<&tokio_util::sync::CancellationToken>,
     on_progress: &mut impl FnMut(usize, usize),
@@ -129,6 +130,7 @@ pub(crate) async fn import_conversation_sessions_advanced_sqlx(
                     adapter_content_hash,
                     card_contract_version,
                     payload_policy_version,
+                    projection_version,
                 )
                 .await
                 {
@@ -202,6 +204,7 @@ pub(crate) async fn import_conversation_sessions_advanced_sqlx(
                     adapter_content_hash,
                     card_contract_version,
                     payload_policy_version,
+                    projection_version,
                 )
                 .await;
 
@@ -404,6 +407,7 @@ async fn import_single_session_sqlx_tx(
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
     payload_policy_version: u32,
+    projection_version: Option<u32>,
 ) -> StoreResult<Option<String>> {
     let change_kind =
         if conversation_session_exists_sqlx_tx(&mut *tx, tenant_id, &session.id).await? {
@@ -423,6 +427,7 @@ async fn import_single_session_sqlx_tx(
             adapter_content_hash,
             card_contract_version,
             payload_policy_version,
+            projection_version,
         )
         .await?;
         return Ok(None);
@@ -471,6 +476,7 @@ async fn import_single_session_sqlx_tx(
         adapter_content_hash,
         card_contract_version,
         payload_policy_version,
+        projection_version,
     )
     .await?;
 

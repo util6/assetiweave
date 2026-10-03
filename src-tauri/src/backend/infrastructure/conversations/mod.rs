@@ -27,7 +27,8 @@ pub(crate) use external::{
     list_conversation_adapter_runtime_statuses_with_settings,
     project_external_adapter_command_parts_with_settings,
     read_external_adapter_usage_with_settings, register_external_adapter_with_settings,
-    scaffold_external_adapter, try_run_external_adapter_with_settings, validate_external_adapter,
+    run_external_adapter_read_session, scaffold_external_adapter,
+    try_run_external_adapter_with_settings, validate_external_adapter,
     ExternalAdapterProgressListener,
 };
 #[cfg(test)]

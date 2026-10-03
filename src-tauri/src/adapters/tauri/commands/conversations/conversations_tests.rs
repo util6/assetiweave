@@ -60,6 +60,7 @@ fn test_conversations_module_exports_expected_commands() {
     let _ = get_conversation_session;
     let _ = get_conversation_session_outline;
     let _ = export_conversation_session;
+    let _ = replay_conversation_session_projection;
     let _ = list_web_record_sessions;
     let _ = get_web_record_session;
     let _ = export_web_record_session;

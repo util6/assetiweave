@@ -44,6 +44,7 @@ async fn test_conversation_session_outline_folding_and_universal_resolver() {
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: timestamp.to_string(),
         updated_at: timestamp.to_string(),
     };
@@ -286,6 +287,7 @@ async fn test_conversation_session_get_roles_filter_and_short_id_block_get() {
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: timestamp.to_string(),
         updated_at: timestamp.to_string(),
     };

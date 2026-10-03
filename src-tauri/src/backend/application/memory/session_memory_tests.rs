@@ -204,6 +204,7 @@ async fn phase1_worker_honors_idle_boundary_persists_redacted_output_and_is_idem
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: timestamp.to_string(),
         updated_at: timestamp.to_string(),
     };
@@ -608,6 +609,7 @@ async fn session_memory_uses_its_own_runtime_settings_snapshot() {
             input_kinds: vec![ConversationSourceKind::Directory],
             card_contract_version: None,
             card_kinds: Vec::new(),
+            projection_version: Some(1),
             created_at: "2026-08-30T23:00:00Z".to_string(),
             updated_at: "2026-08-30T23:00:00Z".to_string(),
         };

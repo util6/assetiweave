@@ -1503,6 +1503,23 @@ export async function getConversationSession(
   }
 }
 
+export async function replayConversationSessionProjection(
+  sessionId: string,
+): Promise<ConversationSessionDetail> {
+  try {
+    return await invoke<ConversationSessionDetail>(
+      "replay_conversation_session_projection",
+      { sessionId },
+    );
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+
+    return fallbackSessionDetail;
+  }
+}
+
 export async function listWebRecordSessions(
   params: ConversationSessionListParams,
 ): Promise<ConversationSessionListItem[]> {

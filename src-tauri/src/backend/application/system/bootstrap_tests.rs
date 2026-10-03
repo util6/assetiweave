@@ -48,6 +48,7 @@ async fn seed_receives_prepared_data_and_writes_nothing_to_fs() {
         input_kinds: Vec::new(),
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "now".to_string(),
         updated_at: "now".to_string(),
     };
@@ -109,6 +110,7 @@ async fn seed_rejects_invalid_paths_before_persisting_adapters() {
         input_kinds: Vec::new(),
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "now".to_string(),
         updated_at: "now".to_string(),
     };

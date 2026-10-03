@@ -273,6 +273,7 @@ function normalizeTurn(cid, rawTurn, index) {
     title: null,
     started_at: null,
     ended_at: null,
+    model: "gemini",
     parts
   };
 }

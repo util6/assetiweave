@@ -77,3 +77,13 @@ pub(crate) async fn export_web_record_session(
         .export_web_record_session(params)
         .await
 }
+
+#[tauri::command]
+pub(crate) async fn replay_conversation_session_projection(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> RuntimeAppResult<crate::backend::domain::ConversationSessionDetail> {
+    AppService::from_runtime(&state.runtime)
+        .replay_conversation_session_projection(&session_id)
+        .await
+}

@@ -83,6 +83,7 @@ async fn command_projection_falls_back_to_core_projector_for_legacy_adapter() {
         input_kinds: vec![ConversationSourceKind::File],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -160,6 +161,7 @@ async fn command_projection_falls_back_when_adapter_projector_is_unavailable() {
         input_kinds: vec![ConversationSourceKind::File],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -302,6 +304,7 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: now_text.clone(),
         updated_at: now_text.clone(),
     };
@@ -1530,6 +1533,7 @@ async fn upsert_conversation_export_fixture(
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: now.clone(),
         updated_at: now.clone(),
     };
@@ -2061,6 +2065,7 @@ esac
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: now.clone(),
         updated_at: now.clone(),
     };
@@ -2922,6 +2927,7 @@ printf '%s\n' '{"type":"complete","item":{}}'
             input_kinds: vec![ConversationSourceKind::Directory],
             card_contract_version: None,
             card_kinds: Vec::new(),
+            projection_version: Some(1),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         };
@@ -5443,6 +5449,7 @@ async fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     };

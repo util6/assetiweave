@@ -2636,73 +2636,93 @@ async fn sqlx_adapter_or_card_contract_change_invalidates_incremental_hydration_
     ];
     let hydrated = BTreeSet::from(["session-1".to_string()]);
 
-    let (same, adapter_changed, contract_changed, payload_policy_changed) = async {
-        persist_conversation_session_observations_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            "source-1",
-            ConversationRecordKind::Session,
-            &descriptors,
-            &hydrated,
-            Some("adapter-hash-v1"),
-            Some(1),
-            crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-        )
-        .await?;
-        let same = load_conversation_session_versions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            "source-1",
-            ConversationRecordKind::Session,
-            Some("adapter-hash-v1"),
-            Some(1),
-            crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-        )
-        .await?;
-        let adapter_changed = load_conversation_session_versions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            "source-1",
-            ConversationRecordKind::Session,
-            Some("adapter-hash-v2"),
-            Some(1),
-            crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-        )
-        .await?;
-        let contract_changed = load_conversation_session_versions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            "source-1",
-            ConversationRecordKind::Session,
-            Some("adapter-hash-v1"),
-            Some(2),
-            crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-        )
-        .await?;
-        let payload_policy_changed = load_conversation_session_versions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            "source-1",
-            ConversationRecordKind::Session,
-            Some("adapter-hash-v1"),
-            Some(1),
-            crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION + 1,
-        )
-        .await?;
-        Ok::<_, StoreError>((
-            same,
-            adapter_changed,
-            contract_changed,
-            payload_policy_changed,
-        ))
-    }
-    .await
-    .expect("compare hydration identity");
+    let (same, adapter_changed, contract_changed, payload_policy_changed, projection_changed) =
+        async {
+            persist_conversation_session_observations_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                "source-1",
+                ConversationRecordKind::Session,
+                &descriptors,
+                &hydrated,
+                Some("adapter-hash-v1"),
+                Some(1),
+                crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+                Some(1),
+            )
+            .await?;
+            let same = load_conversation_session_versions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                "source-1",
+                ConversationRecordKind::Session,
+                Some("adapter-hash-v1"),
+                Some(1),
+                crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+                Some(1),
+            )
+            .await?;
+            let adapter_changed = load_conversation_session_versions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                "source-1",
+                ConversationRecordKind::Session,
+                Some("adapter-hash-v2"),
+                Some(1),
+                crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+                Some(1),
+            )
+            .await?;
+            let contract_changed = load_conversation_session_versions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                "source-1",
+                ConversationRecordKind::Session,
+                Some("adapter-hash-v1"),
+                Some(2),
+                crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+                Some(1),
+            )
+            .await?;
+            let payload_policy_changed = load_conversation_session_versions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                "source-1",
+                ConversationRecordKind::Session,
+                Some("adapter-hash-v1"),
+                Some(1),
+                crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION
+                    + 1,
+                Some(1),
+            )
+            .await?;
+            let projection_changed = load_conversation_session_versions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                "source-1",
+                ConversationRecordKind::Session,
+                Some("adapter-hash-v1"),
+                Some(1),
+                crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+                Some(2),
+            )
+            .await?;
+            Ok::<_, StoreError>((
+                same,
+                adapter_changed,
+                contract_changed,
+                payload_policy_changed,
+                projection_changed,
+            ))
+        }
+        .await
+        .expect("compare hydration identity");
 
     assert_eq!(same.get("session-1").map(String::as_str), Some("source-v1"));
     assert!(adapter_changed.is_empty());
     assert!(contract_changed.is_empty());
     assert!(payload_policy_changed.is_empty());
+    assert!(projection_changed.is_empty());
 
     drop(database);
     cleanup_database(&db_path);
@@ -2851,6 +2871,7 @@ fn test_conversation_adapter(
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-06-19T00:00:00Z".to_string(),
         updated_at: "2026-06-19T00:00:00Z".to_string(),
     }

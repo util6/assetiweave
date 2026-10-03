@@ -90,6 +90,7 @@ async fn normalize_conversation_paths_migrates_legacy_paths_outside_store() {
         input_kinds: Vec::new(),
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-09-23T00:00:00Z".to_string(),
         updated_at: "2026-09-23T00:00:00Z".to_string(),
     };

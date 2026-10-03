@@ -137,6 +137,7 @@ fn adapter_with_manifest_runtime(
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     }
@@ -805,6 +806,7 @@ fn legacy_javascript_command_is_promoted_to_node_runtime() {
         capabilities: vec!["probe".to_string(), "read_session".to_string()],
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
+        projection_version: Some(1),
         card_kinds: Vec::new(),
     };
 
@@ -1140,6 +1142,7 @@ fn adapter_runtime_requirements_include_legacy_javascript_commands() {
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     };
@@ -1686,6 +1689,7 @@ printf '%s\n' '{"type":"complete","item":{}}'
         ],
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
+        projection_version: Some(1),
         card_kinds: Vec::new(),
     };
     fs::write(
@@ -1884,6 +1888,7 @@ printf '%s\n' '{"type":"complete","item":{"projection_count":1}}'
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     };
@@ -1941,6 +1946,7 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     };
@@ -2007,6 +2013,7 @@ esac
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     };
@@ -2082,6 +2089,7 @@ esac
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     };
@@ -2154,6 +2162,7 @@ esac
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     };
@@ -3836,6 +3845,7 @@ fn official_adapter_fixture(
         input_kinds,
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     }
@@ -3948,6 +3958,7 @@ fn write_manifest(dir: &Path, command: Vec<String>) -> PathBuf {
         ],
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
+        projection_version: Some(1),
         card_kinds: Vec::new(),
     };
     let path = dir.join("conversation-adapter.json");

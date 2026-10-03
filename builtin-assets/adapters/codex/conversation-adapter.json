@@ -21,6 +21,7 @@
     "file"
   ],
   "card_contract_version": 1,
+  "projection_version": 1,
   "card_kinds": [
     {
       "id": "codex.answer",

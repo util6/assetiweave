@@ -184,6 +184,7 @@ function normalizeRound(round, index) {
     title: null,
     started_at: text(round.create_time) || null,
     ended_at: text(round.update_time) || null,
+    model: text(round.model) || "qwen",
     parts
   };
 }

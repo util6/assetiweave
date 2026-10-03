@@ -189,6 +189,7 @@ pub(crate) fn command_handler(
         get_conversation_session,
         get_conversation_session_outline,
         export_conversation_session,
+        replay_conversation_session_projection,
         list_web_record_sessions,
         get_web_record_session,
         search_conversation_records,

@@ -93,6 +93,7 @@ mod tests {
                 input_kinds: vec![ConversationSourceKind::Directory],
                 card_contract_version: None,
                 card_kinds: Vec::new(),
+                projection_version: Some(1),
                 created_at: timestamp.to_string(),
                 updated_at: timestamp.to_string(),
             };

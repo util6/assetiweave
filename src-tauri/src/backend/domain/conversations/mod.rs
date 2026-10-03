@@ -5,6 +5,7 @@ mod adapter_path;
 pub mod events;
 pub mod fingerprint;
 pub mod grouping;
+pub mod links;
 pub(crate) mod pricing;
 pub mod projection;
 pub mod read_models;
@@ -18,6 +19,7 @@ pub(crate) use adapter_path::{
 pub use events::*;
 pub use fingerprint::*;
 pub use grouping::*;
+pub use links::*;
 pub use projection::*;
 pub use read_models::*;
 pub(crate) use search::*;
@@ -213,6 +215,8 @@ pub struct ConversationAdapter {
     pub input_kinds: Vec<ConversationSourceKind>,
     pub card_contract_version: Option<u32>,
     pub card_kinds: Vec<ConversationCardKindDefinition>,
+    #[serde(default, alias = "projectionVersion")]
+    pub projection_version: Option<u32>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -478,18 +482,6 @@ pub struct NormalizedConversationPart {
     pub content_card: Option<ConversationContentCardDescriptor>,
     #[serde(default, deserialize_with = "deserialize_optional_metadata_json")]
     pub metadata_json: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ConversationContentCardDescriptor {
-    #[serde(alias = "schemaVersion")]
-    pub schema_version: u32,
-    pub kind: String,
-    #[serde(default, alias = "semanticRole")]
-    pub semantic_role: Option<String>,
-    #[serde(default)]
-    pub renderer: Option<String>,
 }
 
 #[cfg(test)]

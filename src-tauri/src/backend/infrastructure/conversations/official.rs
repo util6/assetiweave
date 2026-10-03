@@ -223,6 +223,7 @@ pub(crate) fn ensure_official_conversation_adapters() -> InfraResult<Vec<Convers
             input_kinds: validation.manifest.input_kinds.clone(),
             card_contract_version: validation.manifest.card_contract_version,
             card_kinds: validation.manifest.card_kinds.clone(),
+            projection_version: validation.manifest.projection_version,
             created_at: now.clone(),
             updated_at: now,
         });
@@ -269,6 +270,7 @@ fn materialize_shell_command_projector(root: &Path) -> InfraResult<ConversationA
         input_kinds: validation.manifest.input_kinds.clone(),
         card_contract_version: validation.manifest.card_contract_version,
         card_kinds: validation.manifest.card_kinds.clone(),
+        projection_version: validation.manifest.projection_version,
         created_at: now.clone(),
         updated_at: now,
     })

@@ -270,6 +270,7 @@ function parseConversation(conversation) {
         title: null,
         started_at: timestamp(message.create_time),
         ended_at: null,
+        model: null,
         parts: []
       };
       continue;
@@ -284,10 +285,14 @@ function parseConversation(conversation) {
         title: null,
         started_at: timestamp(message.create_time),
         ended_at: null,
+        model: null,
         parts: []
       };
     }
     // 模型响应加入当前 Turn 的 Parts 列表
+    if (!current.model) {
+      current.model = text(message.metadata && message.metadata.model_slug) || text(conversation.default_model_slug) || null;
+    }
     current.parts.push(normalizedPart(role, "text", { text: messageText }));
     const endedAt = timestamp(message.update_time) || timestamp(message.create_time);
     if (endedAt) current.ended_at = endedAt;

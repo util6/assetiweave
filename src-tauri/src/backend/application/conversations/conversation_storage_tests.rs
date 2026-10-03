@@ -40,6 +40,7 @@ async fn application_adapter_and_package_storage_normalizes_paths_before_store()
         input_kinds: Vec::new(),
         card_contract_version: None,
         card_kinds: Vec::new(),
+        projection_version: Some(1),
         created_at: "2026-09-23T00:00:00Z".to_string(),
         updated_at: "2026-09-23T00:00:00Z".to_string(),
     };

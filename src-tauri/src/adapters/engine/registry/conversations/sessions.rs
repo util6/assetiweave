@@ -166,6 +166,18 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation session export <session-id> --output-root <dir>")
     ),
     command!(
+        "replay_conversation_session_projection",
+        "conversation.session.reproject",
+        "Replay and reproject materialized cards and links for a conversation session",
+        Write,
+        App,
+        true,
+        crate::backend::application::ConversationSessionGetParams,
+        ServiceAsync => |service, params| service.replay_conversation_session_projection(&params.session_id).await,
+        &[param!("session_id", "Session identifier", ["sessionId"])],
+        None
+    ),
+    command!(
         "conversation.web-record.list",
         "conversation.web-record.list",
         "List imported web conversation records",

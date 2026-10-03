@@ -72,6 +72,9 @@ impl AppService {
         let card_contract_version = adapter
             .as_ref()
             .and_then(|adapter| adapter.card_contract_version);
+        let projection_version = adapter
+            .as_ref()
+            .and_then(|adapter| adapter.projection_version);
         let payload_policy_version =
             crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION;
         let known_versions = if params.mode.uses_known_versions() {
@@ -83,6 +86,7 @@ impl AppService {
                 adapter_content_hash.as_deref(),
                 card_contract_version,
                 payload_policy_version,
+                projection_version,
             )
             .await
             .map_err(conversation_storage_error)?
@@ -153,6 +157,7 @@ impl AppService {
                     adapter_content_hash.as_deref(),
                     card_contract_version,
                     payload_policy_version,
+                    projection_version,
                 )
                 .await
                 .map_err(conversation_storage_error)?;
@@ -197,6 +202,7 @@ impl AppService {
                     adapter_content_hash.as_deref(),
                     card_contract_version,
                     payload_policy_version,
+                    projection_version,
                     params.dry_run,
                     cancellation,
                     &mut on_import_progress,
@@ -213,6 +219,7 @@ impl AppService {
                     adapter_content_hash.as_deref(),
                     card_contract_version,
                     payload_policy_version,
+                    projection_version,
                 )
                 .await
                 .map_err(conversation_storage_error)?;
@@ -250,6 +257,7 @@ async fn persist_successful_conversation_observation(
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
     payload_policy_version: u32,
+    projection_version: Option<u32>,
 ) -> AppResult<usize> {
     if dry_run || !read.incremental {
         return Ok(0);
@@ -270,6 +278,7 @@ async fn persist_successful_conversation_observation(
         adapter_content_hash,
         card_contract_version,
         payload_policy_version,
+        projection_version,
     )
     .await
     .map_err(conversation_storage_error)
