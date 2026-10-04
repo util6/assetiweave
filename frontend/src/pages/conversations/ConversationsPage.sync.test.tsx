@@ -777,7 +777,8 @@ describe("ConversationsPage sync scope", () => {
         "session-export-target",
       ),
     );
-    expect(await screen.findAllByText("Export question")).toHaveLength(2);
+    expect(await screen.findAllByText("Export question")).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Export target" })).toBeTruthy();
     expect(screen.getAllByText("Export-ready answer.")).toHaveLength(2);
   });
 

@@ -230,6 +230,70 @@ describe("ConversationScriptResourcePanel", () => {
     expect(await screen.findByText("Built-in Codex")).toBeTruthy();
   });
 
+  it("keeps visible entries rendered while refreshing in background without flashing skeleton", async () => {
+    let resolveRefresh: (
+      value: ConversationAdapterPackageCatalogEntry[],
+    ) => void = () => undefined;
+    serviceMocks.list.mockResolvedValueOnce(entries);
+
+    renderPanel();
+
+    expect(await screen.findByText("Built-in Codex")).toBeTruthy();
+
+    serviceMocks.list.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    // Items remain visible during refresh!
+    expect(screen.getByText("Built-in Codex")).toBeTruthy();
+    // Non-blocking validating status is shown
+    expect(screen.getByRole("status").textContent).toContain(
+      "Validating script directories",
+    );
+
+    // Complete refresh
+    resolveRefresh(entries);
+    await waitFor(() => {
+      expect(screen.queryByRole("status")).toBeNull();
+    });
+    expect(screen.getByText("Built-in Codex")).toBeTruthy();
+  });
+
+  it("does not re-trigger initial loading when parent re-renders with new callback references", async () => {
+    serviceMocks.list.mockResolvedValue(entries);
+
+    function DynamicParent({ step }: { step: number }) {
+      return (
+        <I18nProvider>
+          <ConversationScriptResourcePanel
+            onInstalled={() => {}}
+            onManifestSelect={() => {}}
+            onNotify={() => {}}
+            onNotifyError={() => {
+              void step;
+            }}
+            recordKind="session"
+          />
+        </I18nProvider>
+      );
+    }
+
+    const { rerender } = render(<DynamicParent step={1} />);
+
+    expect(await screen.findByText("Built-in Codex")).toBeTruthy();
+    expect(serviceMocks.list).toHaveBeenCalledTimes(1);
+
+    rerender(<DynamicParent step={2} />);
+
+    // Must NOT call listConversationAdapterPackages again!
+    expect(serviceMocks.list).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Built-in Codex")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   it("shows runtime details, version history, and changelog", async () => {
     renderPanel();
     const details = await screen.findAllByRole("button", { name: "Details" });

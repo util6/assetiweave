@@ -95,45 +95,6 @@ function textPart(role, text) {
   };
 }
 
-function splitMarkdownParts(role, text) {
-  const parts = [];
-  let remaining = String(text ?? "");
-  while (remaining.includes("```")) {
-    const start = remaining.indexOf("```");
-    const beforePart = textPart(role, remaining.slice(0, start));
-    if (beforePart) parts.push(beforePart);
-
-    const fenceBody = remaining.slice(start + 3);
-    const end = fenceBody.indexOf("```");
-    if (end < 0) {
-      const trailing = textPart(role, fenceBody);
-      if (trailing) parts.push(trailing);
-      return parts;
-    }
-
-    const fenced = fenceBody.slice(0, end);
-    const firstNewline = fenced.indexOf("\n");
-    const language = firstNewline < 0 ? null : fenced.slice(0, firstNewline).trim() || null;
-    const code = (firstNewline < 0 ? fenced : fenced.slice(firstNewline + 1)).trimEnd();
-    if (code.trim()) {
-      parts.push({
-        role,
-        kind: "code_block",
-        text: code,
-        language,
-        command: null,
-        cwd: null,
-        status: null,
-        exit_code: null,
-        metadata_json: metadata({ type: "code", ...(language ? { language } : {}) }),
-      });
-    }
-    remaining = fenceBody.slice(end + 3);
-  }
-  const tail = textPart(role, remaining);
-  if (tail) parts.push(tail);
-  return parts;
-}
 
 function collectJsonlFiles(root) {
   if (!existsSync(root)) return [];
@@ -552,7 +513,8 @@ function toolResultPart(value, parent) {
 function assistantMessageParts(payload, parent) {
   if (!Array.isArray(payload?.content)) {
     const text = extractText(payload);
-    return text.trim() ? splitMarkdownParts("assistant", text) : [];
+    const part = text.trim() ? textPart("assistant", text) : null;
+    return part ? [part] : [];
   }
 
   const parts = [];
@@ -577,7 +539,10 @@ function assistantMessageParts(payload, parent) {
     }
     if (isIgnoredContentValue(item)) continue;
     const text = extractText(item);
-    if (text.trim()) parts.push(...splitMarkdownParts("assistant", text));
+    if (text.trim()) {
+      const part = textPart("assistant", text);
+      if (part) parts.push(part);
+    }
   }
   return parts;
 }
@@ -760,9 +725,32 @@ function inferProjectPathFromTurns(turns) {
   return null;
 }
 
+function sanitizeSessionShortTitle(text, maxLength = 36) {
+  if (!text) return null;
+  let cleaned = String(text).trim();
+  cleaned = cleaned.replace(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i, "$1");
+  cleaned = cleaned.replace(/<\/?(?:USER_REQUEST|ADDITIONAL_METADATA|system_information|context|prompt)[^>]*>/gi, " ");
+  cleaned = cleaned.replace(/^#+\s+/gm, "");
+  cleaned = cleaned.replace(/```[\s\S]*?```/g, " ");
+  cleaned = cleaned.replace(/`([^`]+)`/g, "$1");
+  cleaned = cleaned.replace(/^\s*[-*+]\s+/gm, "");
+  const firstLine = cleaned.split(/\r?\n/).map((line) => line.trim()).find((line) => Boolean(line) && !line.startsWith("<!--")) ?? "";
+  if (!firstLine) return null;
+  if (firstLine.length <= maxLength) return firstLine;
+  return `${firstLine.slice(0, maxLength - 3).trim()}...`;
+}
+
 function titleFromFile(filePath) {
   const parentName = path.basename(path.dirname(filePath));
   return parentName ? parentName.replaceAll("-", "/") : null;
+}
+
+function resolveSessionTitle(parsed, turns, filePath) {
+  if (parsed?.title?.trim()) return parsed.title.trim();
+  if (parsed?.summary?.trim()) return sanitizeSessionShortTitle(parsed.summary);
+  const promptTitle = sanitizeSessionShortTitle(turns[0]?.user_text);
+  if (promptTitle) return promptTitle;
+  return titleFromFile(filePath);
 }
 
 function readSession() {
@@ -778,7 +766,7 @@ function readSession() {
     if (!turns.length) return [];
     return [{
       external_id: path.basename(requestedLocator, ".jsonl") || "claude-session",
-      title: titleFromFile(requestedLocator),
+      title: resolveSessionTitle(parsed, turns, requestedLocator),
       project_path: parsed.projectPath ?? inferProjectPathFromTurns(turns),
       started_at: turns[0]?.started_at ?? null,
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
@@ -797,7 +785,7 @@ function readSession() {
       if (turns.length) {
         return [{
           external_id: String(requestedSessionId),
-          title: titleFromFile(directCandidate),
+          title: resolveSessionTitle(parsed, turns, directCandidate),
           project_path: parsed.projectPath ?? inferProjectPathFromTurns(turns),
           started_at: turns[0]?.started_at ?? null,
           updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
@@ -818,7 +806,7 @@ function readSession() {
     if (!turns.length) return [];
     return [{
       external_id: path.basename(filePath, ".jsonl") || "claude-session",
-      title: titleFromFile(filePath),
+      title: resolveSessionTitle(parsed, turns, filePath),
       project_path: parsed.projectPath ?? inferProjectPathFromTurns(turns),
       started_at: turns[0]?.started_at ?? null,
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,

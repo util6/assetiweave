@@ -165,4 +165,41 @@ describe("DeferredSkeletonBoundary", () => {
     );
     expect(screen.getByText("disabled content")).toBeTruthy();
   });
+
+  it("transitions immediately to ready when forceReady changes from false to true", () => {
+    const onReady = vi.fn();
+    const scrollElement = document.createElement("div");
+    const { rerender } = render(
+      <RenderActivityProvider scrollElementRef={{ current: scrollElement }}>
+        <DeferredSkeletonBoundary
+          forceReady={false}
+          itemKey="dynamic-turn"
+          onReady={onReady}
+        >
+          <span>dynamic ready content</span>
+        </DeferredSkeletonBoundary>
+      </RenderActivityProvider>,
+    );
+
+    const boundary = screen.getByTestId("deferred-render-boundary");
+    expect(boundary.getAttribute("data-render-state")).toBe("skeleton");
+    expect(screen.queryByText("dynamic ready content")).toBeNull();
+    expect(onReady).not.toHaveBeenCalled();
+
+    rerender(
+      <RenderActivityProvider scrollElementRef={{ current: scrollElement }}>
+        <DeferredSkeletonBoundary
+          forceReady={true}
+          itemKey="dynamic-turn"
+          onReady={onReady}
+        >
+          <span>dynamic ready content</span>
+        </DeferredSkeletonBoundary>
+      </RenderActivityProvider>,
+    );
+
+    expect(boundary.getAttribute("data-render-state")).toBe("ready");
+    expect(screen.getByText("dynamic ready content")).toBeTruthy();
+    expect(onReady).toHaveBeenCalledWith("dynamic-turn");
+  });
 });

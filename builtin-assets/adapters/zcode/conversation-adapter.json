@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "zcode",
   "name": "ZCode",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "protocol_version": 1,
   "runtime": {
     "type": "node",
@@ -51,15 +51,6 @@
       "default_renderer": "command",
       "allowed_renderers": [
         "command"
-      ]
-    },
-    {
-      "id": "zcode.code",
-      "semantic_role": "code",
-      "label": "Code",
-      "default_renderer": "code",
-      "allowed_renderers": [
-        "code"
       ]
     },
     {

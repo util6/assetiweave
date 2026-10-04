@@ -411,5 +411,6 @@ export const conversationsZh = {
   "conversation.sync.background.description":
     "可继续使用其他功能，完成后会自动刷新。",
   "conversation.markdown.untitledQuestion": "未命名问题",
+  "conversation.session.untitled": "未命名会话",
   "conversation.markdown.empty": "暂无可预览内容。",
 } as const;

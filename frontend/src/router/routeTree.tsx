@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import {
   createRootRoute,
   createRoute,
@@ -164,6 +165,18 @@ function ConversationsSessionsView() {
     onOpenSettings,
     setConversationNavigationTarget,
   } = useWorkspaceContext();
+  const handleNotify = useCallback(
+    (notification: Parameters<typeof catalog.showNotification>[0]) => {
+      catalog.showNotification(notification);
+    },
+    [catalog.showNotification],
+  );
+  const handleNotifyError = useCallback(
+    (message: string) => {
+      catalog.showNotification({ tone: "error", message });
+    },
+    [catalog.showNotification],
+  );
   return (
     <ConversationsPage
       activeSubNavId={activeSubNavId}
@@ -179,10 +192,8 @@ function ConversationsSessionsView() {
           current?.nonce === nonce ? null : current,
         )
       }
-      onNotify={(notification) => catalog.showNotification(notification)}
-      onNotifyError={(message) =>
-        catalog.showNotification({ tone: "error", message })
-      }
+      onNotify={handleNotify}
+      onNotifyError={handleNotifyError}
       onOpenSettings={onOpenSettings}
       recordKind="session"
     />
@@ -198,6 +209,18 @@ function ConversationsWebRecordsView() {
     onOpenSettings,
     setConversationNavigationTarget,
   } = useWorkspaceContext();
+  const handleNotify = useCallback(
+    (notification: Parameters<typeof catalog.showNotification>[0]) => {
+      catalog.showNotification(notification);
+    },
+    [catalog.showNotification],
+  );
+  const handleNotifyError = useCallback(
+    (message: string) => {
+      catalog.showNotification({ tone: "error", message });
+    },
+    [catalog.showNotification],
+  );
   return (
     <ConversationsPage
       activeSubNavId={activeSubNavId}
@@ -213,10 +236,8 @@ function ConversationsWebRecordsView() {
           current?.nonce === nonce ? null : current,
         )
       }
-      onNotify={(notification) => catalog.showNotification(notification)}
-      onNotifyError={(message) =>
-        catalog.showNotification({ tone: "error", message })
-      }
+      onNotify={handleNotify}
+      onNotifyError={handleNotifyError}
       onOpenSettings={onOpenSettings}
       recordKind="web"
     />

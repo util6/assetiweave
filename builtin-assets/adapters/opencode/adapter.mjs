@@ -12,6 +12,21 @@ const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 const SQLITE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 const CONTENT_CARD_SCHEMA_VERSION = "opencode-content-cards-v7";
 
+function sanitizeSessionShortTitle(text, maxLength = 36) {
+  if (!text) return null;
+  let cleaned = String(text).trim();
+  cleaned = cleaned.replace(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i, "$1");
+  cleaned = cleaned.replace(/<\/?(?:USER_REQUEST|ADDITIONAL_METADATA|system_information|context|prompt)[^>]*>/gi, " ");
+  cleaned = cleaned.replace(/^#+\s+/gm, "");
+  cleaned = cleaned.replace(/```[\s\S]*?```/g, " ");
+  cleaned = cleaned.replace(/`([^`]+)`/g, "$1");
+  cleaned = cleaned.replace(/^\s*[-*+]\s+/gm, "");
+  const firstLine = cleaned.split(/\r?\n/).map((line) => line.trim()).find((line) => Boolean(line) && !line.startsWith("<!--")) ?? "";
+  if (!firstLine) return null;
+  if (firstLine.length <= maxLength) return firstLine;
+  return `${firstLine.slice(0, maxLength - 3).trim()}...`;
+}
+
 process.stdout.on("error", (err) => {
   if (err.code === "EPIPE") process.exit(0);
 });
@@ -147,45 +162,6 @@ function textPart(role, text) {
   };
 }
 
-function splitMarkdownParts(role, text) {
-  const parts = [];
-  let remaining = String(text ?? "");
-  while (remaining.includes("```")) {
-    const start = remaining.indexOf("```");
-    const beforePart = textPart(role, remaining.slice(0, start));
-    if (beforePart) parts.push(beforePart);
-
-    const fenceBody = remaining.slice(start + 3);
-    const end = fenceBody.indexOf("```");
-    if (end < 0) {
-      const trailing = textPart(role, fenceBody);
-      if (trailing) parts.push(trailing);
-      return parts;
-    }
-
-    const fenced = fenceBody.slice(0, end);
-    const firstNewline = fenced.indexOf("\n");
-    const language = firstNewline < 0 ? null : fenced.slice(0, firstNewline).trim() || null;
-    const code = (firstNewline < 0 ? fenced : fenced.slice(firstNewline + 1)).trimEnd();
-    if (code.trim()) {
-      parts.push({
-        role,
-        kind: "code_block",
-        text: code,
-        language,
-        command: null,
-        cwd: null,
-        status: null,
-        exit_code: null,
-        metadata_json: metadata({ type: "code", ...(language ? { language } : {}) }),
-      });
-    }
-    remaining = fenceBody.slice(end + 3);
-  }
-  const tail = textPart(role, remaining);
-  if (tail) parts.push(tail);
-  return parts;
-}
 
 function valueText(value, keys) {
   for (const key of keys) {
@@ -268,7 +244,8 @@ function normalizePart(row, role) {
       ? "tool"
       : "assistant";
   if (normalizedKind === "text") {
-    return splitMarkdownParts(normalizedRole, text);
+    const part = textPart(normalizedRole, text);
+    return part ? [part] : [];
   }
   const cwd = valueText(data, ["cwd", "directory"])
     ?? nestedText(data, [["state", "input", "cwd"], ["input", "cwd"]])
@@ -669,7 +646,9 @@ function readSessions(includeTurns) {
     if (includeTurns && !turns.length) return [];
     return [{
       external_id: String(row.id),
-      title: row.title == null ? null : String(row.title),
+      title: (row.title == null || !String(row.title).trim())
+        ? (sanitizeSessionShortTitle(turns[0]?.user_text) || null)
+        : String(row.title).trim(),
       project_path: row.project_path == null ? null : String(row.project_path),
       started_at: turns[0]?.started_at ?? null,
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),

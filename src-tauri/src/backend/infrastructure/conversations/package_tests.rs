@@ -135,7 +135,7 @@ fn kernel_package_inspection_preserves_fixture_package_identity() {
     );
     assert_eq!(
         inspected.identity.version,
-        semver::Version::parse("1.6.4").unwrap()
+        semver::Version::parse("1.7.0").unwrap()
     );
     assert_eq!(inspected.compatibility.protocol_version, 1);
     assert_eq!(

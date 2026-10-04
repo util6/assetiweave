@@ -8,12 +8,14 @@ import { ConversationScriptResourcePanel } from "./ConversationScriptResourcePan
 
 type ConversationImportNotification = Omit<NotificationMessage, "id">;
 
+const NOOP = () => undefined;
+
 export function ConversationImportDialog({
   busy = false,
   onClose,
-  onNotify = () => undefined,
-  onNotifyError = () => undefined,
-  onScriptInstalled = () => undefined,
+  onNotify = NOOP,
+  onNotifyError = NOOP,
+  onScriptInstalled = NOOP,
   recordKind,
 }: {
   busy?: boolean;

@@ -47,6 +47,21 @@ const MAX_BROWSE_OUTPUT_LINE_CHARS = 1200;
 /** sqlite3 子进程标准输出上限 (64MB)，用于兼容标题或全量读取中的较大结果集 */
 const SQLITE_OUTPUT_BUFFER_BYTES = 64 * 1024 * 1024;
 
+function sanitizeSessionShortTitle(text, maxLength = 36) {
+  if (!text) return null;
+  let cleaned = String(text).trim();
+  cleaned = cleaned.replace(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i, "$1");
+  cleaned = cleaned.replace(/<\/?(?:USER_REQUEST|ADDITIONAL_METADATA|system_information|context|prompt)[^>]*>/gi, " ");
+  cleaned = cleaned.replace(/^#+\s+/gm, "");
+  cleaned = cleaned.replace(/```[\s\S]*?```/g, " ");
+  cleaned = cleaned.replace(/`([^`]+)`/g, "$1");
+  cleaned = cleaned.replace(/^\s*[-*+]\s+/gm, "");
+  const firstLine = cleaned.split(/\r?\n/).map((line) => line.trim()).find((line) => Boolean(line) && !line.startsWith("<!--")) ?? "";
+  if (!firstLine) return null;
+  if (firstLine.length <= maxLength) return firstLine;
+  return `${firstLine.slice(0, maxLength - 3).trim()}...`;
+}
+
 /**
  * 识别关键错误、异常与高信号日志信息的正则表达式模式；
  * 当终端输出文本超长时，低信号压缩算法会优先保留匹配此正则的行及其前后上下文。
@@ -1874,7 +1889,9 @@ function readSession() {
     const isSubagent = Boolean(row.is_subagent === 1 || row.is_subagent === true || row.is_subagent === "1");
     const rawSession = {
       external_id: String(row.id),
-      title: row.title == null ? null : String(row.title),
+      title: (row.title == null || !String(row.title).trim())
+        ? (sanitizeSessionShortTitle(turns[0]?.user_text) || null)
+        : String(row.title).trim(),
       project_path: parsed.projectPath ?? inferProjectPath(turns),
       started_at: turns[0]?.started_at ?? null,
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),

@@ -68,7 +68,6 @@ const contentFilterOptions: ConversationContentType[] = [
   "subagent",
   "skill",
   "ambient",
-  "code",
 ];
 
 export function ConversationContentFilter({

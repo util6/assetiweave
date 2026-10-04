@@ -284,45 +284,6 @@ function textPart(role, text) {
   };
 }
 
-function splitMarkdownParts(role, text) {
-  const parts = [];
-  let remaining = String(text ?? "");
-  while (remaining.includes("```")) {
-    const start = remaining.indexOf("```");
-    const beforePart = textPart(role, remaining.slice(0, start));
-    if (beforePart) parts.push(beforePart);
-
-    const fenceBody = remaining.slice(start + 3);
-    const end = fenceBody.indexOf("```");
-    if (end < 0) {
-      const trailing = textPart(role, fenceBody);
-      if (trailing) parts.push(trailing);
-      return parts;
-    }
-
-    const fenced = fenceBody.slice(0, end);
-    const firstNewline = fenced.indexOf("\n");
-    const language = firstNewline < 0 ? null : fenced.slice(0, firstNewline).trim() || null;
-    const code = (firstNewline < 0 ? fenced : fenced.slice(firstNewline + 1)).trimEnd();
-    if (code.trim()) {
-      parts.push({
-        role,
-        kind: "code_block",
-        text: code,
-        language,
-        command: null,
-        cwd: null,
-        status: null,
-        exit_code: null,
-        metadata_json: metadata({ type: "code", ...(language ? { language } : {}) }),
-      });
-    }
-    remaining = fenceBody.slice(end + 3);
-  }
-  const tail = textPart(role, remaining);
-  if (tail) parts.push(tail);
-  return parts;
-}
 
 function displayTurns(turns) {
   return turns
@@ -1015,7 +976,8 @@ function buildTurnsFromSteps(steps) {
     if (type === "PLANNER_RESPONSE" && source === "MODEL") {
       const responseText = String(step.content ?? "").trim();
       if (responseText) {
-        current.parts.push(...splitMarkdownParts("assistant", responseText));
+        const part = textPart("assistant", responseText);
+        if (part) current.parts.push(part);
       }
       // Extract tool call parts
       if (Array.isArray(step.tool_calls) && step.tool_calls.length > 0) {
@@ -1595,11 +1557,76 @@ function inferProjectPath(turns) {
   return null;
 }
 
+function sanitizeSessionShortTitle(text, maxLength = 36) {
+  if (!text) return null;
+  let cleaned = String(text).trim();
+  cleaned = cleaned.replace(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i, "$1");
+  cleaned = cleaned.replace(/<\/?(?:USER_REQUEST|ADDITIONAL_METADATA|system_information|context|prompt)[^>]*>/gi, " ");
+  cleaned = cleaned.replace(/^#+\s+/gm, "");
+  cleaned = cleaned.replace(/```[\s\S]*?```/g, " ");
+  cleaned = cleaned.replace(/`([^`]+)`/g, "$1");
+  cleaned = cleaned.replace(/^\s*[-*+]\s+/gm, "");
+  const firstLine = cleaned.split(/\r?\n/).map((line) => line.trim()).find((line) => Boolean(line) && !line.startsWith("<!--")) ?? "";
+  if (!firstLine) return null;
+  if (firstLine.length <= maxLength) return firstLine;
+  return `${firstLine.slice(0, maxLength - 3).trim()}...`;
+}
+
 function titleFromUserText(userText) {
-  if (!userText) return null;
-  const firstLine = userText.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
-  if (firstLine.length <= 80) return firstLine;
-  return `${firstLine.slice(0, 77)}...`;
+  return sanitizeSessionShortTitle(userText, 36);
+}
+
+function sessionVersionToken(locator, fallbackKey = null) {
+  if (locator && existsSync(locator)) {
+    const st = statSync(locator);
+    return `${st.size}:${st.mtimeMs}`;
+  }
+  return `summary-${fallbackKey ?? "none"}`;
+}
+
+let cachedSummaryTitles = null;
+function getSummaryTitle(externalId, startLocation = null) {
+  if (!externalId) return null;
+  if (cachedSummaryTitles === null) {
+    cachedSummaryTitles = new Map();
+    const roots = resolveCandidateRoots(startLocation || expandPath(input.source?.location));
+    for (const root of roots) {
+      const sumDbPath = path.join(root, "conversation_summaries.db");
+      if (existsSync(sumDbPath)) {
+        let rows = [];
+        if (DatabaseSync) {
+          let db;
+          try {
+            db = new DatabaseSync(sumDbPath, { readOnly: true });
+            const stmt = db.prepare("SELECT conversation_id, title FROM conversation_summaries;");
+            rows = stmt.all();
+          } catch {
+            rows = [];
+          } finally {
+            if (db) db.close();
+          }
+        } else {
+          try {
+            const raw = execFileSync("sqlite3", ["-json", sumDbPath, "SELECT conversation_id, title FROM conversation_summaries;"], {
+              encoding: "utf8",
+              maxBuffer: 50 * 1024 * 1024,
+            });
+            rows = JSON.parse(raw || "[]");
+          } catch {
+            rows = [];
+          }
+        }
+        for (const row of rows) {
+          if (row.conversation_id && row.title && !isSyntheticWorkOrderText(row.title)) {
+            if (!cachedSummaryTitles.has(row.conversation_id)) {
+              cachedSummaryTitles.set(row.conversation_id, row.title.trim());
+            }
+          }
+        }
+      }
+    }
+  }
+  return cachedSummaryTitles.get(externalId) || null;
 }
 
 function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
@@ -1626,14 +1653,15 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
         if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) {
           return null;
         }
+        const title = getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text);
         return applyTextBudgets(finalizeStructuredContentCards({
           external_id: externalId,
-          title: titleFromUserText(turns[0]?.user_text),
+          title,
           project_path: parsed.projectPath ?? inferProjectPath(turns),
           started_at: turns[0]?.started_at ?? null,
           updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
           source_locator: targetPath,
-          source_fingerprint: sourceFingerprint(`${stat.size}:${stat.mtimeMs}`),
+          source_fingerprint: sessionVersionToken(targetPath, externalId),
           execution_origin: flavor,
           turns,
         }));
@@ -1655,14 +1683,15 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
         return null;
       }
       const externalId = externalIdHint || path.basename(path.resolve(targetPath, "../../..")) || "antigravity-session";
+      const title = getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text);
       return applyTextBudgets(finalizeStructuredContentCards({
         external_id: externalId,
-        title: titleFromUserText(turns[0]?.user_text),
+        title,
         project_path: parsed.projectPath ?? inferProjectPath(turns),
         started_at: turns[0]?.started_at ?? null,
         updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
         source_locator: targetPath,
-        source_fingerprint: sourceFingerprint(text),
+        source_fingerprint: sessionVersionToken(targetPath, externalId),
         execution_origin: flavor,
         turns,
       }));
@@ -1686,14 +1715,15 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
       if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) {
         return null;
       }
+      const title = getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text);
       return applyTextBudgets(finalizeStructuredContentCards({
         external_id: externalId,
-        title: titleFromUserText(turns[0]?.user_text),
+        title,
         project_path: parsed.projectPath ?? inferProjectPath(turns),
         started_at: turns[0]?.started_at ?? null,
         updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
         source_locator: transcriptInDir,
-        source_fingerprint: sourceFingerprint(text),
+        source_fingerprint: sessionVersionToken(transcriptInDir, externalId),
         execution_origin: flavor,
         turns,
       }));
@@ -1760,7 +1790,7 @@ function listSessions() {
           title: row.title || undefined,
           updated_at: updatedAt,
           source_locator: locator || undefined,
-          version_token: `summary-${row.last_modified_time || id}`,
+          version_token: sessionVersionToken(locator, row.last_modified_time || id),
         };
         emit("item", { item: { kind: "session_descriptor", ...descriptor } });
         count++;
@@ -1781,9 +1811,10 @@ function listSessions() {
             const st = statSync(transcript);
             const descriptor = {
               external_id: id,
+              title: getSummaryTitle(id, [root]) || undefined,
               updated_at: st.mtime.toISOString(),
               source_locator: transcript,
-              version_token: `${st.size}:${st.mtimeMs}`,
+              version_token: sessionVersionToken(transcript, id),
             };
             emit("item", { item: { kind: "session_descriptor", ...descriptor } });
             count++;
@@ -1809,9 +1840,10 @@ function listSessions() {
           const st = statSync(full);
           const descriptor = {
             external_id: id,
+            title: getSummaryTitle(id, [root]) || undefined,
             updated_at: st.mtime.toISOString(),
             source_locator: full,
-            version_token: `${st.size}:${st.mtimeMs}`,
+            version_token: sessionVersionToken(full, id),
           };
           emit("item", { item: { kind: "session_descriptor", ...descriptor } });
           count++;
@@ -1935,12 +1967,12 @@ function readSession(onSession = null) {
 
     const s = applyTextBudgets(finalizeStructuredContentCards({
       external_id: externalId,
-      title: titleFromUserText(turns[0]?.user_text),
+      title: getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text),
       project_path: parsed.projectPath ?? inferProjectPath(turns),
       started_at: turns[0]?.started_at ?? null,
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
       source_locator: transcriptPath,
-      source_fingerprint: sourceFingerprint(text),
+      source_fingerprint: sessionVersionToken(transcriptPath, externalId),
       execution_origin: detectClientFlavor(transcriptPath),
       turns,
     }));
@@ -1972,15 +2004,14 @@ function readSession(onSession = null) {
       if (!turns.length) continue;
       if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) continue;
       seenExternalIds.add(externalId);
-      const stat = statSync(dbPath);
       const s = applyTextBudgets(finalizeStructuredContentCards({
         external_id: externalId,
-        title: titleFromUserText(turns[0]?.user_text),
+        title: getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text),
         project_path: parsed.projectPath ?? inferProjectPath(turns),
         started_at: turns[0]?.started_at ?? null,
         updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
         source_locator: dbPath,
-        source_fingerprint: sourceFingerprint(`${stat.size}:${stat.mtimeMs}`),
+        source_fingerprint: sessionVersionToken(dbPath, externalId),
         execution_origin: detectClientFlavor(dbPath),
         turns,
       }));

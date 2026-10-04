@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package_id": "io.github.util6.codebuddy-session",
   "name": "CodeBuddy Session Parser",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "min_core_version": "0.5.2",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
@@ -15,6 +15,13 @@
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "1.4.0",
+      "date": "2026-10-04",
+      "notes": [
+        "Fix list_sessions scope, eliminate reference errors, and remove deprecated code card kind."
+      ]
+    },
     {
       "version": "1.1.0",
       "date": "2026-10-03",

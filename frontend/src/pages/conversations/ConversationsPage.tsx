@@ -900,6 +900,14 @@ export function ConversationsPage({
     }
   }
 
+  const handleCloseImportDialog = useCallback(() => {
+    setImportDialogOpen(false);
+  }, [setImportDialogOpen]);
+
+  const handleScriptInstalled = useCallback(() => {
+    void refreshCatalog();
+  }, [activeScope, currentRecordKind, onNotifyError, query, queryClient, reconcileSessionSelection]);
+
   async function refreshSessions(options: { rethrow?: boolean } = {}) {
     try {
       await queryClient.invalidateQueries({
@@ -1299,6 +1307,19 @@ export function ConversationsPage({
               t={t}
               visibility={contentVisibility}
             />
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              <ToolbarActionButton
+                icon={<Download size={16} />}
+                label={t("conversation.session.exportMarkdown")}
+                onClick={() =>
+                  openExportDialog(
+                    selectedQuestionIds.size > 0 ? "questions" : "session",
+                    selectedQuestionIds.size > 0 ? [...selectedQuestionIds] : [],
+                  )
+                }
+                text={t("toolbar.export")}
+              />
+            </div>
           </section>
         </div>
       )}
@@ -1359,10 +1380,10 @@ export function ConversationsPage({
 
       {importDialogOpen ? (
         <ConversationImportDialog
-          onClose={() => setImportDialogOpen(false)}
+          onClose={handleCloseImportDialog}
           onNotify={onNotify}
           onNotifyError={onNotifyError}
-          onScriptInstalled={() => refreshCatalog()}
+          onScriptInstalled={handleScriptInstalled}
           recordKind={currentRecordKind}
         />
       ) : null}
@@ -2851,20 +2872,20 @@ export function QuestionPreview({
   activeSearchTarget?: ConversationSearchTarget | null;
   adapterVersion?: string;
   contentCardColors?: ConversationContentCardColorSettings;
-  onExport: () => void;
+  onExport?: () => void;
   onCopyError?: (message: string) => void;
-  onPickOutputRoot: () => Promise<string | null>;
+  onPickOutputRoot?: () => Promise<string | null>;
   onSplit?: (
     question: ConversationQuestionDetail,
     turnId: string,
   ) => Promise<void>;
-  outputRoot: string;
+  outputRoot?: string;
   question: ConversationQuestionDetail;
   questionListToggle?: ReactNode;
   recordKind?: ConversationRecordKind;
   resultPreviewLineLimit?: number;
   session: ConversationSessionDetail;
-  setOutputRoot: (value: string) => void;
+  setOutputRoot?: (value: string) => void;
   t: Translator;
   translationSettings?: ResolvedConversationTranslationSettings;
   visibility?: ConversationContentVisibility;
@@ -2872,7 +2893,6 @@ export function QuestionPreview({
   const title =
     conversationQuestionTitle(question) ??
     t("conversation.markdown.untitledQuestion");
-  const [pickingOutputRoot, setPickingOutputRoot] = useState(false);
   const [commandProjections, setCommandProjections] = useState<
     ConversationCommandProjection[]
   >([]);
@@ -3004,54 +3024,26 @@ export function QuestionPreview({
     [],
   );
 
-  async function handlePickOutputRoot() {
-    setPickingOutputRoot(true);
-    try {
-      const selected = await onPickOutputRoot();
-      if (selected) {
-        setOutputRoot(abbreviateHomePath(selected));
-      }
-    } finally {
-      setPickingOutputRoot(false);
-    }
-  }
-
   return (
     <div className="conversation-readable flex h-full min-h-0 flex-col">
-      <header className="conversation-section-header shrink-0 px-5 py-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 flex-1 items-start gap-3">
-            {questionListToggle}
-            <div className="min-w-0">
-              <p className="text-label-caps text-primary">
-                {questionOriginLabel(question, t)}
-              </p>
-              <h2 className="mt-1 text-title-md text-on-surface">{title}</h2>
-              {recordKind !== "web" ? (
-                <p className="mt-1 text-body-sm text-on-surface-variant">
-                  {session.session.project_path
-                    ? abbreviateHomePath(session.session.project_path)
-                    : t("conversation.session.noProject")}
-                </p>
-              ) : null}
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <PathPickerInput
-              aria-label={t("conversation.session.outputRoot")}
-              className="min-w-64"
-              onChange={(event) => setOutputRoot(event.target.value)}
-              onPick={() => void handlePickOutputRoot()}
-              pickLabel={t("conversation.export.pickOutputRoot")}
-              picking={pickingOutputRoot}
-              value={outputRoot}
-            />
-            <ToolbarActionButton
-              icon={<Download size={17} />}
-              label={t("conversation.session.exportMarkdown")}
-              onClick={onExport}
-              text={t("toolbar.export")}
-            />
+      <header className="conversation-section-header flex shrink-0 items-center justify-between gap-3 px-4 py-2.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          {questionListToggle}
+          <div className="flex min-w-0 items-center gap-2">
+            <h2
+              className="truncate text-body-sm font-semibold text-on-surface"
+              title={session.session.title || t("conversation.session.untitled")}
+            >
+              {session.session.title || t("conversation.session.untitled")}
+            </h2>
+            {recordKind !== "web" && session.session.project_path ? (
+              <span
+                className="hidden truncate font-mono text-code-xs text-on-surface-muted sm:inline-block"
+                title={session.session.project_path}
+              >
+                {abbreviateHomePath(session.session.project_path)}
+              </span>
+            ) : null}
           </div>
         </div>
       </header>

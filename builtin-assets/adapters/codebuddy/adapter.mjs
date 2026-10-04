@@ -19,6 +19,21 @@ const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 const ADAPTER_ID = "codebuddy";
 const CONTENT_CARD_SCHEMA_VERSION = "codebuddy-content-cards-v1";
 
+function sanitizeSessionShortTitle(text, maxLength = 36) {
+  if (!text) return null;
+  let cleaned = String(text).trim();
+  cleaned = cleaned.replace(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i, "$1");
+  cleaned = cleaned.replace(/<\/?(?:USER_REQUEST|ADDITIONAL_METADATA|system_information|context|prompt)[^>]*>/gi, " ");
+  cleaned = cleaned.replace(/^#+\s+/gm, "");
+  cleaned = cleaned.replace(/```[\s\S]*?```/g, " ");
+  cleaned = cleaned.replace(/`([^`]+)`/g, "$1");
+  cleaned = cleaned.replace(/^\s*[-*+]\s+/gm, "");
+  const firstLine = cleaned.split(/\r?\n/).map((line) => line.trim()).find((line) => Boolean(line) && !line.startsWith("<!--")) ?? "";
+  if (!firstLine) return null;
+  if (firstLine.length <= maxLength) return firstLine;
+  return `${firstLine.slice(0, maxLength - 3).trim()}...`;
+}
+
 process.stdout.on("error", (err) => {
   if (err.code === "EPIPE") process.exit(0);
 });
@@ -712,6 +727,8 @@ function listSessions() {
 
   for (const filePath of allFiles) {
     try {
+      const isSubagent = isSubagentSessionPath(filePath);
+      if (isSubagent) continue;
       const { text, versionToken } = readStableFile(filePath);
       const sid = path.basename(filePath, ".jsonl");
       const parsed = parseJsonl(text, sid, filePath);
@@ -719,10 +736,11 @@ function listSessions() {
 
       const stat = statSync(filePath);
       const dbInfo = dbTitles.get(parsed.sessionId || sid);
-      const isSubagent = isSubagentSessionPath(filePath);
-      const title = isSubagent
-        ? `[子代理] ${parsed.sessionTitle || parsed.turns[0]?.user_text?.slice(0, 40) || sid}`
-        : (dbInfo?.title || parsed.sessionTitle || parsed.turns[0]?.user_text?.slice(0, 80) || "CodeBuddy 会话");
+      const title =
+        dbInfo?.title ||
+        parsed.sessionTitle ||
+        sanitizeSessionShortTitle(parsed.turns[0]?.user_text) ||
+        "CodeBuddy 会话";
       descriptors.push({
         external_id: parsed.sessionId || sid,
         title,
@@ -752,8 +770,8 @@ function readSession() {
     const isSubagent = isSubagentSessionPath(filePath);
     const origin = isSubagent ? "subagent" : detectClientFlavor(filePath);
     const title = isSubagent
-      ? `[子代理] ${parsed.sessionTitle || parsed.turns[0]?.user_text?.slice(0, 40) || sid}`
-      : (dbInfo?.title || parsed.sessionTitle || parsed.turns[0]?.user_text?.slice(0, 80) || "CodeBuddy 会话");
+      ? `[子代理] ${parsed.sessionTitle || sanitizeSessionShortTitle(parsed.turns[0]?.user_text, 24) || sid}`
+      : (dbInfo?.title || parsed.sessionTitle || sanitizeSessionShortTitle(parsed.turns[0]?.user_text) || "CodeBuddy 会话");
     const userVisible = !isSubagent;
 
     const session = {

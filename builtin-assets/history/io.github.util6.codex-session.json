@@ -7,6 +7,22 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "1.7.0",
+      "channel": "stable",
+      "released_at": "2026-10-04T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.7.0-universal.zip",
+      "artifact_size": 134696,
+      "artifact_sha256": "d3e969da61f75d25cac875c905ef7e56e09b6e8979543624b6168e431ea3faaf",
+      "changelog_markdown": "## 1.7.0\n\n- Remove deprecated code card kind from manifest and preserve unified markdown answers.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
+      }
+    },
+    {
       "version": "1.6.4",
       "channel": "stable",
       "released_at": "2026-09-11T00:00:00Z",

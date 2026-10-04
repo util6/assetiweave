@@ -7,6 +7,22 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "0.6.0",
+      "channel": "stable",
+      "released_at": "2026-10-04T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.zcode-session-0.6.0-universal.zip",
+      "artifact_size": 53226,
+      "artifact_sha256": "feddd13d3059cd938b457c780957324d02b4fa586bca9be9054e5d7d266b4894",
+      "changelog_markdown": "## 0.6.0\n\n- Remove deprecated code card kind and preserve complete markdown answers without splitting code fences into separate cards.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
+      }
+    },
+    {
       "version": "0.5.2",
       "channel": "stable",
       "released_at": "2026-08-26T00:00:00Z",

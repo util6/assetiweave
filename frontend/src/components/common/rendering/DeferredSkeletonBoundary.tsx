@@ -77,17 +77,20 @@ export function DeferredSkeletonBoundary({
   stateRef.current = state;
   priorityRef.current = explicitPriority ?? observedPriority;
 
+  const isForceReady = Boolean(forceReady);
   const itemChanged = itemKeyRef.current !== itemKey;
   if (itemChanged) {
     itemKeyRef.current = itemKey;
     readyNotifiedRef.current = false;
-    stateRef.current = enabled && !forceReady ? "skeleton" : "ready";
+    stateRef.current = enabled && !isForceReady ? "skeleton" : "ready";
   }
-  const renderState = itemChanged
-    ? enabled && !forceReady
-      ? "skeleton"
-      : "ready"
-    : state;
+  const renderState = isForceReady
+    ? "ready"
+    : itemChanged
+      ? enabled
+        ? "skeleton"
+        : "ready"
+      : state;
 
   const cancelQueuedTask = () => {
     cancelTaskRef.current?.();
@@ -103,12 +106,16 @@ export function DeferredSkeletonBoundary({
   }, []);
 
   useEffect(() => {
-    if (itemChanged) {
+    if (isForceReady && stateRef.current !== "ready") {
+      cancelQueuedTask();
+      stateRef.current = "ready";
+      setState("ready");
+    } else if (itemChanged) {
       cancelQueuedTask();
       setObservedPriority(null);
-      setState(enabled && !forceReady ? "skeleton" : "ready");
+      setState(enabled && !isForceReady ? "skeleton" : "ready");
     }
-  }, [enabled, forceReady, itemKey, itemChanged]);
+  }, [enabled, isForceReady, itemKey, itemChanged]);
 
   useEffect(() => {
     if (!enabled || forceReady || explicitPriority !== undefined)

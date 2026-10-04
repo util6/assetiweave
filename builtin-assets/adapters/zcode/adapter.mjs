@@ -14,6 +14,22 @@ const { projectCommandParts, SHELL_PROJECTOR_VERSION } = shellProjector;
 
 const SQLITE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 const CONTENT_CARD_SCHEMA_VERSION = "zcode-content-cards-v7";
+
+function sanitizeSessionShortTitle(text, maxLength = 36) {
+  if (!text) return null;
+  let cleaned = String(text).trim();
+  cleaned = cleaned.replace(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i, "$1");
+  cleaned = cleaned.replace(/<\/?(?:USER_REQUEST|ADDITIONAL_METADATA|system_information|context|prompt)[^>]*>/gi, " ");
+  cleaned = cleaned.replace(/^#+\s+/gm, "");
+  cleaned = cleaned.replace(/```[\s\S]*?```/g, " ");
+  cleaned = cleaned.replace(/`([^`]+)`/g, "$1");
+  cleaned = cleaned.replace(/^\s*[-*+]\s+/gm, "");
+  const firstLine = cleaned.split(/\r?\n/).map((line) => line.trim()).find((line) => Boolean(line) && !line.startsWith("<!--")) ?? "";
+  if (!firstLine) return null;
+  if (firstLine.length <= maxLength) return firstLine;
+  return `${firstLine.slice(0, maxLength - 3).trim()}...`;
+}
+
 const IGNORED_PART_TYPES = new Set([
   "compaction",
   "reasoning",
@@ -317,85 +333,21 @@ function normalizedPart({
   };
 }
 
-function splitMarkdown(role, text) {
-  const parts = [];
-  let remaining = String(text ?? "");
-  while (remaining.includes("```")) {
-    const start = remaining.indexOf("```");
-    const before = remaining.slice(0, start);
-    if (before && before.trim()) {
-      parts.push(
-        normalizedPart({
-          role,
-          kind: "text",
-          text: before.trim(),
-          metadata_json: role === "assistant"
-            ? contentCardMetadata({ type: "answer", format: "markdown" })
-            : null,
-        }),
-      );
-    }
-    const fenceBody = remaining.slice(start + 3);
-    const end = fenceBody.indexOf("```");
-    if (end < 0) {
-      const tail = `\`\`\`${fenceBody}`.trim();
-      if (tail) {
-        parts.push(
-          normalizedPart({
-            role,
-            kind: "text",
-            text: tail,
-            metadata_json: role === "assistant"
-              ? contentCardMetadata({ type: "answer", format: "markdown" })
-              : null,
-          }),
-        );
-      }
-      return parts;
-    }
-    const fenced = fenceBody.slice(0, end);
-    remaining = fenceBody.slice(end + 3);
-    let language = null;
-    let code = fenced;
-    if (fenced.includes("\n")) {
-      const firstNewline = fenced.indexOf("\n");
-      language = fenced.slice(0, firstNewline).trim() || null;
-      code = fenced.slice(firstNewline + 1);
-    }
-    code = code.replace(/^\n+|\n+$/g, "");
-    if (code.trim()) {
-      parts.push(
-        normalizedPart({
-          role,
-          kind: "code_block",
-          text: code,
-          language,
-          metadata_json: contentCardMetadata({ type: "code", language }),
-        }),
-      );
-    }
-  }
-  if (remaining && remaining.trim()) {
-    parts.push(
-      normalizedPart({
-        role,
-        kind: "text",
-        text: remaining.trim(),
-        metadata_json: role === "assistant"
-          ? contentCardMetadata({ type: "answer", format: "markdown" })
-          : null,
-      }),
-    );
-  }
-  return parts;
-}
 
 function normalizeAssistantPart(data, sourceExecutionId = null) {
   const kind = String(data?.type || "text");
   if (IGNORED_PART_TYPES.has(kind)) return [];
   if (kind === "text") {
     const text = data?.text;
-    return typeof text === "string" ? splitMarkdown("assistant", text) : [];
+    if (typeof text !== "string" || !text.trim()) return [];
+    return [
+      normalizedPart({
+        role: "assistant",
+        kind: "text",
+        text: text.trim(),
+        metadata_json: contentCardMetadata({ type: "answer", format: "markdown" }),
+      }),
+    ];
   }
   if (kind === "tool" || kind === "tool-call" || kind === "tool-result") {
     const command = nestedString(data, ["command", "cmd", "shell_command"]);
@@ -1102,7 +1054,9 @@ function run(request) {
     if (!turns.length) continue;
     sessions.push({
       external_id: String(row.id),
-      title: row.title != null ? String(row.title) : null,
+      title: (row.title != null && String(row.title).trim())
+        ? String(row.title).trim()
+        : (sanitizeSessionShortTitle(turns[0]?.user_text) || null),
       project_path: row.project_path != null ? String(row.project_path) : null,
       started_at: turns[0]?.started_at ?? null,
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? timestamp(row.time_updated),

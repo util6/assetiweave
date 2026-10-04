@@ -3327,13 +3327,13 @@ async fn official_opencode_adapter_splits_command_and_result_cards() {
     assert_eq!(sessions[0].turns[0].user_text, "Run tests");
     assert_content_card_types(
         &sessions[0].turns[0].parts,
-        &["answer", "code", "command", "result"],
+        &["answer", "command", "result"],
     );
     assert_eq!(
-        sessions[0].turns[0].parts[2].command.as_deref(),
+        sessions[0].turns[0].parts[1].command.as_deref(),
         Some("cargo test")
     );
-    assert_eq!(sessions[0].turns[0].parts[3].text, None);
+    assert_eq!(sessions[0].turns[0].parts[2].text, None);
 }
 
 #[cfg(unix)]
@@ -3583,22 +3583,22 @@ async fn official_opencode_adapter_extracts_json_fields_without_raw_metadata() {
 
     assert_eq!(sessions.len(), 1);
     let parts = &sessions[0].turns[0].parts;
-    assert_content_card_types(parts, &["answer", "code", "command", "result"]);
-    assert_eq!(parts[2].command.as_deref(), Some("cargo test"));
-    assert_eq!(parts[3].text, None);
+    assert_content_card_types(parts, &["answer", "command", "result"]);
+    assert_eq!(parts[1].command.as_deref(), Some("cargo test"));
+    assert_eq!(parts[2].text, None);
     assert_eq!(
-        parts[3]
+        parts[2]
             .content_card
             .as_ref()
             .and_then(|card| card.renderer.as_deref()),
         Some("terminal_output")
     );
     assert_eq!(
-        parts[2].source_execution_id.as_deref(),
+        parts[1].source_execution_id.as_deref(),
         Some("call-opencode-tests")
     );
     assert_eq!(
-        parts[3].source_execution_id.as_deref(),
+        parts[2].source_execution_id.as_deref(),
         Some("call-opencode-tests")
     );
     let metadata = parts
@@ -3655,13 +3655,13 @@ async fn official_claude_code_adapter_splits_command_and_result_cards() {
     assert_eq!(sessions[0].turns[0].user_text, "Run tests");
     assert_content_card_types(
         &sessions[0].turns[0].parts,
-        &["answer", "code", "command", "result"],
+        &["answer", "command", "result"],
     );
     assert_eq!(
-        sessions[0].turns[0].parts[2].command.as_deref(),
+        sessions[0].turns[0].parts[1].command.as_deref(),
         Some("cargo test")
     );
-    assert_eq!(sessions[0].turns[0].parts[3].text, None);
+    assert_eq!(sessions[0].turns[0].parts[2].text, None);
 }
 
 #[cfg(unix)]

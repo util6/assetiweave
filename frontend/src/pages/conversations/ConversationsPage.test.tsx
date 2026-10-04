@@ -261,13 +261,13 @@ describe("MarkdownContent", () => {
       />,
     );
 
+    expect(html).toContain("Conversation fixture");
     expect(html).toContain("用户问题");
     expect(html).toContain("回复与活动");
     expect(html).toContain("同步流程");
     expect(html).toContain("<li>按 Session 导入</li>");
     expect(html).toContain("assetiweave-cli conversation sync --dry-run");
     expect(html).toContain("从这里拆分");
-    expect(html).toContain("导出");
   });
 
   it("omits project path from web record question previews", () => {
@@ -320,32 +320,23 @@ describe("MarkdownContent", () => {
     ).toBe(questionDetail.question.id);
   });
 
-  it("lets users choose the inline question export output root", async () => {
-    const setOutputRoot = vi.fn();
-    const onPickOutputRoot = vi.fn(async () => "/tmp/detail-export-root");
-
-    render(
+  it("renders a compact session title in the question preview header without inline path picker", () => {
+    const { container } = render(
       <QuestionPreview
         onExport={async () => undefined}
-        onPickOutputRoot={onPickOutputRoot}
+        onPickOutputRoot={async () => null}
         onSplit={async () => undefined}
         outputRoot="/tmp/conversation-export"
         question={questionDetail}
         session={sessionDetail}
-        setOutputRoot={setOutputRoot}
+        setOutputRoot={vi.fn()}
         t={t}
       />,
     );
 
-    const pickButton = screen.getByRole("button", { name: "选择导出根目录" });
-    expect(pickButton.textContent).toBe("");
-
-    fireEvent.click(pickButton);
-
-    await waitFor(() => {
-      expect(onPickOutputRoot).toHaveBeenCalledTimes(1);
-      expect(setOutputRoot).toHaveBeenCalledWith("/tmp/detail-export-root");
-    });
+    expect(screen.queryByRole("button", { name: "选择导出根目录" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Conversation fixture" })).toBeTruthy();
+    expect(container.querySelector(".conversation-section-header")).toBeTruthy();
   });
 
   it("groups sessions from the app level before browsing individual sessions", () => {

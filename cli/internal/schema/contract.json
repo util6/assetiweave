@@ -9781,7 +9781,7 @@
             ]
           },
           "mode": {
-            "description": "Synchronization strategy. Incremental is the default; full reparses every discoverable record.",
+            "description": "Synchronization strategy: incremental or full",
             "type": "string",
             "enum": [
               "incremental",
@@ -10792,7 +10792,7 @@
             ]
           },
           "mode": {
-            "description": "Synchronization strategy. Incremental is the default; full reparses every discoverable record.",
+            "description": "Synchronization strategy: incremental or full",
             "type": "string",
             "enum": [
               "incremental",

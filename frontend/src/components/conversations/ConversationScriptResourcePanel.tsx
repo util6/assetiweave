@@ -74,6 +74,31 @@ export function ConversationScriptResourcePanel({
   recordKind: ConversationRecordKind;
 }) {
   const { t } = useI18n();
+  const onInstalledRef = useRef(onInstalled);
+  onInstalledRef.current = onInstalled;
+  const onManifestSelectRef = useRef(onManifestSelect);
+  onManifestSelectRef.current = onManifestSelect;
+  const onNotifyRef = useRef(onNotify);
+  onNotifyRef.current = onNotify;
+  const onNotifyErrorRef = useRef(onNotifyError);
+  onNotifyErrorRef.current = onNotifyError;
+
+  const notify = useCallback(
+    (notification: ScriptResourceNotification) => {
+      onNotifyRef.current(notification);
+    },
+    [],
+  );
+  const notifyError = useCallback((message: string) => {
+    onNotifyErrorRef.current(message);
+  }, []);
+  const notifyInstalled = useCallback(() => {
+    return onInstalledRef.current();
+  }, []);
+  const notifyManifestSelect = useCallback((manifestPath: string) => {
+    onManifestSelectRef.current?.(manifestPath);
+  }, []);
+
   const [entries, setEntries] = useState<
     ConversationAdapterPackageCatalogEntry[]
   >([]);
@@ -123,13 +148,13 @@ export function ConversationScriptResourcePanel({
       } catch (loadError) {
         const message = errorMessage(loadError);
         setError(message);
-        onNotifyError(message);
+        notifyError(message);
       } finally {
         setLoading(false);
         setRefreshing(false);
       }
     },
-    [onNotifyError],
+    [notifyError],
   );
 
   useEffect(() => {
@@ -226,30 +251,30 @@ export function ConversationScriptResourcePanel({
     handledInstallTaskIds.current.add(installTask.id);
     if (installTask.status === "completed") {
       const manifestPath = manifestPathFromInstallResult(installTask.result);
-      if (manifestPath && onManifestSelect) {
-        onManifestSelect(manifestPath);
+      if (manifestPath) {
+        notifyManifestSelect(manifestPath);
       }
-      onNotify({
+      notify({
         message: t(packageTaskCompletedLabel(installTask.action)),
         tone: "success",
       });
-      void Promise.resolve(onInstalled()).finally(() => {
+      void Promise.resolve(notifyInstalled()).finally(() => {
         void loadCatalog("refresh");
       });
       return;
     }
 
-    onNotifyError(
+    notifyError(
       installTask.error?.message ||
         t(packageTaskFailedLabel(installTask.action)),
     );
   }, [
     installTask,
     loadCatalog,
-    onInstalled,
-    onManifestSelect,
-    onNotify,
-    onNotifyError,
+    notify,
+    notifyError,
+    notifyInstalled,
+    notifyManifestSelect,
     t,
   ]);
 
@@ -277,6 +302,8 @@ export function ConversationScriptResourcePanel({
     }
   }, [activeView, recordEntries]);
   const installRunning = installTask?.status === "running";
+  const isInitialLoading = loading && entries.length === 0;
+  const isValidating = (loading || refreshing) && entries.length > 0;
 
   async function handleInstall(entry: ConversationAdapterPackageCatalogEntry) {
     const action = packageActionForEntry(entry);
@@ -286,38 +313,38 @@ export function ConversationScriptResourcePanel({
     if (!entry.installed && entry.item.source.type === "local_directory") {
       const manifestPath = manifestPathForEntry(entry);
       if (!manifestPath) {
-        onNotifyError(t("conversation.scriptMarket.localManifestMissing"));
+        notifyError(t("conversation.scriptMarket.localManifestMissing"));
         return;
       }
       try {
         await registerConversationAdapter(manifestPath, false, true);
-        onNotify({
+        notify({
           message: t("conversation.scriptMarket.registerCompleted"),
           tone: "success",
         });
-        await Promise.resolve(onInstalled());
+        await Promise.resolve(notifyInstalled());
         await loadCatalog("refresh");
       } catch (registerError) {
-        onNotifyError(errorMessage(registerError));
+        notifyError(errorMessage(registerError));
       }
       return;
     }
     if (entry.status === "uninstalled" && isBuiltInEntry(entry)) {
       const manifestPath = manifestPathForEntry(entry);
       if (!manifestPath) {
-        onNotifyError(t("conversation.scriptMarket.builtInManifestMissing"));
+        notifyError(t("conversation.scriptMarket.builtInManifestMissing"));
         return;
       }
       try {
         await registerConversationAdapter(manifestPath, false, true);
-        onNotify({
+        notify({
           message: t("conversation.scriptMarket.registerCompleted"),
           tone: "success",
         });
-        await Promise.resolve(onInstalled());
+        await Promise.resolve(notifyInstalled());
         await loadCatalog("refresh");
       } catch (registerError) {
-        onNotifyError(errorMessage(registerError));
+        notifyError(errorMessage(registerError));
       }
       return;
     }
@@ -332,14 +359,14 @@ export function ConversationScriptResourcePanel({
       });
       await loadCatalog("refresh");
       setActiveView("updates");
-      onNotify({
+      notify({
         message: t("conversation.scriptMarket.checkUpdatesCompleted", {
           count: statuses.filter((status) => status.update_available).length,
         }),
         tone: "success",
       });
     } catch (checkError) {
-      onNotifyError(errorMessage(checkError));
+      notifyError(errorMessage(checkError));
     } finally {
       setCheckingUpdates(false);
     }
@@ -364,7 +391,7 @@ export function ConversationScriptResourcePanel({
       }
       setPendingChange({ action, entry, preflight });
     } catch (installError) {
-      onNotifyError(errorMessage(installError));
+      notifyError(errorMessage(installError));
     }
   }
 
@@ -383,11 +410,11 @@ export function ConversationScriptResourcePanel({
         await unregisterConversationAdapter({ adapterId, confirmed: true });
         setPendingChange(null);
         setDetailEntry(null);
-        onNotify({
+        notify({
           message: t("conversation.scriptMarket.uninstallCompleted"),
           tone: "success",
         });
-        await Promise.resolve(onInstalled());
+        await Promise.resolve(notifyInstalled());
         await loadCatalog("refresh");
         return;
       }
@@ -420,13 +447,13 @@ export function ConversationScriptResourcePanel({
       setPendingChange(null);
       setInstallTask(task);
       if (task.status === "running") {
-        onNotify({
+        notify({
           message: t("conversation.scriptMarket.installStarted"),
           tone: "info",
         });
       }
     } catch (installError) {
-      onNotifyError(errorMessage(installError));
+      notifyError(errorMessage(installError));
     } finally {
       setConfirmingChange(false);
     }
@@ -519,12 +546,12 @@ export function ConversationScriptResourcePanel({
       if (action !== "delete" || nextVersions.length === 0) {
         setDetailEntry(null);
       }
-      onNotify({
+      notify({
         message: t("conversation.scriptMarket.versionActionCompleted"),
         tone: "success",
       });
     } catch (mutationError) {
-      onNotifyError(errorMessage(mutationError));
+      notifyError(errorMessage(mutationError));
     } finally {
       setVersionMutation(null);
     }
@@ -545,12 +572,12 @@ export function ConversationScriptResourcePanel({
       setDetailEntry((current) =>
         current ? { ...current, installed_package: updated } : current,
       );
-      onNotify({
+      notify({
         message: t("conversation.scriptMarket.policySaved"),
         tone: "success",
       });
     } catch (policyError) {
-      onNotifyError(errorMessage(policyError));
+      notifyError(errorMessage(policyError));
     } finally {
       setPolicySaving(false);
     }
@@ -643,7 +670,7 @@ export function ConversationScriptResourcePanel({
           <CircleAlert className="mt-0.5 shrink-0" size={15} />
           <span>{error}</span>
         </div>
-      ) : loading ? (
+      ) : isInitialLoading ? (
         <div className="mt-3 grid gap-2">
           <div
             aria-live="polite"
@@ -663,29 +690,43 @@ export function ConversationScriptResourcePanel({
             </div>
           ))}
         </div>
-      ) : visibleEntries.length === 0 ? (
-        <div className="mt-3 rounded-xl border border-theme-card-border bg-theme-control/40 px-3 py-2 text-body-sm text-on-surface-variant">
-          {t("conversation.scriptMarket.emptyForKind")}
-        </div>
       ) : (
-        <div className="mt-3 grid max-h-72 gap-2 overflow-y-auto pr-1">
-          {visibleEntries.map((entry) => (
-            <ScriptResourceRow
-              changeDisabled={disabled || installRunning}
-              disabled={disabled}
-              entry={entry}
-              key={entry.item.id}
-              onInstall={() => void handleInstall(entry)}
-              onInspect={() => void openPackageDetail(entry)}
-              onLifecycle={() => {
-                const action = packageLifecycleAction(entry);
-                if (action) {
-                  void beginPackageChange(entry, action);
-                }
-              }}
-            />
-          ))}
-        </div>
+        <>
+          {isValidating ? (
+            <div
+              aria-live="polite"
+              className="mt-3 flex items-center gap-2 rounded-xl border border-status-update/30 bg-status-update/10 px-3 py-2 text-body-sm text-status-update"
+              role="status"
+            >
+              <Loader2 className="shrink-0 animate-spin" size={15} />
+              <span>{t("conversation.scriptMarket.loading")}</span>
+            </div>
+          ) : null}
+          {visibleEntries.length === 0 ? (
+            <div className="mt-3 rounded-xl border border-theme-card-border bg-theme-control/40 px-3 py-2 text-body-sm text-on-surface-variant">
+              {t("conversation.scriptMarket.emptyForKind")}
+            </div>
+          ) : (
+            <div className="mt-3 grid max-h-72 gap-2 overflow-y-auto pr-1">
+              {visibleEntries.map((entry) => (
+                <ScriptResourceRow
+                  changeDisabled={disabled || installRunning}
+                  disabled={disabled}
+                  entry={entry}
+                  key={entry.item.id}
+                  onInstall={() => void handleInstall(entry)}
+                  onInspect={() => void openPackageDetail(entry)}
+                  onLifecycle={() => {
+                    const action = packageLifecycleAction(entry);
+                    if (action) {
+                      void beginPackageChange(entry, action);
+                    }
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
       {detailEntry ? (
         <DialogFrame

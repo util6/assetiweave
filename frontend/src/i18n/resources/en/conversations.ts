@@ -441,5 +441,6 @@ export const conversationsEn = {
   "conversation.sync.background.description":
     "You can keep using other features. Lists refresh when it finishes.",
   "conversation.markdown.untitledQuestion": "Untitled question",
+  "conversation.session.untitled": "Untitled session",
   "conversation.markdown.empty": "Nothing to preview yet.",
 } as const;

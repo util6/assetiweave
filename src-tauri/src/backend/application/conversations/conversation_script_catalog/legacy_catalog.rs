@@ -17,26 +17,22 @@ const LOCAL_DEFAULT_CONVERSATION_SCRIPT_CATALOG: &str =
 pub(crate) fn load_conversation_script_catalog(
     catalog_url: Option<&str>,
 ) -> AppResult<ConversationScriptCatalog> {
-    let catalog_url = catalog_url
-        .and_then(clean_non_empty_string)
-        .unwrap_or_else(|| DEFAULT_CONVERSATION_SCRIPT_CATALOG_URL.to_string());
-    let text = if catalog_url.starts_with("https://") || catalog_url.starts_with("http://") {
-        match fetch_catalog_text(&catalog_url) {
-            Ok(text) => text,
-            Err(error) if catalog_url == DEFAULT_CONVERSATION_SCRIPT_CATALOG_URL => {
-                read_local_default_catalog()
-                    .map_err(|fallback_error| {
-                        format!("{error}; local default catalog fallback failed: {fallback_error}")
-                    })
-                    .map_err(AppError::external)?
-            }
-            Err(error) => return Err(error),
+    let text = match catalog_url.and_then(clean_non_empty_string) {
+        None => read_local_default_catalog()?,
+        Some(url) if url == DEFAULT_CONVERSATION_SCRIPT_CATALOG_URL => {
+            read_local_default_catalog()?
         }
-    } else {
-        let path = crate::backend::infrastructure::path_utils::expand_path(&catalog_url)?;
-        fs::read_to_string(&path)
-            .map_err(|error| format!("read conversation adapter package catalog failed: {error}"))
-            .map_err(AppError::external)?
+        Some(url) if url.starts_with("https://") || url.starts_with("http://") => {
+            fetch_catalog_text(&url)?
+        }
+        Some(url) => {
+            let path = crate::backend::infrastructure::path_utils::expand_path(&url)?;
+            fs::read_to_string(&path)
+                .map_err(|error| {
+                    format!("read conversation adapter package catalog failed: {error}")
+                })
+                .map_err(AppError::external)?
+        }
     };
     let catalog: ConversationScriptCatalog = serde_json::from_str(&text)
         .map_err(|error| {

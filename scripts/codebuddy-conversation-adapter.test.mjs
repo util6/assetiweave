@@ -330,7 +330,8 @@ test("CodeBuddy links Agent tool call to subagent child session and discovers su
     });
     assert.equal(listResult.status, 0);
     const items = listResult.stdout.trim().split("\n").map((l) => JSON.parse(l)).filter((m) => m.type === "item");
-    assert.equal(items.length, 2); // Both main session and subagent session are discovered!
+    assert.equal(items.length, 1); // Subagent session is filtered out from top-level list_sessions
+    assert.equal(items[0].item.external_id, "session-main");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
