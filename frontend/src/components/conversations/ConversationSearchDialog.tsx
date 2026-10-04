@@ -63,11 +63,30 @@ export interface ConversationSearchDialogProps {
 }
 
 export function ConversationSearchDialog({
-  adapterId, appMetaById, commitDelayMs = 700, commitImmediatelyWhen,
-  contentCardColors, includeQuestions, loading, loadingMore = false,
-  onAdapterChange, onApplyFilters, onCardKindToggle, onClose, onLoadMore,
-  onOpenHit, onQueryChange, onQuestionToggle, onSemanticRoleToggle, onShowAllCardTypes,
-  open, query, result, selectedCardKinds, selectedSemanticRoles, t,
+  adapterId,
+  appMetaById,
+  commitDelayMs = 700,
+  commitImmediatelyWhen,
+  contentCardColors,
+  includeQuestions,
+  loading,
+  loadingMore = false,
+  onAdapterChange,
+  onApplyFilters,
+  onCardKindToggle,
+  onClose,
+  onLoadMore,
+  onOpenHit,
+  onQueryChange,
+  onQuestionToggle,
+  onSemanticRoleToggle,
+  onShowAllCardTypes,
+  open,
+  query,
+  result,
+  selectedCardKinds,
+  selectedSemanticRoles,
+  t,
 }: ConversationSearchDialogProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [draftQuery, setDraftQuery] = useState(query);
@@ -80,17 +99,31 @@ export function ConversationSearchDialog({
   const [, startTransition] = useTransition();
 
   const {
-    applyDraftFilters, draftAdapterId, draftCardKinds, draftIncludeQuestions,
-    draftSemanticRoles, handleDiscardDraft, handleDraftAdapterChange,
-    handleDraftCardKindToggle, handleDraftQuestionToggle, handleDraftReset,
-    handleDraftSemanticRoleToggle, hasPendingFilterChanges, pendingChangeCount,
+    applyDraftFilters,
+    draftAdapterId,
+    draftCardKinds,
+    draftIncludeQuestions,
+    draftSemanticRoles,
+    handleDiscardDraft,
+    handleDraftAdapterChange,
+    handleDraftCardKindToggle,
+    handleDraftQuestionToggle,
+    handleDraftReset,
+    handleDraftSemanticRoleToggle,
+    hasPendingFilterChanges,
+    pendingChangeCount,
   } = useConversationSearchDraftFilters({
     committedAdapterId: adapterId,
     committedCardKinds: selectedCardKinds,
     committedIncludeQuestions: includeQuestions,
     committedSemanticRoles: selectedSemanticRoles,
-    onAdapterChange, onApplyFilters, onCardKindToggle, onQuestionToggle,
-    onResetFilters: onShowAllCardTypes, onSemanticRoleToggle, open,
+    onAdapterChange,
+    onApplyFilters,
+    onCardKindToggle,
+    onQuestionToggle,
+    onResetFilters: onShowAllCardTypes,
+    onSemanticRoleToggle,
+    open,
   });
 
   const [activeHitKey, setActiveHitKey] = useState<string | null>(null);
@@ -127,7 +160,8 @@ export function ConversationSearchDialog({
   const displayedTotalCount = result?.totalCount ?? hits.length;
   const isShortId = /^[0-9a-f]{8}$/i.test(trimmedQuery);
   const hasUncommittedDraft =
-    trimmedQuery !== committedQueryRef.current.trim() && trimmedQuery.length > 0;
+    trimmedQuery !== committedQueryRef.current.trim() &&
+    trimmedQuery.length > 0;
   const hasUncommittedChanges = hasUncommittedDraft || hasPendingFilterChanges;
 
   const visibleHits = useMemo(
@@ -138,7 +172,13 @@ export function ConversationSearchDialog({
         selectedCardKinds: draftCardKinds,
         selectedSemanticRoles: draftSemanticRoles,
       }),
-    [hits, draftAdapterId, draftIncludeQuestions, draftCardKinds, draftSemanticRoles],
+    [
+      hits,
+      draftAdapterId,
+      draftIncludeQuestions,
+      draftCardKinds,
+      draftSemanticRoles,
+    ],
   );
 
   useEffect(() => {
@@ -152,9 +192,13 @@ export function ConversationSearchDialog({
     }
   }, [visibleHits, activeHitKey]);
 
-  const currentHitIndex = visibleHits.findIndex((h) => getHitKey(h) === activeHitKey);
+  const currentHitIndex = visibleHits.findIndex(
+    (h) => getHitKey(h) === activeHitKey,
+  );
   const activeHit =
-    (currentHitIndex >= 0 ? visibleHits[currentHitIndex] : null) ?? visibleHits[0] ?? null;
+    (currentHitIndex >= 0 ? visibleHits[currentHitIndex] : null) ??
+    visibleHits[0] ??
+    null;
 
   const commitDraft = (nextValue: string) => {
     clearTimer();
@@ -188,7 +232,8 @@ export function ConversationSearchDialog({
       clearTimer();
       return;
     }
-    const isBulkOrPaste = isPasteRef.current || Math.abs(value.length - prevLength) !== 1;
+    const isBulkOrPaste =
+      isPasteRef.current || Math.abs(value.length - prevLength) !== 1;
     isPasteRef.current = false;
     if (isBulkOrPaste && commitImmediatelyWhen?.(value)) {
       clearTimer();
@@ -273,7 +318,8 @@ export function ConversationSearchDialog({
     if (event.key === "Enter") {
       event.preventDefault();
       clearTimer();
-      const hasQueryChange = draftRef.current.trim() !== committedQueryRef.current.trim();
+      const hasQueryChange =
+        draftRef.current.trim() !== committedQueryRef.current.trim();
       if (hasQueryChange || hasPendingFilterChanges) {
         if (hasPendingFilterChanges) applyDraftFilters();
         if (hasQueryChange) commitDraft(draftRef.current);
@@ -336,15 +382,21 @@ export function ConversationSearchDialog({
           <div className="flex items-center gap-4">
             <div className="hidden items-center gap-2.5 font-mono text-caption text-on-surface-muted sm:flex">
               <span className="inline-flex items-center gap-1">
-                <kbd className="rounded-lg border border-theme-control-border bg-theme-control/80 px-1.5 py-0.5 text-[11px] shadow-sm">↑↓</kbd>
+                <kbd className="rounded-lg border border-theme-control-border bg-theme-control/80 px-1.5 py-0.5 text-[11px] shadow-sm">
+                  ↑↓
+                </kbd>
                 {t("conversation.search.shortcutNav")}
               </span>
               <span className="inline-flex items-center gap-1">
-                <kbd className="rounded-lg border border-theme-control-border bg-theme-control/80 px-1.5 py-0.5 text-[11px] shadow-sm">↵</kbd>
+                <kbd className="rounded-lg border border-theme-control-border bg-theme-control/80 px-1.5 py-0.5 text-[11px] shadow-sm">
+                  ↵
+                </kbd>
                 {t("conversation.search.shortcutOpen")}
               </span>
               <span className="inline-flex items-center gap-1">
-                <kbd className="rounded-lg border border-theme-control-border bg-theme-control/80 px-1.5 py-0.5 text-[11px] shadow-sm">Esc</kbd>
+                <kbd className="rounded-lg border border-theme-control-border bg-theme-control/80 px-1.5 py-0.5 text-[11px] shadow-sm">
+                  Esc
+                </kbd>
                 {t("conversation.search.dialogClose")}
               </span>
             </div>
@@ -360,7 +412,12 @@ export function ConversationSearchDialog({
                 <CornerDownLeft className="mr-1.5 size-4" />
                 {t("conversation.search.openSessionAndJump")}
               </Button>
-              <Button onClick={onClose} size="default" type="button" variant="outline">
+              <Button
+                onClick={onClose}
+                size="default"
+                type="button"
+                variant="outline"
+              >
                 {t("conversation.search.dialogClose")}
               </Button>
             </div>
@@ -438,7 +495,9 @@ export function ConversationSearchDialog({
             >
               <Search size={15} />
               {hasUncommittedChanges ? (
-                <kbd className="hidden text-[10px] font-mono leading-none sm:inline">↵</kbd>
+                <kbd className="hidden text-[10px] font-mono leading-none sm:inline">
+                  ↵
+                </kbd>
               ) : null}
             </button>
           </div>
@@ -482,4 +541,3 @@ function inputEventIsComposing(event: ChangeEvent<HTMLInputElement>) {
 }
 
 export { ConversationSearchTrigger } from "./conversationSearchHelpers";
-

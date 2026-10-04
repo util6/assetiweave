@@ -83,7 +83,8 @@ describe("CollapsibleHeader component", () => {
       </CollapsibleHeader>,
     );
 
-    const header = screen.getByText("Header Content").parentElement?.parentElement;
+    const header =
+      screen.getByText("Header Content").parentElement?.parentElement;
     expect(header?.getAttribute("data-collapsed")).toBe("false");
     expect(header?.getAttribute("aria-hidden")).toBe("false");
 
@@ -105,10 +106,7 @@ describe("CollapsibleHeader component", () => {
           <CollapsibleHeader>
             <h1>Managed Title</h1>
           </CollapsibleHeader>
-          <div
-            data-testid="scroll-area"
-            onScroll={onScroll}
-          />
+          <div data-testid="scroll-area" onScroll={onScroll} />
         </div>
       );
     }
@@ -119,7 +117,8 @@ describe("CollapsibleHeader component", () => {
       </CollapsibleHeaderProvider>,
     );
 
-    const titleElement = screen.getByText("Managed Title").parentElement?.parentElement;
+    const titleElement =
+      screen.getByText("Managed Title").parentElement?.parentElement;
     expect(titleElement?.getAttribute("data-collapsed")).toBe("false");
 
     const scrollArea = screen.getByTestId("scroll-area");

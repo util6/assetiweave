@@ -43,9 +43,11 @@ export function useConversationSearchDraftFilters({
   const [draftAdapterId, setDraftAdapterId] = useState<string | null>(
     committedAdapterId ?? null,
   );
-  const [draftCardKinds, setDraftCardKinds] = useState<string[]>(committedCardKinds);
-  const [draftSemanticRoles, setDraftSemanticRoles] =
-    useState<string[]>(committedSemanticRoles);
+  const [draftCardKinds, setDraftCardKinds] =
+    useState<string[]>(committedCardKinds);
+  const [draftSemanticRoles, setDraftSemanticRoles] = useState<string[]>(
+    committedSemanticRoles,
+  );
   const [draftIncludeQuestions, setDraftIncludeQuestions] = useState<boolean>(
     committedIncludeQuestions,
   );
@@ -127,11 +129,19 @@ export function useConversationSearchDraftFilters({
     let count = 0;
     if (draftAdapterId !== (committedAdapterId ?? null)) count += 1;
     if (draftIncludeQuestions !== committedIncludeQuestions) count += 1;
-    const addedKinds = draftCardKinds.filter((k) => !committedCardKinds.includes(k));
-    const removedKinds = committedCardKinds.filter((k) => !draftCardKinds.includes(k));
+    const addedKinds = draftCardKinds.filter(
+      (k) => !committedCardKinds.includes(k),
+    );
+    const removedKinds = committedCardKinds.filter(
+      (k) => !draftCardKinds.includes(k),
+    );
     count += addedKinds.length + removedKinds.length;
-    const addedRoles = draftSemanticRoles.filter((r) => !committedSemanticRoles.includes(r));
-    const removedRoles = committedSemanticRoles.filter((r) => !draftSemanticRoles.includes(r));
+    const addedRoles = draftSemanticRoles.filter(
+      (r) => !committedSemanticRoles.includes(r),
+    );
+    const removedRoles = committedSemanticRoles.filter(
+      (r) => !draftSemanticRoles.includes(r),
+    );
     count += addedRoles.length + removedRoles.length;
     return count;
   }, [

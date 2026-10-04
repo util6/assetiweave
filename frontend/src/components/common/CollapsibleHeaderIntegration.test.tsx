@@ -33,7 +33,8 @@ describe("CollapsibleHeader with RenderSafeScrollSurface integration", () => {
 
     render(<Page />);
 
-    const headerShell = screen.getByTestId("header").parentElement?.parentElement;
+    const headerShell =
+      screen.getByTestId("header").parentElement?.parentElement;
     expect(headerShell?.getAttribute("data-collapsed")).toBe("false");
 
     const scrollSurface = screen.getByTestId("scroll-surface");

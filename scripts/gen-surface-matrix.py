@@ -12,35 +12,51 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "cli/internal/schema/contract.json"
-TAURI_COMMANDS = ROOT / "src-tauri/src/adapters/tauri/commands.rs"
-ENGINE_REGISTRY = ROOT / "src-tauri/src/adapters/engine/registry.rs"
+TAURI_COMMANDS = ROOT / "src-tauri/src/adapters/tauri/commands"
+ENGINE_REGISTRY = ROOT / "src-tauri/src/adapters/engine/registry"
 EXEMPTIONS = ROOT / "scripts/surface-matrix-exemptions.txt"
 MARKDOWN = ROOT / "agent-docs/generated/surface-matrix.md"
 RUST = ROOT / "src-tauri/src/adapters/engine/surface_mapping.rs"
 
 
 def tauri_functions() -> list[str]:
-    lines = TAURI_COMMANDS.read_text().splitlines()
     result: list[str] = []
-    for index, line in enumerate(lines):
-        if "tauri::command" not in line:
+    candidates = (
+        sorted(TAURI_COMMANDS.rglob("*.rs"))
+        if TAURI_COMMANDS.is_dir()
+        else ([TAURI_COMMANDS.with_suffix(".rs")] if TAURI_COMMANDS.with_suffix(".rs").is_file() else [TAURI_COMMANDS])
+    )
+    for path in candidates:
+        if not path.is_file():
             continue
-        for candidate in lines[index + 1 : index + 32]:
-            match = re.search(r"fn\s+([A-Za-z0-9_]+)\s*\(", candidate)
-            if match:
-                result.append(match.group(1))
-                break
-    return result
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(lines):
+            if not re.search(r"#\[tauri::command(\(|\])", line):
+                continue
+            for candidate in lines[index + 1 : index + 32]:
+                match = re.search(r"fn\s+([A-Za-z0-9_]+)\s*\(", candidate)
+                if match:
+                    result.append(match.group(1))
+                    break
+    return sorted(set(result))
 
 
 def registry_methods() -> dict[str, str]:
-    text = ENGINE_REGISTRY.read_text()
-    return {
-        method: canonical
+    mapping: dict[str, str] = {}
+    candidates = (
+        sorted(ENGINE_REGISTRY.rglob("*.rs"))
+        if ENGINE_REGISTRY.is_dir()
+        else ([ENGINE_REGISTRY.with_suffix(".rs")] if ENGINE_REGISTRY.with_suffix(".rs").is_file() else [ENGINE_REGISTRY])
+    )
+    for path in candidates:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
         for method, canonical in re.findall(
             r'command!\(\s*"([^"]+)"\s*,\s*"([^"]+)"', text
-        )
-    }
+        ):
+            mapping[method] = canonical
+    return mapping
 
 
 def load_exemptions() -> set[str]:

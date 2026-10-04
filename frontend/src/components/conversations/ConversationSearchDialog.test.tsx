@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, fireEvent, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(cleanup);
@@ -650,7 +656,9 @@ describe("ConversationSearchDialog", () => {
     expect(handleAdapterChange).toHaveBeenCalledWith("codex");
 
     // Pagination load more button
-    const loadMoreBtn = screen.getByRole("button", { name: "加载更多搜索结果" });
+    const loadMoreBtn = screen.getByRole("button", {
+      name: "加载更多搜索结果",
+    });
     fireEvent.click(loadMoreBtn);
     expect(handleLoadMore).toHaveBeenCalledTimes(1);
   });
@@ -701,11 +709,7 @@ describe("ConversationSearchDialog", () => {
 
     render(
       <ConversationSearchDialog
-        appMetaById={
-          new Map([
-            ["codex", { name: "Codex" }],
-          ])
-        }
+        appMetaById={new Map([["codex", { name: "Codex" }]])}
         contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
         includeQuestions={true}
         loading={false}

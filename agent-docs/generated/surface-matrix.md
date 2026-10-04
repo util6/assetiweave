@@ -71,6 +71,8 @@
 | `conversation.session.export` | `conversation.session.export`<br>`export_conversation_session` | `assetiweave-cli conversation session export <session-id> --output-root <dir>` | `export_conversation_session` | `write` | `false` |
 | `conversation.session.get` | `conversation.session.get`<br>`get_conversation_session` | `assetiweave-cli conversation session get <session-id>` | `get_conversation_session` | `read` | `false` |
 | `conversation.session.list` | `conversation.session.list`<br>`list_conversation_sessions` | `assetiweave-cli conversation session list` | `list_conversation_sessions` | `read` | `false` |
+| `conversation.session.outline` | `conversation.session.outline`<br>`get_conversation_session_outline` | `assetiweave-cli conversation session outline <any-id>` | `get_conversation_session_outline` | `read` | `false` |
+| `conversation.session.reproject` | `replay_conversation_session_projection` | — | `replay_conversation_session_projection` | `write` | `false` |
 | `conversation.source.add` | `conversation.source.add`<br>`upsert_conversation_source` | `assetiweave-cli conversation source add --source-json <json>` | `upsert_conversation_source` | `write` | `false` |
 | `conversation.source.disable` | `conversation.source.disable`<br>`disable_conversation_source` | `assetiweave-cli conversation source disable <source-id>` | `disable_conversation_source` | `write` | `false` |
 | `conversation.source.list` | `conversation.source.list`<br>`list_conversation_sources` | `assetiweave-cli conversation source list` | `list_conversation_sources` | `read` | `false` |

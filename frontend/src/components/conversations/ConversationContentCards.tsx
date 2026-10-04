@@ -227,7 +227,10 @@ function conversationContentBlockSeedToBlock(
     commandLabel: card.command_label,
     translatedText: card.translated_body,
     format: card.renderer === "markdown" ? "markdown" : "plain",
-    signal: card.renderer === "compact_action" || card.semantic_role === "ambient" ? "ambient" : undefined,
+    signal:
+      card.renderer === "compact_action" || card.semantic_role === "ambient"
+        ? "ambient"
+        : undefined,
   };
 }
 
@@ -250,7 +253,10 @@ function conversationContentNodeToBlock(
     commandLabel: node.command_label,
     translatedText: node.translated_content,
     format: node.renderer === "markdown" ? "markdown" : "plain",
-    signal: node.renderer === "compact_action" || node.semantic_role === "ambient" ? "ambient" : undefined,
+    signal:
+      node.renderer === "compact_action" || node.semantic_role === "ambient"
+        ? "ambient"
+        : undefined,
   };
 }
 
@@ -262,7 +268,10 @@ interface ParsedCompactAction {
   details?: string;
 }
 
-function parseCompactActionText(text: string, block: ConversationContentBlock): ParsedCompactAction {
+function parseCompactActionText(
+  text: string,
+  block: ConversationContentBlock,
+): ParsedCompactAction {
   const trimmed = text.trim();
   const colonMatch = trimmed.match(/^([a-zA-Z0-9_-]+):\s*(.+)$/s);
   if (colonMatch) {
@@ -275,7 +284,9 @@ function parseCompactActionText(text: string, block: ConversationContentBlock): 
       target: rest.split("\n", 1)[0],
       icon: isSearch ? "search" : isRead ? "read" : "tool",
       hasDetails: rest.includes("\n"),
-      details: rest.includes("\n") ? rest.slice(rest.indexOf("\n") + 1).trim() : undefined,
+      details: rest.includes("\n")
+        ? rest.slice(rest.indexOf("\n") + 1).trim()
+        : undefined,
     };
   }
 
@@ -285,8 +296,12 @@ function parseCompactActionText(text: string, block: ConversationContentBlock): 
     const details = lines.slice(1).join("\n").trim();
     const isSearch = /grep|search|find/i.test(firstLine);
     const isRead = /view|read|cat|head|tail/i.test(firstLine);
-    const pathMatch = details.match(/(?:AbsolutePath|path|TargetFile):\s*(.+)$/m);
-    const target = pathMatch ? pathMatch[1].trim() : (block.filePath || firstLine);
+    const pathMatch = details.match(
+      /(?:AbsolutePath|path|TargetFile):\s*(.+)$/m,
+    );
+    const target = pathMatch
+      ? pathMatch[1].trim()
+      : block.filePath || firstLine;
     return {
       action: block.toolName || firstLine,
       target,
@@ -296,13 +311,16 @@ function parseCompactActionText(text: string, block: ConversationContentBlock): 
     };
   }
 
-  const isSearch = /grep|search|find|rg/i.test(trimmed) || /search/i.test(block.kind || "");
+  const isSearch =
+    /grep|search|find|rg/i.test(trimmed) || /search/i.test(block.kind || "");
   return {
     action: block.commandLabel || (isSearch ? "search" : "read"),
     target: block.filePath || trimmed.split("\n", 1)[0],
     icon: isSearch ? "search" : "read",
     hasDetails: trimmed.includes("\n"),
-    details: trimmed.includes("\n") ? trimmed.slice(trimmed.indexOf("\n") + 1).trim() : undefined,
+    details: trimmed.includes("\n")
+      ? trimmed.slice(trimmed.indexOf("\n") + 1).trim()
+      : undefined,
   };
 }
 
@@ -312,7 +330,12 @@ function isAmbientBlock(block: ConversationContentBlock): boolean {
   const kind = (block.kind || "").toLowerCase();
   const cmd = (block.text || "").toLowerCase();
   if (kind.includes("read") || kind.includes("search")) return true;
-  if (/^(?:view_file|read_file|grep_search|list_directory|read_url_content):/i.test(cmd)) return true;
+  if (
+    /^(?:view_file|read_file|grep_search|list_directory|read_url_content):/i.test(
+      cmd,
+    )
+  )
+    return true;
   return false;
 }
 
@@ -339,8 +362,12 @@ function CompactActionCard({
   t: Translator;
 }) {
   const [detailsExpanded, setDetailsExpanded] = useState(false);
-  const parsed = parseCompactActionText(block.text || block.commandLabel || "", block);
-  const isSuccess = block.status !== "failed" && (!block.exitCode || block.exitCode === 0);
+  const parsed = parseCompactActionText(
+    block.text || block.commandLabel || "",
+    block,
+  );
+  const isSuccess =
+    block.status !== "failed" && (!block.exitCode || block.exitCode === 0);
 
   return (
     <div
@@ -368,7 +395,10 @@ function CompactActionCard({
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {isSuccess ? (
-            <span className="h-1.5 w-1.5 rounded-full bg-status-create" title="Success" />
+            <span
+              className="h-1.5 w-1.5 rounded-full bg-status-create"
+              title="Success"
+            />
           ) : (
             <span className="flex items-center gap-1 font-mono text-label-caps text-status-remove">
               <span className="h-1.5 w-1.5 rounded-full bg-status-remove" />
@@ -379,10 +409,16 @@ function CompactActionCard({
             <button
               className="opacity-0 group-hover:opacity-100 rounded p-1 text-on-surface-muted hover:text-on-surface hover:bg-theme-control/50 transition-all"
               onClick={onCopy}
-              title={copied ? t("conversation.content.copied") : t("common.copy")}
+              title={
+                copied ? t("conversation.content.copied") : t("common.copy")
+              }
               type="button"
             >
-              {copied ? <Check className="h-3 w-3 text-status-create" /> : <Copy className="h-3 w-3" />}
+              {copied ? (
+                <Check className="h-3 w-3 text-status-create" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
             </button>
           )}
           {parsed.hasDetails && (
@@ -391,7 +427,11 @@ function CompactActionCard({
               onClick={() => setDetailsExpanded((prev) => !prev)}
               type="button"
             >
-              {detailsExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              {detailsExpanded ? (
+                <ChevronUp className="h-3 w-3" />
+              ) : (
+                <ChevronDown className="h-3 w-3" />
+              )}
             </button>
           )}
         </div>
@@ -438,7 +478,11 @@ function AmbientActionGroup({
           type="button"
         >
           <span>{expanded ? t("common.collapse") : t("common.expand")}</span>
-          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {expanded ? (
+            <ChevronUp className="h-3 w-3" />
+          ) : (
+            <ChevronDown className="h-3 w-3" />
+          )}
         </button>
       </div>
       {expanded ? (
@@ -596,7 +640,10 @@ export function ConversationContentCards({
           nodes: [...currentAmbientGroup],
         });
       } else if (currentAmbientGroup.length === 1) {
-        groupedDisplayItems.push({ type: "single", node: currentAmbientGroup[0] });
+        groupedDisplayItems.push({
+          type: "single",
+          node: currentAmbientGroup[0],
+        });
       }
       currentAmbientGroup = [];
       groupedDisplayItems.push({ type: "single", node });
@@ -890,7 +937,11 @@ function ConversationContentCard({
     (block.type ? definitions.get(block.type) : undefined);
   const label = definition?.label ?? conversationCardLabel(block.type, t);
   const role = t(`conversation.part.role.${block.role}` as TranslationKey);
-  const accentColor = conversationCardColor(block.type, colors, definition?.semantic_role);
+  const accentColor = conversationCardColor(
+    block.type,
+    colors,
+    definition?.semantic_role,
+  );
   const copyLabel = copied
     ? t("conversation.content.copied")
     : t("conversation.content.copy", { type: label });
@@ -1157,7 +1208,10 @@ interface SubagentPayload {
   total_subagents?: number;
 }
 
-function parseSubagentPayload(text: string): { payload: SubagentPayload | null; raw: string } {
+function parseSubagentPayload(text: string): {
+  payload: SubagentPayload | null;
+  raw: string;
+} {
   try {
     const parsed = JSON.parse(text);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
@@ -1182,7 +1236,8 @@ function SubagentTreeCard({
 }) {
   const [open, setOpen] = useState(true);
   const { payload } = parseSubagentPayload(text);
-  const roleName = payload?.agent_role || payload?.type_name || label || "Subagent";
+  const roleName =
+    payload?.agent_role || payload?.type_name || label || "Subagent";
   const taskText = payload?.task || (payload ? "" : text);
   const status = payload?.status || block.status || "completed";
   const childSessionId = payload?.child_session_id;
@@ -1206,7 +1261,9 @@ function SubagentTreeCard({
         </div>
         <button
           type="button"
-          aria-label={open ? "Collapse subagent details" : "Expand subagent details"}
+          aria-label={
+            open ? "Collapse subagent details" : "Expand subagent details"
+          }
           onClick={() => setOpen((prev) => !prev)}
           className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-on-surface-variant hover:bg-theme-control-hover/70 transition-colors duration-150"
         >
@@ -1219,18 +1276,24 @@ function SubagentTreeCard({
 
       {taskText ? (
         <div className="rounded-xl border border-border/40 bg-theme-card/30 p-2.5 text-body-sm text-on-surface-variant">
-          <div className="text-label-caps text-on-surface-muted mb-1 font-medium">Task</div>
+          <div className="text-label-caps text-on-surface-muted mb-1 font-medium">
+            Task
+          </div>
           {block.format === "markdown" ? (
             <MarkdownContent value={taskText} />
           ) : (
-            <div className="whitespace-pre-wrap break-words text-body-sm leading-relaxed">{taskText}</div>
+            <div className="whitespace-pre-wrap break-words text-body-sm leading-relaxed">
+              {taskText}
+            </div>
           )}
         </div>
       ) : null}
 
       {childSessionId ? (
         <div className="flex items-center gap-2 text-body-sm">
-          <span className="text-on-surface-muted text-label-caps">Child Session:</span>
+          <span className="text-on-surface-muted text-label-caps">
+            Child Session:
+          </span>
           <span className="font-mono text-code-sm text-on-surface-variant bg-theme-control px-2 py-0.5 rounded-md border border-border/30">
             {childSessionId}
           </span>
@@ -1302,12 +1365,7 @@ function ConversationStandardCardBody({
         </pre>
       );
     case "compact_action":
-      return (
-        <CompactActionCard
-          block={block}
-          t={t}
-        />
-      );
+      return <CompactActionCard block={block} t={t} />;
     case "accordion":
       return (
         <details className="group rounded-xl border border-inherit bg-theme-card/35 p-3 transition-colors duration-150 open:bg-theme-card/55">
@@ -1327,14 +1385,7 @@ function ConversationStandardCardBody({
         </details>
       );
     case "subagent_tree":
-      return (
-        <SubagentTreeCard
-          block={block}
-          label={label}
-          text={text}
-          t={t}
-        />
-      );
+      return <SubagentTreeCard block={block} label={label} text={text} t={t} />;
     default: {
       let prettyText = text;
       try {
@@ -1593,7 +1644,9 @@ export function conversationCardColor(
   if (colors[kind]) return colors[kind];
   if (semanticRole && colors[semanticRole]) return colors[semanticRole];
 
-  const leaf = kind.includes(".") ? kind.slice(kind.lastIndexOf(".") + 1) : kind;
+  const leaf = kind.includes(".")
+    ? kind.slice(kind.lastIndexOf(".") + 1)
+    : kind;
   if (colors[leaf]) return colors[leaf];
 
   if (semanticRole && SEMANTIC_FALLBACK_CARD_COLORS[semanticRole]) {
@@ -1816,8 +1869,10 @@ function createBlock(
       const meta = JSON.parse(part.metadata_json);
       if (typeof meta === "object" && meta !== null) {
         if (!signal && typeof meta.signal === "string") signal = meta.signal;
-        if (!filePath && typeof meta.file_path === "string") filePath = meta.file_path;
-        if (!toolName && typeof meta.tool_name === "string") toolName = meta.tool_name;
+        if (!filePath && typeof meta.file_path === "string")
+          filePath = meta.file_path;
+        if (!toolName && typeof meta.tool_name === "string")
+          toolName = meta.tool_name;
       }
     } catch {
       // Ignore JSON parse error in non-critical metadata inspection

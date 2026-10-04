@@ -250,7 +250,8 @@ export function mergeConversationTaskSnapshot(
       ? {
           ...(currentProgress ?? {}),
           ...(incomingProgress ?? {}),
-          phase: incomingProgress?.phase ?? currentProgress?.phase ?? "preparing",
+          phase:
+            incomingProgress?.phase ?? currentProgress?.phase ?? "preparing",
           completed_source_count:
             incomingProgress?.completed_source_count ??
             currentProgress?.completed_source_count ??

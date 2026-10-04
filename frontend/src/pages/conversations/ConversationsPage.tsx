@@ -469,9 +469,7 @@ export function ConversationsPage({
     let cancelled = false;
     setContentSearchLoading(true);
     void searchConversationRecords({
-      ...(contentSearchAdapterId
-        ? { adapter_id: contentSearchAdapterId }
-        : {}),
+      ...(contentSearchAdapterId ? { adapter_id: contentSearchAdapterId } : {}),
       content_types: [],
       card_kinds: contentSearchCardKinds,
       semantic_roles: contentSearchSemanticRoles,
@@ -2260,7 +2258,11 @@ function AppListItem({
           {group.app.name}
         </span>
         <span className="mt-1 flex items-center gap-1.5 text-code-sm text-on-surface-variant">
-          <span>{t("conversation.app.sessionCount", { count: group.sessions.length })}</span>
+          <span>
+            {t("conversation.app.sessionCount", {
+              count: group.sessions.length,
+            })}
+          </span>
           {isSyncing ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
               <RefreshCw className="size-2.5 animate-spin" />
@@ -2423,11 +2425,14 @@ function SessionMetaChips({
     if (raw.includes("workbuddy")) {
       return {
         label: "WorkBuddy",
-        className:
-          "border border-primary/20 bg-primary/10 text-primary",
+        className: "border border-primary/20 bg-primary/10 text-primary",
       };
     }
-    if (raw.includes("codebuddy-cli") || raw.includes(".codebuddy") || (raw.includes("cli") && !raw.includes("client"))) {
+    if (
+      raw.includes("codebuddy-cli") ||
+      raw.includes(".codebuddy") ||
+      (raw.includes("cli") && !raw.includes("client"))
+    ) {
       return {
         label: "CLI",
         className:

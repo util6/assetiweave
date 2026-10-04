@@ -13,9 +13,7 @@ describe("agentCatalog presentation and projection", () => {
   });
 
   it("legacy presentation presents codebuddy as ACP Agent", () => {
-    const codebuddy = agentCatalog.find(
-      (agent) => agent.id === "codebuddy",
-    );
+    const codebuddy = agentCatalog.find((agent) => agent.id === "codebuddy");
     expect(codebuddy).toBeDefined();
     expect(codebuddy?.protocol).toBe("ACP Agent");
     expect(codebuddy?.connectionMode).toBe("registry");
