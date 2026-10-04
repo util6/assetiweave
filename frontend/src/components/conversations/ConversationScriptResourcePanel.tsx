@@ -83,12 +83,9 @@ export function ConversationScriptResourcePanel({
   const onNotifyErrorRef = useRef(onNotifyError);
   onNotifyErrorRef.current = onNotifyError;
 
-  const notify = useCallback(
-    (notification: ScriptResourceNotification) => {
-      onNotifyRef.current(notification);
-    },
-    [],
-  );
+  const notify = useCallback((notification: ScriptResourceNotification) => {
+    onNotifyRef.current(notification);
+  }, []);
   const notifyError = useCallback((message: string) => {
     onNotifyErrorRef.current(message);
   }, []);

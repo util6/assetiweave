@@ -320,6 +320,8 @@ export const conversationsEn = {
   "conversation.content.subagent": "Subagent",
   "conversation.content.resultSuccess": "success",
   "conversation.content.resultFailed": "failed",
+  "conversation.content.commandSuccess": "Success",
+  "conversation.content.commandFailed": "Failed",
   "conversation.content.changedFiles": "Changed files · {{count}} files",
   "conversation.content.diffSummaryFiles": "{{count}} changed files",
   "conversation.content.diffSummaryUnavailable":

@@ -12,6 +12,7 @@ import {
   Languages,
   Layers,
   Search,
+  X,
   XCircle,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -1031,9 +1032,31 @@ function ConversationContentCard({
             </span>
           ) : null}
           {block.type === "command" && block.exitCode != null ? (
-            <span className="rounded-full border border-inherit bg-theme-card/45 px-2 py-0.5 font-mono text-code-sm normal-case text-on-surface-variant">
-              {t("conversation.content.exitCode", { code: block.exitCode })}
-            </span>
+            block.exitCode === 0 ? (
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-status-create/35 bg-status-create/15 px-2 py-0.5 text-label-caps normal-case text-status-create"
+                data-command-status="success"
+                data-exit-code={block.exitCode}
+                title={t("conversation.content.exitCode", {
+                  code: block.exitCode,
+                })}
+              >
+                <Check aria-hidden="true" className="size-3" />
+                <span>{t("conversation.content.commandSuccess")}</span>
+              </span>
+            ) : (
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-status-remove/40 bg-status-remove/15 px-2 py-0.5 text-label-caps normal-case text-status-remove"
+                data-command-status="failure"
+                data-exit-code={block.exitCode}
+                title={t("conversation.content.exitCode", {
+                  code: block.exitCode,
+                })}
+              >
+                <X aria-hidden="true" className="size-3" />
+                <span>{t("conversation.content.commandFailed")}</span>
+              </span>
+            )
           ) : null}
         </div>
         <div className="flex items-center gap-1.5 text-label-caps">

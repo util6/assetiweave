@@ -906,7 +906,14 @@ export function ConversationsPage({
 
   const handleScriptInstalled = useCallback(() => {
     void refreshCatalog();
-  }, [activeScope, currentRecordKind, onNotifyError, query, queryClient, reconcileSessionSelection]);
+  }, [
+    activeScope,
+    currentRecordKind,
+    onNotifyError,
+    query,
+    queryClient,
+    reconcileSessionSelection,
+  ]);
 
   async function refreshSessions(options: { rethrow?: boolean } = {}) {
     try {
@@ -1314,7 +1321,9 @@ export function ConversationsPage({
                 onClick={() =>
                   openExportDialog(
                     selectedQuestionIds.size > 0 ? "questions" : "session",
-                    selectedQuestionIds.size > 0 ? [...selectedQuestionIds] : [],
+                    selectedQuestionIds.size > 0
+                      ? [...selectedQuestionIds]
+                      : [],
                   )
                 }
                 text={t("toolbar.export")}
@@ -3032,7 +3041,9 @@ export function QuestionPreview({
           <div className="flex min-w-0 items-center gap-2">
             <h2
               className="truncate text-body-sm font-semibold text-on-surface"
-              title={session.session.title || t("conversation.session.untitled")}
+              title={
+                session.session.title || t("conversation.session.untitled")
+              }
             >
               {session.session.title || t("conversation.session.untitled")}
             </h2>

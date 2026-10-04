@@ -335,8 +335,12 @@ describe("MarkdownContent", () => {
     );
 
     expect(screen.queryByRole("button", { name: "选择导出根目录" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Conversation fixture" })).toBeTruthy();
-    expect(container.querySelector(".conversation-section-header")).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "Conversation fixture" }),
+    ).toBeTruthy();
+    expect(
+      container.querySelector(".conversation-section-header"),
+    ).toBeTruthy();
   });
 
   it("groups sessions from the app level before browsing individual sessions", () => {

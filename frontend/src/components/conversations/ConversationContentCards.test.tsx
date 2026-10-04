@@ -1233,6 +1233,49 @@ describe("ConversationContentCards", () => {
     expect(html).not.toContain('data-result-summary="success"');
   });
 
+  it("renders semantic success and failure status badges on command cards based on exitCode", () => {
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={[
+          {
+            format: "plain",
+            id: "cmd-success",
+            kind: "command",
+            renderer: "command",
+            role: "tool",
+            text: "git status",
+            type: "command",
+            exitCode: 0,
+          },
+          {
+            format: "plain",
+            id: "cmd-failed",
+            kind: "command",
+            renderer: "command",
+            role: "tool",
+            text: "cargo test",
+            type: "command",
+            exitCode: 1,
+          },
+        ]}
+        t={t}
+        visibility={{ command: true }}
+      />,
+    );
+
+    expect(html).toContain('data-conversation-card-id="cmd-success"');
+    expect(html).toContain('data-command-status="success"');
+    expect(html).toContain('data-exit-code="0"');
+    expect(html).toContain('title="退出码 0"');
+    expect(html).toContain("text-status-create");
+
+    expect(html).toContain('data-conversation-card-id="cmd-failed"');
+    expect(html).toContain('data-command-status="failure"');
+    expect(html).toContain('data-exit-code="1"');
+    expect(html).toContain('title="退出码 1"');
+    expect(html).toContain("text-status-remove");
+  });
+
   it("inserts translated content for a custom target language after opencode is available", async () => {
     const translator = vi
       .fn()

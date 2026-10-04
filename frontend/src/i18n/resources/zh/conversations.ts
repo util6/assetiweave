@@ -302,6 +302,8 @@ export const conversationsZh = {
   "conversation.content.subagent": "子代理",
   "conversation.content.resultSuccess": "成功",
   "conversation.content.resultFailed": "失败",
+  "conversation.content.commandSuccess": "成功",
+  "conversation.content.commandFailed": "失败",
   "conversation.content.changedFiles": "Changed files · {{count}} 个文件",
   "conversation.content.diffSummaryFiles": "{{count}} 个文件变更",
   "conversation.content.diffSummaryUnavailable":
