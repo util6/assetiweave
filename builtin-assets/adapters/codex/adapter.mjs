@@ -1789,6 +1789,7 @@ function sessionRows({ sessionId = null, includeTitle = true } = {}) {
   const updatedCol = pick(columns, ["updated_at", "last_updated_at", "mtime", "created_at"]);
   const threadSourceCol = pick(columns, ["thread_source"]);
   const sourceCol = pick(columns, ["source"]);
+  const cwdCol = pick(columns, ["cwd", "working_directory", "workdir", "directory"]);
   const titleProjection = includeTitle && titleCol ? quoteIdent(titleCol) : "NULL";
 
   const isSubagentExpr = threadSourceCol && sourceCol
@@ -1803,13 +1804,16 @@ function sessionRows({ sessionId = null, includeTitle = true } = {}) {
   if (threadSourceCol || sourceCol) {
     filters.push(`NOT (${isSubagentExpr})`);
   }
+  if (cwdCol) {
+    filters.push(`NOT (${quoteIdent(cwdCol)} LIKE '%agent-executions%' OR ${quoteIdent(cwdCol)} LIKE '%agent-runs%' OR ${quoteIdent(cwdCol)} LIKE '%.assetiweave%')`);
+  }
   if (sessionId != null) {
     filters.push(`${quoteIdent(idCol)} = ${quoteSqlString(sessionId)}`);
   }
 
   const whereClause = filters.length > 0 ? ` WHERE ${filters.join(" AND ")}` : "";
   const orderClause = sessionId == null ? " ORDER BY rowid DESC" : "";
-  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleProjection} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at, ${isSubagentExpr} AS is_subagent FROM threads${whereClause}${orderClause}`;
+  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleProjection} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at, ${cwdCol ? quoteIdent(cwdCol) : "NULL"} AS cwd, ${isSubagentExpr} AS is_subagent FROM threads${whereClause}${orderClause}`;
   emitProgress({
     stage: "scan",
     operation: "query_sqlite_threads",
@@ -1818,12 +1822,26 @@ function sessionRows({ sessionId = null, includeTitle = true } = {}) {
   return sqliteJson(dbPath, sql).map((row) => ({ ...row, rollout_path: expandPath(row.rollout_path) }));
 }
 
+function isInternalExecutionPath(cwd) {
+  if (!cwd || typeof cwd !== "string") return false;
+  const norm = cwd.replace(/\\/g, "/").toLowerCase();
+  return (
+    norm.includes("/agent-executions/") ||
+    norm.includes("/agent-runs/") ||
+    norm.includes("/.assetiweave/") ||
+    norm.includes("agent-executions") ||
+    norm.includes("agent-runs") ||
+    norm.includes(".assetiweave")
+  );
+}
+
 /**
  * 【会话列举入口】：供 Rust 侧 `list_sessions`IPC 方法调用，快速提取轻量会话描述符列表
  * @returns {Array<object>} 包含 external_id, updated_at, source_locator, version_token 的描述符列表
  */
 function listSessions() {
   return sessionRows({ includeTitle: false }).flatMap((row) => {
+    if (isInternalExecutionPath(row.cwd)) return [];
     if (!row.rollout_path || !existsSync(row.rollout_path)) return [];
     const files = rolloutFilesForSession(row.rollout_path, String(row.id));
     if (!files.length) return [];
@@ -1856,6 +1874,7 @@ function readSession() {
   let current = 0;
 
   return rows.flatMap((row) => {
+    if (isInternalExecutionPath(row.cwd)) return [];
     current += 1;
     // 3. 展开并校验 `.jsonl` 会话日志文件的绝对路径，不存在则忽略
     let rolloutPath = expandPath(row.rollout_path);
@@ -1887,12 +1906,15 @@ function readSession() {
 
     // 7. 组装 Session 基础元数据结构对象
     const isSubagent = Boolean(row.is_subagent === 1 || row.is_subagent === true || row.is_subagent === "1");
+    const projectPath = parsed.projectPath ?? inferProjectPath(turns);
+    if (isInternalExecutionPath(projectPath)) return [];
+
     const rawSession = {
       external_id: String(row.id),
       title: (row.title == null || !String(row.title).trim())
         ? (sanitizeSessionShortTitle(turns[0]?.user_text) || null)
         : String(row.title).trim(),
-      project_path: parsed.projectPath ?? inferProjectPath(turns),
+      project_path: projectPath,
       started_at: turns[0]?.started_at ?? null,
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),
       source_locator: files.length > 1 ? files[files.length - 1] : rolloutPath,

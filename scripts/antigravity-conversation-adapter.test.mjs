@@ -710,6 +710,63 @@ test("Antigravity reconstructs concrete diff from real GENERIC replace_file_cont
   }
 });
 
+test("Antigravity maintains unique execution ids across multiple tool calls in a turn so success is not overwritten by failure", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "ag-turn-multicall-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, ".system_generated", "logs", "transcript.jsonl");
+    mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-10-03T16:00:00Z",
+        content: "<USER_REQUEST>run checks</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-03T16:00:01Z",
+        tool_calls: [{ name: "run_command", args: { CommandLine: "git status", Cwd: "/app" } }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-10-03T16:00:02Z",
+        content: "The command exited with code 0.\nOutput:\non branch main\n",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-03T16:00:03Z",
+        tool_calls: [{ name: "run_command", args: { CommandLine: "pnpm test", Cwd: "/app" } }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-10-03T16:00:04Z",
+        content: "The command exited with code 1.\nOutput:\n1 test failed\n",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    const commands = session.turns[0].parts.filter((part) => part.kind === "command");
+    assert.equal(commands.length, 2);
+    assert.notEqual(commands[0].source_execution_id, commands[1].source_execution_id);
+    assert.equal(commands[0].exit_code, 0);
+    assert.notEqual(commands[0].status, "failed");
+    assert.equal(commands[1].exit_code, 1);
+    assert.equal(commands[1].status, "failed");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+
 function readFixtureSession(transcriptPath) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",

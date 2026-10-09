@@ -984,11 +984,11 @@ function buildTurnsFromSteps(steps) {
         pendingFileOperations.push(
           ...step.tool_calls.map((call) => fileOperationFromToolCall(call, knownFileContents)).filter(Boolean),
         );
-        let callIdx = 0;
         for (const call of step.tool_calls) {
           if (!call?.name) continue;
-          callIdx += 1;
-          const execId = toolCallExecutionId(call, current.external_id, callIdx);
+          current.toolCallCount = (current.toolCallCount || 0) + 1;
+          const execId = toolCallExecutionId(call, current.external_id, current.toolCallCount);
+          call.execution_id = execId;
           pendingToolCalls.push({ executionId: execId, name: call.name, args: call.args });
         }
         current.parts.push(...toolCallParts(step.tool_calls, current.external_id));
@@ -1042,6 +1042,8 @@ function isInternalExecutionPath(cwd) {
   const norm = cwd.replace(/\\/g, "/").toLowerCase();
   return (
     norm.includes("/agent-executions/") ||
+    norm.includes("/agent-runs/") ||
+    norm.includes("/.assetiweave/") ||
     norm.includes("/agent-runtimes/") ||
     norm.includes("/smoke_workspace/") ||
     norm.includes("/.system_generated/") ||
@@ -1056,6 +1058,8 @@ function isInternalSessionMeta(metaPath) {
     const raw = readFileSync(metaPath, "utf8");
     if (
       raw.includes("agent-executions") ||
+      raw.includes("agent-runs") ||
+      raw.includes(".assetiweave") ||
       raw.includes("agent-runtimes") ||
       raw.includes("smoke_workspace") ||
       raw.includes(".system_generated") ||

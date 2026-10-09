@@ -764,10 +764,12 @@ function readSession() {
     const parsed = parseJsonl(text);
     const turns = displayTurns(parsed.turns);
     if (!turns.length) return [];
+    const projectPath = parsed.projectPath ?? inferProjectPathFromTurns(turns);
+    if (isInternalExecutionPath(projectPath)) return [];
     return [{
       external_id: path.basename(requestedLocator, ".jsonl") || "claude-session",
       title: resolveSessionTitle(parsed, turns, requestedLocator),
-      project_path: parsed.projectPath ?? inferProjectPathFromTurns(turns),
+      project_path: projectPath,
       started_at: turns[0]?.started_at ?? null,
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
       source_locator: requestedLocator,
@@ -783,10 +785,12 @@ function readSession() {
       const parsed = parseJsonl(text);
       const turns = displayTurns(parsed.turns);
       if (turns.length) {
+        const projectPath = parsed.projectPath ?? inferProjectPathFromTurns(turns);
+        if (isInternalExecutionPath(projectPath)) return [];
         return [{
           external_id: String(requestedSessionId),
           title: resolveSessionTitle(parsed, turns, directCandidate),
-          project_path: parsed.projectPath ?? inferProjectPathFromTurns(turns),
+          project_path: projectPath,
           started_at: turns[0]?.started_at ?? null,
           updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
           source_locator: directCandidate,
@@ -804,10 +808,12 @@ function readSession() {
     const parsed = parseJsonl(text);
     const turns = displayTurns(parsed.turns);
     if (!turns.length) return [];
+    const projectPath = parsed.projectPath ?? inferProjectPathFromTurns(turns);
+    if (isInternalExecutionPath(projectPath)) return [];
     return [{
       external_id: path.basename(filePath, ".jsonl") || "claude-session",
       title: resolveSessionTitle(parsed, turns, filePath),
-      project_path: parsed.projectPath ?? inferProjectPathFromTurns(turns),
+      project_path: projectPath,
       started_at: turns[0]?.started_at ?? null,
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
       source_locator: filePath,
@@ -815,6 +821,19 @@ function readSession() {
       turns,
     }];
   });
+}
+
+function isInternalExecutionPath(cwd) {
+  if (!cwd || typeof cwd !== "string") return false;
+  const norm = cwd.replace(/\\/g, "/").toLowerCase();
+  return (
+    norm.includes("/agent-executions/") ||
+    norm.includes("/agent-runs/") ||
+    norm.includes("/.assetiweave/") ||
+    norm.includes("agent-executions") ||
+    norm.includes("agent-runs") ||
+    norm.includes(".assetiweave")
+  );
 }
 
 function listSessions() {

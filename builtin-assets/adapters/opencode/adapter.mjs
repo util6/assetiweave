@@ -608,6 +608,7 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
 }
 
 function readSessions(includeTurns) {
+  const requestedSessionId = input.params?.session_id ?? null;
   const dbPath = expandPath(input.source?.location);
   if (!dbPath || !existsSync(dbPath)) return [];
   const sessionColumns = sqliteJson(dbPath, "PRAGMA table_info(session)").map((row) => row.name);
@@ -623,8 +624,14 @@ function readSessions(includeTurns) {
   const partSessionCol = pick(partColumns, ["session_id", "sessionID", "session"]);
   const partMessageCol = pick(partColumns, ["message_id", "messageID", "message"]);
   if (!messageSessionCol) return [];
-  const requestedSessionId = input.params?.session_id ?? null;
-  const sessionWhere = requestedSessionId ? `WHERE s.${quoteIdent(idCol)} = ${sqlString(requestedSessionId)}` : "";
+  const filters = [];
+  if (requestedSessionId) {
+    filters.push(`s.${quoteIdent(idCol)} = ${sqlString(requestedSessionId)}`);
+  }
+  if (projectCol) {
+    filters.push(`NOT (s.${quoteIdent(projectCol)} LIKE '%agent-executions%' OR s.${quoteIdent(projectCol)} LIKE '%agent-runs%' OR s.${quoteIdent(projectCol)} LIKE '%.assetiweave%')`);
+  }
+  const sessionWhere = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
   const messageVersionExpr = `(SELECT COALESCE(MAX(m.rowid), 0) FROM message m WHERE m.${quoteIdent(messageSessionCol)} = s.${quoteIdent(idCol)})`;
   const partVersionExpr = partSessionCol
     ? `(SELECT COALESCE(MAX(p.rowid), 0) FROM part p WHERE p.${quoteIdent(partSessionCol)} = s.${quoteIdent(idCol)})`
@@ -642,6 +649,7 @@ function readSessions(includeTurns) {
     )
     : new Map();
   return rows.flatMap((row) => {
+    if (isInternalExecutionPath(row.project_path)) return [];
     const turns = displayTurns(turnsBySession.get(String(row.id)) ?? []);
     if (includeTurns && !turns.length) return [];
     return [{
@@ -670,6 +678,19 @@ function listSessions() {
     source_locator: session.source_locator,
     version_token: session.source_fingerprint,
   }));
+}
+
+function isInternalExecutionPath(cwd) {
+  if (!cwd || typeof cwd !== "string") return false;
+  const norm = cwd.replace(/\\/g, "/").toLowerCase();
+  return (
+    norm.includes("/agent-executions/") ||
+    norm.includes("/agent-runs/") ||
+    norm.includes("/.assetiweave/") ||
+    norm.includes("agent-executions") ||
+    norm.includes("agent-runs") ||
+    norm.includes(".assetiweave")
+  );
 }
 
 function executionTextValue(value, depth = 0) {
