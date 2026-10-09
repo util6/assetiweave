@@ -11,6 +11,7 @@ export const DEFAULT_APP_PROFILE_IDS = [
   "qoder",
   "hermes",
   "codebuddy",
+  "workbuddy",
 ] as const;
 
 export function isDefaultAppProfileId(profileId: string) {

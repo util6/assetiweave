@@ -136,6 +136,7 @@ function defaultAccentColor(appKind: AppKind) {
     openclaw: "#f43f5e",
     opencode: "#6366f1",
     qoder: "#14b8a6",
+    workbuddy: "#2b66ff",
     zcode: "#f59e0b",
   };
   return colors[appKind];

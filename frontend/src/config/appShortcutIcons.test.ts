@@ -27,10 +27,11 @@ describe("app shortcut icon assets", () => {
         "openclaw",
         "opencode",
         "qoder",
+        "workbuddy",
         "zcode",
       ]),
     );
-    expect(iconKeys.length).toBeGreaterThanOrEqual(12);
+    expect(iconKeys.length).toBeGreaterThanOrEqual(13);
   });
 
   it("preserves path data and legacy display icon compatibility", () => {

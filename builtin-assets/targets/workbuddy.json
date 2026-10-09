@@ -1,0 +1,19 @@
+{
+  "id": "workbuddy",
+  "name": "WorkBuddy",
+  "app_kind_compat": "workbuddy",
+  "default_targets": [
+    {
+      "asset_kind": "skill",
+      "path": "~/.workbuddy/skills"
+    }
+  ],
+  "supported_kinds": [
+    "skill",
+    "prompt",
+    "rule",
+    "custom"
+  ],
+  "deployment_strategy": "symlink_to_source",
+  "icon": null
+}

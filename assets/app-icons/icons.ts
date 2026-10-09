@@ -117,4 +117,13 @@ export default {
       </svg>
     `,
   },
+  workbuddy: {
+    legacyIcon: "W",
+    accentColor: "#2b66ff",
+    svg: `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M4 4h4.5l3.5 11 3.5-11H20l-5 16h-4.5L7 9.5 3.5 20H2L4 4z" />
+      </svg>
+    `,
+  },
 };

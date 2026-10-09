@@ -239,6 +239,7 @@ export type AppKind =
   | "qoder"
   | "hermes"
   | "codebuddy"
+  | "workbuddy"
   | "custom";
 
 export type ConversationAdapterKind = "external";

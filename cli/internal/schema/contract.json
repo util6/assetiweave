@@ -2593,6 +2593,7 @@
                   "qoder",
                   "hermes",
                   "codebuddy",
+                  "workbuddy",
                   "custom",
                   null
                 ]
@@ -2844,6 +2845,7 @@
                   "qoder",
                   "hermes",
                   "codebuddy",
+                  "workbuddy",
                   "custom",
                   null
                 ],
@@ -4239,6 +4241,7 @@
               "qoder",
               "hermes",
               "codebuddy",
+                  "workbuddy",
               "custom"
             ],
             "description": "Origin application kind",
@@ -5942,6 +5945,7 @@
                   "qoder",
                   "hermes",
                   "codebuddy",
+                  "workbuddy",
                   "custom",
                   null
                 ]
@@ -6097,6 +6101,7 @@
                   "qoder",
                   "hermes",
                   "codebuddy",
+                  "workbuddy",
                   "custom",
                   null
                 ]

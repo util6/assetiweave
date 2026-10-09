@@ -76,6 +76,7 @@ export const appKindValues = [
   "qoder",
   "hermes",
   "codebuddy",
+  "workbuddy",
   "custom",
 ] as const satisfies readonly AppKind[];
 
