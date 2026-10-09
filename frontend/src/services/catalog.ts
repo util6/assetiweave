@@ -58,6 +58,9 @@ import type {
   ExecutionResult,
   Source,
   SourceInput,
+  SourceProbeResult,
+  GitSourcePullItemResult,
+  GitSourcePullTaskSnapshot,
   RemoteSkillAcquireTaskSnapshot,
   SkillAcquireResult,
   SkillBackupSettings,
@@ -68,6 +71,9 @@ import type {
   TargetProfile,
   TargetProfileInput,
 } from "../types";
+import type { TaskView } from "../types/taskCenter";
+
+export type { GitSourcePullItemResult, GitSourcePullTaskSnapshot };
 import {
   defaultAppShortcut,
   deriveProfileId,
@@ -507,6 +513,37 @@ export async function deleteSource(id: string): Promise<void> {
       throw error;
     }
     return;
+  }
+}
+
+export async function probeSourcePath(
+  path: string,
+): Promise<SourceProbeResult> {
+  try {
+    return await invoke<SourceProbeResult>("probe_source_path", { path });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+    return {
+      candidates: [],
+      default_source_origin: "local_folder",
+      is_container: false,
+      root_path: path,
+    };
+  }
+}
+
+export async function splitContainerSource(
+  sourceId: string,
+): Promise<Source[]> {
+  try {
+    return await invoke<Source[]>("split_container_source", { sourceId });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+    return [];
   }
 }
 
@@ -1044,30 +1081,11 @@ export async function scanSkillSources(): Promise<Asset[]> {
 
 export type SourceScanScope = "all" | "skills";
 
-export interface SourceScanTaskSnapshot {
-  id: string;
-  status: "running" | "cancelling" | "completed" | "failed" | "cancelled";
-  scope: SourceScanScope;
-  kind: AssetKind | null;
-  progress: {
-    phase: "preparing" | "scanning" | "completed" | "failed" | "cancelled";
-    completed_source_count: number;
-    total_source_count: number | null;
-    current_source_name: string | null;
-  };
-  started_at: string;
-  finished_at: string | null;
-  result: Asset[] | null;
-  error: AppErrorView | null;
-}
-
-const SOURCE_SCAN_TASK_UPDATED_EVENT = "source-scan-task-updated";
-
 export async function startSourceScan(
   kind?: AssetKind,
   scope: SourceScanScope = "all",
-): Promise<SourceScanTaskSnapshot> {
-  return await invoke<SourceScanTaskSnapshot>("start_source_scan", {
+): Promise<TaskView> {
+  return await invoke<TaskView>("start_source_scan", {
     kind: kind ?? null,
     scope,
   });
@@ -1075,31 +1093,20 @@ export async function startSourceScan(
 
 export async function getSourceScanTask(
   taskId: string,
-): Promise<SourceScanTaskSnapshot> {
-  return await invoke<SourceScanTaskSnapshot>("get_source_scan_task", {
+): Promise<TaskView> {
+  return await invoke<TaskView>("get_source_scan_task", {
     taskId,
   });
 }
 
-export async function listSourceScanTasks(): Promise<SourceScanTaskSnapshot[]> {
-  return await invoke<SourceScanTaskSnapshot[]>("list_source_scan_tasks");
+export async function listSourceScanTasks(): Promise<TaskView[]> {
+  return await invoke<TaskView[]>("list_source_scan_tasks");
 }
 
 export async function cancelSourceScan(
   taskId: string,
-): Promise<SourceScanTaskSnapshot> {
-  return await invoke<SourceScanTaskSnapshot>("cancel_source_scan", { taskId });
-}
-
-export function subscribeSourceScanTasks(
-  listener: (snapshot: SourceScanTaskSnapshot) => void,
-) {
-  return listen<SourceScanTaskSnapshot>(
-    SOURCE_SCAN_TASK_UPDATED_EVENT,
-    (event) => {
-      listener(event.payload);
-    },
-  );
+): Promise<TaskView> {
+  return await invoke<TaskView>("cancel_source_scan", { taskId });
 }
 
 export interface BatchMountTaskSnapshot {
@@ -1162,6 +1169,51 @@ export function subscribeBatchMountTasks(
 ) {
   return listen<BatchMountTaskSnapshot>(
     BATCH_MOUNT_TASK_UPDATED_EVENT,
+    (event) => {
+      listener(event.payload);
+    },
+  );
+}
+
+const GIT_SOURCE_PULL_TASK_UPDATED_EVENT = "git-source-pull-task-updated";
+
+export async function startGitSourcePull(
+  sourceIds: string[],
+): Promise<GitSourcePullTaskSnapshot> {
+  return await invoke<GitSourcePullTaskSnapshot>("start_git_source_pull", {
+    sourceIds,
+  });
+}
+
+export async function getGitSourcePullTask(
+  taskId: string,
+): Promise<GitSourcePullTaskSnapshot> {
+  return await invoke<GitSourcePullTaskSnapshot>("get_git_source_pull_task", {
+    taskId,
+  });
+}
+
+export async function listGitSourcePullTasks(): Promise<
+  GitSourcePullTaskSnapshot[]
+> {
+  return await invoke<GitSourcePullTaskSnapshot[]>(
+    "list_git_source_pull_tasks",
+  );
+}
+
+export async function cancelGitSourcePull(
+  taskId: string,
+): Promise<GitSourcePullTaskSnapshot> {
+  return await invoke<GitSourcePullTaskSnapshot>("cancel_git_source_pull", {
+    taskId,
+  });
+}
+
+export function subscribeGitSourcePullTasks(
+  listener: (snapshot: GitSourcePullTaskSnapshot) => void,
+) {
+  return listen<GitSourcePullTaskSnapshot>(
+    GIT_SOURCE_PULL_TASK_UPDATED_EVENT,
     (event) => {
       listener(event.payload);
     },

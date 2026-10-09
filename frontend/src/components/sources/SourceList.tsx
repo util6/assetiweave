@@ -25,6 +25,7 @@ export function SourceList({
   onAssetReveal,
   onReveal,
   onSetSourceMountProfile,
+  onSplit,
   onToggleAsset,
   onToggleMount,
   profiles,
@@ -47,6 +48,7 @@ export function SourceList({
     profileId: string,
     enabled: boolean,
   ) => void;
+  onSplit?: (source: Source) => void;
   onToggleAsset: (assetId: string) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
   profiles: TargetProfile[];
@@ -103,6 +105,7 @@ export function SourceList({
         onReveal={onReveal}
         onSelectSource={setSelectedSourceId}
         onSetSourceMountProfile={onSetSourceMountProfile}
+        onSplit={onSplit}
         onToggleMount={onToggleMount}
         profiles={profiles}
         selectedSource={selectedSource}
@@ -129,6 +132,7 @@ export function SourceList({
           onAssetReveal={onAssetReveal}
           onReveal={() => onReveal(source.root_path)}
           onSetSourceMountProfile={onSetSourceMountProfile}
+          onSplit={onSplit ? () => onSplit(source) : undefined}
           onToggleAsset={onToggleAsset}
           onToggleExpanded={() => toggleSourceExpanded(source.id)}
           onToggleMount={onToggleMount}

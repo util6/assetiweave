@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { FolderOpen, Pencil, Trash2 } from "lucide-react";
+import { FolderOpen, GitFork, Pencil, Trash2 } from "lucide-react";
 import {
   sourceKindLabel,
   sourceOriginLabel,
@@ -38,6 +38,7 @@ export function SourceColumnView({
   onReveal,
   onSelectSource,
   onSetSourceMountProfile,
+  onSplit,
   onToggleMount,
   profiles,
   selectedSource,
@@ -59,6 +60,7 @@ export function SourceColumnView({
     profileId: string,
     enabled: boolean,
   ) => void;
+  onSplit?: (source: Source) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
   profiles: TargetProfile[];
   selectedSource: Source;
@@ -241,6 +243,18 @@ export function SourceColumnView({
               <Pencil size={15} />
               {t("source.action.edit")}
             </button>
+            {selectedSource.source_origin === "local_folder" && onSplit && (
+              <button
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-on-surface-variant transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={busy}
+                onClick={() => onSplit(selectedSource)}
+                title={t("source.action.split")}
+                type="button"
+              >
+                <GitFork size={15} />
+                {t("source.action.split")}
+              </button>
+            )}
             <button
               className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-status-remove/45 bg-status-remove/10 px-3 text-body-sm font-semibold text-status-remove transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-status-remove/15 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={busy || isProtectedSource(selectedSource)}

@@ -75,6 +75,36 @@ describe("SourceRow", () => {
     expect(html).toContain("1 个资产");
     expect(html).toContain('title="状态刷新：1 个资产，移除 0，更新 0"');
   });
+
+  it("renders split button when source origin is local_folder and onSplit is provided", () => {
+    const html = renderToStaticMarkup(
+      <I18nProvider>
+        <SourceRow
+          appShortcuts={[]}
+          assets={[]}
+          busy={false}
+          expanded={false}
+          expandedAssetIds={new Set()}
+          mountStatusesByAssetId={new Map<string, AssetMountStatus[]>()}
+          onAssetReveal={vi.fn()}
+          onDelete={vi.fn()}
+          onDeleteAsset={vi.fn()}
+          onEdit={vi.fn()}
+          onEditAsset={vi.fn()}
+          onReveal={vi.fn()}
+          onSetSourceMountProfile={vi.fn()}
+          onSplit={vi.fn()}
+          onToggleAsset={vi.fn()}
+          onToggleExpanded={vi.fn()}
+          onToggleMount={vi.fn()}
+          profiles={[]}
+          source={source}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).toContain('aria-label="拆分为独立 Git 源"');
+  });
 });
 
 const asset: Asset = {

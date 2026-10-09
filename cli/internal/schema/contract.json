@@ -121,6 +121,8 @@
     "list_sources",
     "list_skill_sources",
     "create_source",
+    "probe_source_path",
+    "split_container_source",
     "update_source",
     "delete_source",
     "update_asset_description",
@@ -4241,7 +4243,7 @@
               "qoder",
               "hermes",
               "codebuddy",
-                  "workbuddy",
+              "workbuddy",
               "custom"
             ],
             "description": "Origin application kind",
@@ -6007,6 +6009,61 @@
               "priority"
             ],
             "description": "Source input"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "probe_source_path",
+      "canonical_method": "probe_source_path",
+      "description": "Probe a candidate source directory for git repositories and skill assets",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "path"
+        ],
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory path to probe"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "split_container_source",
+      "canonical_method": "split_container_source",
+      "description": "Split a multi-repo container source into individual git repo sources",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "source_id"
+        ],
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "description": "Source ID to split",
+            "aliases": [
+              "sourceId"
+            ]
           }
         },
         "additionalProperties": false

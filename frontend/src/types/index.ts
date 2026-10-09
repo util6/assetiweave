@@ -152,6 +152,32 @@ export interface RemoteSkillAcquireTaskSnapshot {
   } | null;
 }
 
+export interface GitSourcePullItemResult {
+  source_id: string;
+  source_name: string;
+  success: boolean;
+  changed: boolean;
+  message: string;
+}
+
+export interface GitSourcePullTaskProgress {
+  phase: string;
+  completed: number;
+  total: number;
+  current_source_name?: string | null;
+  latest_item_result?: GitSourcePullItemResult | null;
+}
+
+export interface GitSourcePullTaskSnapshot {
+  id: string;
+  status: "running" | "cancelling" | "completed" | "failed" | "cancelled";
+  progress: GitSourcePullTaskProgress;
+  started_at: string;
+  finished_at?: string | null;
+  results: GitSourcePullItemResult[];
+  error?: AppErrorView | null;
+}
+
 export interface AppOverview {
   source_count: number;
   asset_count: number;
@@ -224,6 +250,22 @@ export interface SourceInput {
   default_kind?: AssetKind | null;
   enabled: boolean;
   priority: number;
+}
+
+export interface SourceProbeCandidate {
+  name: string;
+  path: string;
+  relative_path: string;
+  is_git_repo: boolean;
+  remote_url: string | null;
+  skill_count: number;
+}
+
+export interface SourceProbeResult {
+  root_path: string;
+  is_container: boolean;
+  default_source_origin: SourceOrigin;
+  candidates: SourceProbeCandidate[];
 }
 
 export type AppKind =

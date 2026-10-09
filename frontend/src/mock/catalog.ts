@@ -590,6 +590,14 @@ export const fallbackAppShortcuts: AppShortcut[] = [
     accentColor: appShortcutIconAccentColors.codebuddy,
     enabled: false,
   },
+  {
+    profileId: "workbuddy",
+    profileName: "WorkBuddy",
+    appKind: "workbuddy",
+    displayIcon: "app:workbuddy",
+    accentColor: appShortcutIconAccentColors.workbuddy,
+    enabled: false,
+  },
 ];
 
 export const fallbackNavigationModel: NavigationModel = navigationModel;

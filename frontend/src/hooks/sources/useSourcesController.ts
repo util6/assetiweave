@@ -11,21 +11,20 @@ import {
   deleteSource as deleteSourceById,
   revealPath,
   scanSkillSources,
+  splitContainerSource,
   updateSource,
 } from "../../services/catalog";
 import type { Asset, Source, SourceInput } from "../../types";
-import type {
-  SourceScanScope,
-  SourceScanTaskSnapshot,
-} from "../../services/catalog";
+import type { SourceScanScope } from "../../services/catalog";
+import type { TaskView } from "../../types/taskCenter";
 
 export function useSourcesController(
   onCatalogRefresh?: (assets?: Asset[]) => Promise<void>,
   startBackgroundScan?: (
     kind?: "skill" | "prompt" | "rule",
     scope?: SourceScanScope,
-  ) => Promise<SourceScanTaskSnapshot>,
-  sourceScan?: SourceScanTaskSnapshot | null,
+  ) => Promise<TaskView>,
+  sourceScan?: TaskView | null,
 ) {
   const queryClient = useQueryClient();
   const queryScope = useQueryScope();
@@ -176,19 +175,46 @@ export function useSourcesController(
     }
   }
 
-  async function importSource(sourceInput: SourceInput) {
+  async function importSource(sourceInput: SourceInput | SourceInput[]) {
+    const inputs = Array.isArray(sourceInput) ? sourceInput : [sourceInput];
+    if (inputs.length === 0) return;
     setBusy(true);
     try {
-      const saved = await createSource(sourceInput);
+      const savedList: Source[] = [];
+      for (const input of inputs) {
+        const saved = await createSource(input);
+        savedList.push(saved);
+      }
       queryClient.setQueryData<Source[]>(
         catalogKeys.skillSources(activeScope),
-        (current = []) => upsertAndSortSources(current, saved),
+        (current = []) => {
+          let updated = current;
+          for (const saved of savedList) {
+            updated = upsertAndSortSources(updated, saved);
+          }
+          return updated;
+        },
       );
-      if (saved.enabled && saved.last_scan_status !== "preview") {
+      const shouldScan = savedList.some(
+        (s) => s.enabled && s.last_scan_status !== "preview",
+      );
+      if (shouldScan) {
         await startSkillScan();
       } else {
         await onCatalogRefresh?.();
       }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function splitSource(sourceId: string) {
+    setBusy(true);
+    try {
+      const newSources = await splitContainerSource(sourceId);
+      await Promise.all([refreshSources(), refreshSourceAssets()]);
+      await onCatalogRefresh?.();
+      return newSources;
     } finally {
       setBusy(false);
     }
@@ -219,12 +245,8 @@ export function useSourcesController(
     }
   }
 
-  async function refreshAfterSourceScan(task: SourceScanTaskSnapshot) {
-    if (task.status === "completed" && task.result) {
-      await onCatalogRefresh?.(task.result);
-    } else {
-      await onCatalogRefresh?.();
-    }
+  async function refreshAfterSourceScan(_task: TaskView) {
+    await onCatalogRefresh?.();
     await Promise.all([refreshSources(), refreshSourceAssets()]);
   }
 
@@ -251,6 +273,7 @@ export function useSourcesController(
     setQuery,
     sources,
     sourceAssets,
+    splitSource,
     summary,
     toggleSource,
     removeSourceAsset: (assetId: string) =>
@@ -261,11 +284,11 @@ export function useSourcesController(
   };
 }
 
-function isTerminalSourceScan(task: SourceScanTaskSnapshot) {
+function isTerminalSourceScan(task: TaskView) {
   return (
-    task.status === "completed" ||
-    task.status === "failed" ||
-    task.status === "cancelled"
+    task.state === "succeeded" ||
+    task.state === "failed" ||
+    task.state === "canceled"
   );
 }
 

@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronRight,
   FolderOpen,
+  GitFork,
   Pencil,
   Trash2,
 } from "lucide-react";
@@ -38,6 +39,7 @@ export function SourceRow({
   onAssetReveal,
   onReveal,
   onSetSourceMountProfile,
+  onSplit,
   onToggleAsset,
   onToggleExpanded,
   onToggleMount,
@@ -61,6 +63,7 @@ export function SourceRow({
     profileId: string,
     enabled: boolean,
   ) => void;
+  onSplit?: () => void;
   onToggleAsset: (assetId: string) => void;
   onToggleExpanded: () => void;
   onToggleMount: (assetId: string, profileId: string) => void;
@@ -157,6 +160,15 @@ export function SourceRow({
             >
               <FolderOpen size={16} />
             </SourceIconButton>
+            {source.source_origin === "local_folder" && onSplit && (
+              <SourceIconButton
+                disabled={busy}
+                label={t("source.action.split")}
+                onClick={onSplit}
+              >
+                <GitFork size={16} />
+              </SourceIconButton>
+            )}
             <SourceIconButton
               disabled={busy || isProtectedSource(source)}
               label={

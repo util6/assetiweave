@@ -4,8 +4,8 @@ import {
   executePlan,
   scanSources,
   type SourceScanScope,
-  type SourceScanTaskSnapshot,
 } from "../../services/catalog";
+import type { TaskView } from "../../types/taskCenter";
 import type {
   Asset,
   AssetKind,
@@ -19,8 +19,8 @@ export function useCatalogOperations(
   startBackgroundScan?: (
     kind?: Extract<AssetKind, "skill" | "prompt" | "rule">,
     scope?: SourceScanScope,
-  ) => Promise<SourceScanTaskSnapshot>,
-  sourceScan?: SourceScanTaskSnapshot | null,
+  ) => Promise<TaskView>,
+  sourceScan?: TaskView | null,
 ) {
   const [plan, setPlan] = useState<DeploymentPlan | null>(null);
   const [executionResult, setExecutionResult] =
@@ -69,14 +69,10 @@ export function useCatalogOperations(
     }
   }
 
-  async function settleSourceScan(task: SourceScanTaskSnapshot) {
-    if (task.status === "completed" && task.result) {
-      await refreshOverview(task.result);
-      setPlan(null);
-      setExecutionResult(null);
-    } else {
-      await refreshOverview();
-    }
+  async function settleSourceScan(_task: TaskView) {
+    await refreshOverview();
+    setPlan(null);
+    setExecutionResult(null);
   }
 
   async function createDeploymentPlan() {
@@ -116,10 +112,10 @@ export function useCatalogOperations(
   };
 }
 
-function isTerminalSourceScan(task: SourceScanTaskSnapshot) {
+function isTerminalSourceScan(task: TaskView) {
   return (
-    task.status === "completed" ||
-    task.status === "failed" ||
-    task.status === "cancelled"
+    task.state === "succeeded" ||
+    task.state === "failed" ||
+    task.state === "canceled"
   );
 }

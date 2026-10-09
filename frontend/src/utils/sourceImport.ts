@@ -1,4 +1,4 @@
-import type { SourceInput } from "../types";
+import type { SourceInput, SourceOrigin, SourceProbeCandidate } from "../types";
 
 export const DEFAULT_SKILL_INCLUDE_GLOBS = ["**/SKILL.md"];
 export const DEFAULT_SKILL_EXCLUDE_GLOBS = [
@@ -15,10 +15,12 @@ export interface SourceImportFormValues {
   name: string;
   priority: string;
   rootPath: string;
+  sourceOrigin?: SourceOrigin;
 }
 
 export function buildImportSourceInput(
   values: SourceImportFormValues,
+  overrideOrigin?: SourceOrigin,
 ): SourceInput {
   const rootPath = values.rootPath.trim();
   const includeGlobs = splitRuleLines(values.includeGlobsText);
@@ -39,7 +41,34 @@ export function buildImportSourceInput(
     root_path: rootPath,
     scan_root: "",
     scanner_kind: "skill",
-    source_origin: "local_folder",
+    source_origin: overrideOrigin ?? values.sourceOrigin ?? "local_folder",
+  };
+}
+
+export function buildCandidateSourceInputs(
+  candidate: SourceProbeCandidate,
+  baseValues: SourceImportFormValues,
+  index = 0,
+): SourceInput {
+  const includeGlobs = splitRuleLines(baseValues.includeGlobsText);
+  const excludeGlobs = splitRuleLines(baseValues.excludeGlobsText);
+
+  return {
+    default_kind: "skill",
+    enabled: baseValues.enabled,
+    exclude_globs:
+      excludeGlobs.length > 0 ? excludeGlobs : DEFAULT_SKILL_EXCLUDE_GLOBS,
+    include_globs:
+      includeGlobs.length > 0 ? includeGlobs : DEFAULT_SKILL_INCLUDE_GLOBS,
+    kind: "import",
+    name: candidate.name,
+    origin_app_kind: null,
+    priority: parsePriority(baseValues.priority) + index,
+    repo_root: null,
+    root_path: candidate.path,
+    scan_root: "",
+    scanner_kind: "skill",
+    source_origin: candidate.is_git_repo ? "git_repo" : "local_folder",
   };
 }
 

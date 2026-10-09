@@ -4,6 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Asset, Source } from "../../types";
+import type { TaskView } from "../../types/taskCenter";
 
 const catalogService = vi.hoisted(() => ({
   createSource: vi.fn(),
@@ -77,10 +78,9 @@ describe("useSourcesController", () => {
     catalogService.listSourceAssets.mockResolvedValue([]);
     const onCatalogRefresh = vi.fn().mockResolvedValue(undefined);
     const task = runningSourceScan();
-    const terminal = {
+    const terminal: TaskView = {
       ...task,
-      status: "completed" as const,
-      result: [],
+      state: "succeeded",
       finished_at: "2026-08-21T00:00:02Z",
     };
     const startBackgroundScan = vi.fn().mockResolvedValue(task);
@@ -89,7 +89,7 @@ describe("useSourcesController", () => {
       ({ snapshot }) =>
         useSourcesController(onCatalogRefresh, startBackgroundScan, snapshot),
       {
-        initialProps: { snapshot: null as typeof terminal | null },
+        initialProps: { snapshot: null as TaskView | null },
         wrapper: createWrapper(),
       },
     );
@@ -102,26 +102,23 @@ describe("useSourcesController", () => {
     expect(startBackgroundScan).toHaveBeenCalledWith("skill", "skills");
     expect(onCatalogRefresh).not.toHaveBeenCalled();
     rerender({ snapshot: terminal });
-    await waitFor(() => expect(onCatalogRefresh).toHaveBeenCalledWith([]));
+    await waitFor(() => expect(onCatalogRefresh).toHaveBeenCalled());
   });
 });
 
-function runningSourceScan() {
+function runningSourceScan(): TaskView {
   return {
     id: "scan-task",
-    status: "running" as const,
-    scope: "skills" as const,
-    kind: "skill" as const,
-    progress: {
-      phase: "scanning" as const,
-      completed_source_count: 0,
-      total_source_count: 1,
-      current_source_name: null,
-    },
+    kind: "scan",
+    state: "running",
+    title: "Scan sources",
+    stages: [],
+    metrics: [],
+    failures: [],
+    capabilities: { cancellable: true, retryable: false, clearable: false },
+    revision: 1,
     started_at: "2026-08-21T00:00:00Z",
     finished_at: null,
-    result: null,
-    error: null,
   };
 }
 

@@ -8,6 +8,7 @@ import {
   DownloadCloud,
   Filter,
   FolderPlus,
+  GitBranch,
   LayoutList,
   Power,
   RefreshCw,
@@ -29,6 +30,7 @@ import { PageHeader } from "../../components/foundation/PageHeader";
 import { AppSkeleton } from "../../components/foundation/skeleton";
 import { SourceEditDialog } from "../../components/sources/SourceEditDialog";
 import { SkillAcquireDialog } from "../../components/sources/SkillAcquireDialog";
+import { SourceGitUpdateDialog } from "../../components/sources/SourceGitUpdateDialog";
 import { SourceList } from "../../components/sources/SourceList";
 import { SourceImportDialog } from "../../components/sources/SourceImportDialog";
 import { SourceSummary } from "../../components/sources/SourceSummary";
@@ -114,8 +116,10 @@ export function SourcesPage({
   );
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [acquireDialogOpen, setAcquireDialogOpen] = useState(false);
+  const [gitUpdateDialogOpen, setGitUpdateDialogOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<Source | null>(null);
   const [deletingSource, setDeletingSource] = useState<Source | null>(null);
+  const [splittingSource, setSplittingSource] = useState<Source | null>(null);
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [deletingAsset, setDeletingAsset] = useState<Asset | null>(null);
   const [assetGroups, setAssetGroups] = useState<AssetGroupDetail[]>([]);
@@ -240,6 +244,19 @@ export function SourcesPage({
     try {
       await sources.removeSource(deletingSource);
       setDeletingSource(null);
+    } catch (error) {
+      onNotifyError(errorMessage(error));
+    }
+  }
+
+  async function handleSplitSource() {
+    if (!splittingSource) {
+      return;
+    }
+
+    try {
+      await sources.splitSource(splittingSource.id);
+      setSplittingSource(null);
     } catch (error) {
       onNotifyError(errorMessage(error));
     }
@@ -400,6 +417,13 @@ export function SourcesPage({
               onClick: () => setAcquireDialogOpen(true),
               text: t("source.toolbar.discover"),
             },
+            {
+              disabled: sources.busy,
+              icon: <GitBranch size={17} />,
+              label: t("source.toolbar.gitPull"),
+              onClick: () => setGitUpdateDialogOpen(true),
+              text: t("source.toolbar.gitPull"),
+            },
           ],
           [
             {
@@ -531,6 +555,7 @@ export function SourcesPage({
           onSetSourceMountProfile={(assetIds, profileId, enabled) =>
             void onSetSourceMountProfile(assetIds, profileId, enabled)
           }
+          onSplit={setSplittingSource}
           onToggleAsset={onToggleAsset}
           onToggleMount={onToggleMount}
           profiles={profiles}
@@ -555,6 +580,13 @@ export function SourcesPage({
         onClose={() => setAcquireDialogOpen(false)}
         onNotifyError={onNotifyError}
         open={acquireDialogOpen}
+      />
+      <SourceGitUpdateDialog
+        onClose={() => setGitUpdateDialogOpen(false)}
+        onNotifyError={onNotifyError}
+        onSuccess={sources.scanAllSources}
+        open={gitUpdateDialogOpen}
+        sources={sources.sources}
       />
       <SourceEditDialog
         backupAssetIds={sourceBackupAssets.map((asset) => asset.id)}
@@ -586,6 +618,24 @@ export function SourcesPage({
       >
         <div className="rounded-xl border border-theme-card-border bg-theme-card/65 p-3 text-body-sm text-on-surface-variant">
           {t("source.deleteDialog.detail")}
+        </div>
+      </ConfirmDialog>
+      <ConfirmDialog
+        busy={sources.busy}
+        confirmLabel={t("source.action.split")}
+        message={
+          splittingSource
+            ? `${splittingSource.name} (${splittingSource.root_path})`
+            : ""
+        }
+        onClose={() => setSplittingSource(null)}
+        onConfirm={() => void handleSplitSource()}
+        open={Boolean(splittingSource)}
+        title={t("source.action.splitConfirmTitle")}
+        tone="default"
+      >
+        <div className="rounded-xl border border-theme-card-border bg-theme-card/65 p-3 text-body-sm text-on-surface-variant">
+          {t("source.action.splitConfirmDesc")}
         </div>
       </ConfirmDialog>
       <AssetEditDialog
