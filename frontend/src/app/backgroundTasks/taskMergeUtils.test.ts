@@ -5,7 +5,7 @@ import {
   mergeTaskSnapshot,
 } from "./taskMergeUtils";
 import { mergeConversationTaskSnapshot } from "./ConversationSyncProvider";
-import type { SourceScanTaskSnapshot } from "../../services/catalog";
+import type { TaskView } from "../../types/taskCenter";
 import type { ConversationSyncTaskSnapshot } from "../../services/conversations";
 
 describe("taskMergeUtils", () => {
@@ -27,44 +27,37 @@ describe("taskMergeUtils", () => {
   });
 
   it("mergeTaskSnapshot protects terminal status from out-of-order running polling", () => {
-    const completedTask: SourceScanTaskSnapshot = {
+    const completedTask: TaskView = {
       id: "task-1",
-      status: "completed",
-      scope: "all",
-      kind: null,
-      progress: {
-        phase: "completed",
-        completed_source_count: 10,
-        total_source_count: 10,
-        current_source_name: null,
-      },
+      kind: "scan",
+      state: "succeeded",
+      title: "Scan sources",
+      stages: [],
+      metrics: [],
+      failures: [],
+      capabilities: { cancellable: false, retryable: false, clearable: true },
+      revision: 2,
       started_at: "2026-09-04T00:00:00Z",
       finished_at: "2026-09-04T00:02:00Z",
-      result: [],
-      error: null,
     };
 
-    const stalePollingRunningTask: SourceScanTaskSnapshot = {
+    const stalePollingRunningTask: TaskView = {
       id: "task-1",
-      status: "running",
-      scope: "all",
-      kind: null,
-      progress: {
-        phase: "scanning",
-        completed_source_count: 5,
-        total_source_count: 10,
-        current_source_name: "source-a",
-      },
+      kind: "scan",
+      state: "running",
+      title: "Scan sources",
+      stages: [],
+      metrics: [],
+      failures: [],
+      capabilities: { cancellable: true, retryable: false, clearable: false },
+      revision: 1,
       started_at: "2026-09-04T00:00:00Z",
       finished_at: null,
-      result: null,
-      error: null,
     };
 
     const merged = mergeTaskSnapshot(stalePollingRunningTask, completedTask);
-    expect(merged.status).toBe("completed");
+    expect(merged.state).toBe("succeeded");
     expect(merged.finished_at).toBe("2026-09-04T00:02:00Z");
-    expect(merged.progress.completed_source_count).toBe(10);
   });
 
   it("checkEventTenantMatch validates tenant matching or returns unknown when absent", () => {

@@ -18,3 +18,7 @@
 | **T14** | Phase 5 | 侧边栏锚定单条气泡通知组件 | 4s/8s 停留、悬停暂停、3 条有界队列、点击跳转、静默控制 |
 | **T15** | Phase 5 | 清理旧业务悬浮指示卡组件 | 移除各业务悬浮任务条与根部挂载 |
 | **T16** | Phase 6 | 全仓测试、并发验证与门禁合规 | 全自动化测试通过、`cargo fmt`, `pnpm typecheck`, `pnpm test`, `go test` |
+| **T17** | Phase 7 | ADR-0017 决策落地、SQLite Task Journal 与冷启动自愈 | ADR-0017、`task_journal` 表迁移、优雅停机序列、`reconcile_orphaned_tasks_on_startup` |
+| **T18** | Phase 7 | AppService 流水线脚手架、双轨事件信封与保序节流 | `spawn_pipeline_task`、`run_inline`、`ConflictPolicy`、`stages::*` 常量、`TaskChangeClass`、150ms 节流 + 冲刷保序 |
+| **T19** | Phase 7 | `scan_sources` 黄金切片垂直改穿、旧轨物理删除与全仓门禁 | 迁移 `scan_sources` 为三阶段流水线、物理删除 `SourceScanTaskSnapshot` 与私有事件、前端 `taskInvalidationRegistry`、契约与全仓测试全绿 |
+

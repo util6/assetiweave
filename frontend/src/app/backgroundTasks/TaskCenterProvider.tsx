@@ -20,6 +20,7 @@ import type { TaskView } from "../../types/taskCenter";
 import { useQueryScope } from "../query/QueryScopeProvider";
 import { taskKeys } from "../query/taskKeys";
 import { useAppSettings } from "../../store/settings/useAppSettings";
+import { taskInvalidationRegistry } from "./taskInvalidationRegistry";
 
 export interface TaskNotificationItem {
   id: string;
@@ -201,6 +202,12 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
 
       if (wasActive && nowTerminal) {
         enqueueNotification(snapshot);
+      }
+
+      const isStructural =
+        snapshot.change_class !== "cosmetic" && snapshot.changeClass !== "cosmetic";
+      if (nowTerminal && isStructural) {
+        void taskInvalidationRegistry.trigger(snapshot, queryClient);
       }
 
       prevTasksRef.current.set(snapshot.id, snapshot);

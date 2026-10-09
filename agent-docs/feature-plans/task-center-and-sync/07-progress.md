@@ -23,4 +23,7 @@
 | T14 | Completed | Agent | Pass | 侧边栏任务图标入口 (ListTodo)、运行中徽标与路由注册 |
 | T15 | Completed | Agent | Pass | 任务中心页面 (主从布局、Stage 流水线、Worker 活动、指标与审计) |
 | T16 | Completed | Agent | Pass | 全仓门禁（typecheck, pnpm test, cargo test, go vet/test, e2e）全数通过 |
+| T17 | Completed | Agent | Pass | ADR-0017、SQLite Task Journal 持久化与冷启动中断任务对齐 (reconcile) |
+| T18 | Completed | Agent | Pass | AppService spawn_pipeline_task 脚手架、TaskChangeClass (Structural/Cosmetic)、150ms 节流与保序冲刷 |
+| T19 | Completed | Agent | Pass | scan_sources 黄金切片改穿、物理删除 SourceScanTaskSnapshot 与私有事件、前端 taskInvalidationRegistry |
 

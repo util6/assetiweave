@@ -3,6 +3,8 @@ import type { AgentSessionRef } from "./agentSession";
 export type TaskState =
   "pending" | "running" | "cancelling" | "succeeded" | "failed" | "canceled";
 
+export type TaskChangeClass = "structural" | "cosmetic";
+
 export type TaskOutcome =
   "success" | "partial_success" | "failure" | "canceled";
 
@@ -143,6 +145,8 @@ export interface TaskView {
   result_summary?: string | null;
   capabilities: TaskCapabilitiesView;
   revision: number;
+  changeClass?: TaskChangeClass;
+  change_class?: TaskChangeClass;
   agentSessionRef?: AgentSessionRef | null;
   agent_session_ref?: AgentSessionRef | null;
 }
@@ -289,6 +293,8 @@ export function normalizeTaskView(raw: unknown): TaskView {
       clearable: false,
     }) as TaskCapabilitiesView,
     revision: typeof data.revision === "number" ? data.revision : 0,
+    changeClass: ((data.changeClass ?? data.change_class ?? "structural") as TaskChangeClass),
+    change_class: ((data.changeClass ?? data.change_class ?? "structural") as TaskChangeClass),
     agentSessionRef: taskSessionRef,
     agent_session_ref: taskSessionRef,
   };

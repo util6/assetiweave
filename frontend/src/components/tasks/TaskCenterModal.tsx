@@ -70,6 +70,9 @@ function formatTaskCategoryLabel(
   if (cat === "conversation/session_sync") return "会话同步";
   if (cat === "conversation/web_sync") return "网页记录同步";
   if (cat === "conversation/sync") return "全量会话同步";
+  if (cat === "conversation/pricing_sync") return "模型价格同步与重算";
+  if (cat === "conversation/usage_scan") return "用量统计扫描";
+  if (kind === "ConversationUsageScan") return "用量统计扫描";
   return category || kind || "";
 }
 
@@ -1126,6 +1129,7 @@ function TaskKindIcon({
     case "Backup":
       return <Archive className={className} />;
     case "Scan":
+    case "ConversationUsageScan":
       return <RefreshCw className={className} />;
     case "AiExecution":
       return <Sparkles className={className} />;
