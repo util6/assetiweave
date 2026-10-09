@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { formatErrorMessage } from "../../utils/error";
 import type { Translator } from "../../i18n/I18nProvider";
 import {
   checkConversationTranslationAvailability,
@@ -425,5 +426,5 @@ async function writeClipboardText(value: string) {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  return formatErrorMessage(error);
 }

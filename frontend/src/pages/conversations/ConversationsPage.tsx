@@ -99,6 +99,7 @@ import {
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
+import { formatErrorMessage } from "../../utils/error";
 import { DEFAULT_COLUMN_MIN_WIDTH } from "../../store/settings/settingsSchema";
 import {
   DEFAULT_RESULT_PREVIEW_LINE_LIMIT,
@@ -3178,10 +3179,5 @@ export function preferredConversationQuestionId(
 }
 
 function errorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error !== null && "message" in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string" && message.trim()) return message;
-  }
-  return String(error);
+  return formatErrorMessage(error);
 }

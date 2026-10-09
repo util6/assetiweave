@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import { Skeleton } from "../foundation/skeleton";
 import { SimpleSelect } from "../ui/select";
+import { formatErrorMessage } from "../../utils/error";
 import {
   checkConversationAdapterPackageUpdates,
   getConversationAdapterPackageTask,
@@ -1537,5 +1538,5 @@ function isTauriRuntime() {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  return formatErrorMessage(error);
 }

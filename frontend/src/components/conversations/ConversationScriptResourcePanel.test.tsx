@@ -673,6 +673,37 @@ describe("ConversationScriptResourcePanel", () => {
       }),
     );
   });
+
+  it("displays structured backend error message instead of [object Object]", async () => {
+    serviceMocks.list.mockRejectedValueOnce({
+      code: "storage_error",
+      message: "error returned from database: (code: 5) database is locked",
+      retryable: false,
+      details: null,
+    });
+    const onNotifyError = vi.fn();
+    render(
+      <I18nProvider>
+        <ConversationScriptResourcePanel
+          onInstalled={vi.fn()}
+          onManifestSelect={vi.fn()}
+          onNotify={vi.fn()}
+          onNotifyError={onNotifyError}
+          recordKind="session"
+        />
+      </I18nProvider>,
+    );
+
+    expect(
+      await screen.findByText(
+        "error returned from database: (code: 5) database is locked",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("[object Object]")).toBeNull();
+    expect(onNotifyError).toHaveBeenCalledWith(
+      "error returned from database: (code: 5) database is locked",
+    );
+  });
 });
 
 function renderPanel() {
