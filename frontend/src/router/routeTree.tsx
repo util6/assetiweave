@@ -245,7 +245,8 @@ function ConversationsWebRecordsView() {
 }
 
 function ConversationsUsageView() {
-  return <UsageDashboardPage />;
+  const { catalog } = useWorkspaceContext();
+  return <UsageDashboardPage appShortcuts={catalog.appShortcuts} />;
 }
 
 function PromptsOverviewView() {

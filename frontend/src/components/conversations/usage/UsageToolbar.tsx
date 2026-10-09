@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState, useEffect } from "react";
 import type {
   UsageScanStatus,
   UsageSourceBreakdown,
@@ -11,15 +11,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../ui/select";
-import { RefreshCw, RotateCw, AlertTriangle } from "lucide-react";
+import {
+  RefreshCw,
+  RotateCw,
+  AlertTriangle,
+} from "lucide-react";
 import { cn } from "../../../lib/utils";
+import { DateRangePicker } from "./DateRangePicker";
 
 export type TimeRangeValue =
-  "last_30_days" | "today" | "last_7_days" | "last_90_days" | "all_time";
+  | "last_30_days"
+  | "today"
+  | "last_7_days"
+  | "last_90_days"
+  | "all_time"
+  | "custom";
 
 interface UsageToolbarProps {
   timeRange: TimeRangeValue;
   onTimeRangeChange: (range: TimeRangeValue) => void;
+  startDate?: string | null;
+  endDate?: string | null;
+  onDateRangeChange?: (start: string | null, end: string | null) => void;
   selectedInstance: string;
   onInstanceChange: (instance: string) => void;
   sources: UsageSourceBreakdown[];
@@ -34,6 +47,9 @@ interface UsageToolbarProps {
 export const UsageToolbar: React.FC<UsageToolbarProps> = ({
   timeRange,
   onTimeRangeChange,
+  startDate,
+  endDate,
+  onDateRangeChange,
   selectedInstance,
   onInstanceChange,
   sources,
@@ -72,27 +88,35 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
   return (
     <div className={cn("flex flex-col gap-3", className)}>
       {/* Top Filter Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-theme-card-border/80 bg-surface/75 p-3.5 shadow-[var(--theme-shadow-card)] backdrop-blur-xl">
+      {/* Top Filter Bar — relative z-30 提升层叠上下文，避免内部 DateRangePicker 弹层被下方 backdrop-blur 卡片（DOM 靠后）遮盖 */}
+      <div className="relative z-30 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-theme-card-border/75 bg-[linear-gradient(135deg,rgb(var(--theme-toolbar-bg)/0.82),rgb(var(--theme-card-header)/0.72))] px-4 py-3 shadow-[var(--theme-shadow-toolbar),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.16)] backdrop-blur-xl">
         <div className="flex flex-wrap items-center gap-4">
           {/* Time range selector */}
           <div className="flex items-center gap-2">
             <span className="text-body-sm font-medium text-on-surface-variant shrink-0">
               相对范围
             </span>
-            <div className="w-[120px]">
+            <div className="w-[124px]">
               <Select
                 value={timeRange}
-                onValueChange={(val) =>
-                  onTimeRangeChange(val as TimeRangeValue)
-                }
+                onValueChange={(val) => {
+                  const nextVal = val as TimeRangeValue;
+                  if (nextVal !== "custom" && onDateRangeChange) {
+                    onDateRangeChange(null, null);
+                  }
+                  onTimeRangeChange(nextVal);
+                }}
               >
                 <SelectTrigger
                   size="sm"
-                  className="h-8 rounded-xl bg-theme-control/40"
+                  className="h-9 rounded-xl border-theme-control-border/80 bg-theme-control/60 shadow-[var(--theme-shadow-control-inset)] hover:border-theme-nav-active-border/50"
                 >
                   <SelectValue placeholder="选择范围" />
                 </SelectTrigger>
-                <SelectContent className="rounded-xl">
+                <SelectContent className="rounded-xl border-theme-card-border bg-theme-card-header/95 backdrop-blur-xl">
+                  {timeRange === "custom" && (
+                    <SelectItem value="custom">自定义区间</SelectItem>
+                  )}
                   <SelectItem value="last_30_days">近 30 天</SelectItem>
                   <SelectItem value="today">今天</SelectItem>
                   <SelectItem value="last_7_days">近 7 天</SelectItem>
@@ -103,23 +127,44 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
             </div>
           </div>
 
+          {/* Date range picker */}
+          <div className="flex items-center gap-2">
+            <span className="text-body-sm font-medium text-on-surface-variant shrink-0">
+              日期区间
+            </span>
+            <DateRangePicker
+              startDate={startDate}
+              endDate={endDate}
+              onChange={(start, end) => {
+                if (onDateRangeChange) {
+                  onDateRangeChange(start, end);
+                }
+                if (start && end) {
+                  onTimeRangeChange("custom");
+                } else if (!start && !end) {
+                  onTimeRangeChange("last_30_days");
+                }
+              }}
+            />
+          </div>
+
           {/* Instance selector */}
           <div className="flex items-center gap-2">
             <span className="text-body-sm font-medium text-on-surface-variant shrink-0">
               实例
             </span>
-            <div className="w-[130px]">
+            <div className="w-[136px]">
               <Select
                 value={selectedInstance}
                 onValueChange={(val) => onInstanceChange(val)}
               >
                 <SelectTrigger
                   size="sm"
-                  className="h-8 rounded-xl bg-theme-control/40"
+                  className="h-9 rounded-xl border-theme-control-border/80 bg-theme-control/60 shadow-[var(--theme-shadow-control-inset)] hover:border-theme-nav-active-border/50"
                 >
                   <SelectValue placeholder="选择实例" />
                 </SelectTrigger>
-                <SelectContent className="rounded-xl">
+                <SelectContent className="rounded-xl border-theme-card-border bg-theme-card-header/95 backdrop-blur-xl">
                   <SelectItem value="all">全部实例</SelectItem>
                   {sources.map((s) => (
                     <SelectItem key={s.sourceId} value={s.sourceId}>
@@ -139,7 +184,7 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
             size="sm"
             onClick={onRefresh}
             disabled={refreshing}
-            className="h-8 gap-1.5 rounded-xl px-3 text-caption cursor-pointer border-theme-border/70"
+            className="h-9 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/60 px-3 text-caption text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] cursor-pointer transition-all hover:border-theme-nav-active-border/60 hover:text-on-surface"
           >
             <RefreshCw
               className={cn(
@@ -155,7 +200,7 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
             size="sm"
             onClick={handleScanClick}
             disabled={isScanning || cooldownSecs > 0}
-            className="h-8 gap-1.5 rounded-xl px-3 text-caption cursor-pointer border-theme-border/70"
+            className="h-9 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/60 px-3 text-caption text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] cursor-pointer transition-all hover:border-theme-nav-active-border/60 hover:text-on-surface"
           >
             <RotateCw
               className={cn(
@@ -175,14 +220,16 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
       </div>
 
       {/* Metadata summary line */}
-      <div className="px-1 text-caption text-on-surface-variant">
-        已扫描 {scanStatus.scannedSourcesCount || sources.length || 0}{" "}
-        个本地来源，累计 {totalRequests.toLocaleString()} 次请求 · 上次更新{" "}
-        {lastUpdatedText}
+      <div className="px-1 text-caption text-on-surface-variant flex flex-wrap items-center justify-between gap-2">
+        <div>
+          已扫描 {scanStatus.scannedSourcesCount || sources.length || 0}{" "}
+          个本地来源，累计 {totalRequests.toLocaleString()} 次请求 · 上次更新{" "}
+          {lastUpdatedText}
+        </div>
       </div>
 
       {/* Notice Banner */}
-      <div className="flex items-center gap-2.5 rounded-xl border border-theme-border/50 bg-theme-control/30 px-3.5 py-2.5 text-caption text-on-surface-variant">
+      <div className="flex items-center gap-2.5 rounded-xl border border-theme-card-border/60 bg-[linear-gradient(145deg,rgb(var(--theme-card-header)/0.65),rgb(var(--theme-control-bg)/0.55))] px-3.5 py-2.5 text-caption text-on-surface-variant shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md">
         <AlertTriangle className="h-4 w-4 shrink-0 text-status-conflict" />
         <span>
           本地多源用量统计：当前已接入并统计 Codex、Antigravity、Claude

@@ -191,7 +191,7 @@ const themes = [
         outlineVariant: "207 173 105",
         onSurface: "50 43 31",
         onSurfaceVariant: "91 77 52",
-        primary: "109 78 32",
+        primary: "184 85 10",
         primaryStrong: "216 144 24",
         gridLine: "166 129 70",
       },

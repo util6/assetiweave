@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import type {
   UsageDashboardDto,
   UsageDashboardFilter,
@@ -20,9 +20,19 @@ import { UsageTrendChart } from "../../components/conversations/usage/UsageTrend
 import { UsageBreakdownTables } from "../../components/conversations/usage/UsageBreakdownTables";
 import { AppSkeleton } from "../../components/foundation/skeleton";
 import { AlertCircle } from "lucide-react";
+import { useAppUiStore } from "../../store/ui/appUiStore";
+import type { AppShortcut } from "../../types";
 
-export const UsageDashboardPage: React.FC = () => {
+interface UsageDashboardPageProps {
+  appShortcuts?: AppShortcut[];
+}
+
+export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
+  appShortcuts = [],
+}) => {
   const [timeRange, setTimeRange] = useState<TimeRangeValue>("last_30_days");
+  const [startDate, setStartDate] = useState<string | null>(null);
+  const [endDate, setEndDate] = useState<string | null>(null);
   const [selectedInstance, setSelectedInstance] = useState<string>("all");
   const [dashboard, setDashboard] = useState<UsageDashboardDto | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -44,6 +54,8 @@ export const UsageDashboardPage: React.FC = () => {
       try {
         const filter: UsageDashboardFilter = {
           timeRange,
+          startDate,
+          endDate,
           sourceId: selectedInstance === "all" ? undefined : selectedInstance,
           timezoneOffsetMinutes: -new Date().getTimezoneOffset(),
         };
@@ -64,7 +76,7 @@ export const UsageDashboardPage: React.FC = () => {
         setRefreshing(false);
       }
     },
-    [timeRange, selectedInstance],
+    [timeRange, startDate, endDate, selectedInstance],
   );
 
   const checkScanStatus = useCallback(async () => {
@@ -107,6 +119,16 @@ export const UsageDashboardPage: React.FC = () => {
       cancelled = true;
     };
   }, [loadDashboard, checkScanStatus]);
+
+  // When user returns from settings (e.g. pricing settings), auto-refresh dashboard with updated costs
+  const settingsPanel = useAppUiStore((state) => state.settingsPanel);
+  const prevSettingsPanelRef = React.useRef(settingsPanel);
+  useEffect(() => {
+    if (prevSettingsPanelRef.current && !settingsPanel) {
+      void loadDashboard(true);
+    }
+    prevSettingsPanelRef.current = settingsPanel;
+  }, [settingsPanel, loadDashboard]);
 
   // Subscribe to real-time background scan task events
   useEffect(() => {
@@ -175,7 +197,7 @@ export const UsageDashboardPage: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col gap-4 p-6 max-w-7xl mx-auto w-full">
+    <div className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)] pb-12 w-full">
       {/* Header with Title and Back button */}
       <UsageHeader />
 
@@ -187,10 +209,16 @@ export const UsageDashboardPage: React.FC = () => {
         </div>
       )}
 
-      {/* Toolbar: Time Range, Instance select, Refresh, Scan, Metadata line, Notice banner */}
+      {/* Toolbar: Time Range, Instance select, Refresh, Scan, Metadata line */}
       <UsageToolbar
         timeRange={timeRange}
         onTimeRangeChange={(r) => setTimeRange(r)}
+        startDate={startDate}
+        endDate={endDate}
+        onDateRangeChange={(start, end) => {
+          setStartDate(start);
+          setEndDate(end);
+        }}
         selectedInstance={selectedInstance}
         onInstanceChange={(inst) => setSelectedInstance(inst)}
         sources={dashboard?.sources || []}
@@ -218,6 +246,7 @@ export const UsageDashboardPage: React.FC = () => {
             models={dashboard.models}
             sources={dashboard.sources}
             dates={dashboard.dates}
+            appShortcuts={appShortcuts}
           />
         </>
       ) : null}

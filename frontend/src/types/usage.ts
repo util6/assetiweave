@@ -39,6 +39,7 @@ export interface UsageModelBreakdown {
   cost: number | null;
   currency: string;
   costBasis: string;
+  unitPricePerMillion?: number | null;
 }
 
 export interface UsageSourceBreakdown {
@@ -82,6 +83,76 @@ export interface UsageScanStatus {
   sourceDiagnostics: UsageSourceDiagnostic[];
 }
 
+export interface ModelPricingSyncResult {
+  channelUsed: string;
+  modelsCount: number;
+  exchangeRate: number;
+  recalculatedEventsCount: number;
+  catalogVersion: string;
+  updatedAt: string;
+}
+
+export interface ModelPriceEntry {
+  provider: string;
+  modelPatterns: string[];
+  currency: string;
+  inputPerMillion: number;
+  cacheReadPerMillion: number;
+  cacheWritePerMillion: number;
+  outputPerMillion: number;
+  reasoningPerMillion: number;
+  rawCurrency?: string | null;
+  rawInputPerMillion?: number | null;
+  rawOutputPerMillion?: number | null;
+}
+
+export interface ModelPricingCatalog {
+  catalogVersion: string;
+  updatedAt: string;
+  usdToCnyRate: number;
+  activeChannel: string;
+  models: ModelPriceEntry[];
+  localModels?: ModelPriceEntry[];
+}
+
+export type ModelPricingSyncProgressPhase =
+  | "preparing"
+  | "fetching"
+  | "persisting"
+  | "recalculating"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface ModelPricingSyncTaskProgress {
+  phase: ModelPricingSyncProgressPhase;
+  message?: string | null;
+  channel?: string | null;
+  modelsCount: number;
+  recalculatedEventsCount: number;
+  exchangeRate: number;
+}
+
+export interface ModelPricingSyncTaskSnapshot {
+  id: string;
+  status: "running" | "completed" | "failed" | "cancelling";
+  force: boolean;
+  progress: ModelPricingSyncTaskProgress;
+  startedAt: string;
+  finishedAt?: string | null;
+  result?: ModelPricingSyncResult | null;
+  error?: { message: string } | null;
+}
+
+export interface ModelPricingStatus {
+  modelsCount: number;
+  localModelsCount?: number;
+  exchangeRate: number;
+  activeChannel: string;
+  catalogVersion: string;
+  lastUpdatedAt: string;
+}
+
 export interface UsageDashboardDto {
   hero: UsageHeroOverview;
   dailyTrend: UsageDailyTrendBucket[];
@@ -93,6 +164,8 @@ export interface UsageDashboardDto {
 
 export interface UsageDashboardFilter {
   timeRange?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
   adapterId?: string | null;
   sourceId?: string | null;
   model?: string | null;
@@ -123,13 +196,15 @@ export function formatChineseTokens(tokens: number, precision = 2): string {
 }
 
 export function formatUsageCosts(costs: CurrencyCost[]): string {
-  if (!costs || costs.length === 0) return "$0.00";
-  return costs
-    .map((c) => {
-      const sym = c.currency.toUpperCase() === "CNY" ? "¥" : "$";
-      return `${sym}${c.amount.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")}`;
-    })
-    .join(" / ");
+  if (!costs || costs.length === 0) return "¥0.00";
+  const cnyItem =
+    costs.find((c) => c.currency.toUpperCase() === "CNY") || costs[0];
+  const amount = cnyItem.amount;
+  if (amount === 0) return "¥0.00";
+  if (amount < 0.01 && amount > 0) {
+    return `¥${amount.toFixed(4)}`;
+  }
+  return `¥${amount.toFixed(2)}`;
 }
 
 // Backward-compatibility aliases

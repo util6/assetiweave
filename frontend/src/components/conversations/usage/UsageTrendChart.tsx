@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import type { UsageDailyTrendBucket } from "../../../types/usage";
 import { formatChineseTokens } from "../../../types/usage";
 import { cn } from "../../../lib/utils";
+import { PillTabs } from "../../common/PillTabs";
 
 interface UsageTrendChartProps {
   data: UsageDailyTrendBucket[];
@@ -58,7 +59,7 @@ export const UsageTrendChart: React.FC<UsageTrendChartProps> = ({
     return (
       <div
         className={cn(
-          "flex h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-theme-border/70 bg-theme-control/20 p-6 text-center text-on-surface-variant",
+          "flex h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-theme-border/60 bg-[linear-gradient(145deg,rgb(var(--theme-card-bg)/0.5),rgb(var(--theme-card-header)/0.4))] p-6 text-center text-on-surface-variant backdrop-blur-md",
           className,
         )}
       >
@@ -136,50 +137,33 @@ export const UsageTrendChart: React.FC<UsageTrendChartProps> = ({
   return (
     <div
       className={cn(
-        "relative flex flex-col rounded-2xl border border-theme-card-border/80 bg-surface/75 p-5 shadow-[var(--theme-shadow-card)] backdrop-blur-xl",
+        "relative flex flex-col rounded-2xl border border-theme-card-border/75 bg-[linear-gradient(145deg,rgb(var(--theme-card-bg)/0.82),rgb(var(--theme-card-header)/0.74))] p-5 shadow-[var(--theme-shadow-card),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.14)] backdrop-blur-xl transition-all",
         className,
       )}
     >
       {/* Chart Top Header */}
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between gap-4">
         <div className="flex items-baseline gap-3">
           <span className="text-body-md font-bold text-on-surface">
             会话用量
           </span>
-          <span className="text-xl font-extrabold text-primary tracking-tight">
+          <span className="text-xl font-extrabold text-primary tracking-tight font-mono">
             {metric === "tokens"
               ? formatChineseTokens(totalValue)
               : `${totalValue.toLocaleString()} 次`}
           </span>
         </div>
 
-        {/* Metric toggle pills */}
-        <div className="flex items-center rounded-xl border border-theme-border/60 bg-theme-control/40 p-1">
-          <button
-            type="button"
-            onClick={() => setMetric("tokens")}
-            className={cn(
-              "rounded-lg px-2.5 py-1 text-caption font-medium transition-all cursor-pointer",
-              metric === "tokens"
-                ? "bg-surface text-primary shadow-xs font-semibold"
-                : "text-on-surface-variant hover:text-on-surface",
-            )}
-          >
-            合计 Tokens
-          </button>
-          <button
-            type="button"
-            onClick={() => setMetric("requests")}
-            className={cn(
-              "rounded-lg px-2.5 py-1 text-caption font-medium transition-all cursor-pointer",
-              metric === "requests"
-                ? "bg-surface text-primary shadow-xs font-semibold"
-                : "text-on-surface-variant hover:text-on-surface",
-            )}
-          >
-            请求数
-          </button>
-        </div>
+        {/* Metric toggle pills using standard PillTabs */}
+        <PillTabs<ChartMetric>
+          items={[
+            { id: "tokens", label: "合计 Tokens" },
+            { id: "requests", label: "请求数" },
+          ]}
+          activeId={metric}
+          onSelect={(id) => setMetric(id)}
+          size="sm"
+        />
       </div>
 
       {/* SVG Smooth Curve Area */}
@@ -190,18 +174,45 @@ export const UsageTrendChart: React.FC<UsageTrendChartProps> = ({
           onMouseLeave={() => setHoverIndex(null)}
         >
           <defs>
+            {/* Area fill gradient: Warm amber-orange glow fade */}
             <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
               <stop
                 offset="0%"
-                stopColor="rgb(var(--primary))"
-                stopOpacity="0.28"
+                stopColor="rgb(var(--theme-glow))"
+                stopOpacity="0.32"
+              />
+              <stop
+                offset="60%"
+                stopColor="rgb(var(--theme-glow))"
+                stopOpacity="0.06"
               />
               <stop
                 offset="100%"
-                stopColor="rgb(var(--primary))"
+                stopColor="rgb(var(--theme-glow))"
                 stopOpacity="0.0"
               />
             </linearGradient>
+
+            {/* Line gradient: smooth glow curve */}
+            <linearGradient id="chartLineGradient" x1="0" y1="0" x2="1" y2="0">
+              <stop
+                offset="0%"
+                stopColor="rgb(var(--color-primary-strong))"
+              />
+              <stop
+                offset="50%"
+                stopColor="rgb(var(--theme-glow))"
+              />
+              <stop
+                offset="100%"
+                stopColor="rgb(var(--color-primary-strong))"
+              />
+            </linearGradient>
+
+            {/* Subtle line glow filter */}
+            <filter id="chartLineGlow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="3" stdDeviation="4" floodColor="rgb(var(--theme-glow))" floodOpacity="0.3" />
+            </filter>
           </defs>
 
           {/* Background horizontal guideline */}
@@ -211,22 +222,23 @@ export const UsageTrendChart: React.FC<UsageTrendChartProps> = ({
             x2={width - paddingRight}
             y2={paddingTop + chartHeight}
             stroke="currentColor"
-            className="text-theme-border/50"
+            className="text-theme-border/40"
             strokeWidth={1}
           />
 
           {/* Area fill */}
           {areaPath && <path d={areaPath} fill="url(#chartGradient)" />}
 
-          {/* Line stroke */}
+          {/* Line stroke with glow */}
           {linePath && (
             <path
               d={linePath}
               fill="none"
-              stroke="rgb(var(--primary))"
-              strokeWidth={2.5}
+              stroke="url(#chartLineGradient)"
+              strokeWidth={2.6}
               strokeLinecap="round"
               strokeLinejoin="round"
+              filter="url(#chartLineGlow)"
             />
           )}
 
@@ -240,23 +252,23 @@ export const UsageTrendChart: React.FC<UsageTrendChartProps> = ({
                 x2={peak.x}
                 y2={peak.y - 12}
                 stroke="currentColor"
-                className="text-primary/40"
+                className="text-theme-nav-active-border/70"
                 strokeWidth={1}
                 strokeDasharray="2 2"
               />
               {/* Badge rectangle */}
               <rect
-                x={peak.x - 30}
-                y={peak.y - 25}
-                width={60}
-                height={18}
-                rx={9}
-                className="fill-surface stroke-primary/40"
+                x={peak.x - 32}
+                y={peak.y - 26}
+                width={64}
+                height={20}
+                rx={10}
+                className="fill-theme-card-header stroke-theme-nav-active-border/60"
                 strokeWidth={1}
               />
               <text
                 x={peak.x}
-                y={peak.y - 13}
+                y={peak.y - 12}
                 textAnchor="middle"
                 className="fill-primary text-[10px] font-bold font-mono"
               >
@@ -280,8 +292,8 @@ export const UsageTrendChart: React.FC<UsageTrendChartProps> = ({
                   className={cn(
                     "transition-all duration-150",
                     isHovered
-                      ? "fill-primary stroke-surface stroke-[2.5]"
-                      : "fill-surface stroke-primary stroke-[1.5]",
+                      ? "fill-primary-strong stroke-theme-card stroke-[2.5]"
+                      : "fill-theme-card stroke-primary-strong stroke-[1.8]",
                   )}
                 />
 
@@ -292,7 +304,7 @@ export const UsageTrendChart: React.FC<UsageTrendChartProps> = ({
                     y1={paddingTop}
                     x2={p.x}
                     y2={paddingTop + chartHeight}
-                    stroke="rgb(var(--primary))"
+                    stroke="rgb(var(--theme-glow))"
                     strokeWidth={1.5}
                     strokeDasharray="3 3"
                     className="opacity-75"
@@ -343,40 +355,40 @@ export const UsageTrendChart: React.FC<UsageTrendChartProps> = ({
         {/* Hover Tooltip Overlay */}
         {activePoint && (
           <div
-            className="pointer-events-none absolute z-20 flex flex-col gap-1.5 rounded-xl border border-theme-border/80 bg-surface/95 p-3 text-caption shadow-xl backdrop-blur-md transition-all"
+            className="pointer-events-none absolute z-20 flex flex-col gap-1.5 rounded-2xl border border-theme-nav-active-border/40 bg-theme-card/95 p-3.5 text-caption shadow-[var(--theme-shadow-card),0_12px_28px_rgb(var(--theme-glow)/0.15)] backdrop-blur-md transition-all"
             style={{
               left: `${Math.min(Math.max(activePoint.x - 70, 10), width - 180)}px`,
               top: `${Math.max(activePoint.y - 120, 10)}px`,
             }}
           >
-            <div className="flex items-center justify-between gap-4 border-b border-theme-border/50 pb-1">
+            <div className="flex items-center justify-between gap-4 border-b border-theme-border/50 pb-1.5">
               <span className="font-bold text-on-surface">
                 {activePoint.date}
               </span>
-              <span className="text-[11px] text-on-surface-variant">
+              <span className="text-[11px] text-on-surface-variant font-mono">
                 {activePoint.requestsCount} 次请求
               </span>
             </div>
-            <div className="flex flex-col gap-0.5 text-[11px]">
+            <div className="flex flex-col gap-1 text-[11px]">
               <div className="flex justify-between gap-4">
                 <span className="text-on-surface-variant">合计 Tokens:</span>
-                <span className="font-bold text-on-surface">
+                <span className="font-bold text-primary font-mono">
                   {formatChineseTokens(activePoint.totalTokens)}
                 </span>
               </div>
               <div className="flex justify-between gap-4">
                 <span className="text-on-surface-variant">输入 Tokens:</span>
-                <span>{formatChineseTokens(activePoint.inputTokens)}</span>
+                <span className="font-mono">{formatChineseTokens(activePoint.inputTokens)}</span>
               </div>
               <div className="flex justify-between gap-4">
                 <span className="text-on-surface-variant">缓存 Tokens:</span>
-                <span className="text-status-create font-medium">
+                <span className="text-status-create font-medium font-mono">
                   {formatChineseTokens(activePoint.cacheTokens)}
                 </span>
               </div>
               <div className="flex justify-between gap-4">
                 <span className="text-on-surface-variant">输出 Tokens:</span>
-                <span>{formatChineseTokens(activePoint.outputTokens)}</span>
+                <span className="font-mono">{formatChineseTokens(activePoint.outputTokens)}</span>
               </div>
             </div>
           </div>

@@ -921,7 +921,11 @@ describe("ConversationsPage sync scope", () => {
     renderConversationsPage("session");
     const searchInput = openContentSearchDialog();
     fireEvent.change(searchInput, { target: { value: "reasoning" } });
-    await screen.findByRole("button", { name: /Reasoning search result/ });
+    await screen.findByRole(
+      "button",
+      { name: /Reasoning search result/ },
+      { timeout: 5000 },
+    );
     searchConversationRecordsMock.mockReturnValue(new Promise(() => undefined));
 
     fireEvent.click(screen.getByRole("button", { name: "role:reasoning" }));

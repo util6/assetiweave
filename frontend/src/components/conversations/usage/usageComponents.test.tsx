@@ -6,7 +6,12 @@ import { UsageHeader } from "./UsageHeader";
 import { UsageHeroCard } from "./UsageHeroCard";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { UsageToolbar } from "./UsageToolbar";
-import { UsageBreakdownTables } from "./UsageBreakdownTables";
+import { DateRangePicker } from "./DateRangePicker";
+import {
+  UsageBreakdownTables,
+  formatInstanceDisplayName,
+  findMatchedAppShortcut,
+} from "./UsageBreakdownTables";
 import { formatChineseTokens } from "../../../types/usage";
 
 describe("Usage Components", () => {
@@ -21,7 +26,7 @@ describe("Usage Components", () => {
     cacheWriteTokens: 0,
     reasoningTokens: 120000,
     requestsCount: 22938,
-    costsByCurrency: [{ currency: "USD", amount: 555.6927 }],
+    costsByCurrency: [{ currency: "CNY", amount: 555.69 }],
     costCoveredTokens: 3330000000,
     costCoverageRatio: 1.0,
     costCoveredRequests: 22938,
@@ -51,7 +56,7 @@ describe("Usage Components", () => {
     render(<UsageHeroCard hero={mockHero} />);
     expect(screen.getByText("33.30 亿")).toBeDefined();
     expect(screen.getByText("22,938")).toBeDefined();
-    expect(screen.getByText("$555.6927")).toBeDefined();
+    expect(screen.getByText("¥555.69")).toBeDefined();
     expect(screen.getByText("33.22 亿")).toBeDefined();
     expect(screen.getByText("32.18 亿")).toBeDefined();
     expect(screen.getByText("790.0 万")).toBeDefined();
@@ -191,5 +196,218 @@ describe("Usage Components", () => {
     expect(screen.getByText("gpt-5.0-turbo")).toBeDefined();
     expect(screen.getByText("默认实例")).toBeDefined();
     expect(screen.getByText("2026-09-14")).toBeDefined();
+  });
+
+  it("formats instance display name by removing local sessions suffix", () => {
+    expect(formatInstanceDisplayName("Codex local sessions")).toBe("Codex");
+    expect(formatInstanceDisplayName("Codex (local sessions)")).toBe("Codex");
+    expect(formatInstanceDisplayName("Antigravity local session")).toBe("Antigravity");
+    expect(formatInstanceDisplayName("Claude")).toBe("Claude");
+  });
+
+  it("resolves app shortcuts correctly from global settings catalog", () => {
+    const mockShortcuts = [
+      {
+        profileId: "codex-profile",
+        profileName: "Codex",
+        appKind: "codex",
+        accentColor: "#10b981",
+        displayIcon: "app:codex",
+      },
+    ];
+
+    const matched = findMatchedAppShortcut(
+      {
+        adapterId: "codex",
+        sourceId: "codex-profile",
+        sourceName: "Codex local sessions",
+        appName: "Codex",
+        requestsCount: 1,
+        totalTokens: 1,
+        inputTokens: 1,
+        outputTokens: 1,
+        cacheTokens: 1,
+        costsByCurrency: [],
+        status: "active",
+        diagnostics: [],
+      },
+      mockShortcuts as any,
+    );
+
+    expect(matched?.accentColor).toBe("#10b981");
+    expect(matched?.appKind).toBe("codex");
+  });
+
+  it("renders instance costs and paginates dates table when exceeding page size", () => {
+    const mockDates = Array.from({ length: 15 }, (_, i) => ({
+      date: `2026-09-${String(i + 1).padStart(2, "0")}`,
+      requestsCount: 10 + i,
+      totalTokens: 1000000 * (i + 1),
+      inputTokens: 900000 * (i + 1),
+      outputTokens: 100000 * (i + 1),
+      cacheTokens: 500000 * (i + 1),
+      costsByCurrency: [{ currency: "CNY", amount: 1.5 * (i + 1) }],
+    }));
+
+    render(
+      <UsageBreakdownTables
+        models={[]}
+        sources={[
+          {
+            adapterId: "codex",
+            sourceId: "src-1",
+            sourceName: "Codex local sessions",
+            appName: "Codex",
+            requestsCount: 100,
+            totalTokens: 2000000000,
+            inputTokens: 1800000000,
+            outputTokens: 200000000,
+            cacheTokens: 1000000000,
+            costsByCurrency: [{ currency: "CNY", amount: 217.46 }],
+            status: "active",
+            diagnostics: [],
+          },
+        ]}
+        dates={mockDates}
+      />,
+    );
+
+    // Strips "local sessions" and shows "Codex"
+    expect(screen.getByText("Codex")).toBeDefined();
+    // Shows estimated cost for the instance
+    expect(screen.getByText("¥217.46")).toBeDefined();
+
+    // Pagination: page 1 shows 2026-09-01 but not 2026-09-15
+    expect(screen.getByText("2026-09-01")).toBeDefined();
+    expect(screen.queryByText("2026-09-15")).toBeNull();
+    expect(screen.getByText(/第 1 \/ 2 页/)).toBeDefined();
+
+    // Click next page
+    const nextBtn = screen.getByRole("button", { name: /下一页/ });
+    fireEvent.click(nextBtn);
+
+    // Now page 2 shows 2026-09-15 but not 2026-09-01
+    expect(screen.getByText("2026-09-15")).toBeDefined();
+    expect(screen.queryByText("2026-09-01")).toBeNull();
+  });
+
+  it("renders streamlined UsageToolbar with refresh and scan triggers", () => {
+    const onRefresh = vi.fn();
+    const onScan = vi.fn();
+    render(
+      <UsageToolbar
+        timeRange="last_30_days"
+        onTimeRangeChange={vi.fn()}
+        selectedInstance="all"
+        onInstanceChange={vi.fn()}
+        sources={[]}
+        onRefresh={onRefresh}
+        onScan={onScan}
+        scanStatus={{
+          scannedSourcesCount: 1,
+          totalEventsCount: 10,
+          lastScannedAt: null,
+          activeScanTaskId: null,
+          sourceDiagnostics: [],
+        }}
+        totalRequests={10}
+        refreshing={false}
+      />,
+    );
+
+    const refreshBtn = screen.getByRole("button", { name: "刷新" });
+    expect(refreshBtn).toBeDefined();
+    fireEvent.click(refreshBtn);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    const scanBtn = screen.getByRole("button", { name: /重新扫描/ });
+    expect(scanBtn).toBeDefined();
+    fireEvent.click(scanBtn);
+    expect(onScan).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders DateRangePicker, handles open, preset click, and clear", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <DateRangePicker
+        startDate={null}
+        endDate={null}
+        onChange={onChange}
+      />,
+    );
+
+    // Initial placeholder
+    const trigger = screen.getByRole("button", { name: /选择日期范围/ });
+    expect(trigger).toBeDefined();
+
+    // Open calendar popover
+    fireEvent.click(trigger);
+    expect(screen.getByText("一")).toBeDefined();
+    expect(screen.getByText("日")).toBeDefined();
+    expect(screen.getByRole("button", { name: "今天" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "近7天" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "近30天" })).toBeDefined();
+
+    // Click "今天" preset
+    fireEvent.click(screen.getByRole("button", { name: "今天" }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const [startArg, endArg] = onChange.mock.calls[0];
+    expect(startArg).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(endArg).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(startArg).toBe(endArg);
+
+    // Rerender with active range and test clear
+    rerender(
+      <DateRangePicker
+        startDate="2026-03-01"
+        endDate="2026-03-10"
+        onChange={onChange}
+      />,
+    );
+    expect(screen.getByText("2026-03-01 ~ 2026-03-10")).toBeDefined();
+    const clearBtn = screen.getByTitle("清空范围");
+    expect(clearBtn).toBeDefined();
+    fireEvent.click(clearBtn);
+    expect(onChange).toHaveBeenCalledWith(null, null);
+  });
+
+  it("renders UsageToolbar with DateRangePicker and handles bi-directional changes", () => {
+    const onTimeRangeChange = vi.fn();
+    const onDateRangeChange = vi.fn();
+
+    render(
+      <UsageToolbar
+        timeRange="last_30_days"
+        onTimeRangeChange={onTimeRangeChange}
+        startDate={null}
+        endDate={null}
+        onDateRangeChange={onDateRangeChange}
+        selectedInstance="all"
+        onInstanceChange={vi.fn()}
+        sources={[]}
+        onRefresh={vi.fn()}
+        onScan={vi.fn()}
+        scanStatus={{
+          scannedSourcesCount: 0,
+          totalEventsCount: 0,
+          lastScannedAt: null,
+          activeScanTaskId: null,
+          sourceDiagnostics: [],
+        }}
+        totalRequests={0}
+        refreshing={false}
+      />,
+    );
+
+    expect(screen.getByText("日期区间")).toBeDefined();
+    const datePickerBtn = screen.getByRole("button", { name: /选择日期范围/ });
+    expect(datePickerBtn).toBeDefined();
+
+    // Open date picker and select preset
+    fireEvent.click(datePickerBtn);
+    fireEvent.click(screen.getByRole("button", { name: "近7天" }));
+
+    expect(onDateRangeChange).toHaveBeenCalledTimes(1);
+    expect(onTimeRangeChange).toHaveBeenCalledWith("custom");
   });
 });
