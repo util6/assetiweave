@@ -3,8 +3,8 @@
 ## 1. 项目定位与核心红线 (Core Constraints)
 
 - **产品定位**：AssetIWeave 是本地优先（Local-first）的 AI 文件资产挂载管理器，统一管理 Prompt、Rule、Memory、Skill、MCP、Agent 等本地文件资产与会话记录。
-- **业务唯一收口**：`src-tauri/src/backend/application/AppService` 是 Tauri 与 Engine 唯一的业务编排边界。前端禁止绕过 `frontend/src/services/` 直调 `invoke(...)`；CLI 禁止绕过 Engine 直接读写 SQLite 或操作文件挂载。
-- **持久化真相源**：SQLite 是应用状态、配置与挂载意图（`asset_mounts`）的唯一真相源。数据库变更必须通过 `src-tauri/migrations/`。源资产目录默认只读，严禁向第三方仓库写入应用状态。
+- **业务唯一收口**：`backend/asset_core/src/application/AppService` 是 Tauri 与 Engine 唯一的业务编排边界。前端禁止绕过 `frontend/src/services/` 直调 `invoke(...)`；CLI 禁止绕过 Engine 直接读写 SQLite 或操作文件挂载。
+- **持久化真相源**：SQLite 是应用状态、配置与挂载意图（`asset_mounts`）的唯一真相源。数据库变更必须通过 `backend/asset_core/migrations/`。源资产目录默认只读，严禁向第三方仓库写入应用状态。
 - **单层直接软链接**：默认采用从目标 App 目录直连真实源资产的单层直接软链接，禁止私自引入中间软链接池。
 - **长任务与并发安全**：目录扫描、大批量挂载、远程拉取、会话同步等 I/O 密集操作必须后台化，禁止在耗时任务期间持有全局应用锁阻塞 UI 或核心读写。
 - **前端视觉规范红线**：所有页面与组件必须严格遵循 ADR-0009 与 `agent-docs/governance/frontend-design-system.md` (AssetIWeave UI)。严禁自由发挥、严禁在交互控件上使用 `rounded-sm`/`rounded-md` 等生硬方角破坏流体质感、严禁 Ad-hoc 拼凑未经设计系统收口的按钮与输入框。新 UI 必须以“对话记录”与“Skill 目录总览”为黄金参考系。
@@ -15,7 +15,10 @@
 - **CLI 执行流**：`Go Cobra -> Engine Client -> stdio JSON Protocol -> AppService -> 共享 Capabilities/Store`。
 - **核心模块边界**：
   - `frontend/src/`：React 19 + TypeScript。基础控件位于 `components/foundation` 与 `components/ui`，跨域复用组件在 `components/common`，业务域按 `components/{groups,assets,sources,conversations}` 组织。
-  - `src-tauri/src/`：完整 Rust 后端。`adapters/` 负责 Tauri 命令、Engine stdio 协议、系统胶水与后台任务投影；`backend/` 负责业务逻辑、领域模型与存储。
+  - `desktop/`：Tauri 2 桌面宿主壳。`adapters/` 负责 Tauri 命令、Engine stdio 协议、系统胶水与后台任务投影。
+  - `backend/`：纯 Rust 业务核心双 Crate：
+    - `backend/agent_engine/`：强 AI 纵切纯引擎（ACP 协议、L1 Profile 沙箱隔离、进程生命周期托管，零数据库依赖）。
+    - `backend/asset_core/`：弱 AI 资产纵切（Skill 挂载、对话记录、卡片备忘、SQLite 存储与 migrations、统一业务门面 `AppService`）。
   - `cli/`：Go Cobra 客户端。负责命令行交互、格式化输出与外部采集编排；禁止直接触碰底层数据库与挂载文件。
 
 ## 3. 开发、契约与验证命令 (Commands & Baseline)
@@ -53,9 +56,14 @@
   - **命名与结构镜像**：普通文件 `xxx.rs` 对应 `xxx_tests.rs`；目录模块 `dir/mod.rs` 对应 `dir/<dir>_tests.rs`。测试辅助代码（fixtures/mocks/builders）如仅本模块使用放对应 `*_tests.rs`，多处复用抽到 `test_support`。
   - **文件规模硬性红线**：单个业务实现文件（不计测试代码）严格控制在 **500 行以内**；当业务实现接近或超过 **800 行** 时必须优先拆分出新的子业务模块，严禁以剥离测试为借口继续在原文件膨胀业务代码。
   - **演进策略（童子军规则）**：存量轻量小文件（< 500 行）无需全库机械刷库；但在功能迭代被实质修改、测试继续增长或接近规模红线时，必须顺带将其测试迁移至同级独立 `*_tests.rs`。
-- **长耗时功能规范**：
-  - 长任务禁止直接在按钮点击中 `await` 全过程；后端命令应快速返回任务快照（Snapshot），耗时处理委托后台任务。
-  - 前端必须通过统一 Provider 管理任务状态，结合事件订阅与轮询兜底（Polling fallback），展示全局/局部进度。
+- **长耗时功能与后台流水线规范 (ADR-0017 红线)**：
+  - **>1s 强制流水线化**：凡涉及目录扫描、文件哈希、Git/网络拉取、大批量数据迁移、批量软链接建立或 AI 推理等长耗时操作（预期 >1s），严禁直接在同步请求或裸 async 中阻塞执行，必须通过 `AppService::spawn_pipeline_task` 纳管为后台流水线任务。
+  - **严禁单阶段黑盒与字符串漂移**：任务必须前置声明至少 2 个阶段的 `PipelineDescriptor`；阶段标识必须使用 `stages::*` 编译期常量，禁止手写裸字符串；阶段生命周期必须使用 `let mut stage = cx.enter_stage(...)` RAII 守卫，严禁手动维护孤立状态。
+  - **严禁无理由逃逸**：`TaskContext::untracked()` 仅限 `#[cfg(test)]`；生产环境中内部无状态任务必须显式使用 `TaskContext::detached(reason)`。
+  - **严禁私造事件轨道**：严禁定义 `*-task-updated` 私有事件，统一发射 `task-updated`（附带 `TaskChangeClass { Structural, Cosmetic }` 信封），高频数值帧 150ms 节流，结构帧即刻保序冲刷。
+  - **大产物轻量引用**：`snapshot.result` 仅允许存放状态摘要或文件路径/行 ID 引用，严禁回传数百 KB 以上的大列表。
+  - **黄金参考样板**：以 `ADR-0017` 与 `scan_sources` 实现为全仓标准实现样板。
+  - 前端必须通过统一 `TaskCenterProvider` 管理任务状态，结合事件订阅与轮询兜底，领域模块通过 `taskInvalidationRegistry` 自主注册缓存失效。
   - 批量操作必须在前端完成去重，共享数据一次性装载，完成时触发单次聚合刷新。任务进行中仅禁用冲突操作，保留无关浏览与查看能力。
 - **提交规范**：
   - 采用 Conventional Commits（如 `feat: add source filter` 或 `fix: refresh mount state`），保持原子提交。禁止提交临时日志、秘密凭证与编译产物。

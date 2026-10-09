@@ -1,0 +1,12 @@
+pub mod assets;
+pub mod builtin_skills;
+pub mod catalog_ops;
+pub mod params;
+pub mod skill_remote;
+pub mod skill_remote_client;
+pub mod skill_remote_search;
+pub mod skills;
+pub mod skills_groups;
+pub mod source_probe;
+pub mod source_scanner;
+pub mod sources;

@@ -105,7 +105,7 @@ jobs:
         with:
           workspaces: |
             . -> target
-            src-tauri -> target
+            desktop -> target
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
@@ -156,7 +156,7 @@ jobs:
         with:
           workspaces: |
             . -> target
-            src-tauri -> target
+            desktop -> target
 
       - name: Check Rust workspace
         run: cargo check --workspace
@@ -233,7 +233,7 @@ jobs:
         with:
           workspaces: |
             . -> target
-            src-tauri -> target
+            desktop -> target
 
       - name: Build CLI and Engine
         run: pnpm cli:install

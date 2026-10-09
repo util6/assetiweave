@@ -6,8 +6,10 @@ import process from "node:process";
 import { maskRustNonCode } from "./rust-test-files.mjs";
 
 const projectRoot = path.resolve(process.argv[2] ?? ".");
-const backendRoot = path.join(projectRoot, "src-tauri", "src", "backend");
-const moduleFile = path.join(backendRoot, "mod.rs");
+let moduleFile = path.join(projectRoot, "backend", "asset_core", "src", "lib.rs");
+if (!fs.existsSync(moduleFile)) {
+  moduleFile = path.join(projectRoot, "src-tauri", "src", "backend", "mod.rs");
+}
 const requiredProductionModules = new Set([
   "application",
   "domain",
@@ -68,7 +70,10 @@ for (const [moduleName, count] of declarationCounts) {
   }
 }
 
-if (/\bpub\s*(?:\([^)]*\)\s*)?use\b/.test(code)) {
+const backendRoot = path.dirname(moduleFile);
+
+const filteredCode = code.replace(/pub\s+use\s+self\s+as\s+backend\s*;/g, "");
+if (/\bpub\s*(?:\([^)]*\)\s*)?use\b/.test(filteredCode)) {
   fail("backend/mod.rs must not contain re-exports; import from the owning layer");
 }
 

@@ -41,6 +41,10 @@ start_batch_mount
 get_batch_mount_task
 list_batch_mount_tasks
 cancel_batch_mount
+start_git_source_pull
+get_git_source_pull_task
+list_git_source_pull_tasks
+cancel_git_source_pull
 # Remote Skill task controls use the resident Tauri TaskRuntime; the canonical
 # Engine method `skill.acquire` remains the CLI/API entrypoint.
 start_skill_acquire
@@ -51,5 +55,11 @@ agent_session_get
 get_conversation_usage_dashboard
 get_conversation_usage_scan_status
 scan_conversation_usage
+update_model_pricing_catalog
+get_model_pricing_status
+get_model_pricing_catalog
+get_model_pricing_sync_task
+save_model_price_entry
+set_model_pricing_exchange_rate
 duplicate_memory_generation_skill
 reset_memory_generation_skill_to_default

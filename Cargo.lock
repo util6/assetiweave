@@ -65,6 +65,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_engine"
+version = "0.7.0"
+dependencies = [
+ "agent-client-protocol",
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "chrono",
+ "dirs",
+ "futures",
+ "libc",
+ "process-wrap",
+ "regex",
+ "schemars 1.2.1",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+ "uuid",
+ "validator",
+ "which",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -128,12 +158,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "asset_core"
+version = "0.7.0"
+dependencies = [
+ "agent-client-protocol",
+ "agent_engine",
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "base64 0.22.1",
+ "bzip2",
+ "camino",
+ "chrono",
+ "config",
+ "directories",
+ "dirs",
+ "flate2",
+ "futures",
+ "globset",
+ "libc",
+ "process-wrap",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "schemars 1.2.1",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "signal-hook",
+ "sqlx",
+ "tantivy",
+ "tantivy-jieba",
+ "tar",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "validator",
+ "walkdir",
+ "which",
+ "zip",
+]
+
+[[package]]
 name = "assetiweave"
 version = "0.7.0"
 dependencies = [
  "agent-client-protocol",
+ "agent_engine",
  "anyhow",
  "arc-swap",
+ "asset_core",
  "base64 0.22.1",
  "bzip2",
  "camino",

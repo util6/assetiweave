@@ -1,0 +1,516 @@
+import fs from "node:fs";
+import readline from "node:readline";
+
+const args = process.argv.slice(2);
+const modeArg = args.find((arg) => arg.startsWith("--mode="))?.slice("--mode=".length);
+const recordPathArg = args.find((arg) => arg.startsWith("--record="))?.slice("--record=".length);
+const counterPathArg = args.find((arg) => arg.startsWith("--counter-path="))?.slice("--counter-path=".length);
+
+const mode = modeArg ?? process.env.ASSETIWEAVE_FAKE_ACP_MODE ?? "happy";
+const recordPath = recordPathArg ?? process.env.ASSETIWEAVE_FAKE_ACP_RECORD_PATH;
+const counterPath = counterPathArg ?? process.env.ASSETIWEAVE_FAKE_ACP_COUNTER_PATH;
+
+const startDelayMs = Number(
+  args.find((arg) => arg.startsWith("--start-delay-ms="))?.slice("--start-delay-ms=".length) ??
+  process.env.ASSETIWEAVE_FAKE_ACP_START_DELAY_MS ?? 0
+);
+const initDelayMs = Number(
+  args.find((arg) => arg.startsWith("--init-delay-ms="))?.slice("--init-delay-ms=".length) ??
+  process.env.ASSETIWEAVE_FAKE_ACP_INIT_DELAY_MS ?? 0
+);
+const newDelayMs = Number(
+  args.find((arg) => arg.startsWith("--new-delay-ms="))?.slice("--new-delay-ms=".length) ??
+  process.env.ASSETIWEAVE_FAKE_ACP_NEW_DELAY_MS ?? 0
+);
+
+function delay(ms) {
+  if (!ms || ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const sessionId = "fixture-session";
+let pendingPromptId;
+let pendingPermissionId;
+
+function record(event, fields = {}) {
+  if (recordPath) {
+    fs.appendFileSync(recordPath, `${JSON.stringify({ event, ...fields })}\n`);
+  }
+}
+
+record("spawn", { pid: process.pid, mode });
+if (counterPath) {
+  fs.appendFileSync(counterPath, `${process.pid}\n`);
+}
+
+if (mode === "reject_version" && args.includes("--version")) {
+  process.exit(64);
+}
+
+if (mode === "exit_nonzero") {
+  process.exit(1);
+}
+
+if (startDelayMs > 0) {
+  await delay(startDelayMs);
+}
+
+function send(message) {
+  process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+function respond(id, result) {
+  send({ jsonrpc: "2.0", id, result });
+}
+
+function fail(id, code = -32603, message = "FAKE_PRIVATE_ERROR_MUST_NOT_ESCAPE", data) {
+  send({
+    jsonrpc: "2.0",
+    id,
+    error: { code, message, ...(data === undefined ? {} : { data }) },
+  });
+}
+
+function update(updateValue, targetSessionId = sessionId) {
+  send({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId: targetSessionId, update: updateValue },
+  });
+}
+
+function text(value, targetSessionId = sessionId) {
+  update(
+    {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: value },
+    },
+    targetSessionId,
+  );
+}
+
+function finishPrompt(id, stopReason = "end_turn") {
+  respond(id, { stopReason });
+}
+
+async function handleInitialize(message) {
+  record("initialize", {
+    clientName: message.params?.clientInfo?.name,
+    terminal: message.params?.clientCapabilities?.terminal,
+  });
+  if (initDelayMs > 0) {
+    await delay(initDelayMs);
+  }
+  if (mode === "initialize_timeout") {
+    return;
+  }
+  if (mode === "exit_on_init") {
+    process.exit(2);
+  }
+  if (mode === "initialize_auth_error") {
+    fail(message.id, -32000, "Authentication required: login required to use agent");
+    return;
+  }
+  if (mode === "initialize_error") {
+    fail(message.id);
+    return;
+  }
+  const supportsClose = !["no_close", "no_close_no_delete", "initialize_timeout"].includes(mode);
+  const supportsDelete = !["initialize_timeout", "no_delete", "no_delete_empty", "no_close_no_delete"].includes(mode);
+  const supportsLoad = !["initialize_timeout", "no_load", "load_error"].includes(mode);
+  const supportsResume = !["initialize_timeout", "no_resume", "resume_error"].includes(mode);
+  respond(message.id, {
+    protocolVersion: 1,
+    agentCapabilities: supportsClose || supportsDelete
+      ? {
+          loadSession: supportsLoad,
+          sessionCapabilities: {
+            ...(supportsClose ? { close: {} } : {}),
+            ...(supportsDelete ? { delete: {} } : {}),
+            ...(supportsResume ? { resume: {} } : {}),
+          },
+      }
+      : { loadSession: supportsLoad, sessionCapabilities: supportsResume ? { resume: {} } : {} },
+    agentInfo: { name: "assetiweave-fake-acp", version: "1" },
+  });
+}
+
+async function handleNewSession(message) {
+  record("new", {
+    cwd: message.params?.cwd,
+    mcpCount: message.params?.mcpServers?.length ?? -1,
+    additionalDirectoryCount:
+      message.params?.additionalDirectories?.length ?? 0,
+  });
+  if (newDelayMs > 0) {
+    await delay(newDelayMs);
+  }
+  if (mode === "new_timeout" || mode === "session_new_timeout") {
+    return;
+  }
+  if (mode === "auth_error") {
+    fail(message.id, -32000, "Authentication required: please run login");
+    return;
+  }
+  if (mode === "new_error") {
+    fail(message.id);
+    return;
+  }
+  if (mode === "corrupt_catalog" || mode === "corrupt_config") {
+    respond(message.id, {
+      sessionId,
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "fixture/model-fast",
+          options: [
+            { value: "", name: "" },
+          ],
+        },
+      ],
+    });
+    return;
+  }
+  if (mode === "corrupt_options") {
+    respond(message.id, {
+      sessionId,
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          options: "not-an-array",
+        },
+      ],
+    });
+    return;
+  }
+  if (mode === "unsupported_models") {
+    respond(message.id, {
+      sessionId,
+    });
+    return;
+  }
+  if (mode === "empty_model_options") {
+    respond(message.id, {
+      sessionId,
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "",
+          options: [],
+        },
+      ],
+    });
+    return;
+  }
+  if (mode === "model_discovery_error") {
+    respond(message.id, {
+      sessionId,
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "fixture/model-fast",
+          options: [
+            { value: "", name: "" },
+          ],
+        },
+      ],
+    });
+    return;
+  }
+  respond(message.id, {
+    sessionId,
+    configOptions: mode === "no_models" ? [] : [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "fixture/model-fast",
+        options: [
+          { value: "fixture/model-fast", name: "Fixture Fast", description: "Fast fixture model" },
+          { value: "fixture/model-accurate", name: "Fixture Accurate" },
+        ],
+      },
+    ],
+  });
+}
+
+function handleSetConfig(message) {
+  record("model", {
+    configId: message.params?.configId,
+    value: message.params?.value,
+  });
+  if (mode === "model_reject" || mode === "model_discovery_error") {
+    fail(message.id, -32602);
+    return;
+  }
+  if (mode === "model_timeout") {
+    return;
+  }
+  respond(message.id, { configOptions: [] });
+}
+
+function handleLoadSession(message) {
+  record("load", { sessionId: message.params?.sessionId });
+  if (mode === "load_error") {
+    fail(message.id);
+    return;
+  }
+  if (mode === "session_events") {
+    update({
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text: "replayed provider thought" },
+    }, message.params?.sessionId ?? sessionId);
+    update({
+      sessionUpdate: "tool_call",
+      toolCallId: "replayed-tool",
+      title: "replayed read",
+      kind: "read",
+      status: "pending",
+    }, message.params?.sessionId ?? sessionId);
+    update({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "replayed-tool",
+      status: "completed",
+    }, message.params?.sessionId ?? sessionId);
+  }
+  text("replayed:", message.params?.sessionId ?? sessionId);
+  text("fixture-history", message.params?.sessionId ?? sessionId);
+  respond(message.id, {});
+}
+
+function handleResumeSession(message) {
+  record("resume", { sessionId: message.params?.sessionId });
+  if (mode === "resume_error") {
+    fail(message.id);
+    return;
+  }
+  respond(message.id, {});
+}
+
+function handlePrompt(message) {
+  record("prompt", {
+    blockTypes: (message.params?.prompt ?? []).map((block) => block.type),
+  });
+  const id = message.id;
+  switch (mode) {
+    case "prompt_error":
+      fail(id, -32603, "Internal prompt execution error");
+      return;
+    case "chunked":
+      text("你");
+      text("好🌍");
+      finishPrompt(id);
+      return;
+    case "thinking":
+      update({
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "PRIVATE_THOUGHT" },
+      });
+      text("visible");
+      finishPrompt(id);
+      return;
+    case "wrong_session":
+      text("wrong", "other-session");
+      text("right");
+      finishPrompt(id);
+      return;
+    case "empty":
+    case "no_delete_empty":
+      finishPrompt(id);
+      return;
+    case "oversized":
+      text("x".repeat(Number(process.env.ASSETIWEAVE_FAKE_ACP_TEXT_BYTES ?? 2048)));
+      pendingPromptId = id;
+      return;
+    case "late_chunk":
+      text("before ");
+      text("late");
+      finishPrompt(id);
+      return;
+    case "session_events":
+      text("visible ");
+      text("answer");
+      update({
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "provider thought" },
+      });
+      update({
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "resource_link", name: "metadata", uri: "fixture://thought-metadata" },
+      });
+      update({
+        sessionUpdate: "tool_call",
+        toolCallId: "fixture-tool",
+        title: "memory_recall_search",
+        kind: "read",
+        status: "pending",
+      });
+      update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "fixture-tool",
+        status: "in_progress",
+      });
+      update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "fixture-tool",
+        status: "completed",
+      });
+      finishPrompt(id);
+      return;
+    case "permission":
+      pendingPromptId = id;
+      pendingPermissionId = 9001;
+      send({
+        jsonrpc: "2.0",
+        id: pendingPermissionId,
+        method: "session/request_permission",
+        params: {
+          sessionId,
+          toolCall: {
+            toolCallId: "permission-tool",
+            rawInput: { secret: "RAW_PERMISSION_SECRET" },
+          },
+          options: [
+            { optionId: "reject", name: "Reject", kind: "reject_once" },
+          ],
+        },
+      });
+      return;
+    case "tool_call":
+      update({
+        sessionUpdate: "tool_call",
+        toolCallId: "fixture-tool",
+        title: "fixture tool",
+        kind: "read",
+        status: "pending",
+        rawInput: { secret: "RAW_TOOL_SECRET" },
+      });
+      pendingPromptId = id;
+      return;
+    case "cancel_wait":
+      pendingPromptId = id;
+      return;
+    case "disconnect":
+      process.exit(0);
+      return;
+    case "exit_during_prompt":
+      process.exit(17);
+      return;
+    default:
+      text("translated");
+      finishPrompt(id);
+  }
+}
+
+function handleClose(message) {
+  record("close");
+  if (mode === "close_error") {
+    fail(message.id);
+    return;
+  }
+  if (mode === "close_hang") {
+    return;
+  }
+  respond(message.id, {});
+}
+
+function handleDelete(message) {
+  record("delete", { sessionId: message.params?.sessionId });
+  if (mode === "delete_error") {
+    fail(message.id);
+    return;
+  }
+  if (mode === "delete_not_found") {
+    fail(message.id, -32602, `Session not found: ${sessionId}`);
+    return;
+  }
+  if (mode === "delete_not_found_in_data") {
+    fail(message.id, -32603, "Internal error", {
+      details: `no rollout found for thread id ${sessionId}`,
+    });
+    return;
+  }
+  if (mode === "delete_hang") {
+    return;
+  }
+  respond(message.id, {});
+}
+
+function handleCancel(message) {
+  record("cancel", { sessionId: message.params?.sessionId });
+  if (pendingPromptId !== undefined) {
+    finishPrompt(pendingPromptId, "cancelled");
+    pendingPromptId = undefined;
+  }
+}
+
+function handleResponse(message) {
+  if (message.id !== pendingPermissionId) {
+    return;
+  }
+  record("permission_response", {
+    outcome: message.result?.outcome?.outcome,
+  });
+  pendingPermissionId = undefined;
+  if (pendingPromptId !== undefined) {
+    finishPrompt(pendingPromptId, "cancelled");
+    pendingPromptId = undefined;
+  }
+}
+
+const input = readline.createInterface({ input: process.stdin });
+const keepAlive = (mode.startsWith("no_delete") || mode === "no_close_no_delete" || mode === "cancel_wait") ? setInterval(() => {}, 1_000) : undefined;
+input.on("line", async (line) => {
+  let message;
+  try {
+    message = JSON.parse(line);
+  } catch {
+    record("invalid_json");
+    return;
+  }
+
+  if (message.method === "initialize") {
+    await handleInitialize(message);
+  } else if (message.method === "session/new") {
+    await handleNewSession(message);
+  } else if (message.method === "session/set_config_option") {
+    handleSetConfig(message);
+  } else if (message.method === "session/load") {
+    handleLoadSession(message);
+  } else if (message.method === "session/resume") {
+    handleResumeSession(message);
+  } else if (message.method === "session/prompt") {
+    handlePrompt(message);
+  } else if (message.method === "session/cancel") {
+    handleCancel(message);
+  } else if (message.method === "session/close") {
+    handleClose(message);
+  } else if (message.method === "session/delete") {
+    handleDelete(message);
+  } else if (Object.hasOwn(message, "id")) {
+    handleResponse(message);
+  }
+});
+
+input.on("close", () => {
+  if (process.platform === "win32" && keepAlive) clearInterval(keepAlive);
+  record("stdin_closed");
+});
+process.on("SIGTERM", () => {
+  if (keepAlive) clearInterval(keepAlive);
+  record("sigterm");
+  process.exit(0);
+});

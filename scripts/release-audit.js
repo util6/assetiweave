@@ -67,13 +67,13 @@ function run(command, args, options = {}) {
 }
 
 const packageJSON = readJSON("package.json");
-const tauriConfig = readJSON("src-tauri/tauri.conf.json");
+const tauriConfig = readJSON("desktop/tauri.conf.json");
 const contract = readJSON("cli/internal/schema/contract.json");
-const cargoToml = read("src-tauri/Cargo.toml");
+const cargoToml = read("desktop/Cargo.toml");
 const cargoVersion = cargoToml.match(/^\[package\][\s\S]*?^version = "([^"]+)"/m)?.[1];
 
-requireEqual("src-tauri/Cargo.toml version", cargoVersion, packageJSON.version);
-requireEqual("src-tauri/tauri.conf.json version", tauriConfig.version, packageJSON.version);
+requireEqual("desktop/Cargo.toml version", cargoVersion, packageJSON.version);
+requireEqual("desktop/tauri.conf.json version", tauriConfig.version, packageJSON.version);
 requireEqual("cli/internal/schema/contract.json engine_version", contract.engine_version, packageJSON.version);
 
 const ciWorkflow = read(".github/workflows/ci.yml");
@@ -100,8 +100,8 @@ requireIncludes("package scripts", JSON.stringify(packageJSON.scripts), "bundle:
 requireIncludes("Tauri beforeBuildCommand", tauriConfig.build.beforeBuildCommand, "pnpm bundle:cli");
 requireIncludes("Tauri bundle resources", JSON.stringify(tauriConfig.bundle.resources), "bundled-cli/cli");
 requireIncludes("CLI build", read("scripts/build-cli.js"), "aiwc");
-requireIncludes("CLI installer", read("src-tauri/src/adapters/cli_tools.rs"), "CLI_ALIAS");
-requireIncludes("CLI installer", read("src-tauri/src/adapters/cli_tools.rs"), '"aiwc"');
+requireIncludes("CLI installer", read("desktop/src/adapters/cli_tools.rs"), "CLI_ALIAS");
+requireIncludes("CLI installer", read("desktop/src/adapters/cli_tools.rs"), '"aiwc"');
 requireNotIncludes("release workflow", releaseWorkflow, "assetiweave-tools-");
 requireNotIncludes("release workflow", releaseWorkflow, "CLI tools checksum assets");
 requireNotIncludes("release workflow", releaseWorkflow, "macOS app archive");

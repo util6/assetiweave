@@ -12,11 +12,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "cli/internal/schema/contract.json"
-TAURI_COMMANDS = ROOT / "src-tauri/src/adapters/tauri/commands"
-ENGINE_REGISTRY = ROOT / "src-tauri/src/adapters/engine/registry"
+TAURI_COMMANDS = ROOT / "desktop/src/adapters/tauri/commands"
+ENGINE_REGISTRY = ROOT / "desktop/src/adapters/engine/registry"
 EXEMPTIONS = ROOT / "scripts/surface-matrix-exemptions.txt"
 MARKDOWN = ROOT / "agent-docs/generated/surface-matrix.md"
-RUST = ROOT / "src-tauri/src/adapters/engine/surface_mapping.rs"
+RUST = ROOT / "desktop/src/adapters/engine/surface_mapping.rs"
 
 
 def tauri_functions() -> list[str]:

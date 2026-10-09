@@ -111,7 +111,10 @@ function normalizeGroupedPaths(source) {
 }
 
 function countLayerReferences(root, sourceLayer, targetLayer) {
-  const sourceRoot = path.join(root, "src-tauri", "src", "backend", sourceLayer);
+  let sourceRoot = path.join(root, "backend", "asset_core", "src", sourceLayer);
+  if (!fs.existsSync(sourceRoot)) {
+    sourceRoot = path.join(root, "src-tauri", "src", "backend", sourceLayer);
+  }
   const targetPattern = new RegExp(`\\bbackend::${targetLayer}\\b`, "g");
   const references = [];
 

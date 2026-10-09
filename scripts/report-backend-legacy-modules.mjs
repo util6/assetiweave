@@ -10,8 +10,14 @@ import {
 } from "./rust-test-files.mjs";
 
 const root = path.resolve(process.argv[2] ?? process.cwd());
-const backendRoot = path.join(root, "src-tauri/src/backend");
-const rustRoot = path.join(root, "src-tauri/src");
+let backendRoot = path.join(root, "backend/asset_core/src");
+if (!existsSync(backendRoot)) {
+  backendRoot = path.join(root, "src-tauri/src/backend");
+}
+let rustRoot = path.join(root, "desktop/src");
+if (!existsSync(rustRoot)) {
+  rustRoot = path.join(root, "src-tauri/src");
+}
 const legacyModules = [
   "agent_market",
   "agents",

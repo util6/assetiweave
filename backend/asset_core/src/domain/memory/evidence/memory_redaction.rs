@@ -1,0 +1,269 @@
+use regex::{Captures, Regex};
+use std::sync::OnceLock;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemoryRedactionResult {
+    pub text: String,
+    pub redaction_count: usize,
+}
+
+pub fn redact_memory_text(value: &str) -> MemoryRedactionResult {
+    let mut text = value.to_string();
+    let mut redaction_count = 0;
+
+    text = replace_all(
+        &text,
+        private_key_pattern(),
+        "private_key",
+        &mut redaction_count,
+    );
+    text = replace_header_value(
+        &text,
+        authorization_header_pattern(),
+        "bearer_token",
+        &mut redaction_count,
+    );
+    text = replace_all(
+        &text,
+        bearer_pattern(),
+        "bearer_token",
+        &mut redaction_count,
+    );
+    text = replace_header_value(
+        &text,
+        cookie_header_pattern(),
+        "cookie",
+        &mut redaction_count,
+    );
+    text = replace_all(&text, jwt_pattern(), "jwt_token", &mut redaction_count);
+    text = replace_all(&text, api_key_pattern(), "api_key", &mut redaction_count);
+    text = replace_high_entropy_tokens(&text, &mut redaction_count);
+
+    MemoryRedactionResult {
+        text,
+        redaction_count,
+    }
+}
+
+fn replace_all(text: &str, pattern: &Regex, kind: &str, count: &mut usize) -> String {
+    pattern
+        .replace_all(text, |_: &Captures<'_>| {
+            *count += 1;
+            format!("[REDACTED:{kind}]")
+        })
+        .into_owned()
+}
+
+fn replace_header_value(text: &str, pattern: &Regex, kind: &str, count: &mut usize) -> String {
+    pattern
+        .replace_all(text, |captures: &Captures<'_>| {
+            *count += 1;
+            format!("{} [REDACTED:{kind}]", &captures[1])
+        })
+        .into_owned()
+}
+
+fn replace_high_entropy_tokens(text: &str, count: &mut usize) -> String {
+    high_entropy_token_pattern()
+        .replace_all(text, |captures: &Captures<'_>| {
+            let token = &captures[0];
+            if looks_like_high_entropy_secret(token) {
+                *count += 1;
+                "[REDACTED:high_entropy]".to_string()
+            } else {
+                token.to_string()
+            }
+        })
+        .into_owned()
+}
+
+fn looks_like_high_entropy_secret(value: &str) -> bool {
+    if value.len() < 32 || value.chars().all(|character| character == '-') {
+        return false;
+    }
+
+    // 1. 排除文件路径
+    if is_likely_file_path(value) {
+        return false;
+    }
+
+    // 2. 排除 UUID
+    if is_uuid_like(value) {
+        return false;
+    }
+
+    // 3. 排除纯十六进制哈希（Git SHA 40-hex / SHA256 64-hex）
+    if is_hex_hash(value) {
+        return false;
+    }
+
+    // 4. 排除蛇形命名代码标识符（长函数名、测试名）
+    if is_snake_case_identifier(value) {
+        return false;
+    }
+
+    let mut has_lower = false;
+    let mut has_upper = false;
+    let mut has_digit = false;
+    let mut has_symbol = false;
+    for character in value.chars() {
+        has_lower |= character.is_ascii_lowercase();
+        has_upper |= character.is_ascii_uppercase();
+        has_digit |= character.is_ascii_digit();
+        has_symbol |= !character.is_ascii_alphanumeric();
+    }
+    let character_classes = [has_lower, has_upper, has_digit, has_symbol]
+        .into_iter()
+        .filter(|present| *present)
+        .count();
+    if character_classes < 2 {
+        return false;
+    }
+
+    shannon_entropy(value) >= 3.5
+}
+
+fn is_hex_hash(value: &str) -> bool {
+    (value.len() == 40 || value.len() == 64) && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn is_uuid_like(value: &str) -> bool {
+    if value.len() != 36 {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    if bytes[8] != b'-' || bytes[13] != b'-' || bytes[18] != b'-' || bytes[23] != b'-' {
+        return false;
+    }
+    value.chars().enumerate().all(|(i, c)| {
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            true
+        } else {
+            c.is_ascii_hexdigit()
+        }
+    })
+}
+
+fn is_likely_file_path(value: &str) -> bool {
+    if value.contains('\\') {
+        return true;
+    }
+    if value.starts_with('/') || value.starts_with("./") || value.starts_with("../") {
+        return true;
+    }
+    let common_extensions = [
+        ".rs", ".ts", ".tsx", ".js", ".jsx", ".json", ".toml", ".sql", ".md", ".go", ".py", ".c",
+        ".cpp", ".h", ".yaml", ".yml", ".html", ".css", ".lock", ".sh", ".bash", ".zsh",
+    ];
+    if common_extensions.iter().any(|ext| value.ends_with(ext)) {
+        return true;
+    }
+    let slash_count = value.chars().filter(|&c| c == '/').count();
+    if slash_count >= 2 && !value.contains(':') {
+        return true;
+    }
+    false
+}
+
+fn is_snake_case_identifier(value: &str) -> bool {
+    if !value.contains('_') {
+        return false;
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    {
+        return false;
+    }
+    let underscore_count = value.chars().filter(|&c| c == '_').count();
+    underscore_count >= 2
+}
+
+fn shannon_entropy(value: &str) -> f64 {
+    let mut frequencies = [0_usize; 256];
+    let mut length = 0_usize;
+    for byte in value.bytes() {
+        frequencies[byte as usize] += 1;
+        length += 1;
+    }
+    if length == 0 {
+        return 0.0;
+    }
+
+    frequencies
+        .into_iter()
+        .filter(|frequency| *frequency > 0)
+        .map(|frequency| {
+            let probability = frequency as f64 / length as f64;
+            -probability * probability.log2()
+        })
+        .sum()
+}
+
+fn private_key_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(
+            r"(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
+        )
+        .expect("private key regex")
+    })
+}
+
+fn authorization_header_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"(?im)^(authorization\s*:\s*bearer)\s+[^\r\n]+$")
+            .expect("authorization header regex")
+    })
+}
+
+fn bearer_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}").expect("bearer regex")
+    })
+}
+
+fn cookie_header_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"(?im)^(cookie|set-cookie)\s*:\s*[^\r\n]+$").expect("cookie regex")
+    })
+}
+
+fn jwt_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")
+            .expect("jwt regex")
+    })
+}
+
+fn api_key_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(
+            r"(?x)\b(?:
+                sk-(?:proj-)?[A-Za-z0-9_-]{16,}|
+                gh[pousr]_[A-Za-z0-9_]{16,}|
+                github_pat_[A-Za-z0-9_]{16,}|
+                AIza[0-9A-Za-z_-]{20,}|
+                AKIA[0-9A-Z]{16}|
+                xox[baprs]-[A-Za-z0-9-]{10,}
+            )\b",
+        )
+        .expect("API key regex")
+    })
+}
+
+fn high_entropy_token_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"[A-Za-z0-9][A-Za-z0-9_+/=.-]{31,}").expect("high entropy token regex")
+    })
+}
+
+#[cfg(test)]
+#[path = "memory_redaction_tests.rs"]
+mod tests;

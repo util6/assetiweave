@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const exe = process.platform === "win32" ? ".exe" : "";
-const bundleDir = join(root, "src-tauri", "bundled-cli", "cli");
+const bundleDir = join(root, "desktop", "bundled-cli", "cli");
 const cliOutput = join(bundleDir, `assetiweave-cli${exe}`);
 const engineOutput = join(bundleDir, `assetiweave-engine${exe}`);
 const releaseEngine = join(root, "target", "release", `assetiweave-engine${exe}`);

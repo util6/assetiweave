@@ -115,6 +115,7 @@
 | `mount_asset_mount` | `mount_asset_mount` | — | `mount_asset_mount` | `write` | `false` |
 | `overview.get` | `get_app_overview`<br>`overview.get` | `assetiweave-cli overview` | `get_app_overview` | `read` | `false` |
 | `preview_skill_group_exclusive_mount` | `preview_skill_group_exclusive_mount` | — | `preview_skill_group_exclusive_mount` | `read` | `false` |
+| `probe_source_path` | `probe_source_path` | — | `probe_source_path` | `read` | `false` |
 | `profile.list` | `list_profiles`<br>`profile.list` | `assetiweave-cli profile list` | `list_profiles` | `read` | `false` |
 | `prompt.optimization.availability` | `check_prompt_optimization_availability`<br>`prompt.optimization.availability` | — | `check_prompt_optimization_availability` | `read` | `false` |
 | `prompt.optimization.run` | `optimize_prompt`<br>`prompt.optimization.run` | — | `optimize_prompt` | `write` | `false` |
@@ -153,6 +154,7 @@
 | `source.list` | `list_sources`<br>`source.list` | `assetiweave-cli source list` | `list_sources` | `read` | `false` |
 | `source.remove` | `delete_source`<br>`source.remove` | `assetiweave-cli source remove <source-id> --yes` | `delete_source` | `high-risk-write` | `true` |
 | `source.scan` | `scan_sources`<br>`source.scan` | `assetiweave-cli source scan` | — | `write` | `false` |
+| `split_container_source` | `split_container_source` | — | `split_container_source` | `write` | `false` |
 | `start_conversation_search_index_rebuild` | `start_conversation_search_index_rebuild` | — | `start_conversation_search_index_rebuild` | `write` | `false` |
 | `system.version` | `system.version` | `assetiweave-cli version` | — | `read` | `false` |
 | `target.catalog.list` | `list_target_profile_descriptors` | — | `list_target_profile_descriptors` | `read` | `false` |

@@ -19,13 +19,21 @@ export function countLines(content) {
 }
 
 export function checkBackendLineLimits(root = process.cwd()) {
-  const backendDir = path.resolve(root, "src-tauri/src/backend");
+  const candidateDirs = [
+    path.resolve(root, "backend/asset_core/src"),
+    path.resolve(root, "backend/agent_engine/src"),
+  ].filter((d) => fs.existsSync(d));
 
-  if (!fs.existsSync(backendDir)) {
-    throw new Error(`backend directory not found: ${backendDir}`);
+  const legacyDir = path.resolve(root, "src-tauri/src/backend");
+  if (candidateDirs.length === 0 && fs.existsSync(legacyDir)) {
+    candidateDirs.push(legacyDir);
   }
 
-  const files = walkRustFiles(backendDir);
+  if (candidateDirs.length === 0) {
+    throw new Error(`backend directory not found under: ${root}`);
+  }
+
+  const files = candidateDirs.flatMap((dir) => walkRustFiles(dir));
   const overLimit = [];
   let productionCount = 0;
 

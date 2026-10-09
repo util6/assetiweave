@@ -161,7 +161,7 @@ export async function checkOpencodeTranslationAvailability(): Promise<OpencodeTr
 export async function checkConversationTranslationAvailability(
   request: ConversationTranslationAvailabilityRequest,
 ): Promise<OpencodeTranslationAvailability> {
-  if (request.provider === "cli" && request.agentId === "opencode") {
+  if (request.provider === "cli") {
     return checkOpencodeTranslationAvailability();
   }
 

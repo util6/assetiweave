@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildConversationCardTranslationPrompt,
   cancelAiExecutionTask,
+  checkConversationTranslationAvailability,
   checkOpencodeTranslationAvailability,
   getAiExecutionTask,
   listAiExecutionTasks,
@@ -69,6 +70,29 @@ describe("cardTranslation", () => {
       error: "opencode translation requires the desktop app runtime",
       version: null,
     });
+  });
+
+  it("checks availability using checkOpencodeTranslationAvailability for any CLI agent", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    vi.mocked(invoke).mockResolvedValueOnce({
+      available: true,
+      error: null,
+      version: "1.0.0",
+    });
+
+    await expect(
+      checkConversationTranslationAvailability({
+        agentId: "codex",
+        model: "gpt-5",
+        provider: "cli",
+      }),
+    ).resolves.toEqual({
+      available: true,
+      error: null,
+      version: "1.0.0",
+    });
+
+    expect(invoke).toHaveBeenCalledWith("check_opencode_translation_availability");
   });
 
   it("sends the generated prompt to the Tauri translation command", async () => {

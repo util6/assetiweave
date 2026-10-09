@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+if [ -n "${ASSETIWEAVE_FAKE_NATIVE_RECORD_PATH:-}" ]; then
+  printf '%s\n' "$@" >> "$ASSETIWEAVE_FAKE_NATIVE_RECORD_PATH"
+  printf '%s\n' "--END--" >> "$ASSETIWEAVE_FAKE_NATIVE_RECORD_PATH"
+fi
+
+printf '%s\n' '{"event":"result","result":{"status":"SUCCESS","response":"native fixture response"}}'

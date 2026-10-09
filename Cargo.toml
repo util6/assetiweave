@@ -1,5 +1,9 @@
 [workspace]
-members = ["src-tauri"]
+members = [
+    "desktop",
+    "backend/agent_engine",
+    "backend/asset_core",
+]
 resolver = "2"
 
 [profile.dev]

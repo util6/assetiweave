@@ -305,6 +305,7 @@ func (c *EngineClient) resolvePath() (string, error) {
 	}
 	candidates := []string{
 		filepath.Join("target", "debug", executableName("assetiweave-engine")),
+		filepath.Join("desktop", "target", "debug", executableName("assetiweave-engine")),
 		filepath.Join("src-tauri", "target", "debug", executableName("assetiweave-engine")),
 	}
 	if exe, err := os.Executable(); err == nil {
@@ -368,6 +369,7 @@ func findWorkspaceEngineFrom(startDir string) string {
 		if isAssetIWeaveWorkspace(dir) {
 			candidates := []string{
 				filepath.Join(dir, "target", "debug", executableName("assetiweave-engine")),
+				filepath.Join(dir, "desktop", "target", "debug", executableName("assetiweave-engine")),
 				filepath.Join(dir, "src-tauri", "target", "debug", executableName("assetiweave-engine")),
 			}
 			for _, candidate := range candidates {
@@ -397,12 +399,20 @@ func isAssetIWeaveWorkspace(dir string) bool {
 		}
 	}
 
+	desktopCargo := filepath.Join(dir, "desktop", "Cargo.toml")
 	tauriCargo := filepath.Join(dir, "src-tauri", "Cargo.toml")
-	if info, err := os.Stat(tauriCargo); err == nil && !info.IsDir() {
+	if (statFileExists(desktopCargo) || statFileExists(tauriCargo)) {
 		cargoPath := filepath.Join(dir, "Cargo.toml")
-		if cData, err := os.ReadFile(cargoPath); err == nil && strings.Contains(string(cData), "src-tauri") {
+		if cData, err := os.ReadFile(cargoPath); err == nil && (strings.Contains(string(cData), "desktop") || strings.Contains(string(cData), "src-tauri")) {
 			return true
 		}
+	}
+	return false
+}
+
+func statFileExists(path string) bool {
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		return true
 	}
 	return false
 }

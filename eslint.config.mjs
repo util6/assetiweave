@@ -12,6 +12,8 @@ const baseConfig = [
       "build/**",
       "target/**",
       "cli/**",
+      "desktop/**",
+      "backend/**",
       "src-tauri/**",
       "coverage/**",
       "node_modules/**",
