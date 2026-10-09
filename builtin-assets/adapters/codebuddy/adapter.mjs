@@ -95,17 +95,49 @@ function detectClientFlavor(filePath) {
 
 function resolveCandidateRoots(startLocation) {
   const roots = new Set();
+  const standardFlavors = [
+    ".codebuddy",
+    ".workbuddy",
+    ".workbuddy-ai",
+  ];
+
   if (startLocation) {
-    const resolved = expandPath(startLocation);
+    const resolved = path.resolve(expandPath(startLocation));
     if (existsSync(resolved)) {
-      roots.add(resolved);
+      let baseDir = resolved;
+      try {
+        const stat = statSync(resolved);
+        if (stat.isFile()) {
+          baseDir = path.dirname(resolved);
+        }
+      } catch {}
+
+      if (path.basename(baseDir) === "projects") {
+        baseDir = path.dirname(baseDir);
+      }
+      roots.add(baseDir);
+
+      const parent = path.dirname(baseDir);
+      const isEcological = standardFlavors.includes(path.basename(baseDir)) || parent === homedir();
+      if (isEcological) {
+        for (const flavor of standardFlavors) {
+          const candidate = path.join(parent, flavor);
+          if (existsSync(candidate)) roots.add(candidate);
+        }
+        const grandParent = path.dirname(parent);
+        for (const flavor of standardFlavors) {
+          const candidate = path.join(grandParent, flavor);
+          if (existsSync(candidate)) roots.add(candidate);
+        }
+      }
       return Array.from(roots);
     }
   }
-  const defaultCli = path.join(homedir(), ".codebuddy");
-  const defaultGui = path.join(homedir(), ".workbuddy");
-  if (existsSync(defaultCli)) roots.add(defaultCli);
-  if (existsSync(defaultGui)) roots.add(defaultGui);
+
+  for (const flavor of standardFlavors) {
+    const defaultPath = path.join(homedir(), flavor);
+    if (existsSync(defaultPath)) roots.add(defaultPath);
+  }
   return Array.from(roots);
 }
 
@@ -212,28 +244,39 @@ function isSubagentSessionPath(filePath) {
   return filePath.includes("/subagents/") || path.basename(path.dirname(filePath)) === "subagents";
 }
 
-function queryWorkbuddyDbTitles() {
-  const dbPath = path.join(homedir(), ".workbuddy", "workbuddy.db");
+function queryWorkbuddyDbTitles(candidateRoots = []) {
+  const dbPaths = new Set();
+  const defaultDb = path.join(homedir(), ".workbuddy", "workbuddy.db");
+  const hasEcological = candidateRoots.some((r) => r.includes(".workbuddy") || r.includes(".codebuddy"));
+  if (hasEcological && existsSync(defaultDb)) {
+    dbPaths.add(defaultDb);
+  }
+  for (const root of candidateRoots) {
+    const candidate = path.join(root, "workbuddy.db");
+    if (existsSync(candidate)) dbPaths.add(candidate);
+  }
+
   const map = new Map();
-  if (!existsSync(dbPath)) return map;
-  try {
-    const sql = "SELECT id, title, custom_title, cwd FROM sessions WHERE deleted_at IS NULL;";
-    const res = spawnSync("sqlite3", ["-json", dbPath, sql], {
-      encoding: "utf8",
-      maxBuffer: 32 * 1024 * 1024,
-    });
-    if (res.status === 0 && res.stdout) {
-      const rows = JSON.parse(res.stdout);
-      for (const row of rows) {
-        if (row.id) {
-          map.set(row.id, {
-            title: row.custom_title || row.title || null,
-            projectPath: row.cwd || null,
-          });
+  for (const dbPath of dbPaths) {
+    try {
+      const sql = "SELECT id, title, custom_title, cwd FROM sessions WHERE deleted_at IS NULL;";
+      const res = spawnSync("sqlite3", ["-json", dbPath, sql], {
+        encoding: "utf8",
+        maxBuffer: 32 * 1024 * 1024,
+      });
+      if (res.status === 0 && res.stdout) {
+        const rows = JSON.parse(res.stdout);
+        for (const row of rows) {
+          if (row.id && !map.has(row.id)) {
+            map.set(row.id, {
+              title: row.custom_title || row.title || null,
+              projectPath: row.cwd || null,
+            });
+          }
         }
       }
-    }
-  } catch {}
+    } catch {}
+  }
   return map;
 }
 
@@ -721,9 +764,10 @@ function resolveAllJsonlFiles() {
 }
 
 function listSessions() {
+  const roots = resolveCandidateRoots(input.source?.location);
   const allFiles = resolveAllJsonlFiles();
   const descriptors = [];
-  const dbTitles = queryWorkbuddyDbTitles();
+  const dbTitles = queryWorkbuddyDbTitles(roots);
 
   for (const filePath of allFiles) {
     try {
@@ -758,7 +802,9 @@ function listSessions() {
 function readSession() {
   const requestedSessionId = input.params?.session_id ?? null;
   const requestedLocator = input.params?.source_locator ? expandPath(input.params.source_locator) : null;
-  const dbTitles = queryWorkbuddyDbTitles();
+  const sourceLocation = input.source?.location ? expandPath(input.source.location) : null;
+  const roots = resolveCandidateRoots(sourceLocation);
+  const dbTitles = queryWorkbuddyDbTitles(roots);
 
   const parseAndBuildSession = (filePath) => {
     const { text, versionToken } = readStableFile(filePath);
@@ -790,9 +836,37 @@ function readSession() {
     return normalizeSessionPayload(session);
   };
 
+  // 1. 如果指定了 source_locator，优先直连定位解析
   if (requestedLocator && existsSync(requestedLocator)) {
     const session = parseAndBuildSession(requestedLocator);
     return session ? [session] : [];
+  }
+
+  // 2. 如果 sourceLocation 本身直接是一个已存在的 .jsonl 文件，优先直连解析
+  if (sourceLocation && existsSync(sourceLocation)) {
+    try {
+      const stat = statSync(sourceLocation);
+      if (stat.isFile() && sourceLocation.endsWith(".jsonl")) {
+        const session = parseAndBuildSession(sourceLocation);
+        return session ? [session] : [];
+      }
+    } catch {}
+  }
+
+  // 3. 如果指定了 session_id，尝试快速候选探测（直接在所有候选根目录下匹配）
+  if (requestedSessionId) {
+    for (const r of roots) {
+      const directCandidates = [
+        path.join(r, `${requestedSessionId}.jsonl`),
+        path.join(r, "projects", `${requestedSessionId}.jsonl`),
+      ];
+      for (const candidate of directCandidates) {
+        if (existsSync(candidate)) {
+          const session = parseAndBuildSession(candidate);
+          if (session) return [session];
+        }
+      }
+    }
   }
 
   const allFiles = resolveAllJsonlFiles();
