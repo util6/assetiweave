@@ -31,6 +31,7 @@ export const settingsEn = {
   "settings.section.conversationSessions": "Session Browser",
   "settings.section.conversationTranslation": "Card Translation",
   "settings.section.conversationAdapters": "Conversation Parsers",
+  "settings.section.conversationPricing": "Model Pricing & Costs",
   "settings.language": "Interface language",
   "settings.theme": "Theme palette",
   "settings.theme.promptStudio": "Prompt Studio Dark",

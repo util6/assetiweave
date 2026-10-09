@@ -21,6 +21,7 @@ import {
   Bell,
   Bot,
   Code2,
+  Coins,
   Columns3,
   Cpu,
   ChevronDown,
@@ -82,6 +83,7 @@ import { SkillBackupLibraryDialog } from "../backup/SkillBackupLibraryDialog";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { AgentCapabilityDialog } from "./AgentCapabilityDialog";
 import { AgentSettingsPanel } from "./AgentSettingsPanel";
+import { ConversationPricingSettingsPanel } from "./ConversationPricingSettingsPanel";
 import { AgentCapabilitySetting } from "./AgentCapabilitySetting";
 import { ConversationFullSyncProgress } from "./ConversationFullSyncProgress";
 import {
@@ -298,6 +300,11 @@ export function GlobalSettingsDialog({
             id: "conversations.adapters",
             icon: Puzzle,
             label: t("settings.section.conversationAdapters"),
+          },
+          {
+            id: "conversations.pricing",
+            icon: Coins,
+            label: t("settings.section.conversationPricing"),
           },
         ],
       },
@@ -2194,6 +2201,10 @@ export function GlobalSettingsDialog({
                   t={t}
                 />
               </SettingsGroup>
+            )}
+
+            {activePanel === "conversations.pricing" && (
+              <ConversationPricingSettingsPanel />
             )}
           </div>
         </div>

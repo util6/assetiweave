@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  ModelPriceEntry,
+  ModelPricingCatalog,
+  ModelPricingStatus,
+  ModelPricingSyncResult,
+  ModelPricingSyncTaskSnapshot,
   UsageDashboardDto,
   UsageDashboardFilter,
   UsageScanOptions,
@@ -304,6 +309,34 @@ export async function getConversationUsageDashboard(
   filter: UsageDashboardFilter = {},
 ): Promise<UsageDashboardDto> {
   if (!isTauriRuntime()) {
+    if (filter.startDate || filter.endDate) {
+      const start = filter.startDate || "1970-01-01";
+      const end = filter.endDate || "2099-12-31";
+      const filteredTrend = DEFAULT_MOCK_DASHBOARD.dailyTrend.filter(
+        (d) => d.date >= start && d.date <= end,
+      );
+      const filteredDates = DEFAULT_MOCK_DASHBOARD.dates.filter(
+        (d) => d.date >= start && d.date <= end,
+      );
+      const totalTokens = filteredTrend.reduce(
+        (sum, d) => sum + d.totalTokens,
+        0,
+      );
+      const requestsCount = filteredTrend.reduce(
+        (sum, d) => sum + d.requestsCount,
+        0,
+      );
+      return {
+        ...DEFAULT_MOCK_DASHBOARD,
+        hero: {
+          ...DEFAULT_MOCK_DASHBOARD.hero,
+          totalTokens: filteredTrend.length > 0 ? totalTokens : 0,
+          requestsCount: filteredTrend.length > 0 ? requestsCount : 0,
+        },
+        dailyTrend: filteredTrend,
+        dates: filteredDates,
+      };
+    }
     return DEFAULT_MOCK_DASHBOARD;
   }
   return invoke<UsageDashboardDto>("get_conversation_usage_dashboard", {
@@ -341,4 +374,153 @@ export async function scanConversationUsage(
     ...status,
     activeScanTaskId: snapshot?.id || status.activeScanTaskId,
   };
+}
+
+export async function updateModelPricingCatalog(
+  force = false,
+  models?: string[],
+): Promise<ModelPricingSyncTaskSnapshot> {
+  if (!isTauriRuntime()) {
+    return {
+      id: "mock-task-pricing-sync",
+      status: "completed",
+      force,
+      progress: {
+        phase: "completed",
+        message: "价格同步完成",
+        channel: "litellm",
+        modelsCount: models ? models.length : 12,
+        recalculatedEventsCount: 22938,
+        exchangeRate: 7.25,
+      },
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      result: {
+        channelUsed: "litellm",
+        modelsCount: models ? models.length : 12,
+        exchangeRate: 7.25,
+        recalculatedEventsCount: 22938,
+        catalogVersion: "litellm-2026-10-05",
+        updatedAt: new Date().toISOString(),
+      },
+    };
+  }
+  return invoke<ModelPricingSyncTaskSnapshot>("update_model_pricing_catalog", {
+    force,
+    models,
+  });
+}
+
+export async function getModelPricingStatus(): Promise<ModelPricingStatus> {
+  if (!isTauriRuntime()) {
+    return {
+      modelsCount: 1248,
+      exchangeRate: 7.25,
+      activeChannel: "litellm",
+      catalogVersion: "litellm-2026-10-05",
+      lastUpdatedAt: new Date().toISOString(),
+    };
+  }
+  return invoke<ModelPricingStatus>("get_model_pricing_status");
+}
+
+export async function getModelPricingCatalog(): Promise<ModelPricingCatalog> {
+  if (!isTauriRuntime()) {
+    return {
+      catalogVersion: "bundled",
+      updatedAt: new Date().toISOString(),
+      usdToCnyRate: 7.25,
+      activeChannel: "litellm",
+      models: [
+        {
+          provider: "openai",
+          modelPatterns: ["gpt-4o", "gpt-4o-*"],
+          currency: "CNY",
+          inputPerMillion: 18.13,
+          cacheReadPerMillion: 9.06,
+          cacheWritePerMillion: 18.13,
+          outputPerMillion: 72.5,
+          reasoningPerMillion: 0,
+          rawCurrency: "USD",
+          rawInputPerMillion: 2.5,
+          rawOutputPerMillion: 10.0,
+        },
+        {
+          provider: "anthropic",
+          modelPatterns: ["claude-3-7-sonnet*"],
+          currency: "CNY",
+          inputPerMillion: 21.75,
+          cacheReadPerMillion: 2.18,
+          cacheWritePerMillion: 27.19,
+          outputPerMillion: 108.75,
+          reasoningPerMillion: 108.75,
+          rawCurrency: "USD",
+          rawInputPerMillion: 3.0,
+          rawOutputPerMillion: 15.0,
+        },
+        {
+          provider: "deepseek",
+          modelPatterns: ["deepseek-chat", "deepseek-v3"],
+          currency: "CNY",
+          inputPerMillion: 2.0,
+          cacheReadPerMillion: 0.5,
+          cacheWritePerMillion: 2.0,
+          outputPerMillion: 8.0,
+          reasoningPerMillion: 0,
+          rawCurrency: "CNY",
+          rawInputPerMillion: 2.0,
+          rawOutputPerMillion: 8.0,
+        },
+      ],
+    };
+  }
+  return invoke<ModelPricingCatalog>("get_model_pricing_catalog");
+}
+
+export function subscribeModelPricingSyncTask(
+  listener: (snapshot: ModelPricingSyncTaskSnapshot) => void,
+): Promise<() => void> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(() => undefined);
+  }
+  return listen<ModelPricingSyncTaskSnapshot>(
+    "model-pricing-sync-task-updated",
+    (event) => {
+      listener(event.payload);
+    },
+  );
+}
+
+export async function setModelPricingExchangeRate(
+  rate: number,
+): Promise<ModelPricingStatus> {
+  if (!isTauriRuntime()) {
+    return {
+      modelsCount: 1248,
+      exchangeRate: rate,
+      activeChannel: "custom",
+      catalogVersion: "custom",
+      lastUpdatedAt: new Date().toISOString(),
+    };
+  }
+  return invoke<ModelPricingStatus>("set_model_pricing_exchange_rate", {
+    rate,
+  });
+}
+
+export async function saveModelPriceEntry(
+  entry: ModelPriceEntry,
+): Promise<ModelPricingStatus> {
+  if (!isTauriRuntime()) {
+    return {
+      modelsCount: 1248,
+      exchangeRate: 7.25,
+      activeChannel: "custom",
+      catalogVersion: "custom",
+      lastUpdatedAt: new Date().toISOString(),
+    };
+  }
+  return invoke<ModelPricingStatus>("save_model_price_entry", {
+    entry,
+  });
 }

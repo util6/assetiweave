@@ -64,7 +64,8 @@ export type SettingsPanelId =
   | "general.agents"
   | "conversations.sessions"
   | "conversations.translation"
-  | "conversations.adapters";
+  | "conversations.adapters"
+  | "conversations.pricing";
 
 export interface FontFamilyOption {
   fallback: FontFallbackKind;

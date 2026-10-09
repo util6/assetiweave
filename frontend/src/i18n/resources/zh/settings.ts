@@ -31,6 +31,7 @@ export const settingsZh = {
   "settings.section.conversationSessions": "Session 浏览",
   "settings.section.conversationTranslation": "卡片翻译",
   "settings.section.conversationAdapters": "对话解析器",
+  "settings.section.conversationPricing": "模型价格与计费",
   "settings.language": "界面语言",
   "settings.theme": "主题配色",
   "settings.theme.promptStudio": "灵感夜航",
