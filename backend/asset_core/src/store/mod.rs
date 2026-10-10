@@ -13,7 +13,7 @@ pub use catalog::*;
 pub use codec::*;
 pub use conversations::*;
 pub use database::{
-    count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,
+    begin_immediate, count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,
     open_migrated_pool, Database,
 };
 pub use error::*;

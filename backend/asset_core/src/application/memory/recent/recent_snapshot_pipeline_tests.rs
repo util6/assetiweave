@@ -1763,3 +1763,124 @@ async fn test_work_order_evidence_pack_is_structured_facts_without_markdown() {
     assert!(!json_str.contains(".md"));
     assert!(!json_str.contains("memory_summary"));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_commit_recent_memory_snapshot_concurrent_heartbeat_no_517_lock() {
+    let (service, _root) = setup_test_service().await;
+    seed_test_conversation_data(&service).await;
+    let pool = service.db.pool().clone();
+
+    // 预先插入一条 running 状态的 job，模拟 coordinator 中的后台 job
+    let now = Utc::now().to_rfc3339();
+    let lease_exp = (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+    sqlx::query(
+        "INSERT INTO recent_memory_jobs (tenant_id, id, status, ownership_token, lease_expires_at, heartbeat_at, target_watermark_utc, window_hours, target_fingerprint, content_fingerprint, work_order_json, created_at, updated_at) \
+         VALUES ('default', 'job-concurrent-test', 'running', 'token-abc', ?1, ?2, '2026-09-15T12:00:00Z', 48, 'fp-target-dummy', 'fp-content-dummy', '{}', ?2, ?2)",
+    )
+    .bind(&lease_exp)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("seed job");
+
+    // 启动后台并发任务不断心跳写入/更新 recent_memory_jobs 表，推高 WAL 版本
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let running_clone = running.clone();
+    let heartbeat_pool = pool.clone();
+    let heartbeat_handle = tokio::spawn(async move {
+        while running_clone.load(std::sync::atomic::Ordering::Relaxed) {
+            let tick = Utc::now().to_rfc3339();
+            let _ = store::heartbeat_recent_memory_job_sqlx(
+                &heartbeat_pool,
+                "default",
+                "job-concurrent-test",
+                "token-abc",
+                &tick,
+            )
+            .await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    });
+
+    let target_watermark: DateTime<Utc> = "2026-09-15T12:00:00Z".parse().unwrap();
+    let (candidates, _ref_map) = service
+        .collect_recent_snapshot_candidates(target_watermark, 48)
+        .await
+        .expect("collect candidates");
+    let alpha_candidate = candidates
+        .iter()
+        .find(|c| c.project_key != "unassigned")
+        .unwrap();
+    let unassigned_candidate = candidates
+        .iter()
+        .find(|c| c.project_key == "unassigned")
+        .unwrap();
+
+    let result = MemoryGenerationResult {
+        schema_version: 2,
+        projects: vec![
+            MemoryGenerationProject {
+                project_key: alpha_candidate.project_key.clone(),
+                summary: "Concurrent alpha summary".to_string(),
+                source_sessions: vec![alpha_candidate.short_ref.clone()],
+                items: vec![MemoryGenerationItem {
+                    title: "Concurrent Alpha Item".to_string(),
+                    category: MemoryItemCategory::Progress,
+                    status: MemoryItemStatus::Completed,
+                    summary: "Concurrent Item summary".to_string(),
+                    rationale: "Concurrent rationale".to_string(),
+                    occurred_at: "2026-09-15T10:00:00Z".to_string(),
+                    source_refs: vec![alpha_candidate.short_ref.clone()],
+                    recommendation_rank: Some(1),
+                    promotion_nomination: MemoryPromotionNomination::None,
+                    continues_item_id: None,
+                }],
+                no_material_change: false,
+            },
+            MemoryGenerationProject {
+                project_key: unassigned_candidate.project_key.clone(),
+                summary: "Concurrent unassigned summary".to_string(),
+                source_sessions: vec![unassigned_candidate.short_ref.clone()],
+                items: vec![MemoryGenerationItem {
+                    title: "Concurrent Unassigned Item".to_string(),
+                    category: MemoryItemCategory::Blocker,
+                    status: MemoryItemStatus::Blocked,
+                    summary: "Concurrent blocker summary".to_string(),
+                    rationale: "Waiting for dependency".to_string(),
+                    occurred_at: "2026-09-15T10:00:00Z".to_string(),
+                    source_refs: vec![unassigned_candidate.short_ref.clone()],
+                    recommendation_rank: Some(1),
+                    promotion_nomination: MemoryPromotionNomination::None,
+                    continues_item_id: None,
+                }],
+                no_material_change: false,
+            },
+        ],
+        coverage: MemoryGenerationCoverage {
+            covered_sessions: vec![
+                alpha_candidate.short_ref.clone(),
+                unassigned_candidate.short_ref.clone(),
+            ],
+            no_memory_sessions: vec![],
+            unreadable_sessions: vec![],
+            budget_exhausted: false,
+        },
+        unknowns: vec![],
+    };
+
+    // 执行快照提交流水线（此前正是此处在并发写下遭遇 SQLITE_BUSY_SNAPSHOT 517）
+    let snapshot_res = service
+        .execute_recent_memory_snapshot_pipeline(target_watermark, 48, result)
+        .await;
+
+    running.store(false, std::sync::atomic::Ordering::Relaxed);
+    let _ = heartbeat_handle.await;
+
+    assert!(
+        snapshot_res.is_ok(),
+        "Snapshot commit failed under concurrent writes: {:?}",
+        snapshot_res.err()
+    );
+    let snapshot = snapshot_res.unwrap();
+    assert_eq!(snapshot.projects.len(), 2);
+}

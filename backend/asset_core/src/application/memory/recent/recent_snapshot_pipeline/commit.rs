@@ -29,7 +29,59 @@ impl AppService {
         let pool = self.db.pool();
         let tenant_id = self.tenant_id();
 
-        let mut tx = pool.begin().await.map_err(AppError::external)?;
+        let mut attempts = 0usize;
+        loop {
+            attempts += 1;
+            let outcome = self
+                .commit_recent_memory_snapshot_inner(
+                    pool,
+                    tenant_id,
+                    target,
+                    skill_binding,
+                    &result,
+                    candidates,
+                    ref_map,
+                    target_fingerprint,
+                    content_fingerprint,
+                    expected_long_term_revisions,
+                    job_lease,
+                )
+                .await;
+
+            match outcome {
+                Ok(view) => return Ok(view),
+                Err(err) if attempts < 3 && is_retryable_db_lock(&err) => {
+                    warn!(
+                        attempt = attempts,
+                        error = %err,
+                        "Recent memory snapshot commit hit transient database lock, retrying..."
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(150 * attempts as u64))
+                        .await;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn commit_recent_memory_snapshot_inner(
+        &self,
+        pool: &sqlx::SqlitePool,
+        tenant_id: &str,
+        target: &WatermarkTarget,
+        skill_binding: &MemorySkillBinding,
+        result: &MemoryGenerationResult,
+        candidates: &[CandidateSession],
+        ref_map: &HashMap<String, ResolvedEvidenceRef>,
+        target_fingerprint: &str,
+        content_fingerprint: &str,
+        expected_long_term_revisions: Option<&[String]>,
+        job_lease: Option<(&str, &str)>,
+    ) -> AppResult<RecentMemorySnapshotView> {
+        let mut tx = store::begin_immediate(pool)
+            .await
+            .map_err(AppError::external)?;
 
         if let Some((job_id, ownership_token)) = job_lease {
             let now = Utc::now().to_rfc3339();
@@ -120,7 +172,7 @@ impl AppService {
         .map_err(AppError::external)?;
 
         // 2. 插入 Project & Items
-        for (proj_idx, project) in result.projects.into_iter().enumerate() {
+        for (proj_idx, project) in result.projects.iter().enumerate() {
             let project_row_id = format!("{}-{}", snapshot_id, proj_idx + 1);
 
             // 计算该项目的实际 candidate session count 与 latest activity
@@ -153,7 +205,7 @@ impl AppService {
             let summary = if project.no_material_change && project.summary.trim().is_empty() {
                 "本时间窗口内无重大变更".to_string()
             } else {
-                project.summary
+                project.summary.clone()
             };
 
             sqlx::query(
@@ -177,7 +229,7 @@ impl AppService {
             .await
             .map_err(AppError::external)?;
 
-            for (item_idx, item) in project.items.into_iter().enumerate() {
+            for (item_idx, item) in project.items.iter().enumerate() {
                 let mut resolved_item_id = None;
                 let mut resolved_rev_num = 1i64;
                 let mut resolved_supersedes_id = None;
@@ -337,11 +389,11 @@ impl AppService {
 
                 // Insert source references (去重插入)
                 let mut seen_refs = HashSet::new();
-                for ref_key in item.source_refs {
-                    if !seen_refs.insert(ref_key.clone()) {
+                for ref_key in &item.source_refs {
+                    if !seen_refs.insert(ref_key.as_str()) {
                         continue;
                     }
-                    if let Some(resolved) = ref_map.get(&ref_key) {
+                    if let Some(resolved) = ref_map.get(ref_key) {
                         let ref_id = format!("ref-{}", uuid::Uuid::new_v4());
                         sqlx::query(
                             "INSERT INTO memory_item_source_references (\
@@ -497,4 +549,12 @@ impl AppService {
 
         Ok(loaded)
     }
+}
+
+fn is_retryable_db_lock(err: &AppError) -> bool {
+    let msg = err.to_string();
+    msg.contains("database is locked")
+        || msg.contains("code: 517")
+        || msg.contains("code: 5")
+        || msg.contains("busy")
 }

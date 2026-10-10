@@ -716,6 +716,61 @@ async fn initialized_database_seeds_local_principal_and_default_tenant() {
     cleanup_database(&db_path);
 }
 
+#[tokio::test]
+async fn begin_immediate_commits_and_rolls_back_cleanly() {
+    let db_path = temp_database_path("begin-immediate");
+    let database = Database::open_async(&db_path)
+        .await
+        .expect("open migrated database");
+
+    // 1. Commit 路径验证
+    {
+        let mut tx = database
+            .begin_immediate()
+            .await
+            .expect("open immediate transaction");
+        sqlx::query("INSERT INTO sources (tenant_id, id, name, kind, root_path, include_globs, exclude_globs, enabled, priority) VALUES ('default', ?1, ?2, 'skills', ?3, '[]', '[]', 1, 0)")
+            .bind("src-imm-1")
+            .bind("Immediate Source")
+            .bind("/tmp/src1")
+            .execute(&mut *tx)
+            .await
+            .expect("insert in tx");
+        tx.commit().await.expect("commit tx");
+    }
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sources WHERE id = 'src-imm-1'")
+        .fetch_one(database.pool())
+        .await
+        .expect("query committed source");
+    assert_eq!(count, 1);
+
+    // 2. Drop 自动 Rollback 路径验证 (RAII 守卫)
+    {
+        let mut tx = database
+            .begin_immediate()
+            .await
+            .expect("open immediate transaction for rollback");
+        sqlx::query("INSERT INTO sources (tenant_id, id, name, kind, root_path, include_globs, exclude_globs, enabled, priority) VALUES ('default', ?1, ?2, 'skills', ?3, '[]', '[]', 1, 0)")
+            .bind("src-imm-2")
+            .bind("Rollback Source")
+            .bind("/tmp/src2")
+            .execute(&mut *tx)
+            .await
+            .expect("insert in tx");
+        // tx 出作用域自动 drop，应自动 rollback
+    }
+
+    let count2: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sources WHERE id = 'src-imm-2'")
+        .fetch_one(database.pool())
+        .await
+        .expect("query rolled back source");
+    assert_eq!(count2, 0);
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
 fn temp_database_path(label: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "assetiweave-sqlx-{label}-{}.sqlite",

@@ -2,7 +2,7 @@ use crate::backend::store::{StoreError, StoreResult};
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    AssertSqlSafe, Row, SqlitePool,
+    AssertSqlSafe, Row, SqlSafeStr, SqlitePool,
 };
 use std::{path::Path, time::Duration};
 
@@ -27,6 +27,28 @@ impl Database {
         let pool = open_migrated_pool(db_path).await?;
         Ok(Self::from_pool(pool))
     }
+
+    /// 开启 SQLite 原生立即写事务（`BEGIN IMMEDIATE`）。
+    pub async fn begin_immediate(&self) -> StoreResult<sqlx::Transaction<'static, sqlx::Sqlite>> {
+        begin_immediate(&self.pool).await
+    }
+}
+
+/// 显式开启 SQLite 立即写事务（`BEGIN IMMEDIATE`）。
+///
+/// 在 WAL 模式下，默认 `BEGIN`（即 `BEGIN DEFERRED`）在先读后写时会遭遇快照过期与锁升级失败
+/// （`SQLITE_BUSY_SNAPSHOT (code: 517)`）。使用本函数可在事务第一条语句即申请 RESERVED 写锁，
+/// 锁定最新快照，彻底根除锁升级引发的快照冲突。
+pub async fn begin_immediate(
+    pool: &SqlitePool,
+) -> StoreResult<sqlx::Transaction<'static, sqlx::Sqlite>> {
+    let conn = pool.acquire().await.map_err(StoreError::external)?;
+    sqlx::Transaction::begin(
+        conn,
+        Some(sqlx::SqlSafeStr::into_sql_str("BEGIN IMMEDIATE")),
+    )
+    .await
+    .map_err(StoreError::external)
 }
 
 pub async fn latest_scan_status(pool: &SqlitePool, tenant_id: &str) -> StoreResult<String> {

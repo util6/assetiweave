@@ -1,5 +1,5 @@
 use chrono::Utc;
-use sqlx::{pool::PoolConnection, Sqlite, SqlitePool};
+use sqlx::{Sqlite, SqlitePool};
 
 use crate::backend::{
     domain::{
@@ -238,17 +238,16 @@ pub async fn fail_memory_recall_turn_sqlx(
     error: &str,
 ) -> StoreResult<()> {
     let now = Utc::now().to_rfc3339();
-    let mut connection = begin_immediate(pool).await?;
+    let mut tx = crate::backend::store::begin_immediate(pool).await?;
     let session_id: Option<String> = sqlx::query_scalar(
         "SELECT session_id FROM memory_recall_turns WHERE tenant_id = ?1 AND id = ?2",
     )
     .bind(tenant_id)
     .bind(turn_id)
-    .fetch_optional(&mut *connection)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(StoreError::external)?;
     let Some(session_id) = session_id else {
-        let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
         return Err(StoreError::NotFound(format!(
             "Recall turn not found: {turn_id}"
         )));
@@ -261,14 +260,11 @@ pub async fn fail_memory_recall_turn_sqlx(
     .bind(&now)
     .bind(tenant_id)
     .bind(turn_id)
-    .execute(&mut *connection)
+    .execute(&mut *tx)
     .await
     .map_err(StoreError::external)?;
     if result.rows_affected() == 0 {
-        sqlx::query("COMMIT")
-            .execute(&mut *connection)
-            .await
-            .map_err(StoreError::external)?;
+        tx.commit().await.map_err(StoreError::external)?;
         return Ok(());
     }
     sqlx::query(
@@ -279,23 +275,10 @@ pub async fn fail_memory_recall_turn_sqlx(
     .bind(tenant_id)
     .bind(&session_id)
     .bind(turn_id)
-    .execute(&mut *connection)
+    .execute(&mut *tx)
     .await
     .map_err(StoreError::external)?;
-    sqlx::query("COMMIT")
-        .execute(&mut *connection)
-        .await
-        .map(|_| ())
-        .map_err(StoreError::external)
-}
-
-async fn begin_immediate(pool: &SqlitePool) -> StoreResult<PoolConnection<Sqlite>> {
-    let mut connection = pool.acquire().await.map_err(StoreError::external)?;
-    sqlx::query("BEGIN IMMEDIATE")
-        .execute(&mut *connection)
-        .await
-        .map_err(StoreError::external)?;
-    Ok(connection)
+    tx.commit().await.map_err(StoreError::external)
 }
 
 pub async fn retry_memory_recall_turn_sqlx(

@@ -102,7 +102,9 @@ impl AppService {
         let pool = self.db.pool();
         let tenant_id = self.tenant_id();
 
-        let mut tx = pool.begin().await.map_err(AppError::external)?;
+        let mut tx = store::begin_immediate(pool)
+            .await
+            .map_err(AppError::external)?;
 
         let prior_row = sqlx::query(
             "SELECT content_generated_at FROM recent_memory_snapshots WHERE tenant_id = ?1 AND id = ?2",
