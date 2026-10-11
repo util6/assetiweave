@@ -163,24 +163,17 @@ impl AppService {
     pub async fn schedule_project_memory_rebuild(
         &self,
         project_path: &str,
-        now: DateTime<Utc>,
+        _now: DateTime<Utc>,
     ) -> AppResult<Vec<String>> {
-        let normalized_path = self
-            .resolve_context_project_path(Some(project_path))
-            .await?
-            .ok_or_else(|| AppError::Validation("project_path is required".to_string()))?;
-        let job_id = self
-            .enqueue_memory_maintenance_job(
-                MemoryJobPurpose::ProjectConsolidation,
-                Some(&normalized_path),
-                Some(&normalized_path),
-                now,
-            )
-            .await?;
         let _ = self
-            .reconcile_memory_maintenance_jobs_for_tenant_at(self.tenant_id(), now)
+            .resolve_context_project_path(Some(project_path))
             .await?;
-        Ok(vec![format!("memory-maint-{job_id}")])
+        // L2 项目长期记忆已下线，统一由 AGENTS.md / 本地文件维护，不再触发后台巩固任务
+        tracing::debug!(
+            project_path,
+            "Project memory rebuild requested but L2 consolidation is decommissioned"
+        );
+        Ok(Vec::new())
     }
 
     pub async fn schedule_global_memory_rebuild(

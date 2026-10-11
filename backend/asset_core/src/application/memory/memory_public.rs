@@ -24,127 +24,37 @@ impl AppService {
         self.get_project_memory_l2(&project_path).await
     }
 
-    /// 获取当前项目的 L2 长期记忆视图 (M35-L2-01 ~ M35-L2-06)
+    /// 获取当前项目的 L2 长期记忆视图（已停用，统一返回 None 以保持契约兼容）
     pub async fn get_project_memory_l2(
         &self,
         project_path: &str,
     ) -> AppResult<Option<crate::backend::domain::L2ProjectMemoryView>> {
-        let normalized_path = self
+        let _ = self
             .resolve_context_project_path(Some(project_path))
-            .await?
-            .unwrap_or_else(|| project_path.to_string());
-        let tenant_id = self.tenant_id();
-        crate::backend::application::memory::project_consolidation_pipeline::load_l2_project_memory_view(
-            self.db.pool(),
-            tenant_id,
-            &normalized_path,
-        )
-        .await
+            .await?;
+        Ok(None)
     }
 
-    /// 协调并执行指定项目的 L2 Consolidation
+    /// 协调并执行指定项目的 L2 Consolidation（已停用，直接返回 None）
     pub async fn reconcile_project_consolidation(
         &self,
-        project_key: &str,
-        project_path: Option<&str>,
+        _project_key: &str,
+        _project_path: Option<&str>,
     ) -> AppResult<Option<crate::backend::domain::L2ProjectMemoryView>> {
-        let lock_map = crate::backend::application::memory::project_consolidation_pipeline::global_project_consolidation_lock_map();
-        crate::backend::application::memory::project_consolidation_pipeline::reconcile_project_consolidation_default(
-            self.db.pool(),
-            self.tenant_id(),
-            project_key,
-            project_path,
-            lock_map,
-        )
-        .await
+        Ok(None)
     }
 
     pub async fn reconcile_project_consolidation_with_agent(
         &self,
-        project_key: &str,
-        project_path: Option<&str>,
-        work_order: MemoryWorkOrder,
-        skill_text: String,
-        cancellation: CancellationToken,
-        maintenance_lease: Option<(&str, &str)>,
-        frozen_input: Option<ProjectConsolidationInput>,
+        _project_key: &str,
+        _project_path: Option<&str>,
+        _work_order: MemoryWorkOrder,
+        _skill_text: String,
+        _cancellation: CancellationToken,
+        _maintenance_lease: Option<(&str, &str)>,
+        _frozen_input: Option<ProjectConsolidationInput>,
     ) -> AppResult<Option<crate::backend::domain::L2ProjectMemoryView>> {
-        let settings = self.app_settings_value();
-        let (agent_id, model) =
-            crate::backend::application::agents::composition::resolve_agent_for(
-                &crate::backend::domain::agents::ActionId::new("memory.generation"),
-                &settings,
-            )?;
-        let runtime = self.agent_runtime.clone();
-        let tenant_id = self.tenant_id().to_string();
-        let lock_map = crate::backend::application::memory::project_consolidation_pipeline::
-            global_project_consolidation_lock_map();
-        crate::backend::application::memory::project_consolidation_pipeline::reconcile_project_consolidation_with_lease(
-            self.db.pool(),
-            self.tenant_id(),
-            project_key,
-            project_path,
-            lock_map,
-            Some(move |input: ProjectConsolidationInput| {
-                let runtime = runtime.clone();
-                let agent_id = agent_id.clone();
-                let model = model.clone();
-                let tenant_id = tenant_id.clone();
-                let work_order = work_order.clone();
-                let skill_text = skill_text.clone();
-                let cancellation = cancellation.clone();
-                async move {
-                    if cancellation.is_cancelled() {
-                        return Err(AppError::Cancelled(
-                            "Project consolidation was cancelled before execution".to_string(),
-                        ));
-                    }
-                    let prompt = serde_json::to_string(&json!({
-                        "contract": "memory.project.consolidation.v2",
-                        "instruction": "Return exactly one JSON object matching ProjectConsolidationResult. Do not return Markdown, prose, or code fences.",
-                        "skill": skill_text,
-                        "work_order": work_order.clone(),
-                        "evidence": input,
-                    }))
-                    .map_err(AppError::external)?;
-                    let request = AiExecutionRequest {
-                        execution_id: format!(
-                            "memory-project-execution-{}",
-                            work_order.work_order_id
-                        ),
-                        agent_id,
-                        purpose: AiExecutionPurpose::MemoryGeneration,
-                        session_mode: AgentSessionMode::OneShot,
-                        prompt,
-                        model,
-                        limits: AiExecutionLimits::default(),
-                        cancellation: AiExecutionCancellation::from_token(cancellation),
-                        progress: None,
-                        tenant_id: Some(tenant_id),
-                        execution_context_key: None,
-                        binding: None,
-                        replay: false,
-                        restore_only: false,
-                        recall_tools: None,
-                        memory_generation_tools: None,
-                        account: None,
-                    };
-                    let execution = execute_agent(runtime, request).await.map_err(|error| {
-                        let view = error.to_view();
-                        AppError::Domain {
-                            code: view.code,
-                            message: view.message,
-                            retryable: view.retryable,
-                            details: None,
-                        }
-                    })?;
-                    parse_consolidation_output(&execution.text, "ProjectConsolidationResult")
-                }
-            }),
-            maintenance_lease,
-            frozen_input,
-        )
-        .await
+        Ok(None)
     }
 
     /// 获取当前 Tenant 的 L3 全局长期记忆视图 (M35-L3-01 ~ M35-L3-06)

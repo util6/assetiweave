@@ -294,7 +294,7 @@ impl AppService {
                                 );
                             }
                             if let Err(error) = service
-                                .reconcile_project_consolidations_after_snapshot(&snapshot)
+                                .reconcile_consolidation_after_snapshot(&snapshot)
                                 .await
                             {
                                 tracing::warn!(
@@ -302,7 +302,7 @@ impl AppService {
                                     tenant_id = %tenant_id_for_task,
                                     job_id = %job_id_for_task,
                                     error = %error,
-                                    "Memory promotion was not published; Recent Snapshot remains successful"
+                                    "Global consolidation scheduling after snapshot failed; Recent Snapshot remains successful"
                                 );
                             }
                             if let Err(error) = service.rebuild_markdown_projections().await {
@@ -391,38 +391,17 @@ impl AppService {
         Ok(scheduled)
     }
 
-    async fn reconcile_project_consolidations_after_snapshot(
+    async fn reconcile_consolidation_after_snapshot(
         &self,
-        snapshot: &crate::backend::domain::memory::RecentMemorySnapshotView,
+        _snapshot: &crate::backend::domain::memory::RecentMemorySnapshotView,
     ) -> AppResult<()> {
-        for project in &snapshot.projects {
-            if project.project_key == "unassigned" {
-                continue;
-            }
-            if let Some(project_path) = project.project_path.as_deref() {
-                let normalized_path = self
-                    .resolve_context_project_path(Some(project_path))
-                    .await?
-                    .ok_or_else(|| AppError::Validation("project_path is required".to_string()))?;
-                if crate::backend::application::memory::project_consolidation_pipeline::should_schedule_project_consolidation(
-                        self.db.pool(),
-                        self.tenant_id(),
-                        &normalized_path,
-                    )
-                    .await?
-                {
-                    self.schedule_project_memory_rebuild(&normalized_path, Utc::now())
-                        .await?;
-                }
-            }
-        }
         let now = Utc::now();
         if crate::backend::application::memory::global_consolidation_pipeline::should_schedule_global_consolidation(
             self.db.pool(),
             self.tenant_id(),
             now,
         )
-            .await?
+        .await?
         {
             self.schedule_global_memory_rebuild(now).await?;
         }

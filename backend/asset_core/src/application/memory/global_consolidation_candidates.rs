@@ -88,7 +88,7 @@ pub fn promotion_nomination_for_source_refs(
 /// - M35-L3-02:
 ///   1. 明确全局规则 (global_rule): 必须有 available 用户引用且具全局范围；
 ///   2. 跨项目模式 (cross_project_pattern): 必须由至少两个不同真实 project_key (非 unassigned)
-///      的当前有效 L2 revision 独立支持，且每个项目至少有一个 available 引用。
+///      的当前有效 L1 revision 独立支持，且每个项目至少有一个 available 引用。
 ///   3. unavailable 引用不计入支持数；单项目或 unassigned 不晋升。
 pub async fn evaluate_l3_candidates(
     pool: &SqlitePool,
@@ -108,14 +108,14 @@ pub async fn evaluate_l3_candidates(
     .into_iter()
     .collect();
 
-    // 2. 加载所有当前有效的 L2 条目（必须有 project_key 且非 unassigned）
-    let l2_rows = sqlx::query(
+    // 2. 加载所有当前有效的 L1 条目（直接消费近期快照生成的条目）
+    let l1_rows = sqlx::query(
         "SELECT mi.id as item_id, mi.project_key, \
                 mir.id as revision_id, mir.category, mir.status, \
                 mir.title, mir.summary, mir.rationale, mir.promotion_nomination \
          FROM memory_items mi \
          JOIN memory_item_revisions mir ON mi.tenant_id = mir.tenant_id AND mi.current_revision_id = mir.id \
-         WHERE mi.tenant_id = ?1 AND mi.layer = 'l2' AND mi.lifecycle = 'current' \
+         WHERE mi.tenant_id = ?1 AND mi.layer = 'l1' AND mi.lifecycle = 'current' \
            AND mi.project_key IS NOT NULL AND mi.project_key != 'unassigned'",
     )
     .bind(tenant_id)
@@ -123,7 +123,7 @@ pub async fn evaluate_l3_candidates(
     .await
     .map_err(AppError::external)?;
 
-    // 3. 加载所有与这些 L2 revisions 关联的引用及其可用性
+    // 3. 加载所有与这些 L1 revisions 关联的引用及其可用性
     let ref_rows = sqlx::query(
         "SELECT sr.item_revision_id, sr.source_id, sr.session_id, sr.reference_key, \
                 sr.question_id, sr.turn_id, sr.part_id, sr.node_id, sr.source_revision, sr.availability, \
@@ -131,7 +131,7 @@ pub async fn evaluate_l3_candidates(
          FROM memory_item_source_references sr \
          JOIN memory_item_revisions mir ON sr.tenant_id = mir.tenant_id AND sr.item_revision_id = mir.id \
          JOIN memory_items mi ON mir.tenant_id = mi.tenant_id AND mir.item_id = mi.id \
-         WHERE sr.tenant_id = ?1 AND mi.layer = 'l2' AND mi.lifecycle = 'current'",
+         WHERE sr.tenant_id = ?1 AND mi.layer = 'l1' AND mi.lifecycle = 'current'",
     )
     .bind(tenant_id)
     .fetch_all(pool)
@@ -193,7 +193,7 @@ pub async fn evaluate_l3_candidates(
 
     let mut clusters: HashMap<String, GroupedCandidate> = HashMap::new();
 
-    for row in l2_rows {
+    for row in l1_rows {
         let item_id: String = row.get("item_id");
         let project_key: String = row.get("project_key");
         let revision_id: String = row.get("revision_id");

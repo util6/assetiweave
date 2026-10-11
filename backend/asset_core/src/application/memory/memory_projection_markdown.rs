@@ -187,63 +187,65 @@ pub fn render_memory_long_term_markdown(
     out.push_str(&format!("- Published: {}\n", published_at));
     out.push_str(&format!("- Revision: {}\n\n", revision_hash));
 
-    // 1. Project Memory (L2)
-    out.push_str("## Project Memory\n\n");
+    // 1. Project Memory (L2) - 仅当存在有效项目记忆时渲染（L2 已剥离）
+    if !l2_projects.is_empty() {
+        out.push_str("## Project Memory\n\n");
 
-    let mut sorted_projects = l2_projects.to_vec();
-    sorted_projects.sort_by(|a, b| a.project_key.cmp(&b.project_key));
+        let mut sorted_projects = l2_projects.to_vec();
+        sorted_projects.sort_by(|a, b| a.project_key.cmp(&b.project_key));
 
-    for proj in sorted_projects {
-        out.push_str(&format!("### {}\n\n", proj.project_key));
+        for proj in sorted_projects {
+            out.push_str(&format!("### {}\n\n", proj.project_key));
 
-        let mut sorted_items = proj.items.clone();
-        // 过滤非 current 条目 (M35-L3-06)
-        sorted_items.retain(|i| i.lifecycle == "current");
+            let mut sorted_items = proj.items.clone();
+            // 过滤非 current 条目 (M35-L3-06)
+            sorted_items.retain(|i| i.lifecycle == "current");
 
-        // 按 category, updated_at 降序, ID 排序
-        sorted_items.sort_by(|a, b| {
-            category_order(&a.category)
-                .cmp(&category_order(&b.category))
-                .then_with(|| b.updated_at.cmp(&a.updated_at))
-                .then_with(|| a.item_id.cmp(&b.item_id))
-        });
+            // 按 category, updated_at 降序, ID 排序
+            sorted_items.sort_by(|a, b| {
+                category_order(&a.category)
+                    .cmp(&category_order(&b.category))
+                    .then_with(|| b.updated_at.cmp(&a.updated_at))
+                    .then_with(|| a.item_id.cmp(&b.item_id))
+            });
 
-        if sorted_items.is_empty() {
-            out.push_str("- *No active project memories*\n\n");
-        } else {
-            for item in sorted_items {
-                let cat_str = match item.category {
-                    MemoryItemCategory::Decision => "Decision",
-                    MemoryItemCategory::Research => "Research",
-                    MemoryItemCategory::Verification => "Verification",
-                    MemoryItemCategory::Blocker => "Blocker",
-                    MemoryItemCategory::FollowUp => "FollowUp",
-                    MemoryItemCategory::Progress => "Progress",
-                };
+            if sorted_items.is_empty() {
+                out.push_str("- *No active project memories*\n\n");
+            } else {
+                for item in sorted_items {
+                    let cat_str = match item.category {
+                        MemoryItemCategory::Decision => "Decision",
+                        MemoryItemCategory::Research => "Research",
+                        MemoryItemCategory::Verification => "Verification",
+                        MemoryItemCategory::Blocker => "Blocker",
+                        MemoryItemCategory::FollowUp => "FollowUp",
+                        MemoryItemCategory::Progress => "Progress",
+                    };
 
-                out.push_str(&format!("- **{}** — {}\n", cat_str, item.title.trim()));
-                if !item.rationale.trim().is_empty() {
-                    out.push_str(&format!("  - Why: {}\n", item.rationale.trim()));
+                    out.push_str(&format!("- **{}** — {}\n", cat_str, item.title.trim()));
+                    if !item.rationale.trim().is_empty() {
+                        out.push_str(&format!("  - Why: {}\n", item.rationale.trim()));
+                    }
+                    out.push_str(&format!("  - Updated: {}\n", item.updated_at));
+
+                    let avail_count = item
+                        .source_references
+                        .iter()
+                        .filter(|r| r.available)
+                        .count();
+                    let unavail_count = item.source_references.len() - avail_count;
+
+                    if unavail_count > 0 {
+                        out.push_str(&format!(
+                            "  - Sources: {} available, {} unavailable\n",
+                            avail_count, unavail_count
+                        ));
+                    } else if avail_count > 0 {
+                        out.push_str(&format!("  - Sources: {} available\n", avail_count));
+                    }
                 }
-                out.push_str(&format!("  - Updated: {}\n", item.updated_at));
-
-                let avail_count = item
-                    .source_references
-                    .iter()
-                    .filter(|r| r.available)
-                    .count();
-                let unavail_count = item.source_references.len() - avail_count;
-
-                if unavail_count > 0 {
-                    out.push_str(&format!(
-                        "  - Sources: {} available, {} unavailable\n",
-                        avail_count, unavail_count
-                    ));
-                } else if avail_count > 0 {
-                    out.push_str(&format!("  - Sources: {} available\n", avail_count));
-                }
+                out.push('\n');
             }
-            out.push('\n');
         }
     }
 

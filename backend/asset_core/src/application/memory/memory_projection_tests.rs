@@ -360,3 +360,36 @@ async fn test_m35_proj_04_snapshot_purge_keeps_long_term_revisions() {
 
     let _ = fs::remove_dir_all(root);
 }
+
+/// 测试: 当没有 L2 项目记忆时，render_memory_long_term_markdown 应当跳过 Project Memory，仅渲染 Permanent Memory
+#[test]
+fn test_render_memory_long_term_markdown_without_l2_projects() {
+    let l2_projects = vec![];
+    let l3_items = vec![L3MemoryItemView {
+        item_id: "item-l3-1".to_string(),
+        revision_id: "rev-l3-1".to_string(),
+        revision_number: 1,
+        category: MemoryItemCategory::Decision,
+        status: MemoryItemStatus::Active,
+        title: "Global Rule 1: No Mock In Production".to_string(),
+        summary: "Pure integration tests only".to_string(),
+        rationale: "Prevent regressions".to_string(),
+        lifecycle: "current".to_string(),
+        source_availability: crate::backend::domain::memory::SourceAvailability::Available,
+        source_references: vec![],
+        updated_at: "2026-09-15T00:00:00Z".to_string(),
+    }];
+
+    let md = render_memory_long_term_markdown(
+        &l2_projects,
+        &l3_items,
+        "2026-09-15 14:00 +08:00",
+        "rev-hash-1234",
+    );
+
+    assert!(md.contains("# Memory"));
+    assert!(md.contains("- Revision: rev-hash-1234"));
+    assert!(!md.contains("## Project Memory"));
+    assert!(md.contains("## Permanent Memory"));
+    assert!(md.contains("- **Rule** — Global Rule 1: No Mock In Production"));
+}

@@ -152,22 +152,8 @@ impl AppService {
         )
         .await?;
 
-        let project_keys = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT project_key FROM memory_items WHERE tenant_id = ?1 AND layer = 'l2' AND lifecycle = 'current' AND project_key IS NOT NULL ORDER BY project_key ASC",
-        )
-        .bind(self.tenant_id())
-        .fetch_all(self.db.pool())
-        .await
-        .map_err(AppError::external)?;
-        let mut current_l2_projects = Vec::new();
-        for project_key in project_keys {
-            if let Some(view) = crate::backend::application::memory::project_consolidation_pipeline::
-                load_l2_project_memory_view(self.db.pool(), self.tenant_id(), &project_key)
-                .await?
-            {
-                current_l2_projects.push(view);
-            }
-        }
+        // L2 项目长期记忆已剥离，快照证据包不再注入 L2 项目上下文
+        let current_l2_projects = Vec::new();
         let current_l3_items =
             crate::backend::application::memory::global_consolidation_pipeline::get_global_memory_l3_view(
                 self.db.pool(),

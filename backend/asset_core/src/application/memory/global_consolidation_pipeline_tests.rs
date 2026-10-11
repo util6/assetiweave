@@ -17,8 +17,8 @@ async fn setup_test_db() -> (AppService, SqlitePool, std::path::PathBuf) {
     (service, pool, root)
 }
 
-/// 辅助插入 L2 条目及其 revision 与引用
-async fn insert_l2_fixture(
+/// 辅助插入指定层级的条目及其 revision 与引用
+async fn insert_fixture_with_layer(
     pool: &SqlitePool,
     tenant_id: &str,
     project_key: &str,
@@ -29,25 +29,27 @@ async fn insert_l2_fixture(
     session_id: &str,
     reference_key: &str,
     available: bool,
+    layer: &str,
 ) -> (String, String) {
     let now = "2026-09-15T00:00:00Z";
-    let item_id = format!("l2-item-{}", uuid::Uuid::new_v4());
-    let rev_id = format!("l2-rev-{}", uuid::Uuid::new_v4());
+    let item_id = format!("{layer}-item-{}", uuid::Uuid::new_v4());
+    let rev_id = format!("{layer}-rev-{}", uuid::Uuid::new_v4());
 
     sqlx::query(
         "INSERT INTO memory_items \
              (tenant_id, id, layer, project_key, current_revision_id, lifecycle, \
               first_seen_at, last_seen_at, created_at, updated_at) \
-             VALUES (?1, ?2, 'l2', ?3, ?4, 'current', ?5, ?5, ?5, ?5)",
+             VALUES (?1, ?2, ?3, ?4, ?5, 'current', ?6, ?6, ?6, ?6)",
     )
     .bind(tenant_id)
     .bind(&item_id)
+    .bind(layer)
     .bind(project_key)
     .bind(&rev_id)
     .bind(now)
     .execute(pool)
     .await
-    .expect("insert l2 item");
+    .expect("insert item");
 
     let mut hasher = Sha256::new();
     hasher.update(title.as_bytes());
@@ -71,7 +73,7 @@ async fn insert_l2_fixture(
     .bind(&fp)
     .execute(pool)
     .await
-    .expect("insert l2 revision");
+    .expect("insert revision");
 
     let ref_id = format!("ref-{}", uuid::Uuid::new_v4());
     let avail_str = if available {
@@ -82,25 +84,54 @@ async fn insert_l2_fixture(
     let reason = if available { None } else { Some("deleted") };
 
     sqlx::query(
-            "INSERT INTO memory_item_source_references \
-             (tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
-              question_id, reference_key, source_revision, availability, unavailable_reason, created_at) \
-             VALUES (?1, ?2, ?3, 'session', 'src-1', ?4, ?5, ?6, 1, ?7, ?8, ?9)",
-        )
-        .bind(tenant_id)
-        .bind(&ref_id)
-        .bind(&rev_id)
-        .bind(session_id)
-        .bind(format!("question-{session_id}"))
-        .bind(reference_key)
-        .bind(avail_str)
-        .bind(reason)
-        .bind(now)
-        .execute(pool)
-        .await
-        .expect("insert l2 ref");
+        "INSERT INTO memory_item_source_references \
+         (tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
+          question_id, reference_key, source_revision, availability, unavailable_reason, created_at) \
+         VALUES (?1, ?2, ?3, 'session', 'src-1', ?4, ?5, ?6, 1, ?7, ?8, ?9)",
+    )
+    .bind(tenant_id)
+    .bind(&ref_id)
+    .bind(&rev_id)
+    .bind(session_id)
+    .bind(format!("question-{session_id}"))
+    .bind(reference_key)
+    .bind(avail_str)
+    .bind(reason)
+    .bind(now)
+    .execute(pool)
+    .await
+    .expect("insert ref");
 
     (item_id, rev_id)
+}
+
+/// 默认插入 L1 候选条目
+async fn insert_l2_fixture(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    project_key: &str,
+    title: &str,
+    summary: &str,
+    category: &str,
+    nomination: &str,
+    session_id: &str,
+    reference_key: &str,
+    available: bool,
+) -> (String, String) {
+    insert_fixture_with_layer(
+        pool,
+        tenant_id,
+        project_key,
+        title,
+        summary,
+        category,
+        nomination,
+        session_id,
+        reference_key,
+        available,
+        "l1",
+    )
+    .await
 }
 
 /// 测试 1: M35-L3-02 跨项目候选必须由至少两个不同真实 project_key 独立支持
@@ -418,7 +449,7 @@ async fn test_m35_l3_04_source_invalidation_updates_reference_keeps_l2_l3() {
             .execute(&pool).await.unwrap();
 
     // 插入 L2 条目
-    let (l2_item_id, _) = insert_l2_fixture(
+    let (l2_item_id, _) = insert_fixture_with_layer(
         &pool,
         "default",
         "proj-a",
@@ -429,6 +460,7 @@ async fn test_m35_l3_04_source_invalidation_updates_reference_keeps_l2_l3() {
         "sess-1",
         "ref-1",
         true,
+        "l2",
     )
     .await;
 

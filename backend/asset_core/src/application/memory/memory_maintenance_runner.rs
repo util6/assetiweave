@@ -189,21 +189,11 @@ pub async fn run_memory_maintenance_task(
     };
 
     let result = if purpose == "project_consolidation" {
-        let project_key = job.project_key.as_deref().ok_or_else(|| {
-            AppError::Validation("project maintenance job is missing project_key".to_string())
-        })?;
-        service
-            .reconcile_project_consolidation_with_agent(
-                project_key,
-                job.project_path.as_deref(),
-                payload.work_order.clone(),
-                payload.skill_text.clone(),
-                context.cancellation(),
-                Some((job_id, owner)),
-                payload.project_input.clone(),
-            )
-            .await
-            .map(|view| json!({ "updated": view.is_some() }))
+        tracing::info!(
+            job_id,
+            "Skipping project consolidation task as L2 project memory is decommissioned"
+        );
+        Ok(json!({ "updated": false }))
     } else {
         service
             .reconcile_global_consolidation_with_agent(
