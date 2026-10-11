@@ -26,6 +26,7 @@ import {
   XCircle,
 } from "lucide-react";
 import clsx from "clsx";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { EmptyState } from "../foundation/EmptyState";
 import { ErrorBoundary } from "../foundation/ErrorBoundary";
@@ -289,9 +290,19 @@ function TaskCenterModalContent({
       size="2xl"
       title={t("tasks.page.title")}
     >
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {/* 左栏：任务列表面板 */}
-        <aside className="flex w-[360px] shrink-0 flex-col border-r border-theme-control-border bg-surface-elevated/40">
+      <Group
+        className="flex h-full w-full min-h-0 flex-1 overflow-hidden"
+        orientation="horizontal"
+      >
+        {/* 左栏：任务列表面板（可调宽度，最大 50%） */}
+        <Panel
+          className="flex min-h-0 min-w-0 flex-col"
+          defaultSize="29%"
+          id="task-center-left-panel"
+          maxSize="50%"
+          minSize="22%"
+        >
+          <aside className="flex h-full w-full flex-col bg-surface-elevated/40">
           {/* 搜索与过滤工具区 */}
           <div className="flex flex-col gap-2.5 border-b border-theme-control-border p-3">
             <ToolbarSearch
@@ -432,9 +443,28 @@ function TaskCenterModalContent({
             )}
           </div>
         </aside>
+      </Panel>
 
-        {/* 右栏：选中任务详情面板（带平滑视图切换动效与流动微光进度条） */}
-        <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-surface-base p-6">
+      {/* 可拖拽分栏手柄 */}
+      <Separator
+        aria-label={t("layout.resizeColumns")}
+        className={clsx(
+          "relative z-10 w-3 -translate-x-1/2 cursor-col-resize touch-none outline-none",
+          "ui-resize-handle before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-theme-card-border",
+          "after:absolute after:left-1/2 after:top-1/2 after:h-10 after:w-1.5 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:bg-theme-control-border after:opacity-0 after:transition-opacity",
+          "hover:after:opacity-100 focus-visible:after:opacity-100 focus-visible:ring-2 focus-visible:ring-primary-strong/55",
+        )}
+        id="task-center-separator"
+      />
+
+      {/* 右栏：选中任务详情面板（带平滑视图切换动效与流动微光进度条） */}
+      <Panel
+        className="flex min-h-0 min-w-0 flex-col"
+        defaultSize="71%"
+        id="task-center-right-panel"
+        minSize="50%"
+      >
+        <main className="relative flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-surface-base p-6">
           {activeCount > 0 || actionBusy ? (
             <div className="ui-route-progress" />
           ) : null}
@@ -723,8 +753,9 @@ function TaskCenterModalContent({
             </div>
           )}
         </main>
-      </div>
-    </DialogFrame>
+      </Panel>
+    </Group>
+  </DialogFrame>
   );
 }
 

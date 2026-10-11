@@ -142,8 +142,29 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
                 initialFocusRef.current.focus();
               }
             }}
+            onInteractOutside={(event) => {
+              const originalTarget = (event.detail.originalEvent?.target ??
+                event.target) as HTMLElement | null;
+              if (
+                originalTarget?.closest?.(
+                  '[role="separator"], [data-separator], .ui-resize-handle',
+                )
+              ) {
+                event.preventDefault();
+              }
+            }}
             onPointerDownOutside={(event) => {
               if (busy) {
+                event.preventDefault();
+                return;
+              }
+              const originalTarget = (event.detail.originalEvent?.target ??
+                event.target) as HTMLElement | null;
+              if (
+                originalTarget?.closest?.(
+                  '[role="separator"], [data-separator], .ui-resize-handle',
+                )
+              ) {
                 event.preventDefault();
                 return;
               }

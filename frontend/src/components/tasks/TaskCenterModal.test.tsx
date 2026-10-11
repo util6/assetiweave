@@ -52,6 +52,14 @@ describe("TaskCenterModal", () => {
       setItem: vi.fn(),
     });
     vi.stubGlobal("navigator", { language: "zh-CN" });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        disconnect() {}
+        observe() {}
+        unobserve() {}
+      },
+    );
     mockCancelTask.mockReset();
     mockRetryTask.mockReset();
     mockClearTerminal.mockReset();
@@ -553,5 +561,19 @@ describe("TaskCenterModal", () => {
     await waitFor(() => {
       expect(screen.queryByText("发现会话 session-001")).toBeNull();
     });
+  });
+
+  it("渲染可调整分栏的拖拽分隔手柄与左右面板", () => {
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    const separator = screen.getByRole("separator", { name: "调整分栏宽度" });
+    expect(separator).toBeTruthy();
+    expect(separator.getAttribute("id")).toBe("task-center-separator");
+    expect(document.querySelector("#task-center-left-panel")).toBeTruthy();
+    expect(document.querySelector("#task-center-right-panel")).toBeTruthy();
   });
 });

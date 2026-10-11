@@ -145,6 +145,14 @@ describe("TaskCenterModal - Agent Session Observer (T09)", () => {
       setItem: vi.fn(),
     });
     vi.stubGlobal("navigator", { language: "zh-CN" });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        disconnect() {}
+        observe() {}
+        unobserve() {}
+      },
+    );
     mockGetAgentSession.mockReset();
     mockSubscribeAgentSessionUpdated.mockClear();
 

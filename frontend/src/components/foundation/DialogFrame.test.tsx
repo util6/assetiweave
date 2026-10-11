@@ -154,4 +154,23 @@ describe("DialogFrame", () => {
 
     expect(container?.className).toContain("custom-container-class");
   });
+
+  it("does not trigger onClose when interacting with a resize separator handle", () => {
+    const onClose = vi.fn();
+    render(
+      <DialogFrame onClose={onClose} title="Resizable Dialog">
+        <div>
+          <div aria-label="Resize" className="ui-resize-handle" role="separator">
+            Separator
+          </div>
+        </div>
+      </DialogFrame>,
+    );
+
+    const separator = screen.getByRole("separator", { name: "Resize" });
+    fireEvent.pointerDown(separator);
+    fireEvent.click(separator);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });
