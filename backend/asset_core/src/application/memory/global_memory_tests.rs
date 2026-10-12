@@ -111,7 +111,6 @@ fn context_budget_preserves_priority_and_stable_revision() {
         &[],
         &[],
         &[],
-        &[],
     );
     let second = compile_memory_context(
         "tenant",
@@ -120,7 +119,6 @@ fn context_budget_preserves_priority_and_stable_revision() {
         global_only_budget,
         Some(&global),
         Some(&project),
-        &[],
         &[],
         &[],
         &[],
@@ -151,7 +149,6 @@ fn compile_memory_context_includes_session_short_id() {
         None,
         &[],
         &[session],
-        &[],
         &[],
     );
     assert!(res.text.contains("## Session Memory [Session: fcb638a9]"));

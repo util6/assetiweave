@@ -3,10 +3,7 @@ use crate::backend::application::AppService;
 use crate::backend::domain::memory::{
     RecentMemoryItemView, RecentMemorySnapshotView, RecentProjectView, RecentSessionReferenceView,
 };
-use crate::backend::domain::{
-    L2MemoryItemView, L2ProjectMemoryView, L2SourceReferenceView, L3MemoryItemView,
-    MemoryItemCategory, MemoryItemStatus,
-};
+use crate::backend::domain::{L3MemoryItemView, MemoryItemCategory, MemoryItemStatus};
 use chrono::TimeZone;
 
 async fn setup_test_service() -> (AppService, SqlitePool, PathBuf) {
@@ -89,33 +86,6 @@ fn test_m35_proj_02_render_memory_summary_markdown_deterministic() {
 /// 测试 2: M35-PROJ-02 MEMORY.md 包含 L2 项目记忆与 L3 永久记忆
 #[test]
 fn test_m35_proj_02_render_memory_long_term_markdown() {
-    let l2_projects = vec![L2ProjectMemoryView {
-        project_key: "proj-alpha".to_string(),
-        project_path: Some("/alpha".to_string()),
-        items: vec![L2MemoryItemView {
-            item_id: "item-l2-1".to_string(),
-            revision_id: "rev-l2-1".to_string(),
-            revision_number: 1,
-            category: MemoryItemCategory::Decision,
-            status: MemoryItemStatus::Active,
-            title: "Use SQLite for Persistence".to_string(),
-            summary: "Source of truth".to_string(),
-            rationale: "Local-first ADR".to_string(),
-            lifecycle: "current".to_string(),
-            source_availability: crate::backend::domain::memory::SourceAvailability::Available,
-            source_references: vec![L2SourceReferenceView {
-                source_id: "src-1".to_string(),
-                session_id: "sess-1".to_string(),
-                reference_key: "ref-1".to_string(),
-                available: true,
-                unavailable_reason: None,
-            }],
-            updated_at: "2026-09-15T00:00:00Z".to_string(),
-        }],
-        last_successful_consolidation_at: Some("2026-09-15T00:00:00Z".to_string()),
-        revision_hash: "hash-alpha".to_string(),
-    }];
-
     let l3_items = vec![L3MemoryItemView {
         item_id: "item-l3-1".to_string(),
         revision_id: "rev-l3-1".to_string(),
@@ -131,21 +101,12 @@ fn test_m35_proj_02_render_memory_long_term_markdown() {
         updated_at: "2026-09-15T00:00:00Z".to_string(),
     }];
 
-    let md = render_memory_long_term_markdown(
-        &l2_projects,
-        &l3_items,
-        "2026-09-15 14:00 +08:00",
-        "rev-hash-1234",
-    );
+    let md =
+        render_memory_long_term_markdown(&l3_items, "2026-09-15 14:00 +08:00", "rev-hash-1234");
 
     assert!(md.contains("# Memory"));
     assert!(md.contains("- Revision: rev-hash-1234"));
-    assert!(md.contains("## Project Memory"));
-    assert!(md.contains("### proj-alpha"));
-    assert!(md.contains("- **Decision** — Use SQLite for Persistence"));
-    assert!(md.contains("Why: Local-first ADR"));
-    assert!(md.contains("Sources: 1 available"));
-
+    assert!(!md.contains("## Project Memory"));
     assert!(md.contains("## Permanent Memory"));
     assert!(md.contains("- **Rule** — Global Rule 1: No Mock In Production"));
     assert!(md.contains("Why: Prevent regressions"));
@@ -364,7 +325,6 @@ async fn test_m35_proj_04_snapshot_purge_keeps_long_term_revisions() {
 /// 测试: 当没有 L2 项目记忆时，render_memory_long_term_markdown 应当跳过 Project Memory，仅渲染 Permanent Memory
 #[test]
 fn test_render_memory_long_term_markdown_without_l2_projects() {
-    let l2_projects = vec![];
     let l3_items = vec![L3MemoryItemView {
         item_id: "item-l3-1".to_string(),
         revision_id: "rev-l3-1".to_string(),
@@ -380,12 +340,8 @@ fn test_render_memory_long_term_markdown_without_l2_projects() {
         updated_at: "2026-09-15T00:00:00Z".to_string(),
     }];
 
-    let md = render_memory_long_term_markdown(
-        &l2_projects,
-        &l3_items,
-        "2026-09-15 14:00 +08:00",
-        "rev-hash-1234",
-    );
+    let md =
+        render_memory_long_term_markdown(&l3_items, "2026-09-15 14:00 +08:00", "rev-hash-1234");
 
     assert!(md.contains("# Memory"));
     assert!(md.contains("- Revision: rev-hash-1234"));

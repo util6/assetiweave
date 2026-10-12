@@ -166,29 +166,7 @@ pub async fn rebuild_markdown_projections(
         }
     }
 
-    // 2. 重建 MEMORY.md (基于 L2 项目记忆与 L3 全局记忆)
-    let project_keys: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT project_key FROM memory_items \
-         WHERE tenant_id = ?1 AND layer = 'l2' AND project_key IS NOT NULL AND project_key != 'unassigned'",
-    )
-    .bind(tenant_id)
-    .fetch_all(pool)
-    .await
-    .map_err(AppError::external)?;
-
-    let mut l2_projects = Vec::new();
-    for key in project_keys {
-        if let Some(proj_view) = crate::backend::application::memory::project_consolidation_pipeline::load_l2_project_memory_view(
-            pool,
-            tenant_id,
-            &key,
-        )
-        .await?
-        {
-            l2_projects.push(proj_view);
-        }
-    }
-
+    // 2. 重建 MEMORY.md (基于 L3 全局记忆)
     let l3_view =
         crate::backend::application::memory::global_consolidation_pipeline::get_global_memory_l3_view(
             pool, tenant_id,
@@ -198,16 +176,13 @@ pub async fn rebuild_markdown_projections(
     let l3_items = l3_view.map(|v| v.items).unwrap_or_default();
 
     let mut hasher = Sha256::new();
-    for p in &l2_projects {
-        hasher.update(p.revision_hash.as_bytes());
-    }
     for i in &l3_items {
         hasher.update(i.revision_id.as_bytes());
     }
     let revision_hash = format!("{:x}", hasher.finalize());
 
     let long_term_markdown =
-        render_memory_long_term_markdown(&l2_projects, &l3_items, &published_at, &revision_hash);
+        render_memory_long_term_markdown(&l3_items, &published_at, &revision_hash);
     publish_atomic(&memory_file, &long_term_markdown)?;
 
     Ok(MemoryProjectionPaths {

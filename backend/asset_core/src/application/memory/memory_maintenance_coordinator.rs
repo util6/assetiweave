@@ -1,9 +1,8 @@
 use crate::backend::application::{AppError, AppResult, AppService};
 use crate::backend::{
     domain::{
-        compute_global_consolidation_fingerprint, compute_project_consolidation_fingerprint,
-        MemoryJobPurpose, MemoryMaintenanceWorkOrderPayload, MemoryWindow, MemoryWorkOrder,
-        MemoryWorkOrderScope,
+        compute_global_consolidation_fingerprint, MemoryJobPurpose,
+        MemoryMaintenanceWorkOrderPayload, MemoryWindow, MemoryWorkOrder, MemoryWorkOrderScope,
     },
     infrastructure::tasks::tasks::{TaskCapabilities, TaskKind, TaskSpec},
     store,
@@ -19,26 +18,14 @@ impl AppService {
     pub async fn load_memory_source_revision_set_hash(
         &self,
         purpose: MemoryJobPurpose,
-        project_key: Option<&str>,
-        project_path: Option<&str>,
+        _project_key: Option<&str>,
+        _project_path: Option<&str>,
     ) -> AppResult<String> {
         match purpose {
-            MemoryJobPurpose::ProjectConsolidation => {
-                let project_key = project_key.ok_or_else(|| {
-                    AppError::Validation(
-                        "project maintenance job is missing project_key".to_string(),
-                    )
-                })?;
-                let input = crate::backend::application::memory::project_consolidation_pipeline::
-                    load_project_consolidation_input(
-                        self.db.pool(),
-                        self.tenant_id(),
-                        project_key,
-                        project_path,
-                    )
-                    .await?;
-                Ok(compute_project_consolidation_fingerprint(&input))
-            }
+            MemoryJobPurpose::ProjectConsolidation => Err(AppError::Validation(
+                "project consolidation is decommissioned; use local documents (AGENTS.md)"
+                    .to_string(),
+            )),
             MemoryJobPurpose::GlobalConsolidation => {
                 let input = crate::backend::application::memory::global_consolidation_pipeline::
                     load_global_consolidation_input(self.db.pool(), self.tenant_id())
@@ -64,28 +51,16 @@ impl AppService {
         let skill_text = self.load_active_generation_skill_text().await?;
         let target_watermark_utc = now.to_rfc3339();
         let hours = settings.recent_window_hours;
-        let (project_input, global_input) = match purpose {
+        let global_input = match purpose {
             MemoryJobPurpose::ProjectConsolidation => {
-                let project_key = project_key.ok_or_else(|| {
-                    AppError::Validation(
-                        "project maintenance job is missing project_key".to_string(),
-                    )
-                })?;
-                let input = crate::backend::application::memory::project_consolidation_pipeline::
-                    load_project_consolidation_input(
-                        self.db.pool(),
-                        self.tenant_id(),
-                        project_key,
-                        project_path,
-                    )
-                    .await?;
-                (Some(input), None)
+                return Err(AppError::Validation(
+                    "project consolidation is decommissioned; use local documents (AGENTS.md)".to_string(),
+                ));
             }
             MemoryJobPurpose::GlobalConsolidation => {
-                let input = crate::backend::application::memory::global_consolidation_pipeline::
+                crate::backend::application::memory::global_consolidation_pipeline::
                     load_global_consolidation_input(self.db.pool(), self.tenant_id())
-                    .await?;
-                (None, Some(input))
+                    .await?
             }
             MemoryJobPurpose::RecentSnapshot => {
                 return Err(AppError::Validation(
@@ -93,16 +68,7 @@ impl AppService {
                 ));
             }
         };
-        let source_revision_set_hash = match (&project_input, &global_input) {
-            (Some(input), None) => compute_project_consolidation_fingerprint(input),
-            (None, Some(input)) => compute_global_consolidation_fingerprint(input),
-            _ => {
-                return Err(AppError::Validation(
-                    "memory maintenance Work Order must contain exactly one frozen input"
-                        .to_string(),
-                ));
-            }
-        };
+        let source_revision_set_hash = compute_global_consolidation_fingerprint(&global_input);
         let work_order = MemoryWorkOrder::new(
             format!("memory-maintenance-{}", uuid::Uuid::new_v4()),
             self.tenant_id().to_string(),
@@ -124,19 +90,11 @@ impl AppService {
             work_order: work_order.clone(),
             project_path: project_path.map(str::to_string),
             skill_text,
-            project_input,
-            global_input,
+            project_input: None,
+            global_input: Some(global_input),
         };
         let work_order_json = serde_json::to_string(&payload).map_err(AppError::external)?;
-        let purpose_text = match purpose {
-            MemoryJobPurpose::ProjectConsolidation => "project_consolidation",
-            MemoryJobPurpose::GlobalConsolidation => "global_consolidation",
-            MemoryJobPurpose::RecentSnapshot => {
-                return Err(AppError::Validation(
-                    "recent snapshot must use its dedicated durable queue".to_string(),
-                ));
-            }
-        };
+        let purpose_text = "global_consolidation";
         let job_id = format!(
             "memory-maint-{}",
             short_digest(&format!(
@@ -255,24 +213,31 @@ impl AppService {
             else {
                 continue;
             };
+            if job.purpose == "project_consolidation" {
+                let _ = store::finish_memory_maintenance_job_sqlx(
+                    &pool,
+                    tenant_id,
+                    &job_id,
+                    &ownership_token,
+                    "succeeded",
+                    None,
+                    Some("project consolidation decommissioned (no-op)"),
+                    false,
+                    &now_text,
+                )
+                .await?;
+                continue;
+            }
             let task_id = format!("memory-maint-{job_id}");
             let _ = self.runtime.task_runtime().remove_terminal(&task_id);
-            let domain = if job.purpose == "project_consolidation" {
-                "project_memory"
-            } else {
-                "global_memory"
-            };
+            let domain = "global_memory";
             let mut spec = TaskSpec::new(
                 TaskKind::Memory,
                 Some(format!("memory-maintenance:{tenant_id}:{job_id}")),
             )
             .with_task_id(task_id.clone())
             .with_tenant_id(tenant_id.to_string())
-            .with_title(if domain == "project_memory" {
-                "项目长期记忆维护".to_string()
-            } else {
-                "全局长期记忆维护".to_string()
-            })
+            .with_title("全局长期记忆维护".to_string())
             .with_capabilities(TaskCapabilities {
                 cancellable: true,
                 retryable: true,

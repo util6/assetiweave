@@ -35,28 +35,6 @@ impl AppService {
         Ok(None)
     }
 
-    /// 协调并执行指定项目的 L2 Consolidation（已停用，直接返回 None）
-    pub async fn reconcile_project_consolidation(
-        &self,
-        _project_key: &str,
-        _project_path: Option<&str>,
-    ) -> AppResult<Option<crate::backend::domain::L2ProjectMemoryView>> {
-        Ok(None)
-    }
-
-    pub async fn reconcile_project_consolidation_with_agent(
-        &self,
-        _project_key: &str,
-        _project_path: Option<&str>,
-        _work_order: MemoryWorkOrder,
-        _skill_text: String,
-        _cancellation: CancellationToken,
-        _maintenance_lease: Option<(&str, &str)>,
-        _frozen_input: Option<ProjectConsolidationInput>,
-    ) -> AppResult<Option<crate::backend::domain::L2ProjectMemoryView>> {
-        Ok(None)
-    }
-
     /// 获取当前 Tenant 的 L3 全局长期记忆视图 (M35-L3-01 ~ M35-L3-06)
     pub async fn get_global_memory_l3(
         &self,

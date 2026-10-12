@@ -48,15 +48,6 @@ impl AppService {
             .await?
             .map(|v| v.items)
             .unwrap_or_default();
-        let l2_items = if let Some(path) = project_path.as_deref() {
-            crate::backend::application::memory::project_consolidation_pipeline::load_l2_items(
-                &pool, &tenant_id, path,
-            )
-            .await
-            .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
         let compiled = compile_memory_context(
             &tenant_id,
             project_path.as_deref(),
@@ -67,7 +58,6 @@ impl AppService {
             &project_sources,
             &sessions,
             &l3_items,
-            &l2_items,
         );
         if self.backend_settings()?.is_memory_usage_enabled() {
             let used_at = Utc::now().to_rfc3339();
@@ -117,7 +107,6 @@ pub fn compile_memory_context(
     project_sources: &[crate::backend::domain::ProjectMemorySource],
     sessions: &[crate::backend::domain::SessionMemory],
     l3_items: &[crate::backend::domain::L3MemoryItemView],
-    l2_items: &[crate::backend::domain::L2MemoryItemView],
 ) -> MemoryContextResult {
     let mut sections = Vec::new();
     if !l3_items.is_empty() {
@@ -144,32 +133,6 @@ pub fn compile_memory_context(
                     "## Global Memory\n{}\n\n## Project Index\n{}",
                     summary, memory
                 ),
-            ));
-        }
-    }
-    if !l2_items.is_empty() {
-        for item in l2_items {
-            sections.push(ContextSection::new(
-                "project_memory_l2",
-                item.revision_id.clone(),
-                Some(item.revision_number),
-                format!(
-                    "### [{:?}] {}\n{}\n{}",
-                    item.category, item.title, item.summary, item.rationale
-                ),
-            ));
-        }
-    } else if let Some(version) = project_version {
-        if let Some(content) = version
-            .content_markdown
-            .as_deref()
-            .filter(|text| !text.is_empty())
-        {
-            sections.push(ContextSection::new(
-                "project_memory",
-                version.id.clone(),
-                Some(version.source_watermark),
-                format!("## Project Memory\n{content}"),
             ));
         }
     }
@@ -255,7 +218,6 @@ pub fn compile_memory_context(
             .iter()
             .map(|i| i.updated_at.clone())
             .max()
-            .or_else(|| l2_items.iter().map(|i| i.updated_at.clone()).max())
             .or_else(|| global_version.map(|version| version.updated_at.clone()))
             .or_else(|| project_version.map(|version| version.updated_at.clone())),
         estimated_tokens,

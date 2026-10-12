@@ -1,7 +1,6 @@
 use crate::backend::application::{AppError, AppResult, AppService};
 use crate::backend::domain::{
-    compute_global_consolidation_fingerprint, compute_project_consolidation_fingerprint,
-    MemoryJobPurpose, MemoryMaintenanceWorkOrderPayload,
+    compute_global_consolidation_fingerprint, MemoryJobPurpose, MemoryMaintenanceWorkOrderPayload,
 };
 use crate::backend::infrastructure::runtime::AppRuntime;
 use crate::backend::infrastructure::tasks::TaskContext;
@@ -16,7 +15,7 @@ pub async fn run_memory_maintenance_task(
     tenant_id: &str,
     job_id: &str,
     owner: &str,
-    purpose: &str,
+    _purpose: &str,
     context: &TaskContext,
 ) -> AppResult<serde_json::Value> {
     let service = AppService::from_runtime(runtime)
@@ -32,12 +31,7 @@ pub async fn run_memory_maintenance_task(
             )
         })?;
     if payload.work_order.tenant_id != tenant_id
-        || payload.work_order.purpose
-            != if purpose == "project_consolidation" {
-                MemoryJobPurpose::ProjectConsolidation
-            } else {
-                MemoryJobPurpose::GlobalConsolidation
-            }
+        || payload.work_order.purpose != MemoryJobPurpose::GlobalConsolidation
     {
         return Err(AppError::Validation(
             "MEMORY_WORK_ORDER_INVALID: maintenance scope mismatch".to_string(),
@@ -53,27 +47,9 @@ pub async fn run_memory_maintenance_task(
     }
     match payload.work_order.purpose {
         MemoryJobPurpose::ProjectConsolidation => {
-            let project_input = payload.project_input.as_ref().ok_or_else(|| {
-                AppError::Validation(
-                    "MEMORY_WORK_ORDER_INVALID: missing frozen project input".to_string(),
-                )
-            })?;
-            if payload.global_input.is_some()
-                || project_input.project_key
-                    != payload
-                        .work_order
-                        .scope
-                        .project_key
-                        .as_deref()
-                        .unwrap_or_default()
-                || project_input.project_path.as_deref() != payload.project_path.as_deref()
-                || compute_project_consolidation_fingerprint(project_input)
-                    != payload.work_order.source_revision_set_hash
-            {
-                return Err(AppError::Validation(
-                    "MEMORY_WORK_ORDER_INVALID: frozen project input binding mismatch".to_string(),
-                ));
-            }
+            return Err(AppError::Validation(
+                "MEMORY_WORK_ORDER_INVALID: project consolidation is decommissioned".to_string(),
+            ));
         }
         MemoryJobPurpose::GlobalConsolidation => {
             let global_input = payload.global_input.as_ref().ok_or_else(|| {
@@ -188,25 +164,17 @@ pub async fn run_memory_maintenance_task(
         })
     };
 
-    let result = if purpose == "project_consolidation" {
-        tracing::info!(
-            job_id,
-            "Skipping project consolidation task as L2 project memory is decommissioned"
-        );
-        Ok(json!({ "updated": false }))
-    } else {
-        service
-            .reconcile_global_consolidation_with_agent(
-                Utc::now(),
-                payload.work_order.clone(),
-                payload.skill_text.clone(),
-                context.cancellation(),
-                Some((job_id, owner)),
-                payload.global_input.clone(),
-            )
-            .await
-            .map(|view| json!({ "updated": view.is_some() }))
-    };
+    let result = service
+        .reconcile_global_consolidation_with_agent(
+            Utc::now(),
+            payload.work_order.clone(),
+            payload.skill_text.clone(),
+            context.cancellation(),
+            Some((job_id, owner)),
+            payload.global_input.clone(),
+        )
+        .await
+        .map(|view| json!({ "updated": view.is_some() }));
     heartbeat_cancel.cancel();
     let _ = heartbeat_task.await;
 
@@ -255,11 +223,7 @@ pub async fn run_memory_maintenance_task(
                 );
             }
             Ok(json!({
-                "domain": if purpose == "project_consolidation" {
-                    "project_memory"
-                } else {
-                    "global_memory"
-                },
+                "domain": "global_memory",
                 "maintenance_job_id": job_id,
                 "summary": summary,
             }))
