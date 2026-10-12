@@ -341,3 +341,27 @@ pub fn determine_session_cleanup_status(cleanup: &CleanupReport) -> SessionClean
         SessionCleanupStatus::Failed("session_delete_unsuccessful".to_string())
     }
 }
+
+pub fn is_transient_probe_failure(code: &str) -> bool {
+    let lower = code.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "cleanup_failed"
+            | "connection_failed"
+            | "agent_exited"
+            | "timeout"
+            | "initialize_timeout"
+            | "session_new_timeout"
+            | "config_timeout"
+            | "cleanup_timeout"
+            | "disconnect"
+            | "transport_error"
+            | "stdio_unavailable"
+            | "take_stdio"
+    ) || lower.ends_with("_timeout")
+        || lower.contains("timeout")
+}
+
+#[cfg(test)]
+#[path = "acp_guard_tests.rs"]
+mod tests;

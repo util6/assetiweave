@@ -15,8 +15,8 @@ use crate::infrastructure::host_process::{resolve_host_executable, wrap_tokio_co
 
 use crate::domain::definition::AgentDefinition;
 use crate::infrastructure::process::managed_process_support::{
-    cleanup_failed_spawn, drain_stderr, is_ignorable_signal_error, BoundedByteTail,
-    EXIT_WAIT_AFTER_KILL,
+    augment_path_environment, cleanup_failed_spawn, drain_stderr, is_ignorable_signal_error,
+    BoundedByteTail, EXIT_WAIT_AFTER_KILL,
 };
 pub use crate::infrastructure::process::managed_process_support::{
     ManagedAgentProcessError, ProcessExit, ProcessTerminationReport, SafeSpawnPreview,
@@ -61,14 +61,20 @@ impl ManagedAgentProcess {
                 command_name: definition.command.clone(),
             })?;
         let mut command = Command::new(program);
+        command.args(&definition.args).envs(
+            definition
+                .env
+                .iter()
+                .map(|entry| (&entry.name, &entry.value)),
+        );
+        let explicit_path = definition
+            .env
+            .iter()
+            .find(|entry| entry.name == "PATH")
+            .map(|entry| entry.value.as_str());
+        let augmented_path = augment_path_environment(explicit_path);
         command
-            .args(&definition.args)
-            .envs(
-                definition
-                    .env
-                    .iter()
-                    .map(|entry| (&entry.name, &entry.value)),
-            )
+            .env("PATH", augmented_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

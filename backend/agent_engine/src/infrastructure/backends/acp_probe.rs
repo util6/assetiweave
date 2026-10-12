@@ -11,7 +11,7 @@ use crate::{
 };
 
 use super::acp::{AcpExecutionBackend, PROTOCOL_EVENT_CAPACITY};
-use super::acp_guard::{AcpExecutionGuard, CleanupReport};
+use super::acp_guard::{is_session_delete_failure, AcpExecutionGuard, CleanupReport};
 use super::acp_models::parse_session_models;
 use super::acp_probe_report::*;
 use super::acp_prompt::{
@@ -110,6 +110,26 @@ pub async fn run_session_probe_with_timings(
             Ok(p) => p,
             Err(error) => {
                 timings.initialize_duration_ms = init_start.elapsed().as_millis() as u64;
+                let exit_check = tokio::time::timeout(
+                    std::time::Duration::from_millis(150),
+                    process.wait_for_exit(),
+                )
+                .await;
+                if let Ok(Some(exit)) = exit_check {
+                    if !exit.success {
+                        let stderr = process
+                            .stderr_tail()
+                            .ok()
+                            .and_then(|t| t.formatted_diagnostic());
+                        return (
+                            Err(AiExecutionError::AgentExited {
+                                code: exit.code,
+                                stderr,
+                            }),
+                            AcpConnectionStage::Initialize,
+                        );
+                    }
+                }
                 return (Err(map_acp_error("initialize", error)), AcpConnectionStage::Initialize);
             }
         },
@@ -119,8 +139,13 @@ pub async fn run_session_probe_with_timings(
         }
         exit = process.wait_for_exit() => {
             timings.initialize_duration_ms = init_start.elapsed().as_millis() as u64;
+            let stderr = process
+                .stderr_tail()
+                .ok()
+                .and_then(|t| t.formatted_diagnostic());
             return (Err(AiExecutionError::AgentExited {
                 code: exit.and_then(|exit| exit.code),
+                stderr,
             }), AcpConnectionStage::Initialize);
         }
     };
@@ -219,7 +244,7 @@ impl AcpExecutionBackend {
         let critical_failures = cleanup
             .failures
             .iter()
-            .filter(|failure| failure.as_str() != "delete_unsupported")
+            .filter(|failure| !is_session_delete_failure(failure.as_str()))
             .cloned()
             .collect::<Vec<_>>();
         if !critical_failures.is_empty() && outcome.is_ok() {
@@ -266,7 +291,7 @@ impl AcpExecutionBackend {
         let critical_failures = cleanup
             .failures
             .iter()
-            .filter(|failure| failure.as_str() != "delete_unsupported")
+            .filter(|failure| !is_session_delete_failure(failure.as_str()))
             .cloned()
             .collect::<Vec<_>>();
         if !critical_failures.is_empty() && outcome.is_ok() {
@@ -412,7 +437,7 @@ impl AcpExecutionBackend {
         let critical_failures = cleanup
             .failures
             .iter()
-            .filter(|failure| failure.as_str() != "delete_unsupported")
+            .filter(|failure| !is_session_delete_failure(failure.as_str()))
             .cloned()
             .collect::<Vec<_>>();
         if !critical_failures.is_empty()

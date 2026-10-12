@@ -52,8 +52,16 @@ pub enum AiExecutionError {
     ModelSelectionFailed { detail: Option<String> },
     #[error("the selected AI model is unavailable: {detail}")]
     ModelUnavailable { detail: String },
-    #[error("{}", match code { Some(c) => format!("the AI agent exited with code {c}"), None => "the AI agent exited before execution completed".to_string() })]
-    AgentExited { code: Option<i32> },
+    #[error("{}", match (code, stderr.as_deref()) {
+        (Some(c), Some(err)) if !err.trim().is_empty() => format!("the AI agent exited with code {c}: {err}"),
+        (Some(c), _) => format!("the AI agent exited with code {c}"),
+        (None, Some(err)) if !err.trim().is_empty() => format!("the AI agent exited before execution completed: {err}"),
+        (None, _) => "the AI agent exited before execution completed".to_string(),
+    })]
+    AgentExited {
+        code: Option<i32>,
+        stderr: Option<String>,
+    },
     #[error("the isolated workspace {operation} operation failed")]
     Workspace { operation: &'static str },
     #[error("AI agent cleanup failed in {} step(s)", failures.len())]
@@ -171,11 +179,26 @@ impl AiExecutionError {
                     phase: None,
                 };
             }
-            Self::AgentExited { .. } => (
-                "agent_exited",
-                "The AI agent process exited before execution completed.",
-                true,
-            ),
+            Self::AgentExited { code, stderr } => {
+                let message = match (code, stderr.as_deref()) {
+                    (Some(c), Some(err)) if !err.trim().is_empty() => {
+                        format!("The AI agent process exited with code {c}: {err}")
+                    }
+                    (Some(c), _) => format!("The AI agent process exited with code {c}."),
+                    (None, Some(err)) if !err.trim().is_empty() => {
+                        format!("The AI agent process exited before execution completed: {err}")
+                    }
+                    (None, _) => {
+                        "The AI agent process exited before execution completed.".to_string()
+                    }
+                };
+                return AiExecutionErrorView {
+                    code: "agent_exited".to_string(),
+                    message,
+                    retryable: true,
+                    phase: None,
+                };
+            }
             Self::Workspace { .. } => (
                 "workspace_failed",
                 "The isolated AI execution workspace could not be prepared.",

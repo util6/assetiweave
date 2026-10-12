@@ -1,9 +1,12 @@
-use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc,
+use std::{
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
 };
 
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use crate::backend::{
     domain::agents::{
@@ -11,9 +14,12 @@ use crate::backend::{
     },
     infrastructure::{
         agent_execution::{
-            backends::acp::{
-                AcpConnectionStage, AcpExecutionBackend, AcpModelDiscoveryOutcome, AcpProbeReport,
-                AcpProtocolConnectionOutcome,
+            backends::{
+                acp::{
+                    AcpConnectionStage, AcpExecutionBackend, AcpModelDiscoveryOutcome,
+                    AcpProbeReport, AcpProtocolConnectionOutcome,
+                },
+                acp_guard::is_transient_probe_failure,
             },
             AgentConnectionResult, AgentModelsResult, AiExecutionCancellation,
         },
@@ -247,19 +253,49 @@ impl AgentRuntimeManager {
                         )
                         .with_agent_id(agent_id))
                     } else {
+                        let mut final_report = report;
                         if flight.persist_health.load(Ordering::Acquire) {
-                            self.persist_acp_probe_health(agent_id, &identity, &report)
+                            if let AcpProtocolConnectionOutcome::Failed { error_code, .. } =
+                                &final_report.protocol_connection
+                            {
+                                if is_transient_probe_failure(error_code)
+                                    && !flight.cancellation.is_cancelled()
+                                {
+                                    tracing::info!(
+                                        action = "agent_market.acp_probe.fast_retry",
+                                        agent_id,
+                                        error_code = %error_code,
+                                        "Transient probe failure before persisting health, retrying in 200ms"
+                                    );
+                                    tokio::time::sleep(Duration::from_millis(200)).await;
+                                    if !flight.cancellation.is_cancelled() {
+                                        if let Ok(retry_report) = self
+                                            .probe_acp_health_uncached(
+                                                agent_id,
+                                                identity.clone(),
+                                                flight.cancellation.clone(),
+                                            )
+                                            .await
+                                        {
+                                            final_report = retry_report;
+                                        }
+                                    }
+                                }
+                            }
+                            self.persist_acp_probe_health(agent_id, &identity, &final_report)
                                 .await;
                         }
-                        if let AcpModelDiscoveryOutcome::Success { .. } = &report.model_discovery {
-                            let models_result = report.to_models_result(agent_id);
+                        if let AcpModelDiscoveryOutcome::Success { .. } =
+                            &final_report.model_discovery
+                        {
+                            let models_result = final_report.to_models_result(agent_id);
                             self.models_cache.write().await.insert(
                                 agent_id.to_string(),
                                 identity.clone(),
                                 models_result,
                             );
                         }
-                        Ok(Arc::new(report))
+                        Ok(Arc::new(final_report))
                     }
                 }
                 Err(error) => Err(error),
@@ -375,6 +411,14 @@ impl AgentRuntimeManager {
                 "ACP probe identity changed before the process started"
             );
         }
+
+        let _permit = self.probe_semaphore.acquire().await.map_err(|_| {
+            AgentMarketError::new(
+                "probe_aborted",
+                "Probe rate limiter semaphore closed",
+                false,
+            )
+        })?;
 
         let backend = AcpExecutionBackend::new(self.workspace_root.clone());
         let report = backend

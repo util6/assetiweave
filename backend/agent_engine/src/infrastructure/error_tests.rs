@@ -2,7 +2,10 @@ use super::*;
 
 #[test]
 fn public_error_view_has_a_stable_code() {
-    let error = AiExecutionError::AgentExited { code: Some(1) };
+    let error = AiExecutionError::AgentExited {
+        code: Some(1),
+        stderr: None,
+    };
 
     let view = error.to_view();
     let public_debug = format!("{view:?}");

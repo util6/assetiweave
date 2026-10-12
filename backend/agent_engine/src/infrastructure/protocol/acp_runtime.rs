@@ -199,8 +199,11 @@ pub enum AcpOperation {
 pub enum AcpError {
     #[error("ACP initialize timed out after {} milliseconds", timeout.as_millis())]
     InitializeTimeout { timeout: Duration },
-    #[error("ACP initialize failed")]
-    InitializeFailed,
+    #[error("{}", match message.as_deref() {
+        Some(msg) if !msg.trim().is_empty() => format!("ACP initialize failed: {msg}"),
+        _ => "ACP initialize failed".to_string(),
+    })]
+    InitializeFailed { message: Option<String> },
     #[error("ACP connection closed during initialize")]
     ActorClosedDuringInitialize,
     #[error("ACP {operation:?} timed out after {} milliseconds", timeout.as_millis())]
@@ -303,8 +306,10 @@ pub async fn run_sdk_actor(
                 Ok(initialize) => {
                     let _ = initialize_tx.send(Ok(initialize));
                 }
-                Err(_) => {
-                    let _ = initialize_tx.send(Err(AcpError::InitializeFailed));
+                Err(err) => {
+                    let _ = initialize_tx.send(Err(AcpError::InitializeFailed {
+                        message: Some(err.to_string()),
+                    }));
                     return Ok(());
                 }
             }

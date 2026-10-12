@@ -36,10 +36,72 @@ pub struct StderrTailSnapshot {
 }
 
 impl StderrTailSnapshot {
-    #[cfg(test)]
     pub fn lossy_text(&self) -> String {
         String::from_utf8_lossy(&self.bytes).into_owned()
     }
+
+    pub fn formatted_diagnostic(&self) -> Option<String> {
+        let text = self.lossy_text();
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            None
+        } else if self.truncated {
+            Some(format!("{trimmed} (truncated)"))
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+}
+
+pub fn augment_path_environment(explicit_path: Option<&str>) -> std::ffi::OsString {
+    let mut paths: Vec<PathBuf> = if let Some(explicit) = explicit_path {
+        std::env::split_paths(explicit).collect()
+    } else if let Some(current_path) = std::env::var_os("PATH") {
+        std::env::split_paths(&current_path).collect()
+    } else {
+        Vec::new()
+    };
+
+    #[cfg(not(windows))]
+    {
+        let standard_dirs = [
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/opt/local/bin"),
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/bin"),
+            PathBuf::from("/usr/sbin"),
+            PathBuf::from("/sbin"),
+        ];
+        for dir in standard_dirs {
+            if dir.is_dir() && !paths.contains(&dir) {
+                paths.push(dir);
+            }
+        }
+        if let Some(home) = dirs::home_dir() {
+            let user_dirs = [
+                home.join(".local").join("bin"),
+                home.join(".cargo").join("bin"),
+                home.join(".npm-global").join("bin"),
+                home.join(".pnpm-global").join("bin"),
+                home.join(".bun").join("bin"),
+                home.join(".deno").join("bin"),
+                home.join(".volta").join("bin"),
+            ];
+            for dir in user_dirs {
+                if dir.is_dir() && !paths.contains(&dir) {
+                    paths.push(dir);
+                }
+            }
+        }
+    }
+
+    std::env::join_paths(paths).unwrap_or_else(|_| {
+        explicit_path
+            .map(std::ffi::OsString::from)
+            .or_else(|| std::env::var_os("PATH"))
+            .unwrap_or_default()
+    })
 }
 
 #[derive(Clone, Eq, PartialEq)]

@@ -39,6 +39,7 @@ pub use model_cache::*;
 pub use package_system::*;
 
 pub const STAGING_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
+pub const MAX_CONCURRENT_PROBES: usize = 2;
 
 pub type AgentRuntimeRegistry = AgentRegistryHandle;
 
@@ -52,6 +53,7 @@ pub struct AgentRuntimeManager {
     workspace_root: PathBuf,
     models_cache: Arc<tokio::sync::RwLock<BoundedModelCache>>,
     probe_flights: Arc<tokio::sync::Mutex<HashMap<AgentProbeIdentity, Arc<ProbeFlight>>>>,
+    pub probe_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -89,6 +91,7 @@ impl AgentRuntimeManager {
                 MODEL_CACHE_CAPACITY,
             ))),
             probe_flights: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            probe_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PROBES)),
         }
     }
 

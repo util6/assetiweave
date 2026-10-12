@@ -129,8 +129,13 @@ pub async fn run_prompt_and_aggregate(
                 return Err(cancelled_error(definition));
             }
             exit = &mut process_exit => {
+                let stderr = process
+                    .stderr_tail()
+                    .ok()
+                    .and_then(|t| t.formatted_diagnostic());
                 return Err(AiExecutionError::AgentExited {
                     code: exit.and_then(|exit| exit.code),
+                    stderr,
                 });
             }
             changed = disconnects.changed() => {
@@ -223,6 +228,12 @@ pub fn map_acp_error(operation: &'static str, error: acp_protocol::AcpError) -> 
         acp_protocol::AcpError::RequestFailed { message, .. } => AiExecutionError::ProtocolDetail {
             operation,
             detail: normalize_provider_error_message(&message),
+        },
+        acp_protocol::AcpError::InitializeFailed {
+            message: Some(detail),
+        } if !detail.trim().is_empty() => AiExecutionError::ProtocolDetail {
+            operation,
+            detail: normalize_provider_error_message(&detail),
         },
         _ => AiExecutionError::Protocol { operation },
     }

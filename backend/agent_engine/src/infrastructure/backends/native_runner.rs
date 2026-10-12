@@ -197,20 +197,32 @@ pub async fn run_native_execution(
         )?;
     }
 
+    let stderr = guard
+        .process
+        .as_ref()
+        .and_then(|p| p.stderr_tail().ok())
+        .and_then(|t| t.formatted_diagnostic());
+
     let exit = guard
         .process
         .as_ref()
         .expect("process exists")
         .wait_for_exit()
         .await
-        .ok_or(AiExecutionError::AgentExited { code: None })?;
+        .ok_or(AiExecutionError::AgentExited {
+            code: None,
+            stderr: stderr.clone(),
+        })?;
     if !exit.success {
         if let Some(wait_error) = exit.wait_error {
             return Err(AiExecutionError::Output {
                 message: format!("failed to wait for native agent: {wait_error}"),
             });
         }
-        return Err(AiExecutionError::AgentExited { code: exit.code });
+        return Err(AiExecutionError::AgentExited {
+            code: exit.code,
+            stderr,
+        });
     }
 
     if let Some(err) = result_error {

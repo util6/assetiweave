@@ -254,6 +254,7 @@ pub fn connection_error_code(error: &AiExecutionError) -> &'static str {
         AiExecutionError::Spawn { .. } | AiExecutionError::RuntimeUnavailable { .. } => {
             "agent_spawn_failed"
         }
+        AiExecutionError::AgentExited { .. } => "agent_exited",
         other if is_auth_error(other) => "auth_required",
         _ => "connection_failed",
     }
