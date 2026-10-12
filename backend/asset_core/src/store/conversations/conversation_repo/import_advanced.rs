@@ -49,6 +49,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
             session_failures,
             session_warnings,
             status,
+            succeeded_external_ids: Vec::new(),
         });
     }
 
@@ -105,6 +106,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
 
     let mut completed_session_count = 0;
     let mut all_changed_session_ids = Vec::new();
+    let mut succeeded_external_ids = Vec::new();
     const SESSION_IMPORT_BATCH_SIZE: usize = 50;
 
     for chunk in sessions.chunks(SESSION_IMPORT_BATCH_SIZE) {
@@ -112,7 +114,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
 
         // 优先尝试以批量事务导入当前批次，减少 SQLite 写锁争抢与频繁磁盘 fsync
         let mut batch_success = false;
-        if let Ok(mut batch_tx) = pool.begin().await {
+        if let Ok(mut batch_tx) = crate::backend::store::begin_immediate(pool).await {
             let mut chunk_changed = Vec::new();
             let mut chunk_skipped = 0usize;
             let mut chunk_ok = true;
@@ -156,6 +158,9 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                 changed_session_count += chunk_changed.len();
                 skipped_session_count += chunk_skipped;
                 all_changed_session_ids.extend(chunk_changed);
+                for normalized in chunk {
+                    succeeded_external_ids.push(normalized.external_id.clone());
+                }
                 completed_session_count += chunk.len();
                 on_progress(completed_session_count, sessions.len());
                 tokio::task::yield_now().await;
@@ -169,11 +174,12 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                 let session = conversation_session_from_normalized(source, normalized, &now);
                 if is_droppable_internal_session(normalized, &session) {
                     skipped_session_count += 1;
+                    succeeded_external_ids.push(normalized.external_id.clone());
                     completed_session_count += 1;
                     on_progress(completed_session_count, sessions.len());
                     continue;
                 }
-                let mut tx = match pool.begin().await {
+                let mut tx = match begin_immediate_with_retry(pool, 3).await {
                     Ok(tx) => tx,
                     Err(err) => {
                         let sanitized = sanitize_store_sync_error_message(&err.to_string());
@@ -230,6 +236,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                                 retryable: true,
                             });
                         } else {
+                            succeeded_external_ids.push(normalized.external_id.clone());
                             match changed_opt {
                                 Some(changed_id) => {
                                     changed_session_count += 1;
@@ -276,7 +283,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
 
     // Missing 对账（仅在非主动取消时进行，防止取消时误将未处理会话当成 missing）
     let missing_or_restored_session_ids = if !is_cancelled {
-        let mut tx = pool.begin().await.map_err(StoreError::external)?;
+        let mut tx = crate::backend::store::begin_immediate(pool).await?;
         let missing_ids = mark_missing_conversation_sessions_sqlx_tx(
             &mut tx,
             tenant_id,
@@ -319,7 +326,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
         None
     };
 
-    let mut final_tx = pool.begin().await.map_err(StoreError::external)?;
+    let mut final_tx = crate::backend::store::begin_immediate(pool).await?;
     sqlx::query(
         r#"
         UPDATE conversation_sources
@@ -389,6 +396,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
         session_failures,
         session_warnings,
         status,
+        succeeded_external_ids,
     })
 }
 
@@ -494,4 +502,29 @@ async fn import_single_session_sqlx_tx(
     .await?;
 
     Ok(Some(session.id.clone()))
+}
+
+async fn begin_immediate_with_retry(
+    pool: &SqlitePool,
+    max_attempts: usize,
+) -> StoreResult<sqlx::Transaction<'static, sqlx::Sqlite>> {
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        match crate::backend::store::begin_immediate(pool).await {
+            Ok(tx) => return Ok(tx),
+            Err(err) if attempts < max_attempts && is_retryable_db_lock_err(&err) => {
+                tokio::time::sleep(std::time::Duration::from_millis(100 * attempts as u64)).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn is_retryable_db_lock_err(err: &StoreError) -> bool {
+    let msg = err.to_string();
+    msg.contains("database is locked")
+        || msg.contains("code: 517")
+        || msg.contains("code: 5")
+        || msg.contains("busy")
 }

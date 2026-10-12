@@ -24,13 +24,14 @@ pub async fn import_web_record_sessions_sqlx(
             session_failures: Vec::new(),
             session_warnings: Vec::new(),
             status: crate::backend::domain::ConversationSyncStatus::Completed,
+            succeeded_external_ids: Vec::new(),
         });
     }
 
     let now = Utc::now().to_rfc3339();
     let sync_run_id = stable_id("web-record-sync", &[&source.id, &now]);
     {
-        let mut tx = pool.begin().await.map_err(StoreError::external)?;
+        let mut tx = crate::backend::store::begin_immediate(pool).await?;
         clear_legacy_conversation_records_for_source_sqlx_tx(&mut tx, tenant_id, &source.id)
             .await?;
         tx.commit().await.map_err(StoreError::external)?;
@@ -40,7 +41,7 @@ pub async fn import_web_record_sessions_sqlx(
     let mut skipped_session_count = 0usize;
     let mut changed_session_count = 0usize;
     for batch in sessions.chunks(CONVERSATION_IMPORT_BATCH_SIZE) {
-        let mut tx = pool.begin().await.map_err(StoreError::external)?;
+        let mut tx = crate::backend::store::begin_immediate(pool).await?;
         for normalized in batch {
             let session = web_record_session_from_normalized(source, normalized, &now);
             let change_kind =
@@ -104,7 +105,7 @@ pub async fn import_web_record_sessions_sqlx(
         tx.commit().await.map_err(StoreError::external)?;
     }
 
-    let mut tx = pool.begin().await.map_err(StoreError::external)?;
+    let mut tx = crate::backend::store::begin_immediate(pool).await?;
     sqlx::query(
         r#"
         UPDATE conversation_sources
@@ -152,6 +153,7 @@ pub async fn import_web_record_sessions_sqlx(
         session_failures: Vec::new(),
         session_warnings: Vec::new(),
         status: crate::backend::domain::ConversationSyncStatus::Completed,
+        succeeded_external_ids: sessions.iter().map(|s| s.external_id.clone()).collect(),
     })
 }
 

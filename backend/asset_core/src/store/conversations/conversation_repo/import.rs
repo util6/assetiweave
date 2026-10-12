@@ -77,6 +77,7 @@ pub async fn import_conversation_sessions_with_control_sqlx(
             session_failures: Vec::new(),
             session_warnings: Vec::new(),
             status: ConversationSyncStatus::Completed,
+            succeeded_external_ids: Vec::new(),
         });
     }
 
@@ -267,6 +268,7 @@ pub async fn import_conversation_sessions_with_control_sqlx(
         session_failures: Vec::new(),
         session_warnings: Vec::new(),
         status: ConversationSyncStatus::Completed,
+        succeeded_external_ids: sessions.iter().map(|s| s.external_id.clone()).collect(),
     })
 }
 

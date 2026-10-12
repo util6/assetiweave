@@ -2216,6 +2216,163 @@ esac
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
+async fn conversation_sync_exposes_failures_and_partial_success_to_task_runtime() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-stage-failure-exposure-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .unwrap();
+
+    let script_content = r#"#!/bin/sh
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"s-ok","version_token":"v1"}}'
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"s-bad","version_token":"v1"}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":2,"snapshot_complete":true}}'
+    ;;
+  *s-bad*)
+    echo "malformed JSON error" >&2
+    exit 1
+    ;;
+  *s-ok*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"s-ok","source_fingerprint":"v1","turns":[{"external_id":"turn-1","turn_index":0,"user_text":"Hello","parts":[]}]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+"#;
+    let script = write_executable_script(&root, "adapter.sh", script_content);
+
+    let adapter_id = format!("stage-fault-{}", Uuid::new_v4());
+    let source_id = format!("{adapter_id}-source");
+    let manifest_path = root.join(format!("{adapter_id}.json"));
+    fs::write(
+        &manifest_path,
+        serde_json::json!({
+            "schema_version": 1,
+            "id": &adapter_id,
+            "name": "Stage fault adapter",
+            "version": "0.1.0",
+            "protocol_version": 1,
+            "command": [adapter_manifest_entry(&root, &script)],
+            "capabilities": ["list_sessions", "read_session"],
+            "input_kinds": ["directory"]
+        })
+        .to_string(),
+    )
+    .expect("write adapter manifest");
+
+    let now = "2026-01-01T00:00:00Z".to_string();
+    let adapter = ConversationAdapter {
+        id: adapter_id.clone(),
+        name: "Stage fault adapter".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest_path.to_string_lossy().to_string()),
+        executable_path: Some(script.to_string_lossy().to_string()),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(1),
+        capabilities: vec!["list_sessions".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        projection_version: Some(1),
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+    let source = ConversationSource {
+        id: source_id.clone(),
+        adapter_id: adapter_id.clone(),
+        name: "Stage fault source".to_string(),
+        kind: ConversationSourceKind::Directory,
+        location: root.to_string_lossy().to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id();
+    crate::backend::store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter)
+        .await
+        .unwrap();
+    crate::backend::store::upsert_conversation_source_sqlx(pool, tenant_id, &source)
+        .await
+        .unwrap();
+
+    let task_runtime = service.runtime.task_runtime();
+    let spec = crate::backend::infrastructure::tasks::TaskSpec::new(
+        crate::backend::infrastructure::tasks::TaskKind::ConversationSync,
+        None,
+    )
+    .with_tenant_id(service.tenant_id());
+    let outcome = task_runtime.register_external(spec).unwrap();
+    let task_id = match outcome {
+        crate::backend::infrastructure::tasks::ExternalRegistrationOutcome::Started(s) => s.task_id,
+        crate::backend::infrastructure::tasks::ExternalRegistrationOutcome::Existing(s) => {
+            s.task_id
+        }
+        crate::backend::infrastructure::tasks::ExternalRegistrationOutcome::Conflict(s) => {
+            s.task_id
+        }
+    };
+    let cancellation = task_runtime.cancellation_token(&task_id).unwrap();
+
+    let _result = service
+        .sync_conversations_with_control(
+            ConversationSyncParams {
+                source_id: Some(source_id),
+                adapter_id: None,
+                record_kind: Some("session".to_string()),
+                mode: ConversationSyncMode::Full,
+                dry_run: false,
+            },
+            Some(&cancellation),
+            Some(&task_id),
+            &mut |_, _, _, _| {},
+        )
+        .await
+        .unwrap();
+
+    let snapshot = task_runtime.get(&task_id).unwrap();
+    assert_eq!(
+        snapshot.outcome,
+        Some(crate::backend::infrastructure::tasks::TaskOutcome::PartialSuccess)
+    );
+
+    let sync_stage = snapshot
+        .stages
+        .iter()
+        .find(|s| s.id.ends_with(":sync"))
+        .expect("sync stage exists");
+    assert_eq!(
+        sync_stage.status,
+        crate::backend::infrastructure::tasks::StageStatus::PartialSuccess
+    );
+    assert!(
+        !sync_stage.failures.is_empty(),
+        "failures should not be empty"
+    );
+    assert_eq!(sync_stage.failures[0].code, "adapter_process_error");
+    assert_eq!(sync_stage.failures[0].identity.as_deref(), Some("s-bad"));
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
 async fn conversation_session_export_dry_run_calls_adapter_without_writing_file() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-dry-run-{}",

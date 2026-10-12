@@ -2,7 +2,9 @@ use super::conversation_adapters::conversation_storage_error;
 use super::conversation_sync_support::*;
 use crate::backend::application::prelude::*;
 use crate::backend::application::{AppError, AppResult};
-use crate::backend::infrastructure::tasks::{StageStatus, TaskActivity, TaskOutcome, TaskStage};
+use crate::backend::infrastructure::tasks::{
+    StageStatus, TaskActivity, TaskFailure, TaskOutcome, TaskStage,
+};
 use serde_json::{json, Value};
 
 impl AppService {
@@ -337,29 +339,117 @@ impl AppService {
                     }
                 }
 
-                // 所有 source 处理完成后，将 scan 与 sync 阶段平滑标记为完成，并推进 persist 阶段
+                let mut task_failures = Vec::new();
+                for err in &group_errors {
+                    let msg = err.get("message").and_then(Value::as_str).unwrap_or("未知数据源错误");
+                    let src_id = err.get("source_id").and_then(Value::as_str);
+                    task_failures.push(TaskFailure {
+                        code: "SOURCE_SYNC_FAILED".to_string(),
+                        message: msg.to_string(),
+                        stage: sync_stage_id.clone(),
+                        identity: src_id.map(ToString::to_string),
+                        retryable: true,
+                        path: None,
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    });
+                }
+                let mut session_failure_count = 0;
+                for result in &group_results {
+                    if let Some(failures) = result.get("session_failures").and_then(Value::as_array) {
+                        for fail in failures {
+                            session_failure_count += 1;
+                            let ext_id = fail
+                                .get("session_external_id")
+                                .or_else(|| fail.get("external_id"))
+                                .and_then(Value::as_str);
+                            let msg = fail
+                                .get("error_message")
+                                .or_else(|| fail.get("error"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("会话导入失败");
+                            let code = fail
+                                .get("error_code")
+                                .and_then(Value::as_str)
+                                .unwrap_or("SESSION_IMPORT_FAILED");
+                            let retryable = fail
+                                .get("retryable")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(true);
+                            task_failures.push(TaskFailure {
+                                code: code.to_string(),
+                                message: msg.to_string(),
+                                stage: sync_stage_id.clone(),
+                                identity: ext_id.map(ToString::to_string),
+                                retryable,
+                                path: None,
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                            });
+                        }
+                    }
+                }
+
+                let total_failures = group_errors.len() + session_failure_count;
+                let has_success = !group_results.is_empty();
+                let sync_status = if total_failures == 0 {
+                    StageStatus::Succeeded
+                } else if has_success {
+                    StageStatus::PartialSuccess
+                } else {
+                    StageStatus::Failed
+                };
+
+                // 所有 source 处理完成后，按真实结果推进各阶段状态与错误记录
                 if let Some(ref tid) = task_id {
                     let _ = task_runtime.update_stage_status(tid, &scan_stage_id, StageStatus::Succeeded);
-                    let _ = task_runtime.update_stage_status(tid, &sync_stage_id, StageStatus::Succeeded);
+                    let _ = task_runtime.finish_stage(
+                        tid,
+                        &sync_stage_id,
+                        sync_status,
+                        Vec::new(),
+                        task_failures.clone(),
+                        Vec::new(),
+                    );
 
-                    // 推进入库与索引阶段
-                    let _ = task_runtime.update_stage_status(tid, &persist_stage_id, StageStatus::Running);
-                    let _ = task_runtime.record_stage_step(
-                        tid,
-                        &persist_stage_id,
-                        "persist_completed",
-                        Some(format!("共成功处理 {} 个数据源会话，索引已落库", group_results.len())),
-                        Some(group_results.len() as u64),
-                        Some(group_results.len() as u64),
-                    );
-                    let _ = task_runtime.set_stage_progress(
-                        tid,
-                        &persist_stage_id,
-                        1,
-                        Some(1),
-                        Some("会话记录已安全入库，搜索索引更新完毕".to_string()),
-                    );
-                    let _ = task_runtime.update_stage_status(tid, &persist_stage_id, StageStatus::Succeeded);
+                    if has_success {
+                        let _ = task_runtime.update_stage_status(tid, &persist_stage_id, StageStatus::Running);
+                        let _ = task_runtime.record_stage_step(
+                            tid,
+                            &persist_stage_id,
+                            "persist_completed",
+                            Some(format!("共成功处理 {} 个数据源会话，{} 个失败", group_results.len(), total_failures)),
+                            Some(group_results.len() as u64),
+                            Some(group_results.len() as u64),
+                        );
+                        let _ = task_runtime.set_stage_progress(
+                            tid,
+                            &persist_stage_id,
+                            1,
+                            Some(1),
+                            Some("会话记录已安全入库，搜索索引更新完毕".to_string()),
+                        );
+                        let persist_status = if total_failures == 0 {
+                            StageStatus::Succeeded
+                        } else {
+                            StageStatus::PartialSuccess
+                        };
+                        let _ = task_runtime.finish_stage(
+                            tid,
+                            &persist_stage_id,
+                            persist_status,
+                            Vec::new(),
+                            task_failures,
+                            Vec::new(),
+                        );
+                    } else {
+                        let _ = task_runtime.finish_stage(
+                            tid,
+                            &persist_stage_id,
+                            StageStatus::Skipped,
+                            Vec::new(),
+                            Vec::new(),
+                            Vec::new(),
+                        );
+                    }
                 }
 
                 // 该应用（adapter）已完成落库，加入 completed_adapter_ids 并立即通知外部触发前端增量刷新！
@@ -406,31 +496,48 @@ impl AppService {
             ));
         }
 
+        let total_session_failures = results
+            .iter()
+            .filter_map(|r| r.get("session_failures").and_then(Value::as_array))
+            .map(|arr| arr.len())
+            .sum::<usize>();
+        let total_failure_count = errors.len() + total_session_failures;
+
         if let Some(task_id) = task_id {
-            if !results.is_empty() && errors.is_empty() {
+            if !results.is_empty() && total_failure_count == 0 {
                 let _ = task_runtime.set_outcome(
                     task_id,
                     TaskOutcome::Success,
                     Some(format!("成功同步 {} 个数据源", results.len())),
                     None,
                 );
-            } else if !results.is_empty() && !errors.is_empty() {
+            } else if !results.is_empty() && total_failure_count > 0 {
+                let mut notes = Vec::new();
+                if !errors.is_empty() {
+                    notes.push(format!("{} 个数据源异常", errors.len()));
+                }
+                if total_session_failures > 0 {
+                    notes.push(format!("{} 个会话导入失败", total_session_failures));
+                }
                 let _ = task_runtime.set_outcome(
                     task_id,
                     TaskOutcome::PartialSuccess,
                     Some(format!(
-                        "部分成功：{} 成功，{} 失败",
+                        "部分成功：{} 个数据源处理完成，{}",
                         results.len(),
-                        errors.len()
+                        notes.join("，")
                     )),
-                    Some(format!("{} 个数据源同步发生异常", errors.len())),
+                    Some(format!("同步过程中出现异常：{}", notes.join("，"))),
                 );
-            } else if results.is_empty() && !errors.is_empty() {
+            } else if results.is_empty() && total_failure_count > 0 {
                 let _ = task_runtime.set_outcome(
                     task_id,
                     TaskOutcome::Failure,
                     None,
-                    Some(format!("所有数据源同步均失败（共 {} 个）", errors.len())),
+                    Some(format!(
+                        "所有数据源同步均失败（{} 个错误）",
+                        total_failure_count
+                    )),
                 );
             }
         }

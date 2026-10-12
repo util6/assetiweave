@@ -186,6 +186,8 @@ pub struct ConversationImportResult {
     pub session_warnings: Vec<crate::backend::domain::SessionSyncWarning>,
     #[serde(default)]
     pub status: crate::backend::domain::ConversationSyncStatus,
+    #[serde(default)]
+    pub succeeded_external_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, FromRow)]

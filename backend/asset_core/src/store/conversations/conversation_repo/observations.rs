@@ -10,33 +10,64 @@ pub async fn load_conversation_session_versions_sqlx(
     payload_policy_version: u32,
     projection_version: Option<u32>,
 ) -> StoreResult<std::collections::BTreeMap<String, String>> {
-    let kind_str = match record_kind {
-        ConversationRecordKind::Session => "session",
-        ConversationRecordKind::Web => "web",
+    let rows: Vec<(String, Option<String>)> = match record_kind {
+        ConversationRecordKind::Session => {
+            sqlx::query_as(
+                r#"
+                SELECT o.external_id, o.hydrated_version
+                FROM conversation_session_observations o
+                LEFT JOIN conversation_sessions s
+                  ON s.tenant_id = o.tenant_id
+                 AND s.source_id = o.source_id
+                 AND s.external_id = o.external_id
+                WHERE o.tenant_id = ?1 AND o.source_id = ?2 AND o.record_kind = 'session'
+                  AND o.dirty = 0
+                  AND (s.id IS NULL OR (s.source_fingerprint = o.hydrated_version AND s.missing = 0))
+                  AND COALESCE(o.hydrated_adapter_hash, '') = COALESCE(?3, '')
+                  AND COALESCE(o.hydrated_card_contract_version, 0) = COALESCE(?4, 0)
+                  AND COALESCE(o.hydrated_payload_policy_version, 0) = ?5
+                  AND COALESCE(o.hydrated_projection_version, 0) = COALESCE(?6, 0)
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(source_id)
+            .bind(adapter_content_hash)
+            .bind(card_contract_version.map(i64::from))
+            .bind(i64::from(payload_policy_version))
+            .bind(projection_version.map(i64::from))
+            .fetch_all(pool)
+            .await
+            .map_err(StoreError::external)?
+        }
+        ConversationRecordKind::Web => {
+            sqlx::query_as(
+                r#"
+                SELECT o.external_id, o.hydrated_version
+                FROM conversation_session_observations o
+                LEFT JOIN web_record_sessions s
+                  ON s.tenant_id = o.tenant_id
+                 AND s.source_id = o.source_id
+                 AND s.external_id = o.external_id
+                WHERE o.tenant_id = ?1 AND o.source_id = ?2 AND o.record_kind = 'web'
+                  AND o.dirty = 0
+                  AND (s.id IS NULL OR (s.source_fingerprint = o.hydrated_version AND s.missing = 0))
+                  AND COALESCE(o.hydrated_adapter_hash, '') = COALESCE(?3, '')
+                  AND COALESCE(o.hydrated_card_contract_version, 0) = COALESCE(?4, 0)
+                  AND COALESCE(o.hydrated_payload_policy_version, 0) = ?5
+                  AND COALESCE(o.hydrated_projection_version, 0) = COALESCE(?6, 0)
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(source_id)
+            .bind(adapter_content_hash)
+            .bind(card_contract_version.map(i64::from))
+            .bind(i64::from(payload_policy_version))
+            .bind(projection_version.map(i64::from))
+            .fetch_all(pool)
+            .await
+            .map_err(StoreError::external)?
+        }
     };
-
-    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
-        r#"
-        SELECT external_id, hydrated_version
-        FROM conversation_session_observations
-        WHERE tenant_id = ?1 AND source_id = ?2 AND record_kind = ?3
-          AND dirty = 0
-          AND COALESCE(hydrated_adapter_hash, '') = COALESCE(?4, '')
-          AND COALESCE(hydrated_card_contract_version, 0) = COALESCE(?5, 0)
-          AND COALESCE(hydrated_payload_policy_version, 0) = ?6
-          AND COALESCE(hydrated_projection_version, 0) = COALESCE(?7, 0)
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(source_id)
-    .bind(kind_str)
-    .bind(adapter_content_hash)
-    .bind(card_contract_version.map(i64::from))
-    .bind(i64::from(payload_policy_version))
-    .bind(projection_version.map(i64::from))
-    .fetch_all(pool)
-    .await
-    .map_err(StoreError::external)?;
 
     let mut map = std::collections::BTreeMap::new();
     for (ext_id, version) in rows {
@@ -251,7 +282,9 @@ pub async fn persist_conversation_session_observations_sqlx(
         ConversationRecordKind::Web => "web",
     };
 
-    let mut tx = pool.begin().await.map_err(StoreError::external)?;
+    let mut tx = crate::backend::store::begin_immediate(pool)
+        .await
+        .map_err(StoreError::external)?;
 
     let now = chrono::Utc::now().to_rfc3339();
 

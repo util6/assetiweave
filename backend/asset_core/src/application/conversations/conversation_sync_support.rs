@@ -150,6 +150,7 @@ impl AppService {
                     &source.id,
                     source_record_kind,
                     &read,
+                    &result.succeeded_external_ids,
                     params.dry_run,
                     adapter_content_hash.as_deref(),
                     card_contract_version,
@@ -212,6 +213,7 @@ impl AppService {
                     &source.id,
                     source_record_kind,
                     &read,
+                    &result.succeeded_external_ids,
                     params.dry_run,
                     adapter_content_hash.as_deref(),
                     card_contract_version,
@@ -250,6 +252,7 @@ async fn persist_successful_conversation_observation(
     source_id: &str,
     record_kind: crate::backend::domain::conversations::ConversationRecordKind,
     read: &crate::backend::infrastructure::conversations::ConversationSourceReadResult,
+    succeeded_external_ids: &[String],
     dry_run: bool,
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
@@ -259,10 +262,9 @@ async fn persist_successful_conversation_observation(
     if dry_run || !read.incremental {
         return Ok(0);
     }
-    let hydrated_external_ids = read
-        .sessions
+    let hydrated_external_ids = succeeded_external_ids
         .iter()
-        .map(|session| session.external_id.clone())
+        .cloned()
         .collect::<std::collections::BTreeSet<_>>();
     let observations = persistable_conversation_session_observations(&read.session_descriptors);
     crate::backend::store::persist_conversation_session_observations_sqlx(

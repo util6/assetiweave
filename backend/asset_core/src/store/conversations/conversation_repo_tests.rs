@@ -2729,6 +2729,120 @@ async fn sqlx_adapter_or_card_contract_change_invalidates_incremental_hydration_
 }
 
 #[tokio::test]
+async fn sqlx_observation_reconciles_drift_and_triggers_self_healing() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-observation-drift-self-healing-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "drift-healing-adapter",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+
+    upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter)
+        .await
+        .expect("upsert adapter");
+    upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source)
+        .await
+        .expect("upsert source");
+
+    // 1. 真实会话表里保存的是旧指纹 v1
+    let mut session_v1 = fixture_session("v1");
+    session_v1.external_id = "session-drift".to_string();
+    session_v1.source_fingerprint = Some("v1".to_string());
+    import_conversation_sessions_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &source,
+        &[session_v1],
+        false,
+    )
+    .await
+    .expect("import session v1");
+
+    // 2. 观察表里发生了漂移：hydrated_version 被错误地写成了 v2
+    let descriptors = vec![
+        crate::backend::domain::conversations::ConversationSessionObservation {
+            external_id: "session-drift".to_string(),
+            updated_at: None,
+            source_locator: None,
+            version_token: "v2".to_string(),
+        },
+    ];
+    let hydrated = BTreeSet::from(["session-drift".to_string()]);
+    persist_conversation_session_observations_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &source.id,
+        ConversationRecordKind::Session,
+        &descriptors,
+        &hydrated,
+        None,
+        None,
+        crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+        None,
+    )
+    .await
+    .expect("persist observations");
+
+    // 3. 此时加载已知版本：因为 underlying fingerprint (v1) != hydrated_version (v2)，触发自愈过滤，不返回该版本
+    let versions = load_conversation_session_versions_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &source.id,
+        ConversationRecordKind::Session,
+        None,
+        None,
+        crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+        None,
+    )
+    .await
+    .expect("load versions");
+    assert!(
+        versions.get("session-drift").is_none(),
+        "Drifted session should be excluded from known versions to trigger self-healing"
+    );
+
+    // 4. 当底层真实会话被正确更新为 v2 后，指纹对齐，能够正常返回
+    let mut session_v2 = fixture_session("v2");
+    session_v2.external_id = "session-drift".to_string();
+    session_v2.source_fingerprint = Some("v2".to_string());
+    import_conversation_sessions_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &source,
+        &[session_v2],
+        false,
+    )
+    .await
+    .expect("import session v2");
+
+    let reconciled_versions = load_conversation_session_versions_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &source.id,
+        ConversationRecordKind::Session,
+        None,
+        None,
+        crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+        None,
+    )
+    .await
+    .expect("load reconciled versions");
+    assert_eq!(
+        reconciled_versions.get("session-drift").map(String::as_str),
+        Some("v2"),
+        "Reconciled session should be present in known versions"
+    );
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
 async fn sqlx_payload_policy_state_requests_one_reparse_for_existing_records() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-conversation-payload-policy-state-{}.sqlite",
