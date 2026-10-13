@@ -16,6 +16,15 @@ pub fn start_session_memory_coordinator(runtime: &Arc<AppRuntime>) {
     let task_cancellation = cancellation.clone();
     let runtime_clone = runtime.clone();
     let runner = async move {
+        if let Err(error) =
+            store::reset_orphaned_running_memory_jobs_sqlx(runtime_clone.pool()).await
+        {
+            tracing::warn!(
+                action = "memory.coordinator.cold_start_reset",
+                error = %error,
+                "Failed to reset orphaned running memory jobs at cold start"
+            );
+        }
         while !task_cancellation.is_cancelled() {
             let service = AppService::from_runtime(&runtime_clone);
             let principal_id = runtime_clone.context().request_context.principal.id.clone();
@@ -36,41 +45,35 @@ pub fn start_session_memory_coordinator(runtime: &Arc<AppRuntime>) {
                             continue;
                         }
                     };
-                    if let Err(error) = tenant_service
-                        .reconcile_session_memory_jobs_for_tenant_at(&tenant.id, chrono::Utc::now())
-                        .await
-                    {
-                        tracing::warn!(
-                            action = "session_memory.coordinator.recovery",
-                            tenant_id = %tenant.id,
-                            error = %error,
-                            "Session Memory durable coordinator reconciliation failed"
-                        );
+                    if tenant_service.is_memory_pipeline_active() {
+                        continue;
                     }
-                    if let Err(error) = tenant_service
-                        .reconcile_recent_memory_jobs_for_tenant_at(&tenant.id, chrono::Utc::now())
-                        .await
-                    {
-                        tracing::warn!(
-                            action = "memory.coordinator.recovery",
-                            tenant_id = %tenant.id,
-                            error = %error,
-                            "Memory Recent Snapshot durable coordinator reconciliation failed"
-                        );
-                    }
-                    if let Err(error) = tenant_service
-                        .reconcile_memory_maintenance_jobs_for_tenant_at(
-                            &tenant.id,
-                            chrono::Utc::now(),
-                        )
-                        .await
-                    {
-                        tracing::warn!(
-                            action = "memory.maintenance.recovery",
-                            tenant_id = %tenant.id,
-                            error = %error,
-                            "Memory Project/Global maintenance reconciliation failed"
-                        );
+                    let now = chrono::Utc::now();
+                    match tenant_service.has_pending_memory_work(now).await {
+                        Ok(true) => {
+                            if let Err(error) = tenant_service
+                                .start_memory_pipeline(
+                                    super::memory_pipeline::MemoryPipelineParams::background(),
+                                )
+                                .await
+                            {
+                                tracing::warn!(
+                                    action = "memory.pipeline.background_dispatch",
+                                    tenant_id = %tenant.id,
+                                    error = %error,
+                                    "Memory background pipeline dispatch failed"
+                                );
+                            }
+                        }
+                        Ok(false) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                action = "memory.pipeline.check_pending_work",
+                                tenant_id = %tenant.id,
+                                error = %error,
+                                "Failed to check pending memory work"
+                            );
+                        }
                     }
                     if let Err(error) = tenant_service
                         .recover_memory_recall_turns_for_tenant(&tenant.id)

@@ -319,4 +319,138 @@ impl AppService {
             skill_text,
         }))
     }
+
+    pub async fn prepare_recent_snapshot_generation_for_pipeline<Tz: chrono::TimeZone>(
+        &self,
+        now: Option<DateTime<Tz>>,
+        force_rebuild: bool,
+    ) -> AppResult<Option<RecentSnapshotPreparation>> {
+        let memory_settings = self.backend_settings()?.memory.clone();
+        if !memory_settings.generation_enabled {
+            return Ok(None);
+        }
+
+        let current = now
+            .map(|value| value.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
+        let target = resolve_target_watermark(
+            current,
+            memory_settings.recent_window_hours,
+            &memory_settings.watermark_time_1,
+            &memory_settings.watermark_time_2,
+        )?;
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let state = crate::backend::application::memory::recent::load_recent_memory_state_view(
+            pool, tenant_id,
+        )
+        .await?;
+        let (raw_candidates, _ref_map) = self
+            .collect_recent_snapshot_candidates(target.target_watermark_utc, target.window_hours)
+            .await?;
+        let frozen_context = self
+            .load_recent_snapshot_frozen_context(&target, &raw_candidates)
+            .await?;
+
+        // Pipeline fault-tolerance: filter candidates to those with ready session facts
+        let candidates: Vec<CandidateSession> = raw_candidates
+            .into_iter()
+            .filter(|c| frozen_context.session_memories.contains_key(&c.session_id))
+            .collect();
+
+        let continuable_items = self
+            .collect_continuable_items(&target.target_watermark_utc)
+            .await?;
+
+        if candidates.is_empty() && continuable_items.is_empty() {
+            return Ok(None);
+        }
+
+        let skill_binding = self.get_active_generation_skill_binding().await?;
+        let skill_text = self.load_active_generation_skill_text().await?;
+        let prior_items: Vec<(&str, &str)> = continuable_items
+            .iter()
+            .map(|item| (item.item_id.as_str(), item.current_revision_id.as_str()))
+            .collect();
+        let carry_over: Vec<(&str, &str, i64)> = continuable_items
+            .iter()
+            .map(|item| {
+                (
+                    item.item_id.as_str(),
+                    item.current_revision_id.as_str(),
+                    item.remaining_days,
+                )
+            })
+            .collect();
+
+        let evidence = self.build_recent_snapshot_work_order_evidence_pack_with_context(
+            &target,
+            &candidates,
+            &continuable_items,
+            &frozen_context,
+        );
+        let current_l2_l3_revisions = self.load_current_long_term_revision_ids().await?;
+        let current_l2_l3_revision_refs = current_l2_l3_revisions
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let target_fingerprint = compute_target_fingerprint(
+            tenant_id,
+            &target.target_watermark_utc,
+            target.window_hours,
+            &candidates,
+            &prior_items,
+            &skill_binding,
+        );
+        let base_content_fingerprint = compute_content_fingerprint(
+            target.window_hours,
+            &candidates,
+            &carry_over,
+            &current_l2_l3_revision_refs,
+            &skill_binding,
+            &memory_settings.excluded_session_ids,
+            &memory_settings.excluded_source_ids,
+        );
+        let content_fingerprint =
+            compute_recent_snapshot_evidence_fingerprint(&base_content_fingerprint, &evidence);
+
+        if !force_rebuild {
+            if let Some(last_snapshot) = state.snapshot {
+                if let Some(last_meta) = store::load_recent_snapshot_meta_by_id_sqlx(
+                    pool,
+                    tenant_id,
+                    &last_snapshot.snapshot_id,
+                )
+                .await?
+                {
+                    if last_meta.content_fingerprint == content_fingerprint {
+                        if last_meta.target_watermark_utc
+                            == target.target_watermark_utc.to_rfc3339()
+                            || last_meta.target_fingerprint == target_fingerprint
+                        {
+                            return Ok(None);
+                        }
+                        self.commit_reused_memory_snapshot(
+                            &target,
+                            &skill_binding,
+                            &last_meta.id,
+                            &target_fingerprint,
+                            &content_fingerprint,
+                        )
+                        .await?;
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+
+        Ok(Some(RecentSnapshotPreparation {
+            target,
+            skill_binding,
+            target_fingerprint,
+            content_fingerprint,
+            evidence,
+            skill_text,
+        }))
+    }
 }

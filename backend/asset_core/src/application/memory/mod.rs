@@ -11,6 +11,7 @@ pub mod memory_agent_session;
 pub mod memory_generation_tools;
 pub mod memory_maintenance_coordinator;
 pub mod memory_maintenance_runner;
+pub mod memory_pipeline;
 pub mod memory_projection;
 pub mod memory_projection_markdown;
 pub mod memory_public;
@@ -30,6 +31,7 @@ pub mod session_memory;
 pub mod types;
 
 pub use memory_generation_tools::MemoryGenerationToolHandler;
+pub use memory_pipeline::MemoryPipelineParams;
 pub use types::{
     MemoryContextReference, MemoryContextResult, MemoryProjectView, MemoryRebuildResult,
     MemoryTaskView,

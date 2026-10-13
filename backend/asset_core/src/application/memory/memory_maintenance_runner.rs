@@ -8,7 +8,6 @@ use crate::backend::store;
 use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
-use tokio_util::sync::CancellationToken;
 
 pub async fn run_memory_maintenance_task(
     runtime: &Arc<AppRuntime>,
@@ -103,67 +102,6 @@ pub async fn run_memory_maintenance_task(
         ));
     }
 
-    let heartbeat_cancel = CancellationToken::new();
-    let heartbeat_task = {
-        let heartbeat_cancel = heartbeat_cancel.clone();
-        let heartbeat_pool = service.db.pool().clone();
-        let heartbeat_tenant = tenant_id.to_string();
-        let heartbeat_job = job_id.to_string();
-        let heartbeat_owner = owner.to_string();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-            let mut consecutive_errors = 0usize;
-            loop {
-                tokio::select! {
-                    _ = heartbeat_cancel.cancelled() => break,
-                    _ = interval.tick() => {
-                        let heartbeat_now = Utc::now().to_rfc3339();
-                        match store::heartbeat_memory_maintenance_job_sqlx(
-                            &heartbeat_pool,
-                            &heartbeat_tenant,
-                            &heartbeat_job,
-                            &heartbeat_owner,
-                            &heartbeat_now,
-                        ).await {
-                            Ok(true) => {
-                                consecutive_errors = 0;
-                            }
-                            Ok(false) => {
-                                tracing::warn!(
-                                    action = "memory_maintenance.heartbeat.lost",
-                                    tenant_id = %heartbeat_tenant,
-                                    job_id = %heartbeat_job,
-                                    "Memory maintenance job lease was superseded or released"
-                                );
-                                break;
-                            }
-                            Err(error) => {
-                                consecutive_errors += 1;
-                                tracing::warn!(
-                                    action = "memory_maintenance.heartbeat.retryable_error",
-                                    tenant_id = %heartbeat_tenant,
-                                    job_id = %heartbeat_job,
-                                    consecutive_errors,
-                                    error = %error,
-                                    "Memory maintenance heartbeat update failed due to db lock or error; will retry"
-                                );
-                                if consecutive_errors >= 5 {
-                                    tracing::error!(
-                                        action = "memory_maintenance.heartbeat.exceeded_retries",
-                                        tenant_id = %heartbeat_tenant,
-                                        job_id = %heartbeat_job,
-                                        "Memory maintenance heartbeat failed 5 consecutive times; aborting"
-                                    );
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        })
-    };
-
     let result = service
         .reconcile_global_consolidation_with_agent(
             Utc::now(),
@@ -175,8 +113,6 @@ pub async fn run_memory_maintenance_task(
         )
         .await
         .map(|view| json!({ "updated": view.is_some() }));
-    heartbeat_cancel.cancel();
-    let _ = heartbeat_task.await;
 
     match result {
         Ok(summary) => {

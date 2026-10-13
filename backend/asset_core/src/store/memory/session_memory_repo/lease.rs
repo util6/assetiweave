@@ -99,6 +99,41 @@ pub async fn recover_expired_session_memory_leases_sqlx(
     Ok(result.rows_affected() as usize)
 }
 
+/// 重置冷启动时遗留的处于 'running' 状态的孤儿 memory jobs。
+/// 在单进程应用中，进程重启意味着此前所有在途工作均已中断，直接重置为 'queued' 重新调度。
+pub async fn reset_orphaned_running_memory_jobs_sqlx(pool: &SqlitePool) -> StoreResult<usize> {
+    let now = Utc::now().to_rfc3339();
+    let mut total = 0;
+    let r1 = sqlx::query(
+        "UPDATE session_memory_jobs SET status = 'queued', ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?1 WHERE status = 'running'"
+    )
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(StoreError::Db)?;
+    total += r1.rows_affected() as usize;
+
+    let r2 = sqlx::query(
+        "UPDATE recent_memory_jobs SET status = 'queued', ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?1 WHERE status = 'running'"
+    )
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(StoreError::Db)?;
+    total += r2.rows_affected() as usize;
+
+    let r3 = sqlx::query(
+        "UPDATE memory_maintenance_jobs SET status = 'queued', ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?1 WHERE status = 'running'"
+    )
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(StoreError::Db)?;
+    total += r3.rows_affected() as usize;
+
+    Ok(total)
+}
+
 pub const MAX_SESSION_MEMORY_JOB_RETRIES: i64 = 5;
 
 pub async fn mark_session_memory_job_failed_with_lease_sqlx(

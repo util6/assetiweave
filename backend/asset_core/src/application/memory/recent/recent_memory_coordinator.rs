@@ -200,67 +200,6 @@ impl AppService {
                     .await?
                     .ok_or_else(|| AppError::NotFound("recent memory job not found".to_string()))?;
                     task_progress.transition("load_facts");
-                    let heartbeat_cancel = CancellationToken::new();
-                    let heartbeat_task = {
-                        let heartbeat_cancel = heartbeat_cancel.clone();
-                        let heartbeat_pool = service.db.pool().clone();
-                        let heartbeat_tenant = tenant_id_for_task.clone();
-                        let heartbeat_job = job_id_for_task.clone();
-                        let heartbeat_owner = owner_for_task.clone();
-                        tokio::spawn(async move {
-                            let mut interval =
-                                tokio::time::interval(std::time::Duration::from_secs(30));
-                            let mut consecutive_errors = 0usize;
-                            loop {
-                                tokio::select! {
-                                    _ = heartbeat_cancel.cancelled() => break,
-                                    _ = interval.tick() => {
-                                        let now = Utc::now().to_rfc3339();
-                                        match store::heartbeat_recent_memory_job_sqlx(
-                                            &heartbeat_pool,
-                                            &heartbeat_tenant,
-                                            &heartbeat_job,
-                                            &heartbeat_owner,
-                                            &now,
-                                        ).await {
-                                            Ok(true) => {
-                                                consecutive_errors = 0;
-                                            }
-                                            Ok(false) => {
-                                                tracing::warn!(
-                                                    action = "recent_memory.heartbeat.lost",
-                                                    tenant_id = %heartbeat_tenant,
-                                                    job_id = %heartbeat_job,
-                                                    "Recent Memory job lease was superseded or released"
-                                                );
-                                                break;
-                                            }
-                                            Err(error) => {
-                                                consecutive_errors += 1;
-                                                tracing::warn!(
-                                                    action = "recent_memory.heartbeat.retryable_error",
-                                                    tenant_id = %heartbeat_tenant,
-                                                    job_id = %heartbeat_job,
-                                                    consecutive_errors,
-                                                    error = %error,
-                                                    "Recent Memory heartbeat update failed due to db lock or error; will retry"
-                                                );
-                                                if consecutive_errors >= 5 {
-                                                    tracing::error!(
-                                                        action = "recent_memory.heartbeat.exceeded_retries",
-                                                        tenant_id = %heartbeat_tenant,
-                                                        job_id = %heartbeat_job,
-                                                        "Recent Memory heartbeat failed 5 consecutive times; aborting"
-                                                    );
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        })
-                    };
                     let result = service
                         .run_recent_snapshot_generation_job(
                             &job,
@@ -269,8 +208,6 @@ impl AppService {
                             Some(&mut task_progress),
                         )
                         .await;
-                    heartbeat_cancel.cancel();
-                    let _ = heartbeat_task.await;
                     match result {
                         Ok(snapshot) => {
                             let finished_at = Utc::now().to_rfc3339();

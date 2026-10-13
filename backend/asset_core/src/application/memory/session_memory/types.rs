@@ -89,87 +89,17 @@ use crate::backend::application::memory::memory_agent_session::{
     ActiveMemoryAgentSession, MemoryAgentSessionParams,
 };
 
-pub struct SessionMemoryLeaseGuard {
-    task: tokio::task::JoinHandle<()>,
-}
+pub struct SessionMemoryLeaseGuard;
 
 impl SessionMemoryLeaseGuard {
     pub fn start(
-        database: crate::backend::store::Database,
-        tenant_id: String,
-        job_id: String,
-        ownership_token: String,
-        task_cancellation: CancellationToken,
+        _database: crate::backend::store::Database,
+        _tenant_id: String,
+        _job_id: String,
+        _ownership_token: String,
+        _task_cancellation: CancellationToken,
     ) -> Self {
-        let task = tokio::spawn(async move {
-            let pool = database.pool().clone();
-            let mut interval = tokio::time::interval(StdDuration::from_secs(15));
-            let mut consecutive_errors = 0usize;
-            interval.tick().await;
-
-            loop {
-                tokio::select! {
-                    _ = task_cancellation.cancelled() => {
-                        break;
-                    }
-                    _ = interval.tick() => {
-                        if task_cancellation.is_cancelled() {
-                            break;
-                        }
-                        let now = Utc::now().to_rfc3339();
-                        match store::heartbeat_session_memory_job_sqlx(
-                            &pool,
-                            &tenant_id,
-                            &job_id,
-                            &ownership_token,
-                            &now,
-                            store::SESSION_MEMORY_JOB_LEASE,
-                        )
-                        .await {
-                            Ok(true) => {
-                                consecutive_errors = 0;
-                            }
-                            Ok(false) => {
-                                tracing::warn!(
-                                    action = "session_memory.heartbeat.lost",
-                                    tenant_id = %tenant_id,
-                                    job_id = %job_id,
-                                    "Session Memory job lease was superseded or released"
-                                );
-                                break;
-                            }
-                            Err(error) => {
-                                consecutive_errors += 1;
-                                tracing::warn!(
-                                    action = "session_memory.heartbeat.retryable_error",
-                                    tenant_id = %tenant_id,
-                                    job_id = %job_id,
-                                    consecutive_errors,
-                                    error = %error,
-                                    "Session Memory heartbeat update failed due to db lock or error; will retry"
-                                );
-                                if consecutive_errors >= 7 {
-                                    tracing::error!(
-                                        action = "session_memory.heartbeat.exceeded_retries",
-                                        tenant_id = %tenant_id,
-                                        job_id = %job_id,
-                                        "Session Memory heartbeat failed 7 consecutive times; aborting lease guard"
-                                    );
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        Self { task }
-    }
-}
-
-impl Drop for SessionMemoryLeaseGuard {
-    fn drop(&mut self) {
-        self.task.abort();
+        Self
     }
 }
 

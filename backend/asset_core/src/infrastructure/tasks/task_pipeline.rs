@@ -15,6 +15,10 @@ pub mod stages {
     pub const PREPARE: &str = "prepare";
     pub const PRUNE: &str = "prune";
     pub const VACUUM: &str = "vacuum";
+    pub const SESSION_FACTS: &str = "session_facts";
+    pub const RECENT_SNAPSHOT: &str = "recent_snapshot";
+    pub const GLOBAL_CONSOLIDATION: &str = "global_consolidation";
+    pub const MARKDOWN_PROJECTION: &str = "markdown_projection";
 }
 
 /// 开放任务分类。

@@ -76,6 +76,21 @@ impl AppService {
                 AppError::Validation("Memory task has no retryable domain".to_string())
             })?;
         let tenant_id = self.tenant_id().to_string();
+        if domain == "memory_pipeline" || params.task_id.starts_with("memory-pipeline:") {
+            let _ = self.runtime.task_runtime().remove_terminal(&params.task_id);
+            let _ = self
+                .start_memory_pipeline(super::memory_pipeline::MemoryPipelineParams::rebuild(
+                    MemoryRebuildTarget::All,
+                    None,
+                    Some(MemoryRebuildReason::Manual),
+                ))
+                .await?;
+            return self
+                .get_memory_task_view(MemoryTaskGetParams {
+                    task_id: params.task_id,
+                })?
+                .ok_or_else(|| AppError::NotFound("Retried Memory task was pruned".to_string()));
+        }
         let job_id = snapshot.detail.get("job_id").and_then(Value::as_str);
         let maintenance_job_id = snapshot
             .detail
