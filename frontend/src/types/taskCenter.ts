@@ -253,8 +253,11 @@ export function normalizeTaskView(raw: unknown): TaskView {
     string | null;
   const finishedAt = (data.finishedAt ?? data.finished_at ?? null) as
     string | null;
-  const errorSummary = (data.errorSummary ?? data.error_summary ?? null) as
-    string | null;
+  const rawError = data.error as { message?: string } | undefined;
+  const errorSummary = (data.errorSummary ??
+    data.error_summary ??
+    rawError?.message ??
+    null) as string | null;
   const resultSummary = (data.resultSummary ?? data.result_summary ?? null) as
     string | null;
   const taskSessionRef =

@@ -576,4 +576,127 @@ describe("TaskCenterModal", () => {
     expect(document.querySelector("#task-center-left-panel")).toBeTruthy();
     expect(document.querySelector("#task-center-right-panel")).toBeTruthy();
   });
+
+  it("当 Stage 包含 failures 异常时内联渲染阶段报错面板、错误码与路径", async () => {
+    mockTasks = [
+      {
+        id: "task-failed-stage",
+        kind: "MemoryExtraction",
+        title: "全局记忆提取任务",
+        state: "failed",
+        outcome: "failure",
+        stages: [
+          {
+            id: "session_facts",
+            name: "提取会话事实",
+            status: "failed",
+            durationMs: 3200,
+            progress: { current: 0, total: 10, note: "处理中遇不可恢复错误" },
+            failures: [
+              {
+                code: "agent_not_found",
+                message: "未找到配置的 Agent [codebuddy]，无法派发提取任务",
+                stage: "session_facts",
+                identity: "session-123",
+                path: "/path/to/session-123.json",
+                retryable: false,
+                timestamp: "2026-10-14T10:00:00.000Z",
+              },
+            ],
+            steps: [
+              {
+                timestamp: "2026-10-14T10:00:00.000Z",
+                operation: "提取失败",
+                detail: "Agent 缺失错误导致中断",
+              },
+            ],
+            metrics: [],
+          },
+        ],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: false, retryable: true, clearable: true },
+        revision: 1,
+      } as unknown as TaskView,
+    ];
+
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("阶段异常报错 (1)")).toBeTruthy();
+      expect(screen.getByText("agent_not_found")).toBeTruthy();
+      expect(screen.getByText("致命异常")).toBeTruthy();
+      expect(
+        screen.getByText("未找到配置的 Agent [codebuddy]，无法派发提取任务"),
+      ).toBeTruthy();
+      expect(screen.getByText("/path/to/session-123.json")).toBeTruthy();
+    });
+  });
+
+  it("当任务失败时隐藏绿色执行结果并常驻渲染进度条，无步骤阶段展示友好空态提示", async () => {
+    mockTasks = [
+      {
+        id: "task-memory-failed",
+        kind: "Memory",
+        title: "Memory 知识流水线",
+        state: "failed",
+        outcome: "failure",
+        errorSummary: "近期记忆快照生成失败: 重试达到上限",
+        resultSummary: "Memory 流水线执行完毕 (会话成功: 0, 失败: 0, 快照已更新: false)",
+        stages: [
+          {
+            id: "session_facts",
+            name: "提取会话事实",
+            status: "succeeded",
+            steps: [],
+            metrics: [],
+            failures: [],
+          },
+          {
+            id: "recent_snapshot",
+            name: "近期记忆快照",
+            status: "failed",
+            steps: [],
+            metrics: [],
+            failures: [],
+          },
+        ],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: false, retryable: true, clearable: true },
+        revision: 1,
+      } as unknown as TaskView,
+    ];
+
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      // 绿色的执行结果应当被屏蔽，展示红色的异常信息
+      expect(screen.queryByText("执行结果")).toBeNull();
+      expect(
+        screen.getAllByText("近期记忆快照生成失败: 重试达到上限").length,
+      ).toBeGreaterThanOrEqual(1);
+
+      // 执行进度条常驻展示 (1/2 完成 = 50%)
+      expect(screen.getByText("执行进度")).toBeTruthy();
+      expect(screen.getByText("50%")).toBeTruthy();
+
+      // 阶段失败时若没有具体 failures 数组项，展示阶段失败并中断提示
+      expect(screen.getByText("该阶段执行失败并中断")).toBeTruthy();
+
+      // 无步骤记录时展示空态提示
+      const emptyStepHints = screen.getAllByText("暂无子节点明细步骤记录");
+      expect(emptyStepHints.length).toBeGreaterThanOrEqual(1);
+    });
+  });
 });
+
+

@@ -1,5 +1,5 @@
 /* @vitest-environment jsdom */
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { MarkdownContent } from "./ConversationMarkdown";
@@ -142,4 +142,34 @@ describe("ConversationMarkdown", () => {
     const emptyHtml = renderToStaticMarkup(<MarkdownContent value="" />);
     expect(emptyHtml).toBeDefined();
   });
+
+  it("renders invalid mermaid gracefully without polluting document.body", async () => {
+    const legacyDangling = document.createElement("div");
+    legacyDangling.id = "dconversation-mermaid-legacy-dirty";
+    legacyDangling.textContent = "Syntax error in text";
+    document.body.appendChild(legacyDangling);
+
+    const { container } = render(
+      <MarkdownContent
+        value={[
+          "```mermaid",
+          "flowchart TD",
+          "  A --> |syntax error [broken",
+          "```",
+        ].join("\n")}
+      />,
+    );
+
+    await waitFor(() => {
+      const diagramEl = container.querySelector('[data-mermaid-diagram="true"]');
+      expect(diagramEl).not.toBeNull();
+      expect(diagramEl?.tagName.toLowerCase()).toBe("pre");
+      expect(diagramEl?.textContent).toContain("syntax error");
+
+      expect(document.body.textContent).not.toContain("Syntax error in text");
+      expect(document.getElementById("dconversation-mermaid-legacy-dirty")).toBeNull();
+      expect(document.querySelectorAll('[id^="dconversation-mermaid-"]')).toHaveLength(0);
+    });
+  });
 });
+

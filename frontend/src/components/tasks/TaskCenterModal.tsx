@@ -601,7 +601,7 @@ function TaskCenterModalContent({
                           </div>
                         ) : null}
 
-                        {resultSummary ? (
+                        {resultSummary && selectedTask.state !== "failed" ? (
                           <div className="rounded-xl border border-status-create/30 bg-status-create/10 p-3 text-body-sm text-status-create">
                             <div className="flex items-center gap-2 font-medium">
                               <Check className="size-4" />
@@ -645,8 +645,7 @@ function TaskCenterModalContent({
                                 )
                               : selectedTask.state === "succeeded"
                                 ? 100
-                                : null;
-                          if (percent === null) return null;
+                                : 0;
                           return (
                             <div className="flex flex-col gap-1.5 pt-2 border-t border-theme-control-border/40">
                               <div className="flex items-center justify-between text-caption font-medium text-on-surface-variant">
@@ -659,7 +658,9 @@ function TaskCenterModalContent({
                                     "h-full rounded-full transition-all duration-500",
                                     selectedTask.state === "succeeded"
                                       ? "bg-status-create"
-                                      : "bg-primary",
+                                      : selectedTask.state === "failed"
+                                        ? "bg-status-conflict"
+                                        : "bg-primary",
                                   )}
                                   style={{ width: `${percent}%` }}
                                 />
@@ -694,6 +695,7 @@ function TaskCenterModalContent({
                                   setViewingSessionRef(ref)
                                 }
                                 stage={stage}
+                                taskErrorSummary={errorSummary}
                               />
                             ))}
                           </div>
@@ -764,17 +766,21 @@ function StageCard({
   index,
   isLast,
   onViewSession,
+  taskErrorSummary,
 }: {
   stage: TaskStageView;
   index: number;
   isLast: boolean;
   onViewSession?: (sessionRef: AgentSessionRef) => void;
+  taskErrorSummary?: string | null;
 }) {
-  const [expanded, setExpanded] = useState<boolean>(stage.status === "running");
+  const [expanded, setExpanded] = useState<boolean>(
+    stage.status === "running" || stage.status === "failed",
+  );
   const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
-    if (stage.status === "running") {
+    if (stage.status === "running" || stage.status === "failed") {
       setExpanded(true);
     }
   }, [stage.status]);
@@ -793,10 +799,9 @@ function StageCard({
   const currentActivities =
     stage.currentActivities ?? stage.current_activities ?? [];
   const steps = stage.steps ?? [];
+  const failures = stage.failures ?? [];
   const metrics = stage.metrics ?? [];
   const sessionRef = stage.agentSessionRef ?? stage.agent_session_ref;
-
-  const hasDetails = steps.length > 0 || currentActivities.length > 0;
 
   return (
     <div className="relative flex items-start gap-3.5">
@@ -853,6 +858,8 @@ function StageCard({
           "flex flex-1 flex-col gap-2 rounded-2xl border border-theme-control-border bg-surface-elevated/40 p-4 transition-all mb-4",
           stage.status === "running" &&
             "border-primary/40 bg-surface-elevated/70 shadow-sm shadow-primary/5",
+          stage.status === "failed" &&
+            "border-status-conflict/40 bg-surface-elevated/70 shadow-sm shadow-status-conflict/5",
           stage.status === "skipped" && "opacity-60 bg-surface-elevated/20",
         )}
       >
@@ -911,42 +918,152 @@ function StageCard({
           </div>
         ) : null}
 
-        {/* 活跃 Workers (运行中常驻显示，不闪烁) */}
+        {/* 阶段内联异常警示面板 (完整展现失败原因、错误码与路径) */}
+        {failures.length > 0 ? (
+          <div className="flex flex-col gap-2 rounded-xl border border-status-conflict/40 bg-status-conflict/10 p-3 text-body-sm">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 font-medium">
+                <AlertCircle className="size-4 shrink-0 text-status-conflict" />
+                <span className="font-semibold text-status-conflict">
+                  阶段异常报错 ({failures.length})
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2">
+              {failures.map((fail, fIdx) => (
+                <div
+                  className="flex flex-col gap-1.5 rounded-xl border border-status-conflict/20 bg-surface-base/80 p-2.5 text-on-surface"
+                  key={fIdx}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="rounded-full bg-status-conflict/20 px-2 py-0.5 font-mono text-code-xs font-semibold text-status-conflict">
+                        {fail.code}
+                      </span>
+                      <span
+                        className={clsx(
+                          "rounded-full px-2 py-0.5 text-code-xs font-mono font-medium",
+                          fail.retryable
+                            ? "bg-status-warning/20 text-status-warning"
+                            : "bg-status-conflict/15 text-status-conflict",
+                        )}
+                      >
+                        {fail.retryable ? "可重试" : "致命异常"}
+                      </span>
+                    </div>
+                    {fail.timestamp ? (
+                      <span className="font-mono text-code-xs text-on-surface-muted">
+                        {new Date(fail.timestamp).toLocaleTimeString()}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <p className="font-mono text-body-sm text-on-surface-variant break-all leading-relaxed whitespace-pre-wrap">
+                    {fail.message}
+                  </p>
+
+                  {fail.path || fail.identity ? (
+                    <div className="flex items-center justify-between gap-2 rounded-lg bg-theme-control/20 px-2 py-1 font-mono text-code-xs text-on-surface-muted">
+                      <span
+                        className="truncate max-w-[420px]"
+                        title={fail.path ?? fail.identity ?? ""}
+                      >
+                        {fail.path ?? fail.identity}
+                      </span>
+                      <button
+                        className="shrink-0 p-1 hover:text-on-surface transition-colors"
+                        onClick={() =>
+                          copyPath(fail.path ?? fail.identity ?? "")
+                        }
+                        title="复制路径/标识"
+                        type="button"
+                      >
+                        {copied === (fail.path ?? fail.identity) ? (
+                          <Check className="size-3 text-status-create" />
+                        ) : (
+                          <Copy className="size-3" />
+                        )}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : stage.status === "failed" ? (
+          <div className="flex flex-col gap-1.5 rounded-xl border border-status-conflict/30 bg-status-conflict/10 p-2.5 text-body-sm text-status-conflict">
+            <div className="flex items-center gap-2 font-medium">
+              <AlertCircle className="size-4 shrink-0 text-status-conflict" />
+              <span>该阶段执行失败并中断</span>
+            </div>
+            {taskErrorSummary ? (
+              <p className="font-mono text-caption text-on-surface-variant break-all leading-relaxed whitespace-pre-wrap pl-6">
+                {taskErrorSummary}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* 活跃 Workers (DAG 子节点卡片网格，实时更新且不闪烁) */}
         {currentActivities.length > 0 ? (
-          <div className="flex flex-col gap-1.5 pt-1">
-            <span className="text-caption font-medium text-primary flex items-center gap-1.5">
-              <Activity className="size-3 animate-pulse" />
-              活跃 Workers ({currentActivities.length})
-            </span>
-            <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-2 pt-1">
+            <div className="flex items-center justify-between">
+              <span className="text-caption font-medium text-primary flex items-center gap-1.5">
+                <Activity className="size-3.5 animate-pulse" />
+                活跃 Workers ({currentActivities.length})
+              </span>
+              <span className="font-mono text-code-xs text-on-surface-variant">
+                DAG 工作流活跃节点
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {currentActivities.map((act, actIdx) => {
                 const workerId =
                   act.workerId ?? act.worker_id ?? `worker-${actIdx}`;
+                const path =
+                  act.path ?? act.displayPath ?? act.display_path ?? null;
                 return (
                   <div
-                    className="flex items-center justify-between gap-2 rounded-lg bg-surface-base/60 border border-theme-control-border/40 px-2.5 py-1 text-caption"
+                    className="flex flex-col gap-1.5 rounded-xl border border-primary/25 bg-surface-base/80 p-2.5 text-caption shadow-xs hover:border-primary/40 transition-colors"
                     key={workerId}
                   >
-                    <div className="flex items-center gap-2 overflow-hidden">
-                      <span className="font-mono font-medium text-on-surface">
-                        [{workerId}]
-                      </span>
-                      <span className="text-on-surface-variant font-medium">
-                        {act.operation}
-                      </span>
-                      {act.path ? (
-                        <span
-                          className="font-mono text-on-surface-muted truncate max-w-[260px]"
-                          title={act.path}
-                        >
-                          {act.path}
+                    <div className="flex items-center justify-between gap-1.5">
+                      <div className="flex items-center gap-1.5 overflow-hidden">
+                        <span className="relative flex size-2 shrink-0">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+                          <span className="relative inline-flex size-2 rounded-full bg-primary" />
+                        </span>
+                        <span className="font-mono text-code-xs font-semibold text-primary truncate">
+                          [{workerId}]
+                        </span>
+                      </div>
+                      {act.current != null && act.total != null ? (
+                        <span className="shrink-0 font-mono text-code-xs text-on-surface-variant">
+                          {act.current} / {act.total}
                         </span>
                       ) : null}
                     </div>
-                    {act.current != null && act.total != null ? (
-                      <span className="shrink-0 font-mono text-outline">
-                        {act.current} / {act.total}
-                      </span>
+                    <div className="text-body-xs font-medium text-on-surface truncate">
+                      {act.operation}
+                    </div>
+                    {path ? (
+                      <div className="flex items-center justify-between gap-1 rounded-lg bg-theme-control/25 px-1.5 py-0.5 font-mono text-code-xs text-on-surface-variant overflow-hidden">
+                        <span className="truncate" title={path}>
+                          {path}
+                        </span>
+                        <button
+                          className="shrink-0 p-0.5 hover:text-on-surface transition-colors"
+                          onClick={() => copyPath(path)}
+                          title="复制路径"
+                          type="button"
+                        >
+                          {copied === path ? (
+                            <Check className="size-2.5 text-status-create" />
+                          ) : (
+                            <Copy className="size-2.5 text-on-surface-muted" />
+                          )}
+                        </button>
+                      </div>
                     ) : null}
                   </div>
                 );
@@ -972,35 +1089,53 @@ function StageCard({
               <span>
                 {expanded
                   ? "收起流程明细"
-                  : `查看详细流程 (${steps.length} 步)`}
+                  : `查看详细流程 (${steps.length} 个子节点步骤)`}
               </span>
             </button>
 
             {expanded ? (
               <div className="flex flex-col gap-1.5 rounded-xl border border-theme-control-border/60 bg-surface-base/60 p-2.5">
                 <span className="text-code-xs text-on-surface-variant font-medium px-1">
-                  历史执行流程记录 ({steps.length})
+                  执行步骤序列 ({steps.length})
                 </span>
-                <div className="max-h-60 overflow-y-auto pr-1 flex flex-col gap-1">
+                <div className="max-h-64 overflow-y-auto pr-1 flex flex-col gap-1.5">
                   {steps.map((step, sIdx) => {
                     const timeStr = step.timestamp
                       ? new Date(step.timestamp).toLocaleTimeString()
                       : "";
+                    const isFailureStep =
+                      step.operation.includes("失败") ||
+                      step.operation.toLowerCase().includes("failed") ||
+                      (step.detail &&
+                        (step.detail.includes("失败") ||
+                          step.detail.toLowerCase().includes("error")));
                     return (
                       <div
-                        className="flex items-start justify-between gap-2 rounded-lg bg-theme-control/10 px-2.5 py-1 text-caption hover:bg-theme-control/20 transition-colors"
+                        className={clsx(
+                          "flex items-start justify-between gap-2 rounded-xl border px-2.5 py-1.5 text-caption transition-colors",
+                          isFailureStep
+                            ? "border-status-conflict/30 bg-status-conflict/10 text-status-conflict"
+                            : "border-theme-control-border/30 bg-theme-control/10 text-on-surface hover:bg-theme-control/20",
+                        )}
                         key={sIdx}
                       >
-                        <div className="flex items-start gap-2 overflow-hidden">
+                        <div className="flex items-start gap-2 overflow-hidden flex-1">
                           <span className="shrink-0 text-code-xs text-on-surface-muted font-mono pt-0.5">
                             {timeStr || `#${sIdx + 1}`}
                           </span>
-                          <span className="shrink-0 font-mono text-primary font-medium">
-                            [{step.operation}]
+                          <span
+                            className={clsx(
+                              "shrink-0 font-mono text-code-xs rounded-full px-2 py-0.5 font-medium",
+                              isFailureStep
+                                ? "bg-status-conflict/20 text-status-conflict"
+                                : "bg-primary/10 text-primary",
+                            )}
+                          >
+                            {step.operation}
                           </span>
                           {step.detail ? (
                             <span
-                              className="font-mono text-on-surface-variant break-all"
+                              className="font-mono text-code-xs text-on-surface-variant break-all pt-0.5"
                               title={step.detail}
                             >
                               {step.detail}
@@ -1008,7 +1143,7 @@ function StageCard({
                           ) : null}
                         </div>
                         {step.current != null && step.total != null ? (
-                          <span className="shrink-0 font-mono text-outline text-code-xs pt-0.5">
+                          <span className="shrink-0 font-mono text-on-surface-variant text-code-xs pt-0.5">
                             {step.current}/{step.total}
                           </span>
                         ) : null}
@@ -1018,6 +1153,15 @@ function StageCard({
                 </div>
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {/* 当无子步骤且阶段处于活动/终态时的友好提示 */}
+        {steps.length === 0 &&
+        stage.status !== "pending" &&
+        stage.status !== "skipped" ? (
+          <div className="flex items-center gap-1.5 pt-1 text-code-xs text-on-surface-muted italic">
+            <span>暂无子节点明细步骤记录</span>
           </div>
         ) : null}
 

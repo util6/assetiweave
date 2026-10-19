@@ -67,6 +67,7 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
   const { settings } = useAppSettings();
 
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const lastSelectedIdRef = useRef<string | null>(null);
   const [notificationQueue, setNotificationQueue] = useState<
     TaskNotificationItem[]
   >([]);
@@ -76,7 +77,7 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
 
   const query = useQuery<TaskView[]>({
     queryKey,
-    queryFn: () => listPublicTasks(),
+    queryFn: () => listPublicTasks({ tenant_id: activeScope.tenantId }),
     refetchInterval: (q) => {
       const data = q.state.data;
       const hasActive = data?.some((t) => isActiveState(t.state));
@@ -87,16 +88,18 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
 
   const rawTasks = query.data ?? [];
 
-  // Sort tasks: active tasks first, then by started_at descending
+  // Sort tasks: active tasks first, then by started_at descending, tie-break by id
   const tasks = useMemo(() => {
     return [...rawTasks].sort((a, b) => {
       const aActive = isActiveState(a.state);
       const bActive = isActiveState(b.state);
       if (aActive && !bActive) return -1;
       if (!aActive && bActive) return 1;
-      const aTime = a.started_at ?? a.updated_at ?? "";
-      const bTime = b.started_at ?? b.updated_at ?? "";
-      return bTime.localeCompare(aTime);
+      const aTime = a.started_at || a.updated_at || "";
+      const bTime = b.started_at || b.updated_at || "";
+      const timeCmp = bTime.localeCompare(aTime);
+      if (timeCmp !== 0) return timeCmp;
+      return a.id.localeCompare(b.id);
     });
   }, [rawTasks]);
 
@@ -121,14 +124,25 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
     ).length;
   }, [terminalTasks]);
 
-  // Keep selected task valid
+  // Keep selected task stable across updates
   const selectedTask = useMemo(() => {
     if (selectedTaskId) {
       const found = tasks.find((t) => t.id === selectedTaskId);
       if (found) return found;
     }
-    return tasks[0] ?? null;
+    if (lastSelectedIdRef.current) {
+      const found = tasks.find((t) => t.id === lastSelectedIdRef.current);
+      if (found) return found;
+    }
+    const fallback = tasks[0] ?? null;
+    lastSelectedIdRef.current = fallback?.id ?? null;
+    return fallback;
   }, [tasks, selectedTaskId]);
+
+  const handleSetSelectedTaskId = useCallback((id: string | null) => {
+    lastSelectedIdRef.current = id;
+    setSelectedTaskId(id);
+  }, []);
 
   const enqueueNotification = useCallback(
     (task: TaskView) => {
@@ -196,6 +210,15 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
   // Handle task snapshot updates
   const handleTaskSnapshot = useCallback(
     (snapshot: TaskView) => {
+      // Ignore task snapshots targeting other tenants
+      if (
+        snapshot.tenant_id &&
+        activeScope.tenantId &&
+        snapshot.tenant_id !== activeScope.tenantId
+      ) {
+        return;
+      }
+
       const prev = prevTasksRef.current.get(snapshot.id);
       const wasActive = prev ? isActiveState(prev.state) : false;
       const nowTerminal = isTerminalState(snapshot.state);
@@ -223,7 +246,7 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
         return [snapshot, ...existing];
       });
     },
-    [enqueueNotification, queryClient, queryKey],
+    [activeScope.tenantId, enqueueNotification, queryClient, queryKey],
   );
 
   // Subscribe to Tauri events
@@ -303,7 +326,7 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
       activeCount,
       failureCount,
       selectedTaskId,
-      setSelectedTaskId,
+      setSelectedTaskId: handleSetSelectedTaskId,
       selectedTask,
       cancelTask,
       retryTask,
@@ -319,6 +342,7 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
       activeCount,
       failureCount,
       selectedTaskId,
+      handleSetSelectedTaskId,
       selectedTask,
       cancelTask,
       retryTask,

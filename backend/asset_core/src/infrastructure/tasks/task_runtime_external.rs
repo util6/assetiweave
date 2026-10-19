@@ -419,6 +419,9 @@ impl TaskRuntime {
                 if entry.snapshot.outcome.is_none() {
                     entry.snapshot.outcome = Some(TaskOutcome::Failure);
                 }
+                if entry.snapshot.error_summary.is_none() {
+                    entry.snapshot.error_summary = Some(error.message.clone());
+                }
                 entry.snapshot.error = Some(error);
             }
         }

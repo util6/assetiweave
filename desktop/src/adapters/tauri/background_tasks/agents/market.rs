@@ -191,6 +191,27 @@ impl BackgroundTaskRegistry {
         downloaded_bytes: Option<u64>,
         warnings: Vec<String>,
     ) -> AppResult<AgentLifecycleTaskSnapshot> {
+        self.update_agent_lifecycle_with_progress(
+            task_id,
+            phase,
+            completed_units,
+            None,
+            downloaded_bytes,
+            None,
+            warnings,
+        )
+    }
+
+    pub(crate) fn update_agent_lifecycle_with_progress(
+        &self,
+        task_id: &str,
+        phase: LifecycleTaskPhase,
+        completed_units: u64,
+        total_units: Option<u64>,
+        downloaded_bytes: Option<u64>,
+        total_bytes: Option<u64>,
+        warnings: Vec<String>,
+    ) -> AppResult<AgentLifecycleTaskSnapshot> {
         let runtime = self.external_task_snapshot(task_id)?;
         if runtime.state == TaskState::Pending {
             self.task_runtime
@@ -202,7 +223,15 @@ impl BackgroundTaskRegistry {
             snapshot.state = LifecycleTaskState::Running;
             snapshot.phase = phase;
             snapshot.progress.completed_units = completed_units;
-            snapshot.progress.downloaded_bytes = downloaded_bytes;
+            if let Some(tu) = total_units {
+                snapshot.progress.total_units = Some(tu);
+            }
+            if downloaded_bytes.is_some() {
+                snapshot.progress.downloaded_bytes = downloaded_bytes;
+            }
+            if total_bytes.is_some() {
+                snapshot.progress.total_bytes = total_bytes;
+            }
             snapshot.warnings = warnings;
             snapshot.updated_at = Utc::now().to_rfc3339();
         }

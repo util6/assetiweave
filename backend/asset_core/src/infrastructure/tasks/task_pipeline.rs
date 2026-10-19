@@ -19,6 +19,10 @@ pub mod stages {
     pub const RECENT_SNAPSHOT: &str = "recent_snapshot";
     pub const GLOBAL_CONSOLIDATION: &str = "global_consolidation";
     pub const MARKDOWN_PROJECTION: &str = "markdown_projection";
+    pub const AGENT_DOWNLOAD: &str = "download";
+    pub const AGENT_INSTALL: &str = "install";
+    pub const AGENT_VERIFY: &str = "verify";
+    pub const AGENT_CLEANUP: &str = "cleanup";
 }
 
 /// 开放任务分类。

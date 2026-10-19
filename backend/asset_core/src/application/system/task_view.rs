@@ -266,7 +266,10 @@ impl TaskView {
             stages,
             metrics,
             failures,
-            error_summary: snapshot.error_summary.clone(),
+            error_summary: snapshot
+                .error_summary
+                .clone()
+                .or_else(|| snapshot.error.as_ref().map(|e| e.message.clone())),
             result_summary: snapshot.result_summary.clone(),
             capabilities: TaskCapabilitiesView {
                 cancellable: snapshot.capabilities.cancellable && snapshot.state.is_active(),

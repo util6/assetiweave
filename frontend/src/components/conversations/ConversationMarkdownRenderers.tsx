@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ConversationDiff } from "./ConversationDiff";
 import { isDiffLanguage } from "./conversationDiffLanguage";
 
@@ -59,17 +59,53 @@ export function extractTextContent(node: any): string {
   return "";
 }
 
+function cleanupMermaidDomElements(prefixId: string) {
+  if (typeof document === "undefined") return;
+  document.getElementById(prefixId)?.remove();
+  document.getElementById(`d${prefixId}`)?.remove();
+
+  // Self-heal and clean up any dangling error elements or temp containers
+  const danglingElements = document.querySelectorAll(
+    `body > div[id^="d${prefixId}"], body > div[id^="${prefixId}"], body > svg[id^="${prefixId}"], body > [id^="dconversation-mermaid-"]`,
+  );
+  danglingElements.forEach((el) => el.remove());
+}
+
 export function MermaidDiagram({ value }: { value: string }) {
   const reactId = useId();
-  const diagramId = useMemo(
+  const idPrefix = useMemo(
     () => `conversation-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`,
     [reactId],
   );
+  const renderSeqRef = useRef(0);
   const [svg, setSvg] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    const currentSeq = ++renderSeqRef.current;
+    const currentId = `${idPrefix}-${currentSeq}`;
+
     async function renderDiagram() {
+      if (!value.trim()) {
+        if (!cancelled) setSvg(null);
+        return;
+      }
+
+      let sandboxContainer: HTMLDivElement | null = null;
+      if (typeof document !== "undefined") {
+        sandboxContainer = document.createElement("div");
+        sandboxContainer.setAttribute("aria-hidden", "true");
+        sandboxContainer.style.position = "absolute";
+        sandboxContainer.style.left = "-9999px";
+        sandboxContainer.style.top = "-9999px";
+        sandboxContainer.style.width = "1px";
+        sandboxContainer.style.height = "1px";
+        sandboxContainer.style.overflow = "hidden";
+        sandboxContainer.style.opacity = "0";
+        sandboxContainer.style.pointerEvents = "none";
+        document.body.appendChild(sandboxContainer);
+      }
+
       try {
         const mermaid = (await import("mermaid")).default;
         mermaid.initialize({
@@ -77,8 +113,18 @@ export function MermaidDiagram({ value }: { value: string }) {
           securityLevel: "strict",
           startOnLoad: false,
           theme: "base",
+          suppressErrorRendering: true,
         });
-        const rendered = await mermaid.render(diagramId, value);
+
+        if (typeof mermaid.setParseErrorHandler === "function") {
+          mermaid.setParseErrorHandler(() => {});
+        }
+
+        const rendered = await mermaid.render(
+          currentId,
+          value,
+          sandboxContainer ?? undefined,
+        );
         if (!cancelled) {
           setSvg(rendered.svg);
         }
@@ -86,14 +132,22 @@ export function MermaidDiagram({ value }: { value: string }) {
         if (!cancelled) {
           setSvg(null);
         }
+      } finally {
+        if (sandboxContainer) {
+          sandboxContainer.remove();
+        }
+        cleanupMermaidDomElements(currentId);
+        cleanupMermaidDomElements(idPrefix);
       }
     }
 
     void renderDiagram();
     return () => {
       cancelled = true;
+      cleanupMermaidDomElements(currentId);
+      cleanupMermaidDomElements(idPrefix);
     };
-  }, [diagramId, value]);
+  }, [idPrefix, value]);
 
   if (svg) {
     return (
