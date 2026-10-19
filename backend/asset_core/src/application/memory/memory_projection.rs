@@ -45,6 +45,8 @@ pub fn memory_projection_dir(base_dir: Option<&Path>, tenant_id: &str) -> PathBu
         base.join(".assetiweave")
             .join("memories")
             .join(safe_segment)
+    } else if let Ok(home) = crate::backend::infrastructure::path_utils::app_home_dir() {
+        home.join("memories").join(safe_segment)
     } else if let Some(home) = dirs::home_dir() {
         home.join(".assetiweave")
             .join("memories")

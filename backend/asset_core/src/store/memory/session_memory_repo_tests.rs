@@ -403,7 +403,8 @@ async fn durable_job_lease_recovery_retry_and_cancellation_are_token_bound() {
     .await
     .expect("claim retry owner")
     .expect("retry owner claim");
-    assert_eq!(third.retry_count, 2);
+    assert_eq!(third.retry_count, 1);
+    assert_eq!(third.attempt_count, 3);
     assert!(cancel_session_memory_job_sqlx(
         database.pool(),
         "default",

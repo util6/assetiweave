@@ -192,7 +192,10 @@ impl AppService {
                 .first()
                 .and_then(|c| c.project_path.clone());
 
-            let project_title = if project.project_key == "unassigned" {
+            let project_title = if project.project_key == "unassigned"
+                || project.project_key
+                    == crate::backend::infrastructure::project_path::UNASSIGNED_PROJECT_KEY
+            {
                 "未归属会话".to_string()
             } else {
                 project_path
@@ -387,20 +390,22 @@ impl AppService {
                 .await
                 .map_err(AppError::external)?;
 
-                // Insert source references (去重插入)
-                let mut seen_refs = HashSet::new();
+                // Insert source references (去重插入: 必须按真实底层 reference_key 去重，严禁仅按表面别名去重)
+                let mut seen_reference_keys = HashSet::new();
                 for ref_key in &item.source_refs {
-                    if !seen_refs.insert(ref_key.as_str()) {
-                        continue;
-                    }
-                    if let Some(resolved) = ref_map.get(ref_key) {
+                    let trimmed = ref_key.trim();
+                    if let Some(resolved) = ref_map.get(trimmed) {
+                        if !seen_reference_keys.insert(&resolved.reference_key) {
+                            continue;
+                        }
                         let ref_id = format!("ref-{}", uuid::Uuid::new_v4());
                         sqlx::query(
                             "INSERT INTO memory_item_source_references (\
                                 tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
                                 question_id, turn_id, part_id, node_id, node_order, reference_key, \
                                 source_revision, availability, unavailable_reason, unavailable_at, created_at\
-                             ) VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, NULL, ?8, NULL, ?9, ?10, 'available', NULL, NULL, ?11)",
+                             ) VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, NULL, ?8, NULL, ?9, ?10, 'available', NULL, NULL, ?11) \
+                             ON CONFLICT (tenant_id, item_revision_id, reference_key) DO NOTHING",
                         )
                         .bind(tenant_id)
                         .bind(&ref_id)

@@ -162,11 +162,10 @@ impl AppService {
             let worker = guard.worker(&worker_id);
             worker.report("extract_session_memory", Some(0), None, None);
 
-            let (agent_id, model) =
-                crate::backend::application::agents::composition::resolve_agent_for(
-                    &crate::backend::domain::agents::ActionId::new(SESSION_MEMORY_ACTION),
-                    &self.app_settings_value(),
-                )
+            let (agent_id, model) = self
+                .resolve_available_agent_for(&crate::backend::domain::agents::ActionId::new(
+                    SESSION_MEMORY_ACTION,
+                ))
                 .map(|(id, m)| (id.to_string(), m))
                 .unwrap_or_else(|_| ("builtin:assistant".to_string(), None));
 

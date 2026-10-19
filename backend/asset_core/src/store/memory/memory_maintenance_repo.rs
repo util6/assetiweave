@@ -2,6 +2,7 @@ use crate::backend::store::{StoreError, StoreResult};
 use sqlx::{Row, SqlitePool};
 
 pub const MAX_MEMORY_MAINTENANCE_RETRIES: i64 = 5;
+pub const MAX_MEMORY_MAINTENANCE_INFRA_RETRIES: i64 = 10;
 pub const MEMORY_MAINTENANCE_LEASE_SECONDS: i64 = 300;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,19 +157,19 @@ pub async fn recover_expired_memory_maintenance_leases_sqlx(
     now: &str,
 ) -> StoreResult<()> {
     sqlx::query(
-        "UPDATE memory_maintenance_jobs SET
-            status = CASE WHEN retry_count + 1 >= ?1 THEN 'failed' ELSE 'queued' END,
-            ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
-            retry_count = retry_count + 1,
-            retry_at = CASE WHEN retry_count + 1 >= ?1 THEN NULL ELSE ?2 END,
-            last_error_code = 'LEASE_EXPIRED',
-            last_error_message = 'memory maintenance job lease expired',
-            finished_at = CASE WHEN retry_count + 1 >= ?1 THEN ?2 ELSE NULL END,
-            updated_at = ?2
-         WHERE tenant_id = ?3 AND status = 'running'
+        "UPDATE memory_maintenance_jobs SET \
+            status = CASE WHEN retry_count + 1 >= ?1 THEN 'failed' ELSE 'queued' END, \
+            ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, \
+            retry_count = CASE WHEN retry_count + 1 >= ?1 THEN retry_count + 1 ELSE retry_count END, \
+            retry_at = CASE WHEN retry_count + 1 >= ?1 THEN NULL ELSE ?2 END, \
+            last_error_code = 'LEASE_EXPIRED', \
+            last_error_message = 'memory maintenance job lease expired', \
+            finished_at = CASE WHEN retry_count + 1 >= ?1 THEN ?2 ELSE NULL END, \
+            updated_at = ?2 \
+         WHERE tenant_id = ?3 AND status = 'running' \
            AND (lease_expires_at IS NULL OR lease_expires_at <= ?2)",
     )
-    .bind(MAX_MEMORY_MAINTENANCE_RETRIES)
+    .bind(MAX_MEMORY_MAINTENANCE_INFRA_RETRIES)
     .bind(now)
     .bind(tenant_id)
     .execute(pool)

@@ -95,12 +95,9 @@ impl AppService {
         cancellation: CancellationToken,
         progress: Option<Arc<dyn AiExecutionProgressSink>>,
     ) -> AppResult<GlobalMemoryAgentOutputWithRaw> {
-        let settings = self.app_settings_value();
-        let (agent_id, model) =
-            crate::backend::application::agents::composition::resolve_agent_for(
-                &crate::backend::domain::agents::ActionId::new(GLOBAL_MEMORY_ACTION),
-                &settings,
-            )?;
+        let (agent_id, model) = self.resolve_available_agent_for(
+            &crate::backend::domain::agents::ActionId::new(GLOBAL_MEMORY_ACTION),
+        )?;
         let projects = inputs
             .projects
             .iter()

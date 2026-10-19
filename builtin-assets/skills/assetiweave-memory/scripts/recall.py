@@ -64,11 +64,14 @@ def cli_path() -> str:
         raise RecallError(
             "ASSETIWEAVE_ENV is set to development, but workspace CLI was not found in target/debug/aiwc. Please run: pnpm cli:build"
         )
-    return shutil.which("assetiweave-cli") or shutil.which("aiwc") or "assetiweave-cli"
+    return shutil.which("aiwc") or shutil.which("assetiweave-cli") or "aiwc"
 
 
 def call_cli(arguments: list[str]) -> dict[str, Any]:
-    command = [cli_path(), *arguments]
+    args = list(arguments)
+    if "--format" not in args:
+        args.extend(["--format", "json"])
+    command = [cli_path(), *args]
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
     except OSError as error:

@@ -1884,3 +1884,118 @@ async fn test_commit_recent_memory_snapshot_concurrent_heartbeat_no_517_lock() {
     let snapshot = snapshot_res.unwrap();
     assert_eq!(snapshot.projects.len(), 2);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_commit_recent_memory_snapshot_deduplicates_overlapping_references() {
+    let (service, _root) = setup_test_service().await;
+    seed_test_conversation_data(&service).await;
+    let pool = service.db.pool().clone();
+
+    let target_watermark: DateTime<Utc> = "2026-09-15T12:00:00Z".parse().unwrap();
+    let (candidates, ref_map) = service
+        .collect_recent_snapshot_candidates(target_watermark, 48)
+        .await
+        .expect("collect candidates");
+
+    let alpha_candidate = candidates
+        .iter()
+        .find(|c| c.project_key != "unassigned")
+        .unwrap();
+    let unassigned_candidate = candidates
+        .iter()
+        .find(|c| c.project_key == "unassigned")
+        .unwrap();
+
+    // 验证短 ID 已经为基于 session 的稳定短 ID
+    let expected_short_id =
+        crate::backend::application::memory::global_memory_context::session_short_id(
+            &alpha_candidate.session_id,
+        );
+    assert_eq!(alpha_candidate.short_ref, expected_short_id);
+
+    // 验证 ref_map 中同时包含短 ID、旧版 s1/s2 别名以及完整 session_id
+    assert!(ref_map.contains_key(&alpha_candidate.short_ref));
+    assert!(ref_map.contains_key("s1"));
+    assert!(ref_map.contains_key(&alpha_candidate.session_id));
+
+    // 构造测试数据：在同一个 item 中故意提供指向同一会话的多种不同别名 (短 ID + "s1" + 完整 session_id)
+    let overlapping_refs = vec![
+        alpha_candidate.short_ref.clone(),
+        "s1".to_string(),
+        alpha_candidate.session_id.clone(),
+    ];
+
+    let result = MemoryGenerationResult {
+        schema_version: 2,
+        projects: vec![
+            MemoryGenerationProject {
+                project_key: alpha_candidate.project_key.clone(),
+                summary: "Deduplication test summary".to_string(),
+                source_sessions: vec![alpha_candidate.short_ref.clone()],
+                items: vec![MemoryGenerationItem {
+                    title: "Item with Overlapping References".to_string(),
+                    category: MemoryItemCategory::Progress,
+                    status: MemoryItemStatus::Completed,
+                    summary: "Item summary with multiple aliases pointing to same session"
+                        .to_string(),
+                    rationale: "Testing entity-level deduplication and ON CONFLICT handling"
+                        .to_string(),
+                    occurred_at: "2026-09-15T10:00:00Z".to_string(),
+                    source_refs: overlapping_refs,
+                    recommendation_rank: Some(1),
+                    promotion_nomination: MemoryPromotionNomination::None,
+                    continues_item_id: None,
+                }],
+                no_material_change: false,
+            },
+            MemoryGenerationProject {
+                project_key: unassigned_candidate.project_key.clone(),
+                summary: "Unassigned summary".to_string(),
+                source_sessions: vec![unassigned_candidate.short_ref.clone()],
+                items: vec![],
+                no_material_change: true,
+            },
+        ],
+        coverage: MemoryGenerationCoverage {
+            covered_sessions: vec![
+                alpha_candidate.short_ref.clone(),
+                unassigned_candidate.short_ref.clone(),
+            ],
+            no_memory_sessions: vec![],
+            unreadable_sessions: vec![],
+            budget_exhausted: false,
+        },
+        unknowns: vec![],
+    };
+
+    // 提交流水线：必须成功，绝不可触发 (code: 2067) UNIQUE constraint failed
+    let snapshot_res = service
+        .execute_recent_memory_snapshot_pipeline(target_watermark, 48, result)
+        .await;
+
+    assert!(
+        snapshot_res.is_ok(),
+        "Snapshot commit failed with overlapping references: {:?}",
+        snapshot_res.err()
+    );
+
+    let snapshot = snapshot_res.unwrap();
+    assert_eq!(snapshot.projects.len(), 2);
+
+    // 查询数据库确认：该 item 对应的 memory_item_source_references 记录确实被去重为仅 1 条
+    let item_title = "Item with Overlapping References";
+    let ref_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM memory_item_source_references r \
+         JOIN memory_item_revisions mir ON r.item_revision_id = mir.id \
+         WHERE mir.title = ?1",
+    )
+    .bind(item_title)
+    .fetch_one(&pool)
+    .await
+    .expect("count source references");
+
+    assert_eq!(
+        ref_count, 1,
+        "Overlapping aliases pointing to the same underlying entity must be deduplicated to exactly 1 database row"
+    );
+}

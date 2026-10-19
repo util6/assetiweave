@@ -56,6 +56,10 @@ impl MemoryTurnProgressSink {
         }
     }
 
+    pub fn elapsed_since_active(&self) -> std::time::Duration {
+        self.projection.elapsed_since_active()
+    }
+
     pub fn emit_control(&self, suffix: &str, kind: SessionEventKind) {
         self.emit_session_event(SessionEvent {
             identity: SessionEventIdentity {
@@ -75,7 +79,9 @@ impl MemoryTurnProgressSink {
 }
 
 impl AiExecutionProgressSink for MemoryTurnProgressSink {
-    fn set_phase(&self, _phase: AiExecutionPhase) {}
+    fn set_phase(&self, _phase: AiExecutionPhase) {
+        self.projection.touch();
+    }
 
     fn emit_session_event(&self, mut event: SessionEvent) {
         let observed_sequence = event.sequence;
@@ -119,6 +125,7 @@ pub struct MemoryAgentSessionParams<'a> {
     pub persistent: bool,
 }
 
+#[derive(Clone)]
 pub struct ActiveMemoryAgentSession {
     pub session_ref: AgentSessionRef,
     pub sink: Arc<MemoryTurnProgressSink>,
@@ -227,5 +234,9 @@ impl ActiveMemoryAgentSession {
                 retryable,
             }),
         );
+    }
+
+    pub fn elapsed_since_active(&self) -> std::time::Duration {
+        self.projection.elapsed_since_active()
     }
 }

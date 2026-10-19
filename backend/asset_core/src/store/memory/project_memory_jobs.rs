@@ -7,6 +7,7 @@ use sqlx::{Sqlite, SqlitePool, Transaction};
 
 pub const PROJECT_MEMORY_JOB_LEASE: Duration = Duration::minutes(2);
 pub const MAX_PROJECT_MEMORY_JOB_RETRIES: i64 = 5;
+pub const MAX_PROJECT_MEMORY_INFRA_ATTEMPTS: i64 = 10;
 
 pub fn project_memory_job_id(tenant_id: &str, project_path: &str) -> String {
     format!(
@@ -236,11 +237,18 @@ pub async fn recover_expired_project_memory_leases_sqlx(
     now: &str,
 ) -> StoreResult<u64> {
     let result = sqlx::query(
-        "UPDATE project_memory_jobs SET status = CASE WHEN retry_count + 1 >= ?3 THEN 'failed' ELSE 'queued' END, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, retry_count = retry_count + 1, retry_at = CASE WHEN retry_count + 1 >= ?3 THEN NULL ELSE ?1 END, finished_at = CASE WHEN retry_count + 1 >= ?3 THEN ?1 ELSE NULL END, last_error = 'lease_expired', updated_at = ?1 WHERE tenant_id = ?2 AND status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?1)",
+        "UPDATE project_memory_jobs SET \
+            status = CASE WHEN attempt_count >= ?3 THEN 'failed' ELSE 'queued' END, \
+            ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, \
+            retry_at = CASE WHEN attempt_count >= ?3 THEN NULL ELSE ?1 END, \
+            finished_at = CASE WHEN attempt_count >= ?3 THEN ?1 ELSE NULL END, \
+            last_error = CASE WHEN attempt_count >= ?3 THEN 'lease_expired_limit_exceeded' ELSE 'lease_expired' END, \
+            updated_at = ?1 \
+         WHERE tenant_id = ?2 AND status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?1)",
     )
     .bind(now)
     .bind(tenant_id)
-    .bind(MAX_PROJECT_MEMORY_JOB_RETRIES)
+    .bind(MAX_PROJECT_MEMORY_INFRA_ATTEMPTS)
     .execute(pool)
     .await
     .map_err(StoreError::Db)?;

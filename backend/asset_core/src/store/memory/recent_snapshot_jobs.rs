@@ -40,10 +40,25 @@ pub async fn enqueue_recent_memory_job_sqlx(
     now: &str,
 ) -> StoreResult<String> {
     sqlx::query(
-        "INSERT OR IGNORE INTO recent_memory_jobs (\
+        "INSERT INTO recent_memory_jobs (\
             tenant_id, id, status, target_watermark_utc, window_hours, target_fingerprint, \
             content_fingerprint, work_order_json, created_at, updated_at\
-         ) VALUES (?1, ?2, 'queued', ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+         ) VALUES (?1, ?2, 'queued', ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
+         ON CONFLICT (tenant_id, target_watermark_utc, window_hours, target_fingerprint) \
+         DO UPDATE SET \
+            content_fingerprint = excluded.content_fingerprint, \
+            work_order_json = excluded.work_order_json, \
+            status = CASE WHEN recent_memory_jobs.status = 'running' THEN 'running' ELSE 'queued' END, \
+            ownership_token = CASE WHEN recent_memory_jobs.status = 'running' THEN recent_memory_jobs.ownership_token ELSE NULL END, \
+            lease_expires_at = CASE WHEN recent_memory_jobs.status = 'running' THEN recent_memory_jobs.lease_expires_at ELSE NULL END, \
+            heartbeat_at = CASE WHEN recent_memory_jobs.status = 'running' THEN recent_memory_jobs.heartbeat_at ELSE NULL END, \
+            retry_count = CASE WHEN recent_memory_jobs.status = 'running' THEN recent_memory_jobs.retry_count ELSE 0 END, \
+            retry_at = NULL, \
+            last_error_code = NULL, \
+            last_error_message = NULL, \
+            started_at = CASE WHEN recent_memory_jobs.status = 'running' THEN recent_memory_jobs.started_at ELSE NULL END, \
+            finished_at = NULL, \
+            updated_at = excluded.updated_at",
     )
     .bind(tenant_id)
     .bind(job_id)
@@ -59,14 +74,13 @@ pub async fn enqueue_recent_memory_job_sqlx(
 
     sqlx::query_scalar(
         "SELECT id FROM recent_memory_jobs WHERE tenant_id = ?1 AND target_watermark_utc = ?2 \
-         AND window_hours = ?3 AND target_fingerprint = ?4 AND content_fingerprint = ?5 \
+         AND window_hours = ?3 AND target_fingerprint = ?4 \
          ORDER BY created_at ASC, id ASC LIMIT 1",
     )
     .bind(tenant_id)
     .bind(target_watermark_utc)
     .bind(window_hours)
     .bind(target_fingerprint)
-    .bind(content_fingerprint)
     .fetch_one(pool)
     .await
     .map_err(StoreError::external)
@@ -130,6 +144,20 @@ pub async fn recover_expired_recent_memory_leases_sqlx(
          WHERE tenant_id = ?3 AND status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?2)",
     )
     .bind(MAX_RECENT_MEMORY_JOB_RETRIES)
+    .bind(now)
+    .bind(tenant_id)
+    .execute(pool)
+    .await
+    .map_err(StoreError::external)?;
+
+    sqlx::query(
+        "UPDATE recent_memory_jobs SET status = 'reused', finished_at = ?1, updated_at = ?1 \
+         WHERE tenant_id = ?2 AND status = 'queued' AND EXISTS ( \
+             SELECT 1 FROM recent_memory_snapshots s \
+             WHERE s.tenant_id = recent_memory_jobs.tenant_id \
+               AND s.target_watermark_utc = recent_memory_jobs.target_watermark_utc \
+         )",
+    )
     .bind(now)
     .bind(tenant_id)
     .execute(pool)
@@ -317,7 +345,7 @@ pub async fn restart_recent_memory_job_for_rebuild_sqlx(
     now: &str,
 ) -> StoreResult<bool> {
     let result = sqlx::query(
-        "UPDATE recent_memory_jobs SET status = 'queued', retry_count = 0, retry_at = NULL, last_error_code = NULL, last_error_message = NULL, started_at = NULL, finished_at = NULL, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?1 WHERE tenant_id = ?2 AND id = ?3 AND status IN ('succeeded', 'reused', 'failed', 'canceled', 'stale')",
+        "UPDATE recent_memory_jobs SET status = 'queued', retry_count = 0, retry_at = NULL, last_error_code = NULL, last_error_message = NULL, started_at = NULL, finished_at = NULL, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?1 WHERE tenant_id = ?2 AND id = ?3 AND status IN ('succeeded', 'reused', 'failed', 'canceled', 'stale', 'running')",
     )
     .bind(now)
     .bind(tenant_id)

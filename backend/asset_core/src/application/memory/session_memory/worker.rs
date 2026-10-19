@@ -59,12 +59,9 @@ impl AppService {
         }
 
         let prompt = build_bounded_evidence_prompt(&pack, &recipe)?;
-        let settings = self.app_settings_value();
-        let (agent_id, model) =
-            crate::backend::application::agents::composition::resolve_agent_for(
-                &crate::backend::domain::agents::ActionId::new(SESSION_MEMORY_ACTION),
-                &settings,
-            )?;
+        let (agent_id, model) = self.resolve_available_agent_for(
+            &crate::backend::domain::agents::ActionId::new(SESSION_MEMORY_ACTION),
+        )?;
         let request = AiExecutionRequest {
             execution_id: format!("session-memory-execution-{}", job.id),
             agent_id,

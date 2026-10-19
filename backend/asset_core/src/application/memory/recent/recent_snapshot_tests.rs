@@ -418,7 +418,6 @@ async fn test_recent_memory_non_retryable_error_persists_and_reloads_as_false() 
         ("protocol_failed", "ACP protocol error"),
         ("agent_exited", "Agent exited prematurely"),
         ("workspace_failed", "Isolated workspace setup failed"),
-        ("cleanup_failed", "Post-execution cleanup failed"),
     ];
     for (code, msg) in retryable_db_cases {
         sqlx::query(
@@ -447,6 +446,7 @@ async fn test_recent_memory_non_retryable_error_persists_and_reloads_as_false() 
 
     // 4c. 历史数据为不可重试错误（包括 Agent 确定性错误、业务门禁错误、取消错误）及未知错误时，必须解析为 retryable=false
     let non_retryable_cases = [
+        ("cleanup_failed", "Post-execution cleanup failed"),
         ("MEMORY_BUDGET_EXHAUSTED", "Budget exhausted"),
         ("MEMORY_RESULT_STALE", "Stale result from changed skill"),
         ("VALIDATION_FAILED", "Generation output schema invalid"),
@@ -519,7 +519,6 @@ fn test_infer_recent_memory_error_retryable_matrix() {
         "protocol_failed",
         "agent_exited",
         "workspace_failed",
-        "cleanup_failed",
     ];
     for code in retryable_codes {
         assert!(
@@ -530,6 +529,7 @@ fn test_infer_recent_memory_error_retryable_matrix() {
 
     // 2. 明确已知的不可重试错误：必须推断为 false
     let non_retryable_codes = [
+        "cleanup_failed",
         "MEMORY_BUDGET_EXHAUSTED",
         "MEMORY_RESULT_STALE",
         "MEMORY_WORK_ORDER_INVALID",

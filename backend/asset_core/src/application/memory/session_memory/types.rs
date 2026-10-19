@@ -89,17 +89,90 @@ use crate::backend::application::memory::memory_agent_session::{
     ActiveMemoryAgentSession, MemoryAgentSessionParams,
 };
 
-pub struct SessionMemoryLeaseGuard;
+pub struct SessionMemoryLeaseGuard {
+    task: tokio::task::JoinHandle<()>,
+}
 
 impl SessionMemoryLeaseGuard {
     pub fn start(
-        _database: crate::backend::store::Database,
-        _tenant_id: String,
-        _job_id: String,
-        _ownership_token: String,
-        _task_cancellation: CancellationToken,
+        database: crate::backend::store::Database,
+        tenant_id: String,
+        job_id: String,
+        ownership_token: String,
+        task_cancellation: CancellationToken,
     ) -> Self {
-        Self
+        Self::start_with_interval(
+            database,
+            tenant_id,
+            job_id,
+            ownership_token,
+            task_cancellation,
+            StdDuration::from_secs(25),
+        )
+    }
+
+    pub fn start_with_interval(
+        database: crate::backend::store::Database,
+        tenant_id: String,
+        job_id: String,
+        ownership_token: String,
+        task_cancellation: CancellationToken,
+        interval: StdDuration,
+    ) -> Self {
+        let task = tokio::spawn(async move {
+            let pool = database.pool().clone();
+            let mut ticker = tokio::time::interval(interval);
+            ticker.tick().await;
+
+            loop {
+                tokio::select! {
+                    _ = ticker.tick() => {
+                        if task_cancellation.is_cancelled() {
+                            break;
+                        }
+                        let now = Utc::now().to_rfc3339();
+                        match store::heartbeat_session_memory_job_sqlx(
+                            &pool,
+                            &tenant_id,
+                            &job_id,
+                            &ownership_token,
+                            &now,
+                            store::SESSION_MEMORY_JOB_LEASE,
+                        )
+                        .await
+                        {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                warn!(
+                                    tenant_id = %tenant_id,
+                                    job_id = %job_id,
+                                    "session memory job lease heartbeat failed: ownership lost or job no longer running"
+                                );
+                                break;
+                            }
+                            Err(err) => {
+                                warn!(
+                                    tenant_id = %tenant_id,
+                                    job_id = %job_id,
+                                    error = ?err,
+                                    "session memory job lease heartbeat error"
+                                );
+                            }
+                        }
+                    }
+                    _ = task_cancellation.cancelled() => {
+                        break;
+                    }
+                }
+            }
+        });
+        Self { task }
+    }
+}
+
+impl Drop for SessionMemoryLeaseGuard {
+    fn drop(&mut self) {
+        self.task.abort();
     }
 }
 

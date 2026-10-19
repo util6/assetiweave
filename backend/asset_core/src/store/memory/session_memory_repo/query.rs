@@ -184,6 +184,57 @@ pub async fn list_recent_memory_events_for_sessions_sqlx(
     Ok(events_by_session)
 }
 
+#[derive(Debug, FromRow)]
+struct SessionJobContextRow {
+    session_id: String,
+    status: String,
+    attempt_count: i64,
+    retry_count: i64,
+    last_error: Option<String>,
+}
+
+pub async fn list_session_job_evaluation_contexts_for_sessions_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    session_ids: &[String],
+) -> StoreResult<HashMap<String, crate::backend::domain::memory::SessionJobEvaluationContext>> {
+    if session_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT session_id, status, attempt_count, retry_count, last_error FROM session_memory_jobs WHERE tenant_id = ",
+    );
+    query.push_bind(tenant_id);
+    query.push(" AND session_id IN (");
+    {
+        let mut separated = query.separated(", ");
+        for session_id in session_ids {
+            separated.push_bind(session_id);
+        }
+    }
+    query.push(") ORDER BY session_id ASC, source_revision DESC, id DESC");
+
+    let rows = query
+        .build_query_as::<SessionJobContextRow>()
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::Db)?;
+
+    let mut contexts = HashMap::new();
+    for row in rows {
+        contexts.entry(row.session_id).or_insert(
+            crate::backend::domain::memory::SessionJobEvaluationContext {
+                status: row.status,
+                attempt_count: row.attempt_count,
+                retry_count: row.retry_count,
+                last_error: row.last_error,
+            },
+        );
+    }
+    Ok(contexts)
+}
+
 #[cfg(test)]
 pub async fn count_session_memory_rows_sqlx(
     pool: &SqlitePool,

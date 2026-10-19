@@ -106,3 +106,31 @@ pub struct MemoryTaskRetryParams {
     #[serde(alias = "taskId")]
     pub task_id: String,
 }
+
+/// Memory 流水线执行参数
+#[derive(Debug, Clone, Default)]
+pub struct MemoryPipelineParams {
+    pub force_rebuild: bool,
+    pub target: Option<MemoryRebuildTarget>,
+    pub project_path: Option<String>,
+    pub reason: Option<MemoryRebuildReason>,
+}
+
+impl MemoryPipelineParams {
+    pub fn background() -> Self {
+        Self::default()
+    }
+
+    pub fn rebuild(
+        target: MemoryRebuildTarget,
+        project_path: Option<String>,
+        reason: Option<MemoryRebuildReason>,
+    ) -> Self {
+        Self {
+            force_rebuild: true,
+            target: Some(target),
+            project_path,
+            reason,
+        }
+    }
+}

@@ -188,9 +188,18 @@ impl AppService {
         .await?;
 
         let mut ref_map = HashMap::new();
+        let mut seen_short_refs = HashSet::new();
         for (idx, candidate) in candidates.iter_mut().enumerate() {
-            let short_ref = format!("s{}", idx + 1);
-            candidate.short_ref = short_ref.clone();
+            let legacy_alias = format!("s{}", idx + 1);
+            let mut short_id =
+                crate::backend::application::memory::global_memory_context::session_short_id(
+                    &candidate.session_id,
+                );
+            if !seen_short_refs.insert(short_id.clone()) {
+                short_id = format!("{short_id}-{}", idx + 1);
+                seen_short_refs.insert(short_id.clone());
+            }
+            candidate.short_ref = short_id.clone();
 
             let canonical_reference = source_references
                 .get(&candidate.session_id)
@@ -199,32 +208,41 @@ impl AppService {
                 candidate.source_revision = reference.source_revision;
             }
 
-            ref_map.insert(
-                short_ref.clone(),
-                ResolvedEvidenceRef {
-                    short_ref,
-                    source_id: canonical_reference
-                        .map(|reference| reference.source_id.clone())
-                        .unwrap_or_else(|| candidate.source_id.clone()),
-                    session_id: candidate.session_id.clone(),
-                    project_key: candidate.project_key.clone(),
-                    session_title: candidate.session_title.clone(),
-                    source_agent: candidate.source_agent.clone(),
-                    last_activity_at: candidate.last_activity_at.clone(),
-                    reference_key: canonical_reference
-                        .map(|reference| reference.reference_key.clone())
-                        .unwrap_or_else(|| {
-                            format!("{}/{}", candidate.source_id, candidate.session_id)
-                        }),
-                    source_revision: candidate.source_revision,
-                    question_id: canonical_reference
-                        .and_then(|reference| reference.question_id.clone()),
-                    turn_id: canonical_reference.and_then(|reference| reference.turn_id.clone()),
-                    node_id: canonical_reference.and_then(|reference| reference.node_id.clone()),
-                },
-            );
+            let resolved = ResolvedEvidenceRef {
+                short_ref: candidate.short_ref.clone(),
+                source_id: canonical_reference
+                    .map(|reference| reference.source_id.clone())
+                    .unwrap_or_else(|| candidate.source_id.clone()),
+                session_id: candidate.session_id.clone(),
+                project_key: candidate.project_key.clone(),
+                session_title: candidate.session_title.clone(),
+                source_agent: candidate.source_agent.clone(),
+                last_activity_at: candidate.last_activity_at.clone(),
+                reference_key: canonical_reference
+                    .map(|reference| reference.reference_key.clone())
+                    .unwrap_or_else(|| format!("{}/{}", candidate.source_id, candidate.session_id)),
+                source_revision: candidate.source_revision,
+                question_id: canonical_reference
+                    .and_then(|reference| reference.question_id.clone()),
+                turn_id: canonical_reference.and_then(|reference| reference.turn_id.clone()),
+                node_id: canonical_reference.and_then(|reference| reference.node_id.clone()),
+            };
+
+            ref_map.insert(candidate.short_ref.clone(), resolved.clone());
+            // 兼容历史工单与测试的 s{idx+1} 别名
+            ref_map.insert(legacy_alias.clone(), resolved.clone());
+            // 兼容完整 session_id
+            ref_map.insert(candidate.session_id.clone(), resolved);
+
             if let Some(references) = source_references.get(&candidate.session_id) {
                 extend_source_reference_aliases(&mut ref_map, candidate, references);
+                for (r_idx, _) in references.iter().enumerate() {
+                    let legacy_node_alias = format!("{}.r{}", legacy_alias, r_idx + 1);
+                    let node_alias = format!("{}.r{}", candidate.short_ref, r_idx + 1);
+                    if let Some(res) = ref_map.get(&node_alias).cloned() {
+                        ref_map.entry(legacy_node_alias).or_insert(res);
+                    }
+                }
             }
         }
 

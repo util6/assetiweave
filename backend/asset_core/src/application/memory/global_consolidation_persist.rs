@@ -10,7 +10,7 @@ use crate::backend::store;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub async fn apply_global_consolidation_patch(
     pool: &SqlitePool,
@@ -92,18 +92,23 @@ pub async fn apply_global_consolidation_patch(
                 .await
                 .map_err(AppError::external)?;
 
+                let mut seen_reference_keys = HashSet::new();
                 for ref_key in source_refs {
                     let source_ref = resolve_global_reference(
                         &candidate_reference_map,
                         &ref_key,
                         strict_reference_validation,
                     )?;
+                    if !seen_reference_keys.insert(source_ref.reference_key.clone()) {
+                        continue;
+                    }
                     let ref_id = format!("ref-l3-{}", uuid::Uuid::new_v4());
                     sqlx::query(
                         "INSERT INTO memory_item_source_references \
                          (tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
                           question_id, turn_id, part_id, node_id, reference_key, source_revision, availability, created_at) \
-                         VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'available', ?12)",
+                         VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'available', ?12) \
+                         ON CONFLICT (tenant_id, item_revision_id, reference_key) DO NOTHING",
                     )
                     .bind(tenant_id)
                     .bind(&ref_id)
@@ -194,18 +199,23 @@ pub async fn apply_global_consolidation_patch(
                 .await
                 .map_err(AppError::external)?;
 
+                let mut seen_reference_keys = HashSet::new();
                 for ref_key in source_refs {
                     let source_ref = resolve_global_reference(
                         &candidate_reference_map,
                         &ref_key,
                         strict_reference_validation,
                     )?;
+                    if !seen_reference_keys.insert(source_ref.reference_key.clone()) {
+                        continue;
+                    }
                     let ref_id = format!("ref-l3-{}", uuid::Uuid::new_v4());
                     sqlx::query(
                         "INSERT INTO memory_item_source_references \
                          (tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
                           question_id, turn_id, part_id, node_id, reference_key, source_revision, availability, created_at) \
-                         VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'available', ?12)",
+                         VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'available', ?12) \
+                         ON CONFLICT (tenant_id, item_revision_id, reference_key) DO NOTHING",
                     )
                     .bind(tenant_id)
                     .bind(&ref_id)
@@ -320,18 +330,23 @@ pub async fn apply_global_consolidation_patch(
                 .await
                 .map_err(AppError::external)?;
 
+                let mut seen_reference_keys = HashSet::new();
                 for ref_key in source_refs {
                     let source_ref = resolve_global_reference(
                         &candidate_reference_map,
                         &ref_key,
                         strict_reference_validation,
                     )?;
+                    if !seen_reference_keys.insert(source_ref.reference_key.clone()) {
+                        continue;
+                    }
                     let ref_id = format!("ref-l3-{}", uuid::Uuid::new_v4());
                     sqlx::query(
                         "INSERT INTO memory_item_source_references \
                          (tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
                           question_id, turn_id, part_id, node_id, reference_key, source_revision, availability, created_at) \
-                         VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'available', ?12)",
+                         VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'available', ?12) \
+                         ON CONFLICT (tenant_id, item_revision_id, reference_key) DO NOTHING",
                     )
                     .bind(tenant_id)
                     .bind(&ref_id)

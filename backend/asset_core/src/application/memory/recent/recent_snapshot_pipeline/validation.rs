@@ -41,7 +41,7 @@ impl AppService {
                     "Unreadable sessions detected: {:?}",
                     result.coverage.unreadable_sessions
                 ),
-                retryable: true,
+                retryable: false,
                 details: None,
             });
         }
@@ -79,7 +79,7 @@ impl AppService {
                         "Candidate session {} (short ref {}) not covered in generation result",
                         candidate.session_id, candidate.short_ref
                     ),
-                    retryable: true,
+                    retryable: false,
                     details: None,
                 });
             }
@@ -89,7 +89,7 @@ impl AppService {
             return Err(AppError::Domain {
                 code: "MEMORY_COVERAGE_INCOMPLETE".to_string(),
                 message: "Generation coverage contains more or fewer sessions than the frozen candidate set".to_string(),
-                retryable: true,
+                retryable: false,
                 details: None,
             });
         }
@@ -222,7 +222,8 @@ impl AppService {
                 }
 
                 // M35-L1-12: unassigned 项目不能被提名晋升 L2
-                if key == "unassigned"
+                if (key == "unassigned"
+                    || key == crate::backend::infrastructure::project_path::UNASSIGNED_PROJECT_KEY)
                     && item.promotion_nomination != MemoryPromotionNomination::None
                 {
                     return Err(AppError::Validation(
@@ -245,7 +246,7 @@ impl AppService {
                 message:
                     "Every candidate project must have exactly one Recent Snapshot project output"
                         .to_string(),
-                retryable: true,
+                retryable: false,
                 details: None,
             });
         }

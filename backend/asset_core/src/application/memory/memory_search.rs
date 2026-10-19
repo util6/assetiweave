@@ -11,14 +11,14 @@ impl AppService {
         params: MemoryRecallSearchParams,
     ) -> AppResult<MemoryRecallSearchResult> {
         match tokio::time::timeout(
-            std::time::Duration::from_secs(2),
+            std::time::Duration::from_secs(10),
             self.search_memory_recall_inner(params),
         )
         .await
         {
             Ok(result) => result,
             Err(_) => Err(AppError::Timeout(
-                "Memory recall search timed out after 2s".to_string(),
+                "Memory recall search timed out after 10s".to_string(),
             )),
         }
     }

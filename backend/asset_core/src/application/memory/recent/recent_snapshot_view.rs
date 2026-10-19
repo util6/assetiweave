@@ -113,7 +113,6 @@ pub fn infer_recent_memory_error_retryable(code: &str) -> bool {
             | "protocol_failed"
             | "agent_exited"
             | "workspace_failed"
-            | "cleanup_failed"
     )
 }
 

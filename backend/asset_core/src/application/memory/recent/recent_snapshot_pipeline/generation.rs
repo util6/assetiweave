@@ -78,6 +78,15 @@ impl AppService {
             &mut crate::backend::application::memory::recent::recent_snapshot_task_progress::RecentSnapshotTaskProgress,
         >,
     ) -> AppResult<RecentMemorySnapshotView> {
+        let _lease_guard = job.ownership_token.as_ref().map(|token| {
+            RecentMemoryLeaseGuard::start(
+                self.db.pool().clone(),
+                job.tenant_id.clone(),
+                job.id.clone(),
+                token.clone(),
+                cancellation.clone(),
+            )
+        });
         let envelope: serde_json::Value =
             serde_json::from_str(&job.work_order_json).map_err(|_| {
                 AppError::Validation("MEMORY_WORK_ORDER_INVALID: invalid JSON".to_string())
@@ -165,7 +174,7 @@ impl AppService {
                 details: None,
             });
         }
-        let (candidates, ref_map) = self
+        let (raw_candidates, ref_map) = self
             .collect_recent_snapshot_candidates(target.target_watermark_utc, target.window_hours)
             .await?;
         let continuable_items = self
@@ -191,13 +200,66 @@ impl AppService {
             .map(String::as_str)
             .collect::<Vec<_>>();
         let current_frozen_context = self
-            .load_recent_snapshot_frozen_context(&target, &candidates)
+            .load_recent_snapshot_frozen_context(&target, &raw_candidates)
             .await?;
-        if !has_complete_recent_snapshot_evidence(&candidates, &current_frozen_context) {
+
+        let session_ids = raw_candidates
+            .iter()
+            .map(|c| c.session_id.clone())
+            .collect::<Vec<_>>();
+        let job_contexts = store::list_session_job_evaluation_contexts_for_sessions_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+            &session_ids,
+        )
+        .await?;
+        let settings = self.app_settings_value();
+        let memory_settings = settings
+            .get("memory")
+            .and_then(|value| {
+                serde_json::from_value::<
+                    crate::backend::infrastructure::app_settings::MemorySettings,
+                >(value.clone())
+                .ok()
+            })
+            .unwrap_or_default();
+        let coverage = crate::backend::domain::memory::SessionCoverageProjection::evaluate(
+            raw_candidates,
+            &current_frozen_context.session_memories,
+            &current_frozen_context.source_references,
+            &job_contexts,
+            &memory_settings.excluded_session_ids,
+            &memory_settings.excluded_source_ids,
+        );
+
+        if !coverage.is_transient_empty() {
+            let transient_ids: Vec<String> = coverage
+                .transient_sessions
+                .iter()
+                .map(|s| s.session_id.clone())
+                .collect();
             return Err(AppError::Domain {
                 code: "MEMORY_COVERAGE_INCOMPLETE".to_string(),
-                message: "Recent Snapshot requires successful Phase-1 facts and canonical references for every candidate session".to_string(),
-                retryable: true,
+                message: format!(
+                    "Recent Snapshot candidate sessions are still transient (not yet completed in Phase 1): {:?}",
+                    transient_ids
+                ),
+                retryable: false,
+                details: None,
+            });
+        }
+
+        let candidates = coverage.ready_sessions;
+        if !has_complete_recent_snapshot_evidence(&candidates, &current_frozen_context) {
+            let missing =
+                find_missing_recent_snapshot_evidence(&candidates, &current_frozen_context);
+            return Err(AppError::Domain {
+                code: "MEMORY_COVERAGE_INCOMPLETE".to_string(),
+                message: format!(
+                    "Recent Snapshot requires successful Phase-1 facts and canonical references for every candidate session; missing: {:?}",
+                    missing
+                ),
+                retryable: false,
                 details: None,
             });
         }
@@ -207,16 +269,6 @@ impl AppService {
             &continuable_items,
             &current_frozen_context,
         );
-        let settings = self.app_settings_value();
-        let memory_settings = settings
-            .get("memory")
-            .and_then(|value| {
-                serde_json::from_value::<
-                        crate::backend::infrastructure::app_settings::MemorySettings,
-                    >(value.clone())
-                    .ok()
-            })
-            .unwrap_or_default();
         let current_target_fingerprint = compute_target_fingerprint(
             self.tenant_id(),
             &target.target_watermark_utc,
@@ -271,12 +323,9 @@ impl AppService {
                 task_progress.transition("agent_execution");
             }
             let prompt = build_recent_generation_prompt(&envelope, &payload)?;
-            let settings = self.app_settings_value();
-            let (agent_id, model) =
-                crate::backend::application::agents::composition::resolve_agent_for(
-                    &crate::backend::domain::agents::ActionId::new("memory.generation"),
-                    &settings,
-                )?;
+            let (agent_id, model) = self.resolve_available_agent_for(
+                &crate::backend::domain::agents::ActionId::new("memory.generation"),
+            )?;
             let request = AiExecutionRequest {
                 execution_id: format!("recent-memory-execution-{}", job.id),
                 agent_id,

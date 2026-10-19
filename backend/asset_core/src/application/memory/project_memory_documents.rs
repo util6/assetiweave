@@ -256,12 +256,9 @@ impl AppService {
         cancellation: CancellationToken,
         progress: Option<Arc<dyn AiExecutionProgressSink>>,
     ) -> AppResult<ProjectMemoryAgentOutputWithRaw> {
-        let settings = self.app_settings_value();
-        let (agent_id, model) =
-            crate::backend::application::agents::composition::resolve_agent_for(
-                &crate::backend::domain::agents::ActionId::new(PROJECT_MEMORY_ACTION),
-                &settings,
-            )?;
+        let (agent_id, model) = self.resolve_available_agent_for(
+            &crate::backend::domain::agents::ActionId::new(PROJECT_MEMORY_ACTION),
+        )?;
         let prompt = build_project_memory_prompt(&job.project_path, inputs)?;
         let result = execute_agent(
             self.agent_runtime.clone(),

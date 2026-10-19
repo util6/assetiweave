@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub mod coverage;
 pub mod evidence;
 pub mod generation;
 pub mod global;
@@ -12,6 +13,7 @@ pub mod recent_snapshot;
 pub mod session;
 pub mod work_order;
 
+pub use coverage::*;
 pub use evidence::*;
 pub use generation::*;
 pub use global::*;
@@ -218,9 +220,9 @@ impl MemoryScope {
     }
 }
 
-pub const DEFAULT_MEMORY_CONTRACT_VERSION: &str = "memory.contract.v1";
+pub const DEFAULT_MEMORY_CONTRACT_VERSION: &str = "memory.contract.v2";
 pub const DEFAULT_BUDGET_POLICY_VERSION: &str = "budget.v1";
-pub const DEFAULT_PROJECTION_POLICY_VERSION: &str = "projection.v1";
+pub const DEFAULT_PROJECTION_POLICY_VERSION: &str = "projection.v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

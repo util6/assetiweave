@@ -233,6 +233,20 @@ impl SessionStreamRegistry {
         })
     }
 
+    pub fn elapsed_since_active_by_ref(
+        &self,
+        session_ref_val: &str,
+    ) -> Option<std::time::Duration> {
+        self.get_by_ref(session_ref_val)
+            .map(|s| s.projection.elapsed_since_active())
+    }
+
+    pub fn touch_by_ref(&self, session_ref_val: &str) {
+        if let Some(s) = self.get_by_ref(session_ref_val) {
+            s.projection.touch();
+        }
+    }
+
     pub fn snapshot(&self, key: &SessionStreamKey) -> Option<SessionSnapshot> {
         self.get(key).map(|projection| projection.snapshot())
     }

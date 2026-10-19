@@ -203,6 +203,30 @@ pub fn has_complete_recent_snapshot_evidence(
     })
 }
 
+pub fn find_missing_recent_snapshot_evidence(
+    candidates: &[CandidateSession],
+    context: &RecentSnapshotFrozenContext,
+) -> Vec<String> {
+    candidates
+        .iter()
+        .filter(|candidate| {
+            !context.session_memories.contains_key(&candidate.session_id)
+                || !context
+                    .source_references
+                    .get(&candidate.session_id)
+                    .is_some_and(|references| {
+                        references.iter().any(|reference| {
+                            reference.question_id.is_some()
+                                || reference.turn_id.is_some()
+                                || reference.part_id.is_some()
+                                || reference.node_id.is_some()
+                        })
+                    })
+        })
+        .map(|c| c.session_id.clone())
+        .collect()
+}
+
 pub fn parse_hh_mm(time_str: &str) -> AppResult<chrono::NaiveTime> {
     let parts: Vec<&str> = time_str.split(':').collect();
     if parts.len() != 2 {

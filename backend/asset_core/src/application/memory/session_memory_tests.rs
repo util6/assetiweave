@@ -918,3 +918,80 @@ async fn session_memory_circuit_breaker_and_budget_protect_from_storm() {
 
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn session_memory_lease_guard_extends_lease_periodically() {
+    let root = std::env::temp_dir().join(format!("assetiweave-sm-lease-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create test root");
+    let database = store::Database::open_initialized_async(&root.join("app.db"))
+        .await
+        .expect("open database");
+    let pool = database.pool().clone();
+
+    let tenant_id = "default";
+    let job_id = "sm-job-lease-test";
+    let token = "sm-owner-token-1";
+    let initial_now = Utc::now().to_rfc3339();
+
+    // Insert a running session memory job with a valid lease
+    sqlx::query(
+        r#"
+        INSERT INTO session_memory_jobs (
+            tenant_id, id, session_id, source_id, source_event_id, source_sync_run_id,
+            source_revision, source_fingerprint, contract_version, prompt_version,
+            status, not_before, attempt_count, retry_count, ownership_token,
+            lease_expires_at, heartbeat_at, started_at, created_at, updated_at
+        ) VALUES (
+            ?1, ?2, 'sess-1', 'src-1', 'evt-1', 'sync-1',
+            1, 'fp-1', 'v1', 'v1',
+            'running', ?3, 1, 0, ?4,
+            datetime(?3, '+120 seconds'), ?3, ?3, ?3, ?3
+        )
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(job_id)
+    .bind(&initial_now)
+    .bind(token)
+    .execute(&pool)
+    .await
+    .expect("insert running session memory job");
+
+    let job_before = store::load_session_memory_job_sqlx(&pool, tenant_id, job_id)
+        .await
+        .expect("load job")
+        .expect("job exists");
+    let initial_lease_expires_at = job_before.lease_expires_at.expect("has lease expiry");
+
+    // Start SessionMemoryLeaseGuard with 25ms ticker
+    let cancellation = CancellationToken::new();
+    let guard = SessionMemoryLeaseGuard::start_with_interval(
+        database.clone(),
+        tenant_id.to_string(),
+        job_id.to_string(),
+        token.to_string(),
+        cancellation.clone(),
+        StdDuration::from_millis(25),
+    );
+
+    // Sleep to let ticker trigger heartbeat
+    tokio::time::sleep(StdDuration::from_millis(80)).await;
+
+    let job_after = store::load_session_memory_job_sqlx(&pool, tenant_id, job_id)
+        .await
+        .expect("load job")
+        .expect("job exists");
+
+    let updated_lease_expires_at = job_after.lease_expires_at.expect("has updated lease");
+    assert!(
+        updated_lease_expires_at >= initial_lease_expires_at,
+        "SessionMemoryLeaseGuard should update lease_expires_at"
+    );
+    assert!(
+        job_after.heartbeat_at.is_some(),
+        "heartbeat_at should be recorded"
+    );
+
+    drop(guard);
+    let _ = std::fs::remove_dir_all(root);
+}

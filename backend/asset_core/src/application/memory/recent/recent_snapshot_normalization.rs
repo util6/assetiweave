@@ -86,10 +86,14 @@ fn normalize_projects_and_items(
 
         let mut rank_set = HashSet::new();
         for item in &mut project.items {
+            let mut seen_reference_keys = HashSet::new();
             item.source_refs.retain(|ref_key| {
-                ref_map
-                    .get(ref_key.trim())
-                    .map_or(false, |res| res.project_key == project_key)
+                if let Some(res) = ref_map.get(ref_key.trim()) {
+                    res.project_key == project_key
+                        && seen_reference_keys.insert(res.reference_key.clone())
+                } else {
+                    false
+                }
             });
 
             if item.source_refs.is_empty() && !project_available_refs.is_empty() {
@@ -105,7 +109,11 @@ fn normalize_projects_and_items(
                 }
             }
 
-            if project_key == "unassigned" || item.source_refs.is_empty() {
+            if project_key == "unassigned"
+                || project_key
+                    == crate::backend::infrastructure::project_path::UNASSIGNED_PROJECT_KEY
+                || item.source_refs.is_empty()
+            {
                 item.promotion_nomination = MemoryPromotionNomination::None;
             }
         }
@@ -155,7 +163,7 @@ fn normalize_coverage(
 
     // 构建各种可能引用的别名映射到 canonical short_ref (如 s1, S1, sessionId 等)
     let mut alias_to_canonical = HashMap::new();
-    for c in candidates {
+    for (idx, c) in candidates.iter().enumerate() {
         alias_to_canonical.insert(c.short_ref.clone(), c.short_ref.clone());
         alias_to_canonical.insert(c.short_ref.to_ascii_lowercase(), c.short_ref.clone());
         alias_to_canonical.insert(c.session_id.clone(), c.short_ref.clone());
@@ -163,6 +171,9 @@ fn normalize_coverage(
             format!("{}/{}", c.source_id, c.session_id),
             c.short_ref.clone(),
         );
+        let s_alias = format!("s{}", idx + 1);
+        alias_to_canonical.insert(s_alias.clone(), c.short_ref.clone());
+        alias_to_canonical.insert(s_alias.to_ascii_uppercase(), c.short_ref.clone());
     }
 
     // 找出所有确实产生了记忆卡片 (items) 的 candidate session
