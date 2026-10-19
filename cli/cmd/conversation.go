@@ -1566,7 +1566,12 @@ func resolveWebHarvesterDirectory(target string) string {
 	if _, err := os.Stat(target); err == nil {
 		return target
 	}
-	if home, err := os.UserHomeDir(); err == nil {
+	if homeEnv := strings.TrimSpace(os.Getenv("ASSETIWEAVE_HOME")); homeEnv != "" {
+		candidate := filepath.Join(homeEnv, "harvesters", target)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	} else if home, err := os.UserHomeDir(); err == nil {
 		candidate := filepath.Join(home, ".assetiweave", "harvesters", target)
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate

@@ -174,6 +174,10 @@ const BROWSER_PATHS_MACOS = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
   "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  path.join(os.homedir(), "Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+  path.join(os.homedir(), "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+  path.join(os.homedir(), "Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+  path.join(os.homedir(), "Applications/Chromium.app/Contents/MacOS/Chromium"),
 ];
 
 const BROWSER_PATHS_LINUX = [
@@ -184,11 +188,32 @@ const BROWSER_PATHS_LINUX = [
   "/usr/bin/brave-browser",
   "/usr/bin/chromium-browser",
   "/usr/bin/chromium",
+  "/usr/local/bin/google-chrome",
+  "/snap/bin/chromium",
 ];
+
+const BROWSER_PATHS_WINDOWS = [
+  process.env.PROGRAMFILES && path.join(process.env.PROGRAMFILES, "Google/Chrome/Application/chrome.exe"),
+  process.env["PROGRAMFILES(X86)"] && path.join(process.env["PROGRAMFILES(X86)"], "Google/Chrome/Application/chrome.exe"),
+  process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, "Google/Chrome/Application/chrome.exe"),
+  process.env.PROGRAMFILES && path.join(process.env.PROGRAMFILES, "Microsoft/Edge/Application/msedge.exe"),
+  process.env["PROGRAMFILES(X86)"] && path.join(process.env["PROGRAMFILES(X86)"], "Microsoft/Edge/Application/msedge.exe"),
+].filter(Boolean);
 
 function findBrowserExecutable() {
   const fs = require("fs");
-  const paths = os.platform() === "darwin" ? BROWSER_PATHS_MACOS : BROWSER_PATHS_LINUX;
+  if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) {
+    return process.env.CHROME_PATH;
+  }
+  if (process.env.BROWSER_PATH && fs.existsSync(process.env.BROWSER_PATH)) {
+    return process.env.BROWSER_PATH;
+  }
+  const platform = os.platform();
+  const paths = platform === "darwin"
+    ? BROWSER_PATHS_MACOS
+    : platform === "win32"
+    ? BROWSER_PATHS_WINDOWS
+    : BROWSER_PATHS_LINUX;
   for (const p of paths) {
     try {
       if (fs.existsSync(p)) return p;

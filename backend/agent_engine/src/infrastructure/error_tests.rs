@@ -41,3 +41,14 @@ fn public_model_unavailable_error_is_actionable() {
     assert!(view.message.contains("No allowed providers"));
     assert!(!view.retryable);
 }
+
+#[test]
+fn public_cleanup_failed_error_is_non_retryable() {
+    let view = AiExecutionError::CleanupFailed {
+        failures: vec!["delete_unsupported".to_string()],
+    }
+    .to_view();
+
+    assert_eq!(view.code, "cleanup_failed");
+    assert!(!view.retryable);
+}

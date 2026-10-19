@@ -135,6 +135,17 @@ pub enum AiExecutionPurpose {
 }
 
 impl AiExecutionPurpose {
+    pub fn is_memory_work(&self) -> bool {
+        matches!(
+            self,
+            Self::SessionMemory
+                | Self::MemoryGeneration
+                | Self::ProjectMemory
+                | Self::GlobalMemory
+                | Self::Recall
+        )
+    }
+
     pub fn category_folder(&self) -> &'static str {
         match self {
             Self::Translation => "translations",
@@ -202,7 +213,7 @@ pub struct AiExecutionLimits {
 impl Default for AiExecutionLimits {
     fn default() -> Self {
         Self {
-            total_timeout: Duration::from_secs(180),
+            total_timeout: Duration::from_secs(86400),
             spawn_timeout: Duration::from_secs(30),
             initialize_timeout: Duration::from_secs(10),
             config_rpc_timeout: Duration::from_secs(5),

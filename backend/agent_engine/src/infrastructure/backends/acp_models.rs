@@ -139,21 +139,12 @@ pub fn resolve_model_for_session(
                 if available_ids.contains(&req) {
                     return Some(req.to_owned());
                 }
-                // For Codex, invalid/foreign model ids immediately cause -32602 JSON-RPC errors.
-                // Fall back to a supported model. For other agents, try the requested model.
-                if agent_id.to_ascii_lowercase().contains("codex") {
-                    tracing::warn!(
-                        agent_id = %agent_id,
-                        requested_model = %req,
-                        "Requested model is not available for Codex; selecting preferred fallback"
-                    );
-                    return select_fallback_model(
-                        agent_id,
-                        &available_ids,
-                        current_model_id.as_deref(),
-                    );
-                }
-                return Some(req.to_owned());
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    requested_model = %req,
+                    "Requested model is not available for agent; selecting preferred fallback"
+                );
+                return select_fallback_model(&available_ids, current_model_id.as_deref());
             }
 
             // No model requested
@@ -168,26 +159,13 @@ pub fn resolve_model_for_session(
                 );
             }
 
-            select_fallback_model(agent_id, &available_ids, current_model_id.as_deref())
+            select_fallback_model(&available_ids, current_model_id.as_deref())
         }
         Err(_) => requested.map(str::to_owned),
     }
 }
 
-fn select_fallback_model(
-    agent_id: &str,
-    available_ids: &[&str],
-    current_model: Option<&str>,
-) -> Option<String> {
-    if agent_id.to_ascii_lowercase().contains("codex") {
-        if available_ids.contains(&"gpt-5.6-terra") {
-            return Some("gpt-5.6-terra".to_string());
-        }
-        if available_ids.contains(&"gpt-5.6-luna") {
-            return Some("gpt-5.6-luna".to_string());
-        }
-    }
-
+fn select_fallback_model(available_ids: &[&str], current_model: Option<&str>) -> Option<String> {
     if let Some(current) = current_model {
         if available_ids.contains(&current) {
             return Some(current.to_string());

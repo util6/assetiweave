@@ -207,7 +207,7 @@ impl AiExecutionError {
             Self::CleanupFailed { .. } => (
                 "cleanup_failed",
                 "The AI agent execution did not clean up completely.",
-                true,
+                false,
             ),
             Self::InvalidPrompt(_) | Self::InvalidModel(_) => (
                 "invalid_request",

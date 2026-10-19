@@ -275,7 +275,9 @@ impl AppService {
                             (**lock)(completed, total_source_count, Some(msg.clone()), &current_completed);
                         }
                         if let Some(ref tid) = task_id_detail {
-                            if msg.contains("写入会话") {
+                            if msg.contains(
+                                crate::backend::application::conversations::conversation_sync_support::CONVERSATION_SYNC_PERSISTING_PHASE,
+                            ) {
                                 let _ = progress_task_runtime_detail.remove_activity(tid, &sync_stage_id_detail, &worker_id_detail);
                                 let _ = progress_task_runtime_detail.remove_activity(tid, &scan_stage_id_detail, &worker_id_detail);
                                 let _ = progress_task_runtime_detail.set_stage_progress(

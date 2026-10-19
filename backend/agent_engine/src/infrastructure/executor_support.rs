@@ -118,7 +118,7 @@ pub fn enforce_cleanup_contract(
     purpose: AiExecutionPurpose,
     outcome: Result<AiExecutionResult, AiExecutionError>,
 ) -> Result<AiExecutionResult, AiExecutionError> {
-    if matches!(purpose, AiExecutionPurpose::SessionMemory) {
+    if purpose.is_memory_work() {
         return outcome;
     }
 
@@ -148,3 +148,7 @@ pub fn timeout_before_spawn(request: &AiExecutionRequest, timeout: Duration) -> 
         timeout,
     }
 }
+
+#[cfg(test)]
+#[path = "executor_support_tests.rs"]
+mod tests;

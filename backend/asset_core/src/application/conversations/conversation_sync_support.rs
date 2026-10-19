@@ -3,6 +3,8 @@ use crate::backend::application::prelude::*;
 use crate::backend::application::{AppError, AppResult};
 use serde_json::{json, Value};
 
+pub const CONVERSATION_SYNC_PERSISTING_PHASE: &str = "写入会话";
+
 impl AppService {
     pub async fn sync_conversations(&self, params: ConversationSyncParams) -> AppResult<Value> {
         self.sync_conversations_with_progress(params, |_, _, _, _| {})
@@ -186,7 +188,10 @@ impl AppService {
                     map
                 };
                 let mut on_import_progress = |done: usize, total: usize| {
-                    on_progress_detail(format!("{} · 写入会话 {done}/{total}", source.name));
+                    on_progress_detail(format!(
+                        "{} · {} {done}/{total}",
+                        source.name, CONVERSATION_SYNC_PERSISTING_PHASE
+                    ));
                 };
                 let result = crate::backend::store::import_conversation_sessions_advanced_sqlx(
                     pool,

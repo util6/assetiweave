@@ -140,16 +140,22 @@ impl AgentExecutor {
             let queue_cancellation_token = request.cancellation.clone();
             let queue_cancellation = queue_cancellation_token.cancelled();
             tokio::pin!(queue_cancellation);
-            let permit = tokio::select! {
-                permit = Arc::clone(&self.permits).acquire_owned() => {
-                    permit.map_err(|_| AiExecutionError::Protocol { operation: "execution_queue" })?
-                }
-                _ = &mut queue_cancellation => {
-                    request.report_phase(AiExecutionPhase::Cancelling);
-                    return Err(cancelled_before_spawn(&request));
-                }
-                _ = tokio::time::sleep_until(deadline) => {
-                    return Err(timeout_before_spawn(&request, original_timeout));
+            let mut queue_ticker = tokio::time::interval(std::time::Duration::from_secs(5));
+            let permit = loop {
+                tokio::select! {
+                    permit = Arc::clone(&self.permits).acquire_owned() => {
+                        break permit.map_err(|_| AiExecutionError::Protocol { operation: "execution_queue" })?;
+                    }
+                    _ = queue_ticker.tick() => {
+                        request.report_phase(AiExecutionPhase::Queued);
+                    }
+                    _ = &mut queue_cancellation => {
+                        request.report_phase(AiExecutionPhase::Cancelling);
+                        return Err(cancelled_before_spawn(&request));
+                    }
+                    _ = tokio::time::sleep_until(deadline) => {
+                        return Err(timeout_before_spawn(&request, original_timeout));
+                    }
                 }
             };
 

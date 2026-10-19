@@ -1365,3 +1365,88 @@ test("Codex adapter seamlessly merges multi-page paginated rollouts by history_b
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
+
+test("Codex adapter lists and reads zstd-compressed .jsonl.zst session rollouts", () => {
+  const zstdCheck = spawnSync("zstd", ["--version"], {
+    env: { ...process.env, PATH: `${process.env.PATH || ""}:/opt/homebrew/bin:/usr/local/bin` },
+  });
+  if (zstdCheck.status !== 0) {
+    // Skip if zstd binary is not available in test runner environment
+    return;
+  }
+
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-zst-"));
+  try {
+    const sessionId = "019ce000-0000-7000-8000-000000000001";
+    const sessionsDir = path.join(fixtureRoot, "sessions", "2026", "10", "10");
+    mkdirSync(sessionsDir, { recursive: true });
+    const rawJsonlPath = path.join(sessionsDir, `rollout-2026-10-10T12-00-00-${sessionId}.jsonl`);
+    const zstPath = `${rawJsonlPath}.zst`;
+
+    writeFileSync(
+      rawJsonlPath,
+      [
+        event("2026-10-10T12:00:00Z", "user", "压缩会话测试问题"),
+        event("2026-10-10T12:00:01Z", "assistant", "压缩会话测试回答。"),
+      ].join("\n")
+    );
+
+    // Compress with zstd and remove raw jsonl
+    const compressResult = spawnSync("zstd", ["-q", "--rm", rawJsonlPath, "-o", zstPath], {
+      env: { ...process.env, PATH: `${process.env.PATH || ""}:/opt/homebrew/bin:/usr/local/bin` },
+    });
+    assert.equal(compressResult.status, 0);
+
+    // threads table rollout_path retains original .jsonl path
+    runSqlite(
+      fixtureRoot,
+      [
+        "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT, cwd TEXT, thread_source TEXT, source TEXT);",
+        `INSERT INTO threads VALUES ('${sessionId}', '${sqlString(rawJsonlPath)}', 'Zstd Session', '2026-10-10T12:00:01Z', '/Users/test/project', 'user', 'vscode');`,
+      ].join("\n")
+    );
+
+    // 1. Test list_sessions
+    const listResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "list_sessions",
+        source: { location: fixtureRoot },
+      }),
+    });
+    assert.equal(listResult.status, 0, listResult.stderr);
+    const listItems = listResult.stdout
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((m) => m.type === "item");
+    assert.equal(listItems.length, 1);
+    assert.equal(listItems[0].item.external_id, sessionId);
+    assert.equal(listItems[0].item.source_locator, zstPath);
+
+    // 2. Test read_session
+    const readResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "read_session",
+        source: { location: fixtureRoot },
+        params: { session_id: sessionId },
+      }),
+    });
+    assert.equal(readResult.status, 0, readResult.stderr);
+    const session = readResult.stdout
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .find((m) => m.type === "item")?.item?.session;
+
+    assert.ok(session);
+    assert.equal(session.external_id, sessionId);
+    assert.equal(session.turns.length, 1);
+    assert.equal(session.turns[0].user_text, "压缩会话测试问题");
+    assert.equal(session.turns[0].parts[0].text, "压缩会话测试回答。");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+

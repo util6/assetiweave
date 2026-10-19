@@ -47,6 +47,9 @@ const MAX_BROWSE_OUTPUT_LINE_CHARS = 1200;
 /** sqlite3 子进程标准输出上限 (64MB)，用于兼容标题或全量读取中的较大结果集 */
 const SQLITE_OUTPUT_BUFFER_BYTES = 64 * 1024 * 1024;
 
+/** zstd 解压缩子进程标准输出上限 (512MB)，用于兼容单条超大会话日志 */
+const ZSTD_OUTPUT_BUFFER_BYTES = 512 * 1024 * 1024;
+
 function sanitizeSessionShortTitle(text, maxLength = 36) {
   if (!text) return null;
   let cleaned = String(text).trim();
@@ -162,13 +165,94 @@ function fileVersionToken(filePath, updatedAt = null) {
  * @param {Array<string>} filePaths - 按时间顺序排列的分卷绝对路径列表
  * @returns {string} 拼接去重后的完整 JSONL 文本
  */
+/**
+ * 读取 rollout 会话日志文件内容；
+ * 若文件为 `.zst` 压缩包，则调用系统 `zstd -dc` 解压为 UTF-8 字符串；
+ * 否则直接读取 UTF-8 文本。
+ * @param {string} filePath - 文件绝对路径
+ * @returns {string} 日志文本
+ */
+function readRolloutFile(filePath) {
+  if (filePath.endsWith(".zst")) {
+    const envPath = process.env.PATH || "";
+    const extraPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+    const combinedPath = [...new Set([...envPath.split(":"), ...extraPaths])].join(":");
+    const res = spawnSync("zstd", ["-dc", filePath], {
+      env: { ...process.env, PATH: combinedPath },
+      maxBuffer: ZSTD_OUTPUT_BUFFER_BYTES,
+      encoding: "utf8",
+    });
+    if (res.error) throw res.error;
+    if (res.status !== 0) {
+      throw new Error(`zstd exited with code ${res.status}: ${(res.stderr || "").trim()}`);
+    }
+    return res.stdout;
+  }
+  return readFileSync(filePath, "utf8");
+}
+
+/**
+ * 递归向上探测并获取 Codex 的用户主配置/数据目录 (如 `~/.codex`)
+ * @param {string} rolloutPath - 某 rollout 文件的绝对路径
+ * @returns {string|null} Codex 根目录绝对路径或 null
+ */
+function findCodexRoot(rolloutPath) {
+  let current = path.dirname(rolloutPath);
+  while (current && current !== path.dirname(current)) {
+    const base = path.basename(current);
+    if (base === "sessions" || base === "archived_sessions") {
+      return path.dirname(current);
+    }
+    if (base === ".codex") {
+      return current;
+    }
+    current = path.dirname(current);
+  }
+  const sourceLocation = expandPath(input.source?.location);
+  if (sourceLocation && existsSync(sourceLocation)) {
+    try {
+      if (statSync(sourceLocation).isDirectory()) return sourceLocation;
+      return path.dirname(sourceLocation);
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * 针对数据库中的原始 rollout_path，解析定位磁盘上实际存在的文件路径。
+ * 兼容未压缩的 `.jsonl`、被 zstd 压缩后的 `.jsonl.zst` 以及归档至 `archived_sessions` 目录下的情况。
+ * @param {string|null} rawPath - 原始日志路径
+ * @returns {string|null} 存在的真实文件绝对路径，若均不存在则返回 null
+ */
+function resolveRolloutPath(rawPath) {
+  if (!rawPath) return null;
+  const expanded = expandPath(rawPath);
+  if (!expanded) return null;
+  if (existsSync(expanded)) return expanded;
+  if (existsSync(`${expanded}.zst`)) return `${expanded}.zst`;
+  const baseName = path.basename(expanded);
+  const codexRoot = findCodexRoot(expanded);
+  if (codexRoot) {
+    const archPath = path.join(codexRoot, "archived_sessions", baseName);
+    if (existsSync(archPath)) return archPath;
+    if (existsSync(`${archPath}.zst`)) return `${archPath}.zst`;
+  }
+  return null;
+}
+
+/**
+ * 合并一个会话的所有分卷（Paginated Rollouts）日志内容；
+ * 针对各分卷的首行 history_base.end_ordinal_exclusive 进行对齐去重，无缝拼接事件流。
+ * @param {Array<string>} filePaths - 按时间顺序排列的分卷绝对路径列表
+ * @returns {string} 拼接去重后的完整 JSONL 文本
+ */
 function mergeRolloutFiles(filePaths) {
   if (filePaths.length === 0) return "";
-  if (filePaths.length === 1) return readFileSync(filePaths[0], "utf8");
+  if (filePaths.length === 1) return readRolloutFile(filePaths[0]);
 
   let accumulatedLines = [];
   for (let i = 0; i < filePaths.length; i++) {
-    const text = readFileSync(filePaths[i], "utf8");
+    const text = readRolloutFile(filePaths[i]);
     const lines = text.split(/\r?\n/).filter((l) => l.trim());
     if (lines.length === 0) continue;
 
@@ -256,9 +340,13 @@ function getSessionFilesMap(sessionsDir) {
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
           walk(fullPath, depth + 1);
-        } else if (entry.isFile() && entry.name.endsWith(".jsonl") && entry.name.startsWith("rollout-")) {
+        } else if (
+          entry.isFile() &&
+          (entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zst")) &&
+          entry.name.startsWith("rollout-")
+        ) {
           const match = entry.name.match(
-            /^rollout-.*-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:_[^.]+)?\.jsonl$/
+            /^rollout-.*-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:_[^.]+)?\.jsonl(?:\.zst)?$/
           );
           if (match) {
             const sId = match[1];
@@ -270,6 +358,13 @@ function getSessionFilesMap(sessionsDir) {
     } catch {}
   }
   walk(sessionsDir);
+  const codexRoot = findCodexRoot(sessionsDir);
+  if (codexRoot) {
+    const archDir = path.join(codexRoot, "archived_sessions");
+    if (existsSync(archDir) && archDir !== sessionsDir) {
+      walk(archDir, 0);
+    }
+  }
   for (const [, files] of map.entries()) {
     files.sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
   }
@@ -279,7 +374,7 @@ function getSessionFilesMap(sessionsDir) {
 }
 
 function rolloutFilesForSession(rolloutPath, sessionId) {
-  const expanded = expandPath(rolloutPath);
+  const expanded = resolveRolloutPath(rolloutPath);
   if (!expanded || !existsSync(expanded)) return [];
   if (sessionId) {
     const parentDir = path.dirname(expanded);
@@ -291,7 +386,7 @@ function rolloutFilesForSession(rolloutPath, sessionId) {
             entry.isFile() &&
             entry.name.startsWith("rollout-") &&
             entry.name.includes(sessionId) &&
-            entry.name.endsWith(".jsonl")
+            (entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zst"))
           ) {
             localMatches.push(path.join(parentDir, entry.name));
           }
@@ -1842,13 +1937,14 @@ function isInternalExecutionPath(cwd) {
 function listSessions() {
   return sessionRows({ includeTitle: false }).flatMap((row) => {
     if (isInternalExecutionPath(row.cwd)) return [];
-    if (!row.rollout_path || !existsSync(row.rollout_path)) return [];
-    const files = rolloutFilesForSession(row.rollout_path, String(row.id));
+    const resolvedPath = resolveRolloutPath(row.rollout_path);
+    if (!resolvedPath || !existsSync(resolvedPath)) return [];
+    const files = rolloutFilesForSession(resolvedPath, String(row.id));
     if (!files.length) return [];
     return [{
       external_id: String(row.id),
       updated_at: row.updated_at == null ? null : String(row.updated_at),
-      source_locator: files.length > 1 ? files[files.length - 1] : row.rollout_path,
+      source_locator: files.length > 1 ? files[files.length - 1] : resolvedPath,
       version_token: filesVersionToken(files, row.updated_at),
     }];
   });
@@ -1876,10 +1972,10 @@ function readSession() {
   return rows.flatMap((row) => {
     if (isInternalExecutionPath(row.cwd)) return [];
     current += 1;
-    // 3. 展开并校验 `.jsonl` 会话日志文件的绝对路径，不存在则忽略
-    let rolloutPath = expandPath(row.rollout_path);
-    if ((!rolloutPath || !existsSync(rolloutPath)) && requestedLocator && existsSync(requestedLocator)) {
-      rolloutPath = requestedLocator;
+    // 3. 展开并校验 `.jsonl` / `.jsonl.zst` 会话日志文件的绝对路径，不存在则忽略
+    let rolloutPath = resolveRolloutPath(row.rollout_path);
+    if ((!rolloutPath || !existsSync(rolloutPath)) && requestedLocator) {
+      rolloutPath = resolveRolloutPath(requestedLocator);
     }
     if (!rolloutPath || !existsSync(rolloutPath)) return [];
 
@@ -2166,7 +2262,7 @@ function readUsage() {
   const newProcessedFiles = [];
 
   for (const row of rows) {
-    const rolloutPath = expandPath(row.rollout_path);
+    const rolloutPath = resolveRolloutPath(row.rollout_path);
     if (!rolloutPath || !existsSync(rolloutPath)) continue;
     const files = rolloutFilesForSession(rolloutPath, String(row.id));
     if (!files.length) continue;
@@ -2183,7 +2279,7 @@ function readUsage() {
           continue;
         }
 
-        const text = readFileSync(filePath, "utf8");
+        const text = readRolloutFile(filePath);
         const lines = text.split("\n");
         let currentModel = "gpt-5.4";
         let currentProvider = "openai";

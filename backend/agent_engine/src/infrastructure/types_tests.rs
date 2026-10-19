@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 fn default_limits_match_the_phase_one_contract() {
     let limits = AiExecutionLimits::default();
 
-    assert_eq!(limits.total_timeout.as_secs(), 180);
+    assert_eq!(limits.total_timeout.as_secs(), 86400);
     assert_eq!(limits.spawn_timeout.as_secs(), 30);
     assert_eq!(limits.initialize_timeout.as_secs(), 10);
     assert_eq!(limits.config_rpc_timeout.as_secs(), 5);
@@ -182,4 +182,18 @@ fn purpose_category_folder_mapping_test() {
         AiExecutionPurpose::ModelDiscovery.category_folder(),
         "general"
     );
+}
+
+#[test]
+fn purpose_is_memory_work_test() {
+    assert!(AiExecutionPurpose::SessionMemory.is_memory_work());
+    assert!(AiExecutionPurpose::MemoryGeneration.is_memory_work());
+    assert!(AiExecutionPurpose::ProjectMemory.is_memory_work());
+    assert!(AiExecutionPurpose::GlobalMemory.is_memory_work());
+    assert!(AiExecutionPurpose::Recall.is_memory_work());
+
+    assert!(!AiExecutionPurpose::Translation.is_memory_work());
+    assert!(!AiExecutionPurpose::PromptOptimization.is_memory_work());
+    assert!(!AiExecutionPurpose::ConnectionTest.is_memory_work());
+    assert!(!AiExecutionPurpose::ModelDiscovery.is_memory_work());
 }

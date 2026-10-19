@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
 };
 
 use tokio::sync::broadcast;
@@ -16,10 +19,18 @@ use super::{
     },
 };
 
+fn current_epoch_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 #[derive(Clone)]
 pub struct SessionEventProjection {
     state: Arc<Mutex<ProjectionState>>,
     events: Arc<broadcast::Sender<SessionSnapshot>>,
+    last_active_at_millis: Arc<AtomicU64>,
 }
 
 impl Default for SessionEventProjection {
@@ -34,6 +45,7 @@ impl SessionEventProjection {
         Self {
             state: Arc::new(Mutex::new(ProjectionState::new(limits.normalized()))),
             events: Arc::new(events),
+            last_active_at_millis: Arc::new(AtomicU64::new(current_epoch_millis())),
         }
     }
 
@@ -92,8 +104,25 @@ impl SessionEventProjection {
         state.revision += 1;
         let snapshot = state.snapshot();
         drop(state);
+        self.last_active_at_millis
+            .store(current_epoch_millis(), Ordering::Release);
         let _ = self.events.send(snapshot);
         SessionEventApplyResult::Applied
+    }
+
+    pub fn touch(&self) {
+        self.last_active_at_millis
+            .store(current_epoch_millis(), Ordering::Release);
+    }
+
+    pub fn last_active_at_millis(&self) -> u64 {
+        self.last_active_at_millis.load(Ordering::Acquire)
+    }
+
+    pub fn elapsed_since_active(&self) -> std::time::Duration {
+        let now = current_epoch_millis();
+        let last = self.last_active_at_millis.load(Ordering::Acquire);
+        std::time::Duration::from_millis(now.saturating_sub(last))
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {

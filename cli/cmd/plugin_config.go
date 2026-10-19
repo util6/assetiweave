@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/util6/assetiweave/internal/cmdutil"
 	internalplatform "github.com/util6/assetiweave/internal/platform"
@@ -20,6 +21,9 @@ func pluginConfigPath(f *cmdutil.Factory) string {
 	}
 	if path := os.Getenv(pluginConfigEnv); path != "" {
 		return path
+	}
+	if homeEnv := strings.TrimSpace(os.Getenv("ASSETIWEAVE_HOME")); homeEnv != "" {
+		return filepath.Join(homeEnv, "plugins.json")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {

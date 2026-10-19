@@ -21,7 +21,7 @@ func TestConversationSearchBuildsUnifiedKindSearchParams(t *testing.T) {
 		"--record-kind", "session",
 		"--adapter", "codex",
 		"--source", "codex-live",
-		"--project", "/Users/util6/code-space/assetiweave",
+		"--project", "/workspace/projects/assetiweave",
 		"--kind", "question",
 		"--kind", "answer",
 		"--kind", "claude-code.reasoning",
@@ -43,7 +43,7 @@ func TestConversationSearchBuildsUnifiedKindSearchParams(t *testing.T) {
 		params["record_kind"] != "session" ||
 		params["adapter_id"] != "codex" ||
 		params["source_id"] != "codex-live" ||
-		params["project_path"] != "/Users/util6/code-space/assetiweave" ||
+		params["project_path"] != "/workspace/projects/assetiweave" ||
 		params["since"] != "2026-01-01" ||
 		params["until"] != "2026-06-01T00:00:00Z" ||
 		params["timeline"] != true ||
@@ -438,7 +438,7 @@ func TestConversationSearchWritesMarkdownForAIContext(t *testing.T) {
 		conversationSearchFixtureData(),
 		"conversation", "search",
 		"--query", "frontend",
-		"--project", "/Users/util6/code-space/assetiweave",
+		"--project", "/workspace/projects/assetiweave",
 		"--format", "markdown",
 	)
 
@@ -449,7 +449,7 @@ func TestConversationSearchWritesMarkdownForAIContext(t *testing.T) {
 	for _, want := range []string{
 		"# Conversation Search Evidence",
 		"## Search Scope",
-		"/Users/util6/code-space/assetiweave",
+		"/workspace/projects/assetiweave",
 		"p-1-answer",
 		"frontend style preference",
 		"Card kinds: `claude-code.reasoning`",
@@ -541,7 +541,7 @@ func conversationSearchFixtureData() json.RawMessage {
 			"record_kind": "session",
 			"adapter_id": null,
 			"source_id": null,
-			"project_path": "/Users/util6/code-space/assetiweave",
+			"project_path": "/workspace/projects/assetiweave",
 			"query": "frontend",
 			"content_types": ["answer"],
 			"card_kinds": ["claude-code.reasoning"],
@@ -567,7 +567,7 @@ func conversationSearchFixtureData() json.RawMessage {
 					"adapter_id": "codex",
 					"external_id": "external-session-1",
 					"title": "Frontend style notes",
-					"project_path": "/Users/util6/code-space/assetiweave",
+					"project_path": "/workspace/projects/assetiweave",
 					"started_at": "2026-06-01T10:00:00Z",
 					"updated_at": "2026-06-01T10:30:00Z",
 					"source_locator": null,
