@@ -108,6 +108,20 @@ pub struct UsageSourceBreakdownDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct UsageProjectBreakdownDto {
+    pub project_path: String,
+    pub display_name: String,
+    pub is_unassigned: bool,
+    pub requests_count: i64,
+    pub total_tokens: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_tokens: i64,
+    pub costs_by_currency: Vec<CurrencyCostDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct UsageDateBreakdownDto {
     pub date: String,
     pub requests_count: i64,
@@ -161,6 +175,7 @@ pub struct UsageDashboardDto {
     pub daily_trend: Vec<UsageDailyTrendBucketDto>,
     pub models: Vec<UsageModelBreakdownDto>,
     pub sources: Vec<UsageSourceBreakdownDto>,
+    pub projects: Vec<UsageProjectBreakdownDto>,
     pub dates: Vec<UsageDateBreakdownDto>,
     pub scan_status: UsageScanStatusDto,
 }
@@ -178,6 +193,8 @@ pub struct UsageDashboardFilter {
     pub adapter_id: Option<String>,
     #[serde(default)]
     pub source_id: Option<String>,
+    #[serde(default)]
+    pub project_path: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]

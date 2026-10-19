@@ -34,6 +34,7 @@ export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
   const [startDate, setStartDate] = useState<string | null>(null);
   const [endDate, setEndDate] = useState<string | null>(null);
   const [selectedInstance, setSelectedInstance] = useState<string>("all");
+  const [selectedProject, setSelectedProject] = useState<string>("all");
   const [dashboard, setDashboard] = useState<UsageDashboardDto | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -57,6 +58,7 @@ export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
           startDate,
           endDate,
           sourceId: selectedInstance === "all" ? undefined : selectedInstance,
+          projectPath: selectedProject === "all" ? undefined : selectedProject,
           timezoneOffsetMinutes: -new Date().getTimezoneOffset(),
         };
         const data = await getConversationUsageDashboard(filter);
@@ -76,7 +78,7 @@ export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
         setRefreshing(false);
       }
     },
-    [timeRange, startDate, endDate, selectedInstance],
+    [timeRange, startDate, endDate, selectedInstance, selectedProject],
   );
 
   const checkScanStatus = useCallback(async () => {
@@ -209,7 +211,7 @@ export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
         </div>
       )}
 
-      {/* Toolbar: Time Range, Instance select, Refresh, Scan, Metadata line */}
+      {/* Toolbar: Time Range, Instance select, Project select, Refresh, Scan, Metadata line */}
       <UsageToolbar
         timeRange={timeRange}
         onTimeRangeChange={(r) => setTimeRange(r)}
@@ -221,6 +223,9 @@ export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
         }}
         selectedInstance={selectedInstance}
         onInstanceChange={(inst) => setSelectedInstance(inst)}
+        selectedProject={selectedProject}
+        onProjectChange={(proj) => setSelectedProject(proj)}
+        projects={dashboard?.projects || []}
         sources={dashboard?.sources || []}
         onRefresh={() => void loadDashboard(true)}
         onScan={handleScan}
@@ -241,11 +246,14 @@ export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
           {/* Daily Trend Spline Area Chart with peak badges */}
           <UsageTrendChart data={dashboard.dailyTrend} />
 
-          {/* Side-by-side Tables (By Model & By Instance) + Full-width By Date Table */}
+          {/* Side-by-side Tables (By Model & By Instance) + Projects Table + Full-width By Date Table */}
           <UsageBreakdownTables
             models={dashboard.models}
             sources={dashboard.sources}
+            projects={dashboard.projects}
             dates={dashboard.dates}
+            selectedProject={selectedProject}
+            onSelectProject={(proj) => setSelectedProject(proj)}
             appShortcuts={appShortcuts}
           />
         </>

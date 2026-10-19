@@ -2,8 +2,8 @@ use crate::backend::{
     domain::conversations::pricing::PriceCatalog,
     domain::conversations::{
         CurrencyCostDto, UsageDailyTrendBucketDto, UsageDashboardDto, UsageDashboardFilter,
-        UsageDateBreakdownDto, UsageHeroOverviewDto, UsageModelBreakdownDto, UsageScanStatusDto,
-        UsageSourceBreakdownDto,
+        UsageDateBreakdownDto, UsageHeroOverviewDto, UsageModelBreakdownDto,
+        UsageProjectBreakdownDto, UsageScanStatusDto, UsageSourceBreakdownDto,
     },
     store::StoreResult,
 };

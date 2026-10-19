@@ -410,4 +410,115 @@ describe("Usage Components", () => {
     expect(onDateRangeChange).toHaveBeenCalledTimes(1);
     expect(onTimeRangeChange).toHaveBeenCalledWith("custom");
   });
+
+  it("renders By Project table and handles project selection click", () => {
+    const onSelectProject = vi.fn();
+    const mockProjects = [
+      {
+        projectPath: "~/code-space/assetiweave",
+        displayName: "assetiweave",
+        isUnassigned: false,
+        requestsCount: 150,
+        totalTokens: 2500000,
+        inputTokens: 2000000,
+        outputTokens: 500000,
+        cacheTokens: 1000000,
+        costsByCurrency: [{ currency: "CNY", amount: 12.34 }],
+      },
+      {
+        projectPath: "__unassigned__",
+        displayName: "未分配项目",
+        isUnassigned: true,
+        requestsCount: 20,
+        totalTokens: 300000,
+        inputTokens: 250000,
+        outputTokens: 50000,
+        cacheTokens: 100000,
+        costsByCurrency: [{ currency: "CNY", amount: 1.5 }],
+      },
+    ];
+
+    const { rerender } = render(
+      <UsageBreakdownTables
+        models={[]}
+        sources={[]}
+        projects={mockProjects}
+        dates={[]}
+        selectedProject="all"
+        onSelectProject={onSelectProject}
+      />,
+    );
+
+    expect(screen.getByText("按项目")).toBeDefined();
+    expect(screen.getByText("共 2 个项目")).toBeDefined();
+    expect(screen.getByText("assetiweave")).toBeDefined();
+    expect(screen.getByText("未分配项目")).toBeDefined();
+    expect(screen.getByText("250.0 万")).toBeDefined();
+    expect(screen.getByText("¥12.34")).toBeDefined();
+
+    // Click on project row
+    const projectRow = screen.getByText("assetiweave").closest("tr");
+    expect(projectRow).toBeDefined();
+    fireEvent.click(projectRow!);
+    expect(onSelectProject).toHaveBeenCalledWith("~/code-space/assetiweave");
+
+    // Rerender with selected project
+    rerender(
+      <UsageBreakdownTables
+        models={[]}
+        sources={[]}
+        projects={mockProjects}
+        dates={[]}
+        selectedProject="~/code-space/assetiweave"
+        onSelectProject={onSelectProject}
+      />,
+    );
+
+    expect(screen.getByText("已筛选")).toBeDefined();
+    const clearBtn = screen.getByRole("button", { name: "清除项目过滤" });
+    expect(clearBtn).toBeDefined();
+    fireEvent.click(clearBtn);
+    expect(onSelectProject).toHaveBeenCalledWith("all");
+  });
+
+  it("renders Project selector in UsageToolbar", () => {
+    const onProjectChange = vi.fn();
+    render(
+      <UsageToolbar
+        timeRange="last_30_days"
+        onTimeRangeChange={vi.fn()}
+        selectedInstance="all"
+        onInstanceChange={vi.fn()}
+        selectedProject="all"
+        onProjectChange={onProjectChange}
+        projects={[
+          {
+            projectPath: "~/code-space/assetiweave",
+            displayName: "assetiweave",
+            isUnassigned: false,
+            requestsCount: 150,
+            totalTokens: 2500000,
+            inputTokens: 2000000,
+            outputTokens: 500000,
+            cacheTokens: 1000000,
+            costsByCurrency: [{ currency: "CNY", amount: 12.34 }],
+          },
+        ]}
+        sources={[]}
+        onRefresh={vi.fn()}
+        onScan={vi.fn()}
+        scanStatus={{
+          scannedSourcesCount: 1,
+          totalEventsCount: 10,
+          lastScannedAt: null,
+          activeScanTaskId: null,
+          sourceDiagnostics: [],
+        }}
+        totalRequests={10}
+        refreshing={false}
+      />,
+    );
+
+    expect(screen.getByText("项目")).toBeDefined();
+  });
 });

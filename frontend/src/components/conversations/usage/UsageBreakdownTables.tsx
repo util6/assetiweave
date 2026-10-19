@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import type {
   UsageDateBreakdown,
   UsageModelBreakdown,
+  UsageProjectBreakdown,
   UsageSourceBreakdown,
 } from "../../../types/usage";
 import { formatChineseTokens, formatUsageCosts } from "../../../types/usage";
@@ -15,7 +16,7 @@ import {
 } from "../../apps/AppShortcutIcon";
 import type { AppShortcut } from "../../../types";
 import { Button } from "../../ui/button";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, FolderGit2, FolderArchive } from "lucide-react";
 
 export function formatInstanceDisplayName(name: string): string {
   if (!name) return "";
@@ -48,32 +49,52 @@ export function findMatchedAppShortcut(
 interface UsageBreakdownTablesProps {
   models: UsageModelBreakdown[];
   sources: UsageSourceBreakdown[];
+  projects?: UsageProjectBreakdown[];
   dates: UsageDateBreakdown[];
+  selectedProject?: string;
+  onSelectProject?: (projectPath: string) => void;
   appShortcuts?: AppShortcut[];
   className?: string;
 }
 
 const DATES_PAGE_SIZE = 10;
+const PROJECTS_PAGE_SIZE = 10;
 
 export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
   models,
   sources,
+  projects = [],
   dates,
+  selectedProject,
+  onSelectProject,
   appShortcuts = [],
   className,
 }) => {
   const [datePage, setDatePage] = useState<number>(1);
+  const [projectPage, setProjectPage] = useState<number>(1);
 
   // Reset to page 1 whenever dates dataset changes
   useEffect(() => {
     setDatePage(1);
   }, [dates]);
 
+  // Reset to page 1 whenever projects dataset changes
+  useEffect(() => {
+    setProjectPage(1);
+  }, [projects]);
+
   const totalDatePages = Math.max(1, Math.ceil(dates.length / DATES_PAGE_SIZE));
   const validDatePage = Math.min(Math.max(1, datePage), totalDatePages);
   const pagedDates = dates.slice(
     (validDatePage - 1) * DATES_PAGE_SIZE,
     validDatePage * DATES_PAGE_SIZE,
+  );
+
+  const totalProjectPages = Math.max(1, Math.ceil(projects.length / PROJECTS_PAGE_SIZE));
+  const validProjectPage = Math.min(Math.max(1, projectPage), totalProjectPages);
+  const pagedProjects = projects.slice(
+    (validProjectPage - 1) * PROJECTS_PAGE_SIZE,
+    validProjectPage * PROJECTS_PAGE_SIZE,
   );
 
   return (
@@ -286,6 +307,164 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
             </div>
           )}
         </div>
+      </div>
+
+      {/* Middle Row: Full-width Table for Projects (按项目) */}
+      <div className="flex flex-col rounded-2xl border border-theme-card-border/75 bg-[linear-gradient(145deg,rgb(var(--theme-card-bg)/0.82),rgb(var(--theme-card-header)/0.74))] p-5 sm:p-6 shadow-[var(--theme-shadow-card),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.14)] backdrop-blur-xl transition-all">
+        <div className="mb-3.5 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <h3 className="text-body-md font-bold text-on-surface">按项目</h3>
+            {projects.length > 0 && (
+              <span className="rounded-full bg-theme-control/70 border border-theme-control-border/60 px-2 py-0.5 text-[11px] font-mono text-on-surface-variant">
+                共 {projects.length} 个项目
+              </span>
+            )}
+          </div>
+          {selectedProject && selectedProject !== "all" && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onSelectProject?.("all")}
+              className="h-7 text-xs text-primary hover:text-primary/80 px-2 rounded-lg cursor-pointer"
+            >
+              清除项目过滤
+            </Button>
+          )}
+        </div>
+        <div className="overflow-x-auto -mx-1 px-1">
+          <table className="w-full text-left text-body-sm">
+            <thead>
+              <tr className="border-b border-theme-border/40 text-caption font-semibold text-on-surface-variant">
+                <th className="pb-2.5 pl-2 pr-4">项目</th>
+                <th className="pb-2.5 pr-4 text-right">输入 Tokens</th>
+                <th className="pb-2.5 pr-4 text-right">缓存 Tokens</th>
+                <th className="pb-2.5 pr-4 text-right">输出 Tokens</th>
+                <th className="pb-2.5 pr-4 text-right font-bold">
+                  合计 Tokens
+                </th>
+                <th className="pb-2.5 pr-4 text-right font-bold text-primary">预估费用</th>
+                <th className="pb-2.5 pr-2 text-right font-semibold text-on-surface-variant">请求数</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-theme-border/20">
+              {projects.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="py-6 text-center text-caption text-on-surface-variant"
+                  >
+                    暂无项目用量记录
+                  </td>
+                </tr>
+              ) : (
+                pagedProjects.map((p) => {
+                  const isSelected = selectedProject === p.projectPath;
+                  return (
+                    <tr
+                      key={p.projectPath}
+                      onClick={() => {
+                        if (onSelectProject) {
+                          onSelectProject(isSelected ? "all" : p.projectPath);
+                        }
+                      }}
+                      className={cn(
+                        "hover:bg-theme-control/35 transition-colors cursor-pointer group",
+                        isSelected && "bg-primary/10 hover:bg-primary/15",
+                      )}
+                      title={isSelected ? "点击取消项目过滤" : "点击过滤该项目"}
+                    >
+                      <td className="py-2.5 pl-2 pr-4 font-mono text-caption text-on-surface">
+                        <div className="flex items-center gap-2 max-w-[280px] sm:max-w-[360px]">
+                          {p.isUnassigned ? (
+                            <FolderArchive className="size-4 shrink-0 text-on-surface-variant/60" />
+                          ) : (
+                            <FolderGit2 className="size-4 shrink-0 text-primary/70 group-hover:text-primary transition-colors" />
+                          )}
+                          <div className="flex flex-col min-w-0">
+                            <span
+                              className={cn(
+                                "text-caption font-semibold truncate",
+                                isSelected ? "text-primary font-bold" : "text-on-surface",
+                              )}
+                            >
+                              {p.displayName}
+                            </span>
+                            {!p.isUnassigned && p.projectPath !== p.displayName && (
+                              <span
+                                className="text-[11px] font-mono text-on-surface-variant/70 truncate"
+                                title={p.projectPath}
+                              >
+                                {p.projectPath}
+                              </span>
+                            )}
+                          </div>
+                          {isSelected && (
+                            <span className="ml-auto shrink-0 rounded-full bg-primary/20 text-primary text-[10px] px-1.5 py-0.5 font-medium">
+                              已筛选
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2.5 pr-4 text-right font-mono text-caption text-on-surface">
+                        {formatChineseTokens(p.inputTokens)}
+                      </td>
+                      <td className="py-2.5 pr-4 text-right font-mono text-caption text-on-surface">
+                        {formatChineseTokens(p.cacheTokens)}
+                      </td>
+                      <td className="py-2.5 pr-4 text-right font-mono text-caption text-on-surface">
+                        {formatChineseTokens(p.outputTokens)}
+                      </td>
+                      <td className="py-2.5 pr-4 text-right font-mono text-caption font-bold text-on-surface">
+                        {formatChineseTokens(p.totalTokens)}
+                      </td>
+                      <td className="py-2.5 pr-4 text-right font-mono text-caption font-bold text-primary">
+                        {formatUsageCosts(p.costsByCurrency)}
+                      </td>
+                      <td className="py-2.5 pr-2 text-right font-mono text-caption text-on-surface-variant">
+                        {p.requestsCount.toLocaleString()}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination Bar for Projects Table */}
+        {totalProjectPages > 1 && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-theme-border/30 pt-3 text-caption text-on-surface-variant">
+            <div className="flex items-center gap-1.5 font-medium">
+              <span className="font-mono text-on-surface font-semibold">
+                第 {validProjectPage} / {totalProjectPages} 页
+              </span>
+              <span className="text-on-surface-variant/50">·</span>
+              <span>共 {projects.length} 个项目</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setProjectPage((p) => Math.max(1, p - 1))}
+                disabled={validProjectPage <= 1}
+                className="h-8 gap-1 rounded-xl border-theme-control-border/80 bg-theme-control/60 px-2.5 text-caption text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] transition-all hover:border-theme-nav-active-border/60 hover:text-on-surface disabled:opacity-40 cursor-pointer"
+              >
+                <ChevronLeft className="size-3.5" />
+                <span>上一页</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setProjectPage((p) => Math.min(totalProjectPages, p + 1))}
+                disabled={validProjectPage >= totalProjectPages}
+                className="h-8 gap-1 rounded-xl border-theme-control-border/80 bg-theme-control/60 px-2.5 text-caption text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] transition-all hover:border-theme-nav-active-border/60 hover:text-on-surface disabled:opacity-40 cursor-pointer"
+              >
+                <span>下一页</span>
+                <ChevronRight className="size-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bottom Row: Full-width Table for Dates (按日期) */}

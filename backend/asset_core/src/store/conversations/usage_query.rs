@@ -1,9 +1,10 @@
 use crate::backend::{
     domain::conversations::{
         CurrencyCostDto, UsageDailyTrendBucketDto, UsageDashboardDto, UsageDashboardFilter,
-        UsageDateBreakdownDto, UsageHeroOverviewDto, UsageModelBreakdownDto, UsageScanStatusDto,
-        UsageSourceBreakdownDto,
+        UsageDateBreakdownDto, UsageHeroOverviewDto, UsageModelBreakdownDto,
+        UsageProjectBreakdownDto, UsageScanStatusDto, UsageSourceBreakdownDto,
     },
+    infrastructure::project_path::{resolve_project_directory, UNASSIGNED_PROJECT_KEY},
     store::StoreResult,
 };
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
@@ -27,6 +28,7 @@ struct LoadedUsageRow {
     cost: f64,
     cost_basis: String,
     currency: String,
+    project_path: Option<String>,
 }
 
 pub async fn query_usage_dashboard_sqlx(
@@ -115,32 +117,37 @@ pub async fn query_usage_dashboard_sqlx(
     // Construct SQL query with optional filters
     let mut sql = String::from(
         r#"
-        SELECT timestamp, adapter_id, source_id, provider, model,
-               input_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
-               output_tokens, total_tokens,
-               COALESCE(host_reported_cost, catalog_estimated_cost, 0.0) AS cost,
-               cost_basis, currency
-        FROM conversation_usage_events
-        WHERE tenant_id = ?
+        SELECT u.timestamp, u.adapter_id, u.source_id, u.provider, u.model,
+               u.input_tokens, u.cache_read_tokens, u.cache_write_tokens, u.reasoning_tokens,
+               u.output_tokens, u.total_tokens,
+               COALESCE(u.host_reported_cost, u.catalog_estimated_cost, 0.0) AS cost,
+               u.cost_basis, u.currency,
+               s.project_path
+        FROM conversation_usage_events u
+        LEFT JOIN conversation_sessions s
+               ON s.tenant_id = u.tenant_id
+              AND s.source_id = u.source_id
+              AND (s.external_id = u.session_id OR s.id = u.session_id)
+        WHERE u.tenant_id = ?
         "#,
     );
 
     if !is_all_time {
-        sql.push_str(" AND timestamp >= ?");
+        sql.push_str(" AND u.timestamp >= ?");
     }
     if end_utc_str.is_some() {
-        sql.push_str(" AND timestamp < ?");
+        sql.push_str(" AND u.timestamp < ?");
     }
     if filter.adapter_id.is_some() {
-        sql.push_str(" AND adapter_id = ?");
+        sql.push_str(" AND u.adapter_id = ?");
     }
     if filter.source_id.is_some() {
-        sql.push_str(" AND source_id = ?");
+        sql.push_str(" AND u.source_id = ?");
     }
     if filter.model.is_some() {
-        sql.push_str(" AND model = ?");
+        sql.push_str(" AND u.model = ?");
     }
-    sql.push_str(" ORDER BY timestamp ASC");
+    sql.push_str(" ORDER BY u.timestamp ASC");
 
     let mut query = sqlx::query(AssertSqlSafe(sql.as_str())).bind(tenant_id);
     if !is_all_time {
@@ -177,6 +184,7 @@ pub async fn query_usage_dashboard_sqlx(
             cost: r.get("cost"),
             cost_basis: r.get("cost_basis"),
             currency: r.get("currency"),
+            project_path: r.get("project_path"),
         });
     }
 
@@ -218,6 +226,26 @@ pub async fn query_usage_dashboard_sqlx(
         cached_models,
     );
 
+    let registered_roots = crate::backend::store::load_sources_sqlx(pool, tenant_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|s| s.repo_root)
+        .collect::<Vec<_>>();
+
+    let target_project_filter = filter
+        .project_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|p| {
+            if p == UNASSIGNED_PROJECT_KEY {
+                UNASSIGNED_PROJECT_KEY.to_string()
+            } else {
+                resolve_project_directory(p, &registered_roots).unwrap_or_else(|| p.to_string())
+            }
+        });
+
     // Aggregations:
     let mut total_tokens = 0i64;
     let mut total_input = 0i64;
@@ -225,7 +253,7 @@ pub async fn query_usage_dashboard_sqlx(
     let mut cache_read_tokens = 0i64;
     let mut cache_write_tokens = 0i64;
     let mut reasoning_tokens = 0i64;
-    let requests_count = loaded_events.len() as i64;
+    let mut requests_count = 0i64;
     let mut cost_by_currency_map: HashMap<String, f64> = HashMap::new();
     let mut cost_covered_tokens = 0i64;
     let mut cost_covered_requests = 0i64;
@@ -269,13 +297,48 @@ pub async fn query_usage_dashboard_sqlx(
     }
     let mut source_map: HashMap<String, SourceAgg> = HashMap::new();
 
+    // Project breakdown (project_path -> stats)
+    struct ProjectAgg {
+        display_name: String,
+        is_unassigned: bool,
+        requests: i64,
+        total_tokens: i64,
+        input_tokens: i64,
+        output_tokens: i64,
+        cache_tokens: i64,
+        costs: HashMap<String, f64>,
+    }
+    let mut project_map: HashMap<String, ProjectAgg> = HashMap::new();
+    let mut project_cache: HashMap<String, Option<String>> = HashMap::new();
+
     for ev in &loaded_events {
-        total_tokens += ev.total_tokens;
-        total_input += ev.input_tokens + ev.cache_read_tokens + ev.cache_write_tokens;
-        total_output += ev.reasoning_tokens + ev.output_tokens;
-        cache_read_tokens += ev.cache_read_tokens;
-        cache_write_tokens += ev.cache_write_tokens;
-        reasoning_tokens += ev.reasoning_tokens;
+        let (project_key, display_name, is_unassigned) = match ev.project_path.as_deref() {
+            Some(raw) if !raw.trim().is_empty() => {
+                let resolved = project_cache
+                    .entry(raw.to_string())
+                    .or_insert_with(|| resolve_project_directory(raw, &registered_roots));
+                match resolved {
+                    Some(ref p) => {
+                        let name = std::path::Path::new(p)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or(p)
+                            .to_string();
+                        (p.clone(), name, false)
+                    }
+                    None => (
+                        UNASSIGNED_PROJECT_KEY.to_string(),
+                        "未分配项目".to_string(),
+                        true,
+                    ),
+                }
+            }
+            _ => (
+                UNASSIGNED_PROJECT_KEY.to_string(),
+                "未分配项目".to_string(),
+                true,
+            ),
+        };
 
         // Convert any non-CNY cost (e.g. legacy USD) into CNY for universal presentation
         let ev_cny_cost = if ev.currency.eq_ignore_ascii_case("USD") {
@@ -283,6 +346,42 @@ pub async fn query_usage_dashboard_sqlx(
         } else {
             ev.cost
         };
+
+        let p_entry = project_map
+            .entry(project_key.clone())
+            .or_insert_with(|| ProjectAgg {
+                display_name,
+                is_unassigned,
+                requests: 0,
+                total_tokens: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_tokens: 0,
+                costs: HashMap::new(),
+            });
+        p_entry.requests += 1;
+        p_entry.total_tokens += ev.total_tokens;
+        p_entry.input_tokens += ev.input_tokens + ev.cache_read_tokens + ev.cache_write_tokens;
+        p_entry.output_tokens += ev.reasoning_tokens + ev.output_tokens;
+        p_entry.cache_tokens += ev.cache_read_tokens + ev.cache_write_tokens;
+        if ev.cost_basis != "none" {
+            *p_entry.costs.entry("CNY".to_string()).or_insert(0.0) += ev_cny_cost;
+        }
+
+        // Filter check: If a project filter is requested, only match matching events
+        if let Some(ref target) = target_project_filter {
+            if &project_key != target {
+                continue;
+            }
+        }
+
+        total_tokens += ev.total_tokens;
+        total_input += ev.input_tokens + ev.cache_read_tokens + ev.cache_write_tokens;
+        total_output += ev.reasoning_tokens + ev.output_tokens;
+        cache_read_tokens += ev.cache_read_tokens;
+        cache_write_tokens += ev.cache_write_tokens;
+        reasoning_tokens += ev.reasoning_tokens;
+        requests_count += 1;
 
         if ev.cost_basis != "none" {
             cost_covered_tokens += ev.total_tokens;
@@ -431,7 +530,7 @@ pub async fn query_usage_dashboard_sqlx(
                 } else {
                     Some((agg.cost * 1000.0).round() / 1000.0)
                 },
-                currency: "CNY".to_string(),
+                currency: agg.currency,
                 cost_basis: agg.cost_basis,
                 unit_price_per_million: unit_price,
             }
@@ -472,6 +571,29 @@ pub async fn query_usage_dashboard_sqlx(
         .collect::<Vec<_>>();
     sources.sort_by(|a, b| b.total_tokens.cmp(&a.total_tokens));
 
+    let mut projects = project_map
+        .into_iter()
+        .map(|(project_path, agg)| UsageProjectBreakdownDto {
+            project_path,
+            display_name: agg.display_name,
+            is_unassigned: agg.is_unassigned,
+            requests_count: agg.requests,
+            total_tokens: agg.total_tokens,
+            input_tokens: agg.input_tokens,
+            output_tokens: agg.output_tokens,
+            cache_tokens: agg.cache_tokens,
+            costs_by_currency: agg
+                .costs
+                .into_iter()
+                .map(|(currency, amount)| CurrencyCostDto {
+                    currency,
+                    amount: (amount * 1000.0).round() / 1000.0,
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    projects.sort_by(|a, b| b.total_tokens.cmp(&a.total_tokens));
+
     let mut dates = daily_trend
         .iter()
         .filter(|d| d.requests_count > 0 || d.total_tokens > 0)
@@ -506,6 +628,7 @@ pub async fn query_usage_dashboard_sqlx(
         daily_trend,
         models,
         sources,
+        projects,
         dates,
         scan_status,
     })

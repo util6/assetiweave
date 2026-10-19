@@ -153,11 +153,24 @@ export interface ModelPricingStatus {
   lastUpdatedAt: string;
 }
 
+export interface UsageProjectBreakdown {
+  projectPath: string;
+  displayName: string;
+  isUnassigned: boolean;
+  requestsCount: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  costsByCurrency: CurrencyCost[];
+}
+
 export interface UsageDashboardDto {
   hero: UsageHeroOverview;
   dailyTrend: UsageDailyTrendBucket[];
   models: UsageModelBreakdown[];
   sources: UsageSourceBreakdown[];
+  projects: UsageProjectBreakdown[];
   dates: UsageDateBreakdown[];
   scanStatus: UsageScanStatus;
 }
@@ -169,6 +182,7 @@ export interface UsageDashboardFilter {
   adapterId?: string | null;
   sourceId?: string | null;
   model?: string | null;
+  projectPath?: string | null;
   timezoneOffsetMinutes?: number | null;
 }
 

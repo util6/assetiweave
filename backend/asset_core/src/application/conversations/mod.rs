@@ -24,6 +24,6 @@ pub use event_handlers::{SearchIndexAdvanceConsumer, SessionMemoryConsumer};
 pub use usage_dto::{
     CurrencyCostDto, ModelPriceEntryDto, ModelPricingCatalogDto, ModelPricingStatusDto,
     ModelPricingSyncResultDto, UsageDailyTrendBucketDto, UsageDashboardDto, UsageDashboardFilter,
-    UsageDateBreakdownDto, UsageHeroOverviewDto, UsageModelBreakdownDto, UsageScanOptions,
-    UsageScanStatusDto, UsageSourceBreakdownDto, UsageSourceDiagnosticDto,
+    UsageDateBreakdownDto, UsageHeroOverviewDto, UsageModelBreakdownDto, UsageProjectBreakdownDto,
+    UsageScanOptions, UsageScanStatusDto, UsageSourceBreakdownDto, UsageSourceDiagnosticDto,
 };

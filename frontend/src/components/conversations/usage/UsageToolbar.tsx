@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import type {
+  UsageProjectBreakdown,
   UsageScanStatus,
   UsageSourceBreakdown,
 } from "../../../types/usage";
@@ -35,6 +36,9 @@ interface UsageToolbarProps {
   onDateRangeChange?: (start: string | null, end: string | null) => void;
   selectedInstance: string;
   onInstanceChange: (instance: string) => void;
+  selectedProject?: string;
+  onProjectChange?: (project: string) => void;
+  projects?: UsageProjectBreakdown[];
   sources: UsageSourceBreakdown[];
   onRefresh: () => void;
   onScan: () => void;
@@ -52,6 +56,9 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
   onDateRangeChange,
   selectedInstance,
   onInstanceChange,
+  selectedProject = "all",
+  onProjectChange,
+  projects = [],
   sources,
   onRefresh,
   onScan,
@@ -169,6 +176,34 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
                   {sources.map((s) => (
                     <SelectItem key={s.sourceId} value={s.sourceId}>
                       {s.sourceName || s.appName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Project selector */}
+          <div className="flex items-center gap-2">
+            <span className="text-body-sm font-medium text-on-surface-variant shrink-0">
+              项目
+            </span>
+            <div className="w-[156px]">
+              <Select
+                value={selectedProject}
+                onValueChange={(val) => onProjectChange?.(val)}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="h-9 rounded-xl border-theme-control-border/80 bg-theme-control/60 shadow-[var(--theme-shadow-control-inset)] hover:border-theme-nav-active-border/50"
+                >
+                  <SelectValue placeholder="选择项目" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl border-theme-card-border bg-theme-card-header/95 backdrop-blur-xl max-h-[300px]">
+                  <SelectItem value="all">全部项目</SelectItem>
+                  {projects.map((p) => (
+                    <SelectItem key={p.projectPath} value={p.projectPath}>
+                      {p.displayName}
                     </SelectItem>
                   ))}
                 </SelectContent>

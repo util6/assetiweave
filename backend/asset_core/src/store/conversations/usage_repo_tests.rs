@@ -109,6 +109,7 @@ async fn test_usage_events_ingest_and_dashboard_query() {
         adapter_id: None,
         source_id: None,
         model: None,
+        project_path: None,
         timezone_offset_minutes: Some(0),
     };
     let dashboard = query_usage_dashboard_sqlx(pool, "default", &filter)
@@ -201,6 +202,7 @@ async fn test_zero_host_cost_falls_back_to_catalog_estimation() {
         adapter_id: None,
         source_id: None,
         model: None,
+        project_path: None,
         timezone_offset_minutes: Some(0),
     };
     let dashboard = query_usage_dashboard_sqlx(pool, "default", &filter)
@@ -305,6 +307,7 @@ async fn test_query_usage_dashboard_custom_date_range_bounded() {
         adapter_id: None,
         source_id: None,
         model: None,
+        project_path: None,
         timezone_offset_minutes: Some(0),
     };
     let dashboard = query_usage_dashboard_sqlx(pool, "default", &filter)
@@ -337,4 +340,194 @@ async fn test_query_usage_dashboard_custom_date_range_bounded() {
 
     drop(database);
     std::fs::remove_file(path).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_usage_dashboard_query_by_project() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-usage-proj-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+
+    // Set up temp directories: one Git repo, one non-Git dir
+    let temp_root = std::env::temp_dir().join(format!(
+        "assetiweave-usage-proj-dir-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_root).expect("create temp root");
+    let repo_dir = temp_root.join("my-git-repo");
+    std::fs::create_dir_all(repo_dir.join(".git")).expect("create .git");
+    let subpkg_dir = repo_dir.join("packages").join("web");
+    std::fs::create_dir_all(&subpkg_dir).expect("create subpkg");
+
+    let non_git_dir = temp_root.join("standalone-folder").join("notes");
+    std::fs::create_dir_all(&non_git_dir).expect("create non-git dir");
+
+    let repo_path_str = repo_dir.to_str().unwrap().to_string();
+    let subpkg_path_str = subpkg_dir.to_str().unwrap().to_string();
+    let non_git_path_str = non_git_dir.to_str().unwrap().to_string();
+
+    // 1. Insert sessions into conversation_sessions:
+    // Session 1: in git subpkg
+    // Session 2: in git root, but marked as missing = 1 (deleted session)
+    // Session 3: in non-git directory
+    // Session 4: no project path (unassigned)
+    let insert_session_sql = r#"
+        INSERT INTO conversation_sessions (
+            tenant_id, id, source_id, adapter_id, external_id, title, project_path, started_at, updated_at,
+            missing, created_at, imported_at, execution_origin, execution_purpose, user_visible
+        ) VALUES (
+            'default', ?1, 'src-proj', 'codex', ?2, ?3, ?4, '2026-03-01T00:00:00Z', '2026-03-01T00:00:00Z',
+            ?5, '2026-03-01T00:00:00Z', '2026-03-01T00:00:00Z', 'user', NULL, 1
+        )
+    "#;
+
+    sqlx::query(insert_session_sql)
+        .bind("sess-1")
+        .bind("ext-1")
+        .bind("Session Subpkg")
+        .bind(&subpkg_path_str)
+        .bind(0i64)
+        .execute(pool)
+        .await
+        .expect("insert sess-1");
+
+    sqlx::query(insert_session_sql)
+        .bind("sess-2")
+        .bind("ext-2")
+        .bind("Deleted Session")
+        .bind(&repo_path_str)
+        .bind(1i64) // missing = 1 (deleted!)
+        .execute(pool)
+        .await
+        .expect("insert sess-2");
+
+    sqlx::query(insert_session_sql)
+        .bind("sess-3")
+        .bind("ext-3")
+        .bind("Non-Git Session")
+        .bind(&non_git_path_str)
+        .bind(0i64)
+        .execute(pool)
+        .await
+        .expect("insert sess-3");
+
+    sqlx::query(insert_session_sql)
+        .bind("sess-4")
+        .bind("ext-4")
+        .bind("Unassigned Session")
+        .bind(None::<String>)
+        .bind(0i64)
+        .execute(pool)
+        .await
+        .expect("insert sess-4");
+
+    // 2. Insert usage events
+    let make_event = |id: &str, sess_id: Option<&str>, tokens: i64| RawUsageEventInput {
+        external_event_id: id.to_string(),
+        session_id: sess_id.map(str::to_string),
+        turn_id: None,
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-03-05T12:00:00Z".to_string(),
+        provider: "anthropic".to_string(),
+        model: "claude-3-7-sonnet".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: tokens / 2,
+        output_tokens: tokens / 2,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: None,
+        currency: Some("USD".to_string()),
+    };
+
+    let events = vec![
+        make_event("evt-1", Some("ext-1"), 1000), // git subpkg -> should roll up to git root
+        make_event("evt-2", Some("ext-2"), 2000), // deleted session -> should be preserved in git root
+        make_event("evt-3", Some("ext-3"), 3000), // non-git -> standalone
+        make_event("evt-4", Some("ext-4"), 4000), // session without project -> unassigned
+        make_event("evt-5", None, 5000),          // orphan event without session -> unassigned
+    ];
+
+    upsert_usage_events_sqlx(pool, "default", "src-proj", "codex", &events, None)
+        .await
+        .expect("upsert usage events");
+
+    // 3. Test Global Query (No project filter)
+    let global_filter = UsageDashboardFilter {
+        time_range: Some("all_time".to_string()),
+        start_date: None,
+        end_date: None,
+        adapter_id: None,
+        source_id: None,
+        project_path: None,
+        model: None,
+        timezone_offset_minutes: Some(0),
+    };
+    let global_dashboard = query_usage_dashboard_sqlx(pool, "default", &global_filter)
+        .await
+        .expect("query global dashboard");
+
+    assert_eq!(global_dashboard.hero.total_tokens, 15000);
+    assert_eq!(global_dashboard.hero.requests_count, 5);
+
+    // Verify projects breakdown
+    assert_eq!(global_dashboard.projects.len(), 3); // git repo, non-git folder, unassigned
+
+    let unassigned_proj = global_dashboard
+        .projects
+        .iter()
+        .find(|p| p.is_unassigned)
+        .expect("unassigned project breakdown");
+    assert_eq!(unassigned_proj.total_tokens, 9000); // evt-4 (4000) + evt-5 (5000)
+    assert_eq!(unassigned_proj.requests_count, 2);
+
+    let git_proj = global_dashboard
+        .projects
+        .iter()
+        .find(|p| p.display_name == "my-git-repo")
+        .expect("git project breakdown");
+    assert_eq!(git_proj.total_tokens, 3000); // evt-1 (1000) + evt-2 (2000 from deleted session)
+    assert_eq!(git_proj.requests_count, 2);
+
+    let non_git_proj = global_dashboard
+        .projects
+        .iter()
+        .find(|p| p.display_name == "notes")
+        .expect("non-git project breakdown");
+    assert_eq!(non_git_proj.total_tokens, 3000); // evt-3 (3000)
+    assert_eq!(non_git_proj.requests_count, 1);
+
+    // 4. Test Filtering by Git Repo (passing the subpkg path should also match the rolled-up Git root)
+    let git_filter = UsageDashboardFilter {
+        project_path: Some(subpkg_path_str),
+        ..global_filter.clone()
+    };
+    let git_dashboard = query_usage_dashboard_sqlx(pool, "default", &git_filter)
+        .await
+        .expect("query git project dashboard");
+    assert_eq!(git_dashboard.hero.total_tokens, 3000);
+    assert_eq!(git_dashboard.hero.requests_count, 2);
+    // All projects list is still provided for switching
+    assert_eq!(git_dashboard.projects.len(), 3);
+
+    // 5. Test Filtering by Unassigned Project
+    let unassigned_filter = UsageDashboardFilter {
+        project_path: Some("__unassigned__".to_string()),
+        ..global_filter.clone()
+    };
+    let unassigned_dashboard = query_usage_dashboard_sqlx(pool, "default", &unassigned_filter)
+        .await
+        .expect("query unassigned dashboard");
+    assert_eq!(unassigned_dashboard.hero.total_tokens, 9000);
+    assert_eq!(unassigned_dashboard.hero.requests_count, 2);
+
+    drop(database);
+    std::fs::remove_file(path).ok();
+    std::fs::remove_dir_all(temp_root).ok();
 }
