@@ -1,0 +1,13 @@
+{
+  "method": "POST",
+  "url": "https://api.qianwen.com/growth/user/benefit/user/member/info",
+  "headers": {
+    "Accept": "application/json, text/plain, */*",
+    "Origin": "https://www.qianwen.com",
+    "Referer": "https://www.qianwen.com/",
+    "User-Agent": "Mozilla/5.0"
+  },
+  "body": {
+    "clientChannel": "PC"
+  }
+}

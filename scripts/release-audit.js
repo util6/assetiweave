@@ -68,18 +68,21 @@ function run(command, args, options = {}) {
 
 const packageJSON = readJSON("package.json");
 const tauriConfig = readJSON("desktop/tauri.conf.json");
-const contract = readJSON("cli/internal/schema/contract.json");
 const cargoToml = read("desktop/Cargo.toml");
 const cargoVersion = cargoToml.match(/^\[package\][\s\S]*?^version = "([^"]+)"/m)?.[1];
+const cliCargoToml = read("backend/cli/Cargo.toml");
+const cliCargoVersion = cliCargoToml.match(/^\[package\][\s\S]*?^version = "([^"]+)"/m)?.[1];
+
+const contract = readJSON("cli/internal/schema/contract.json");
 
 requireEqual("desktop/Cargo.toml version", cargoVersion, packageJSON.version);
 requireEqual("desktop/tauri.conf.json version", tauriConfig.version, packageJSON.version);
-requireEqual("cli/internal/schema/contract.json engine_version", contract.engine_version, packageJSON.version);
+requireEqual("backend/cli/Cargo.toml version", cliCargoVersion, packageJSON.version);
 
 const ciWorkflow = read(".github/workflows/ci.yml");
-requireIncludes("CI workflow", ciWorkflow, "go vet -C cli ./...");
-requireIncludes("CI workflow", ciWorkflow, "go test -C cli -race ./...");
-requireIncludes("CI workflow", ciWorkflow, "pnpm cli:test:e2e");
+requireIncludes("CI workflow", ciWorkflow, "pnpm cli:test");
+requireNotIncludes("CI workflow", ciWorkflow, "go vet -C cli");
+requireNotIncludes("CI workflow", ciWorkflow, "go test -C cli");
 const windowsCiJob = workflowJob(ciWorkflow, "windows");
 requireIncludes("Windows CI job", windowsCiJob, "pnpm typecheck");
 requireIncludes("Windows CI job", windowsCiJob, "pnpm test");
@@ -180,7 +183,7 @@ requireIncludes("self updater", selfUpdateApply, "rollbackInstalled");
 requireIncludes("self updater", read("cli/cmd/update.go"), "\"yes\"");
 
 if (!staticOnly) {
-  run("go", ["test", "./internal/errlint", "./internal/cmdlint", "./internal/schema", "./internal/update", "./internal/selfupdate", "./cmd", "-count=1"], { cwd: cliRoot });
+  run("cargo", ["test", "-p", "cli", "--test", "cli_tests"]);
 }
 
 console.log(staticOnly ? "release static audit passed" : "release audit passed");

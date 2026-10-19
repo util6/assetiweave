@@ -38,7 +38,9 @@ const exe = process.platform === "win32" ? ".exe" : "";
 const installDir = resolveInstallDir();
 const cliName = `assetiweave-cli${exe}`;
 const engineName = `assetiweave-engine${exe}`;
-const cliSource = join(root, "target", "debug", cliName);
+const cliSource = existsSync(join(root, "target", "debug", `aiwc${exe}`))
+  ? join(root, "target", "debug", `aiwc${exe}`)
+  : join(root, "target", "debug", cliName);
 const engineSource = join(root, "target", "debug", engineName);
 
 if (process.env.ASSETIWEAVE_INSTALL_SKIP_BUILD !== "1") {
@@ -46,13 +48,15 @@ if (process.env.ASSETIWEAVE_INSTALL_SKIP_BUILD !== "1") {
   run(process.execPath, [join(root, "scripts", "build-cli.js")]);
 }
 
-if (!existsSync(cliSource) || !existsSync(engineSource)) {
-  throw new Error(`built CLI or Engine is missing under ${join(root, "target", "debug")}`);
+if (!existsSync(cliSource)) {
+  throw new Error(`built CLI is missing under ${join(root, "target", "debug")}`);
 }
 
 mkdirSync(installDir, { recursive: true });
 installExecutable(cliSource, join(installDir, cliName));
-installExecutable(engineSource, join(installDir, engineName));
+if (existsSync(engineSource)) {
+  installExecutable(engineSource, join(installDir, engineName));
+}
 if (process.platform === "win32") {
   installTextFile(join(installDir, "aiwc.cmd"), `@echo off\r\n"%~dp0${cliName}" %*\r\n`);
 } else {

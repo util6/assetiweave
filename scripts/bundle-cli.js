@@ -16,7 +16,6 @@ function run(command, args, options = {}) {
     stdio: "inherit",
     env: {
       ...process.env,
-      GOCACHE: join(root, "target", "go-build"),
       ...options.env,
     },
   });
@@ -40,6 +39,7 @@ run("cargo", ["build", "--release", "-p", "assetiweave", "--bin", "assetiweave-e
 run("node", ["scripts/build-cli.js"], {
   env: {
     ASSETIWEAVE_CLI_OUTPUT: cliOutput,
+    CARGO_PROFILE: "release",
   },
 });
 copyFileSync(releaseEngine, engineOutput);

@@ -15,13 +15,17 @@ function findBinary(name, envName, required = true) {
   ].filter(Boolean);
   const found = candidates.find((candidate) => existsSync(candidate));
   if (!found && required) {
-    console.error(`${name} not found. Run pnpm cli:install, or set ${envName}.`);
+    console.error(
+      `${name} not found. Run pnpm cli:install, or set ${envName}.`,
+    );
     process.exit(1);
   }
   return found;
 }
 
-const cli = findBinary("assetiweave-cli", "ASSETIWEAVE_CLI");
+const cli =
+  findBinary("aiwc", "ASSETIWEAVE_CLI", false) ||
+  findBinary("assetiweave-cli", "ASSETIWEAVE_CLI");
 const engine = findBinary("assetiweave-engine", "ASSETIWEAVE_ENGINE", false);
 const env = { ...process.env };
 if (!env.ASSETIWEAVE_ENGINE && engine) {

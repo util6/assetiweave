@@ -32,15 +32,15 @@ jobs:
           node scripts/release-audit.js --static-only
           app_version="$(node -p "require('./package.json').version")"
           tauri_version="$(node -p "require('./desktop/tauri.conf.json').version")"
-          contract_engine_version="$(node -p "require('./cli/internal/schema/contract.json').engine_version")"
+          cli_version="$(sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"/\1/p' backend/cli/Cargo.toml | head -n 1)"
           engine_version="$(sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"/\1/p' desktop/Cargo.toml | head -n 1)"
           expected_tag="v${app_version}"
           if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
             echo "::error::Release tag $RELEASE_TAG does not match application version $expected_tag"
             exit 1
           fi
-          if [[ "$engine_version" != "$app_version" || "$tauri_version" != "$app_version" || "$contract_engine_version" != "$app_version" ]]; then
-            echo "::error::package.json, desktop/Cargo.toml, desktop/tauri.conf.json, and the embedded CLI contract must share version $app_version"
+          if [[ "$engine_version" != "$app_version" || "$tauri_version" != "$app_version" || "$cli_version" != "$app_version" ]]; then
+            echo "::error::package.json, desktop/Cargo.toml, desktop/tauri.conf.json, and backend/cli/Cargo.toml must share version $app_version"
             exit 1
           fi
           if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
@@ -126,13 +126,6 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
-          cache-dependency-path: cli/go.sum
-          cache: true
 
       - name: Setup Rust
         if: matrix.rust_target == ''

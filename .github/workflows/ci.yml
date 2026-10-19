@@ -53,26 +53,6 @@ jobs:
       - name: Build web app
         run: pnpm build
 
-  go:
-    name: Go
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
-          cache-dependency-path: cli/go.sum
-          cache: true
-
-      - name: Vet CLI
-        run: go vet -C cli ./...
-
-      - name: Test CLI
-        run: go test -C cli -race ./...
-
   rust:
     name: Rust
     runs-on: ubuntu-22.04
@@ -123,7 +103,7 @@ jobs:
         run: cargo test --workspace -- --test-threads=1
 
   windows:
-    name: Windows Rust / Go / Frontend
+    name: Windows Rust / Frontend
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -140,13 +120,6 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
-          cache-dependency-path: cli/go.sum
-          cache: true
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -177,14 +150,8 @@ jobs:
           & ".\target\debug\assetiweave.exe" --startup-self-check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Vet CLI
-        run: go vet -C cli ./...
-
       - name: Test CLI
         run: pnpm cli:test
-
-      - name: Build CLI
-        run: go build -C cli ./...
 
       - name: Check frontend types
         run: pnpm typecheck
@@ -199,7 +166,7 @@ jobs:
         run: pnpm bundle:cli
 
   cli-e2e:
-    name: CLI / Engine E2E
+    name: CLI E2E
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
@@ -218,13 +185,6 @@ jobs:
         with:
           node-version: 22
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
-          cache-dependency-path: cli/go.sum
-          cache: true
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -238,5 +198,5 @@ jobs:
       - name: Build CLI and Engine
         run: pnpm cli:install
 
-      - name: Test real CLI and Engine binaries
-        run: pnpm cli:test:e2e
+      - name: Test real CLI binary
+        run: pnpm cli:test

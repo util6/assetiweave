@@ -12,14 +12,15 @@
 ## 2. 模块职责与运行时数据流 (Architecture & Data Flow)
 
 - **桌面端交互流**：`React (UI) -> frontend/src/services -> Tauri Commands -> AppService -> Backend Capabilities/Store -> SQLite & 文件系统`。
-- **CLI 执行流**：`Go Cobra -> Engine Client -> stdio JSON Protocol -> AppService -> 共享 Capabilities/Store`。
+- **CLI 执行流**：`Rust Native (backend/cli) -> In-Process AppService -> 共享 Capabilities/Store`。
 - **核心模块边界**：
   - `frontend/src/`：React 19 + TypeScript。基础控件位于 `components/foundation` 与 `components/ui`，跨域复用组件在 `components/common`，业务域按 `components/{groups,assets,sources,conversations}` 组织。
   - `desktop/`：Tauri 2 桌面宿主壳。`adapters/` 负责 Tauri 命令、Engine stdio 协议、系统胶水与后台任务投影。
-  - `backend/`：纯 Rust 业务核心双 Crate：
+  - `backend/`：纯 Rust 业务核心多 Crate：
     - `backend/agent_engine/`：强 AI 纵切纯引擎（ACP 协议、L1 Profile 沙箱隔离、进程生命周期托管，零数据库依赖）。
     - `backend/asset_core/`：弱 AI 资产纵切（Skill 挂载、对话记录、卡片备忘、SQLite 存储与 migrations、统一业务门面 `AppService`）。
-  - `cli/`：Go Cobra 客户端。负责命令行交互、格式化输出与外部采集编排；禁止直接触碰底层数据库与挂载文件。
+    - `backend/cli/`：Rust Native 纯客户端（`aiwc`），以 OneShot In-Process 方式直连 `AppService`，零跨进程 IPC 与管道开销，实现微秒级响应。
+  - `cli/`：历史 Go Cobra 客户端代码（只读归档，已全面脱钩日常编译、安装与 CI，保留留存纪念）。
 
 ## 3. 开发、契约与验证命令 (Commands & Baseline)
 
@@ -27,16 +28,15 @@
   - 前端开发/校验：`pnpm dev`（纯前端预览，1420 端口）、`pnpm typecheck && pnpm test && pnpm build`。
   - 桌面端联调：`pnpm tauri:dev`。
   - Rust 校验：`cargo fmt --all -- --check && cargo test --workspace`。
-  - Go CLI 校验：`go vet -C cli ./... && go test -C cli -race ./...`。
-  - 契约同步：当 Engine 接口、DTO、错误类型或暴露范围变动时，必须执行 `pnpm cli:contract`，严禁手改 `cli/internal/schema/contract.json`。
+  - CLI 校验：`cargo test -p cli`（或 `pnpm cli:test`）。
   - E2E 验证：`pnpm cli:test:e2e`。
-- **环境基线**：Node 22, pnpm 10, Go 1.24, Rust 1.96.0+。
+- **环境基线**：Node 22, pnpm 10, Rust 1.96.0+（Go 仅为历史归档代码保留，不计入日常编译与构建依赖）。
 
 ## 4. 架构规范与开发模式 (Engineering Patterns)
 
 - **代码与设计规范**：
   - TypeScript 采用 2 空格、分号、双引号；组件/类型使用 `PascalCase`，函数/变量/hooks 使用 `camelCase`（hook 加 `use` 前缀）。
-  - Rust 遵守 `rustfmt`，Go 遵守 `gofmt`。
+  - Rust 遵守 `rustfmt`。
   - **组件分层架构与引入**：严格遵守 Foundation (`components/foundation/` 与 `components/ui/`) -> Common (`components/common/`) -> Domain (`components/{domain}/`) 三层架构。业务层严禁手写裸 HTML 按钮、输入框与自定义遮罩弹窗。
   - **设计系统与视觉规范 (AssetIWeave UI)**：
     - 统一采用温润象牙/暗色玻璃拟态、微光辉与内阴影高光（Theme Tokens & Recipes）。严禁硬编码原始 Hex/RGB/HSL 色值或使用 Tailwind 默认调色盘类名。

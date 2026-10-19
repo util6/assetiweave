@@ -3,6 +3,7 @@ members = [
     "desktop",
     "backend/agent_engine",
     "backend/asset_core",
+    "backend/cli",
 ]
 resolver = "2"
 

@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "site_id": "chatgpt-web",
+  "name": "ChatGPT Web",
+  "auth_probe": {
+    "request": "requests/auth-probe.json",
+    "success": {
+      "status": 200,
+      "json_path": "accessToken"
+    },
+    "expired_when": {
+      "status": 401
+    }
+  },
+  "list": {
+    "request": "requests/list.json",
+    "sessions_path": "items",
+    "id_path": "id",
+    "title_path": "title",
+    "updated_at_path": "update_time",
+    "started_at_path": "create_time",
+    "source_url_path": "",
+    "fingerprint_path": "id"
+  },
+  "detail": {
+    "request": "requests/detail.json",
+    "messages_path": "mapping",
+    "id_path": "id",
+    "role_path": "author.role",
+    "text_path": "content.parts.0",
+    "created_at_path": "create_time"
+  },
+  "parser": {
+    "user_roles": [
+      "user"
+    ],
+    "assistant_roles": [
+      "assistant"
+    ],
+    "system_roles": [
+      "system"
+    ],
+    "tool_roles": [
+      "tool"
+    ]
+  },
+  "output": {
+    "raw_dir": "output/raw",
+    "normalized_dir": "output/normalized",
+    "sessions_file": "sessions.json"
+  },
+  "generated_adapter": {
+    "manifest": "conversation-adapter.json",
+    "script": "adapter.js"
+  }
+}
