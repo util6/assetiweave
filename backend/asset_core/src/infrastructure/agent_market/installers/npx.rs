@@ -77,7 +77,12 @@ impl Installer for NpxInstaller {
             .env("npm_config_cache", &npm_cache);
         let output = run_host_command(&mut command, context, 1024 * 1024, 256 * 1024).await?;
         if !output.status.success() {
-            return Err(InstallError::Failed("npm install failed".to_string()));
+            let stderr_text = String::from_utf8_lossy(&output.stderr);
+            let summary = super::extract_error_summary(&stderr_text)
+                .unwrap_or_else(|| "npm install failed".to_string());
+            return Err(InstallError::Failed(format!(
+                "npm install failed: {summary}"
+            )));
         }
         let lock_path = context.staging_dir.join("package-lock.json");
         if !lock_path.is_file() {

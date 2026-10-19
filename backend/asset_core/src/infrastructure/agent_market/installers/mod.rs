@@ -28,6 +28,7 @@ pub struct InstallContext {
     pub cancellation: Option<std::sync::Arc<AtomicBool>>,
     pub timeout: Duration,
     pub phase_sink: Option<std::sync::Arc<dyn Fn(LifecycleTaskPhase) + Send + Sync>>,
+    pub progress_sink: Option<std::sync::Arc<dyn Fn(u64, Option<u64>) + Send + Sync>>,
 }
 
 impl InstallContext {
@@ -39,12 +40,19 @@ impl InstallContext {
             cancellation: None,
             timeout: Duration::from_secs(10 * 60),
             phase_sink: None,
+            progress_sink: None,
         }
     }
 
     pub fn report_phase(&self, phase: LifecycleTaskPhase) {
         if let Some(sink) = self.phase_sink.as_ref() {
             sink(phase);
+        }
+    }
+
+    pub fn report_progress(&self, current: u64, total: Option<u64>) {
+        if let Some(sink) = self.progress_sink.as_ref() {
+            sink(current, total);
         }
     }
 }
@@ -117,6 +125,31 @@ pub fn is_cancelled(context: &InstallContext) -> bool {
         .cancellation
         .as_ref()
         .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
+}
+
+pub fn extract_error_summary(stderr: &str) -> Option<String> {
+    let lines: Vec<&str> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    for line in lines.iter().rev() {
+        if line.contains("ERR!")
+            || line.contains("error:")
+            || line.contains("Error:")
+            || line.contains("404")
+            || line.contains("ETIMEDOUT")
+        {
+            let truncated = if line.len() > 200 { &line[..200] } else { line };
+            return Some(truncated.to_string());
+        }
+    }
+    let last = lines.last().unwrap();
+    let truncated = if last.len() > 200 { &last[..200] } else { last };
+    Some(truncated.to_string())
 }
 
 pub async fn run_host_command(

@@ -116,3 +116,83 @@ async fn incompatible_installation_denies_update_and_requires_reinstall() {
 
     let _ = fs::remove_dir_all(root);
 }
+
+#[tokio::test]
+async fn test_preview_update_aligns_candidate_resolved_version_with_target_version() {
+    let root = std::env::temp_dir().join(format!("assetiweave-market-test-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create test root");
+    let db_path = root.join("app.db");
+    let service = AppService::open_with_db_path(db_path)
+        .await
+        .expect("open application service");
+
+    let repo = AgentInstallationRepository::new(service.db.pool().clone());
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let fake_bin = root.join("fake_opencode");
+    fs::write(&fake_bin, b"#!/bin/sh\necho 1.0.0\n").expect("write fake bin");
+
+    let installation = AgentInstallation {
+        agent_id: "opencode".to_string(),
+        installation_id: "inst-opencode".to_string(),
+        display_name: "OpenCode".to_string(),
+        catalog_item_version: "1.0.0".to_string(),
+        agent_version: "1.0.0".to_string(),
+        protocol: AgentMarketProtocol::Acp,
+        distribution_id: "binary-darwin-aarch64".to_string(),
+        distribution_type: DistributionType::Binary,
+        ownership: Ownership::Managed,
+        install_dir: Some(root.clone()),
+        resolved_program: fake_bin,
+        args: vec![],
+        definition_json: serde_json::json!({
+            "id": "opencode",
+            "version": "1.0.0",
+            "protocol": "acp"
+        }),
+        integrity_json: None,
+        source_registry: "curated".to_string(),
+        catalog_version: "1.0.0".to_string(),
+        enabled: true,
+        installation_status: InstallationStatus::Ready,
+        runtime_status: RuntimeStatus::Ready,
+        runtime_error_code: None,
+        runtime_error_message: None,
+        runtime_checked_at: Some(now.clone()),
+        protocol_status: ProtocolStatus::Ready,
+        protocol_error_code: None,
+        protocol_error_message: None,
+        protocol_checked_at: Some(now.clone()),
+        model_status: None,
+        model_error_code: None,
+        model_checked_at: None,
+        installed_at: now.clone(),
+        updated_at: now.clone(),
+    };
+    repo.upsert_active(&installation)
+        .await
+        .expect("insert installation");
+
+    let preview = service
+        .preview_agent_installation(AgentInstallPreviewRequest {
+            agent_id: "opencode".to_string(),
+            catalog_version: None,
+            agent_version: None,
+            distribution_id: None,
+            action: "update".to_string(),
+        })
+        .await
+        .expect("update preview should succeed");
+
+    assert_eq!(preview.action, "update");
+    assert_eq!(
+        preview.selected_distribution.resolved_version,
+        Some(preview.target_version.clone())
+    );
+    for alt in &preview.alternatives {
+        if alt.distribution_type != DistributionType::System {
+            assert_eq!(alt.resolved_version, Some(preview.target_version.clone()));
+        }
+    }
+    let _ = fs::remove_dir_all(root);
+}

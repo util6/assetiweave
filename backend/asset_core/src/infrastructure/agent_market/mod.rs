@@ -8,6 +8,7 @@ pub mod manifest;
 pub mod materialize;
 pub mod runtime;
 pub mod types;
+pub mod upstream_probe;
 
 pub use cache::{CatalogCache, CatalogRefreshOutcome};
 pub use error::*;
@@ -17,3 +18,4 @@ pub use manifest::*;
 pub use materialize::*;
 pub use runtime::AgentRuntimeManager;
 pub use types::*;
+pub use upstream_probe::*;

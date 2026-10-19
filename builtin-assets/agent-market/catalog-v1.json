@@ -1,7 +1,7 @@
 {
   "schema": "assetiweave.agent-market/v1",
-  "catalogVersion": "2026.08.29.1",
-  "generatedAt": "2026-08-29T00:00:00Z",
+  "catalogVersion": "2026.10.15.1",
+  "generatedAt": "2026-10-15T00:00:00Z",
   "source": {
     "kind": "assetiweave_curated",
     "upstream": "agentclientprotocol/registry",
@@ -285,7 +285,7 @@
       "displayName": "Codex",
       "description": "ACP adapter for OpenAI's coding assistant",
       "protocol": "acp",
-      "version": "1.6.2",
+      "version": "2.2.2",
       "coreCompatibility": {
         "min": "0.6.0",
         "maxExclusive": "0.7.0"
@@ -306,8 +306,8 @@
       },
       "verification": {
         "status": "tested",
-        "testedAt": "2026-08-20T00:00:00Z",
-        "evidenceId": "acp-registry-066208e4-codex-1.6.2-npx"
+        "testedAt": "2026-10-15T00:00:00Z",
+        "evidenceId": "acp-registry-codex-2.2.2-npx"
       },
       "upstream": {
         "registryId": "codex-acp",
@@ -320,7 +320,7 @@
           "type": "npx",
           "priority": 30,
           "package": "@agentclientprotocol/codex-acp",
-          "version": "1.6.2",
+          "version": "2.2.2",
           "bin": "codex-acp",
           "launchArgs": [],
           "sessionCleanupNotFoundMarkers": [

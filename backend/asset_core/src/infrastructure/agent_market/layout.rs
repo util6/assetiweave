@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use crate::backend::infrastructure::agent_market::error::AgentMarketError;
 
 pub fn default_runtime_root() -> Result<PathBuf, AgentMarketError> {
+    if let Ok(home) = crate::backend::infrastructure::path_utils::app_home_dir() {
+        return Ok(home.join("agent-runtimes"));
+    }
     let home = dirs::home_dir().ok_or_else(|| {
         AgentMarketError::new(
             "runtime_root_unavailable",

@@ -13,8 +13,6 @@ use crate::backend::domain::agents::market::{
 };
 
 pub const MAX_CATALOG_BYTES: usize = 5 * 1024 * 1024;
-pub const DEFAULT_CATALOG_URL: &str =
-    "https://raw.githubusercontent.com/util6/assetiweave/main/builtin-assets/agent-market/catalog-v1.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CatalogRefreshOutcome {
@@ -33,12 +31,19 @@ pub struct CatalogCache {
     pub catalog_path: PathBuf,
     pub etag_path: PathBuf,
     pub meta_path: PathBuf,
+    pub upstream_versions_path: PathBuf,
 }
 
 impl CatalogCache {
     pub fn in_app_cache() -> Option<Self> {
-        dirs::home_dir()
-            .map(|home| Self::new(home.join(".assetiweave").join("cache").join("agent-market")))
+        crate::backend::infrastructure::path_utils::app_home_dir()
+            .ok()
+            .map(|home| Self::new(home.join("cache").join("agent-market")))
+            .or_else(|| {
+                dirs::home_dir().map(|home| {
+                    Self::new(home.join(".assetiweave").join("cache").join("agent-market"))
+                })
+            })
     }
 
     pub fn new(root: PathBuf) -> Self {
@@ -46,7 +51,37 @@ impl CatalogCache {
             catalog_path: root.join("catalog-v1.json"),
             etag_path: root.join("catalog-v1.etag"),
             meta_path: root.join("catalog-v1.meta.json"),
+            upstream_versions_path: root.join("upstream-versions.json"),
         }
+    }
+
+    pub fn read_upstream_versions(
+        &self,
+    ) -> std::collections::HashMap<String, super::upstream_probe::UpstreamVersionInfo> {
+        super::upstream_probe::UpstreamProbe::load_cached_upstream_versions(
+            &self.upstream_versions_path,
+        )
+    }
+
+    pub fn save_upstream_versions(
+        &self,
+        data: &std::collections::HashMap<String, super::upstream_probe::UpstreamVersionInfo>,
+    ) -> Result<(), std::io::Error> {
+        super::upstream_probe::UpstreamProbe::save_cached_upstream_versions(
+            &self.upstream_versions_path,
+            data,
+        )
+    }
+
+    pub fn get_upstream_info(
+        &self,
+        agent_id: &str,
+    ) -> Option<super::upstream_probe::UpstreamVersionInfo> {
+        self.read_upstream_versions().get(agent_id).cloned()
+    }
+
+    pub fn get_upstream_version(&self, agent_id: &str) -> Option<String> {
+        self.get_upstream_info(agent_id).map(|info| info.version)
     }
 
     pub fn read(&self) -> Result<Option<(Catalog, Option<String>)>, AgentMarketError> {
@@ -159,7 +194,17 @@ impl CatalogCache {
     }
 
     pub fn refresh_default() -> Result<CatalogRefreshOutcome, AgentMarketError> {
-        Self::refresh_from_url(DEFAULT_CATALOG_URL)
+        let bundled = CatalogService::bundled()
+            .map_err(AgentMarketError::Catalog)?
+            .catalog();
+        let cached = Self::in_app_cache()
+            .and_then(|cache| cache.read().ok().flatten())
+            .map(|(catalog, _etag)| catalog);
+        let active = select_active_catalog((*bundled).clone(), cached);
+        Ok(CatalogRefreshOutcome::Updated {
+            catalog: active,
+            etag: None,
+        })
     }
 
     pub fn refresh_from_url(url: &str) -> Result<CatalogRefreshOutcome, AgentMarketError> {

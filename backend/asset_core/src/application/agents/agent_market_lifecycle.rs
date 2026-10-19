@@ -160,6 +160,35 @@ impl AppService {
                 &path.to_string_lossy(),
             )
         });
+        let target_version = if request.action == "update" {
+            CatalogCache::in_app_cache()
+                .and_then(|c| c.get_upstream_version(&item.id))
+                .filter(|up_ver| {
+                    if let Some(cur) = current.as_ref() {
+                        crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
+                            up_ver,
+                            &cur.agent_version,
+                        )
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or_else(|| item.version.clone())
+        } else {
+            item.version.clone()
+        };
+        let mut selected = selected;
+        let mut candidates = candidates;
+        if request.action == "update" || target_version != item.version {
+            if selected.distribution_type != DistributionType::System {
+                selected.resolved_version = Some(target_version.clone());
+            }
+            for candidate in &mut candidates {
+                if candidate.distribution_type != DistributionType::System {
+                    candidate.resolved_version = Some(target_version.clone());
+                }
+            }
+        }
         Ok(AgentInstallPreview {
             agent_id: item.id.clone(),
             catalog_version: catalog.catalog().catalog_version.clone(),
@@ -170,7 +199,7 @@ impl AppService {
                 .filter(|candidate| candidate.distribution_id != selected.distribution_id)
                 .collect(),
             current_installation: current.as_ref().map(installation_view),
-            target_version: item.version.clone(),
+            target_version,
             ownership: selected.ownership.clone(),
             target_path,
             download_size: selected.download_size,
@@ -253,7 +282,7 @@ impl AppService {
         request: AgentInstallStartRequest,
         cancellation: Option<Arc<AtomicBool>>,
     ) -> AppResult<AgentInstallResult> {
-        self.install_agent_with_cancellation_and_progress(request, cancellation, None)
+        self.install_agent_with_cancellation_and_progress(request, cancellation, None, None)
             .await
     }
 
@@ -262,10 +291,16 @@ impl AppService {
         request: AgentInstallStartRequest,
         cancellation: Option<Arc<AtomicBool>>,
         phase_sink: Option<Arc<dyn Fn(LifecycleTaskPhase) + Send + Sync>>,
+        progress_sink: Option<Arc<dyn Fn(u64, Option<u64>) + Send + Sync>>,
     ) -> AppResult<AgentInstallResult> {
         let lifecycle = self.agent_lifecycle()?;
         lifecycle
-            .install_with_cancellation_and_progress(request, cancellation, phase_sink)
+            .install_with_cancellation_and_progress(
+                request,
+                cancellation,
+                phase_sink,
+                progress_sink,
+            )
             .await
             .map(|outcome| AgentInstallResult {
                 installation: installation_view(&outcome.installation),

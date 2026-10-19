@@ -372,3 +372,101 @@ fn read_response_text_with_limit_reads_valid_content() {
     assert_eq!(text, "hello world text");
     handle.join().unwrap();
 }
+
+#[test]
+fn download_to_file_with_progress_reports_bytes() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let handle = thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 1024];
+            let _ = std::io::Read::read(&mut stream, &mut buf);
+            let body = b"hello binary world!";
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.write_all(body);
+            let _ = stream.flush();
+        }
+    });
+
+    let client = build_http_client().unwrap();
+    let temp_dir =
+        std::env::temp_dir().join(format!("assetiweave-dl-progress-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let part_path = temp_dir.join("test.bin");
+
+    let spec = DownloadSpec {
+        url: &format!("http://{addr}/binary"),
+        path: &part_path,
+        max_bytes: 1024,
+        expected_size: Some(19),
+        timeout: Duration::from_secs(5),
+    };
+    let progress_calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let calls_clone = progress_calls.clone();
+
+    let downloaded =
+        download_to_file_with_progress(&client, spec, &|| false, &move |current, total| {
+            calls_clone.lock().unwrap().push((current, total));
+        })
+        .unwrap();
+
+    assert_eq!(downloaded, 19);
+    assert!(part_path.exists());
+    let recorded = progress_calls.lock().unwrap().clone();
+    assert!(
+        !recorded.is_empty(),
+        "progress must be called at least once"
+    );
+    assert_eq!(recorded.first().unwrap().0, 0);
+    assert_eq!(recorded.last().unwrap().0, 19);
+    assert_eq!(recorded.last().unwrap().1, Some(19));
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    handle.join().unwrap();
+}
+
+#[test]
+fn download_to_file_returns_not_found_on_404() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let handle = thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 1024];
+            let _ = std::io::Read::read(&mut stream, &mut buf);
+            let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+
+    let client = build_http_client().unwrap();
+    let temp_dir =
+        std::env::temp_dir().join(format!("assetiweave-dl-404-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let part_path = temp_dir.join("test.bin");
+
+    let spec = DownloadSpec {
+        url: &format!("http://{addr}/missing"),
+        path: &part_path,
+        max_bytes: 1024,
+        expected_size: None,
+        timeout: Duration::from_secs(5),
+    };
+
+    let result = download_to_file(&client, spec, &|| false);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, InfraError::NotFound(_)),
+        "Expected InfraError::NotFound, got: {err:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    handle.join().unwrap();
+}

@@ -184,6 +184,31 @@ impl AppService {
             .await;
         Ok(())
     }
+
+    pub fn resolve_available_agent_for(
+        &self,
+        action: &crate::backend::domain::agents::ActionId,
+    ) -> AppResult<(AgentId, Option<String>)> {
+        let settings = self.app_settings_value();
+        let (agent_id, model) =
+            crate::backend::application::agents::composition::resolve_agent_for(action, &settings)?;
+        let catalog = self.agent_runtime.list_agent_catalog();
+        if catalog.iter().any(|entry| entry.id == agent_id.as_str()) {
+            return Ok((agent_id, model));
+        }
+        if let Some(first_available) = catalog.into_iter().next() {
+            if let Ok(fallback_id) = AgentId::parse(&first_available.id) {
+                tracing::warn!(
+                    action = %action.as_str(),
+                    configured_agent = %agent_id.as_str(),
+                    fallback_agent = %fallback_id.as_str(),
+                    "Configured agent is not available in catalog; falling back to available registered agent"
+                );
+                return Ok((fallback_id, None));
+            }
+        }
+        Ok((agent_id, model))
+    }
 }
 
 #[cfg(test)]

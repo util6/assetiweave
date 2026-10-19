@@ -124,6 +124,15 @@ pub fn download_to_file(
     spec: DownloadSpec<'_>,
     cancelled: &dyn Fn() -> bool,
 ) -> InfraResult<u64> {
+    download_to_file_with_progress(client, spec, cancelled, &|_, _| {})
+}
+
+pub fn download_to_file_with_progress(
+    client: &reqwest::blocking::Client,
+    spec: DownloadSpec<'_>,
+    cancelled: &dyn Fn() -> bool,
+    progress: &dyn Fn(u64, Option<u64>),
+) -> InfraResult<u64> {
     if let Some(expected) = spec.expected_size {
         if expected > spec.max_bytes {
             return Err(InfraError::Validation("artifact_size_invalid".into()));
@@ -131,25 +140,49 @@ pub fn download_to_file(
     }
 
     let download_closure = || -> InfraResult<u64> {
-        let mut response = get_with_redirects(
+        let response = get_with_redirects(
             client,
             spec.url,
             reqwest::header::HeaderMap::new(),
             spec.timeout,
-        )?
-        .error_for_status()
-        .map_err(InfraError::external)?;
+        )?;
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::GONE {
+            return Err(InfraError::NotFound(format!(
+                "upstream artifact not found (HTTP {status}): {}",
+                spec.url
+            )));
+        }
+        let total_size = response.content_length().or(spec.expected_size);
+        let mut response = response.error_for_status().map_err(|err| {
+            if err.is_timeout() || err.is_connect() {
+                InfraError::Timeout(format!("network error connecting to {}: {err}", spec.url))
+            } else if let Some(code) = err.status() {
+                if code == reqwest::StatusCode::NOT_FOUND || code == reqwest::StatusCode::GONE {
+                    InfraError::NotFound(format!(
+                        "upstream artifact not found (HTTP {code}): {}",
+                        spec.url
+                    ))
+                } else {
+                    InfraError::External(format!("HTTP error {code}: {err}"))
+                }
+            } else {
+                InfraError::External(format!("network request error: {err}"))
+            }
+        })?;
 
         let mut file =
             std::fs::File::create(spec.path).map_err(|e| InfraError::Storage(e.to_string()))?;
         let mut count = 0u64;
         let mut buffer = [0u8; 8192];
+        progress(0, total_size);
         loop {
             if cancelled() {
                 return Err(InfraError::Cancelled("download cancelled".into()));
             }
-            let read =
-                std::io::Read::read(&mut response, &mut buffer).map_err(InfraError::external)?;
+            let read = std::io::Read::read(&mut response, &mut buffer).map_err(|err| {
+                InfraError::External(format!("network read error during download: {err}"))
+            })?;
             if cancelled() {
                 return Err(InfraError::Cancelled("download cancelled".into()));
             }
@@ -162,6 +195,7 @@ pub fn download_to_file(
             }
             std::io::Write::write_all(&mut file, &buffer[..read])
                 .map_err(|e| InfraError::Storage(e.to_string()))?;
+            progress(count, total_size);
         }
 
         if let Some(expected) = spec.expected_size {

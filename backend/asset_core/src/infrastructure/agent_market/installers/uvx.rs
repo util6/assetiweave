@@ -73,7 +73,12 @@ impl Installer for UvxInstaller {
             .env("UV_TOOL_BIN_DIR", &bin_dir);
         let output = run_host_command(&mut command, context, 1024 * 1024, 256 * 1024).await?;
         if !output.status.success() {
-            return Err(InstallError::Failed("uv tool install failed".to_string()));
+            let stderr_text = String::from_utf8_lossy(&output.stderr);
+            let summary = super::extract_error_summary(&stderr_text)
+                .unwrap_or_else(|| "uv tool install failed".to_string());
+            return Err(InstallError::Failed(format!(
+                "uv tool install failed: {summary}"
+            )));
         }
         let program = bin_dir.join(entry);
         runtime_from_local(

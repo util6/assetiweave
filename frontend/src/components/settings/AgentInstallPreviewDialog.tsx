@@ -68,7 +68,37 @@ export function AgentInstallPreviewDialog({
     >
       <div className="grid gap-3 text-body-sm">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="primary">v{preview.targetVersion}</Badge>
+          {preview.action === "update" && preview.currentInstallation ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge tone="neutral">
+                {t("settings.agents.currentVersion")} v
+                {preview.currentInstallation.version}
+              </Badge>
+              <span
+                aria-hidden="true"
+                className="select-none text-body-xs font-semibold text-outline"
+              >
+                ➔
+              </span>
+              <Badge tone="primary">
+                {t("settings.agents.upgradeTo")} v{preview.targetVersion}
+              </Badge>
+            </div>
+          ) : preview.action === "reinstall" && preview.currentInstallation ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge tone="neutral">
+                {t("settings.agents.currentVersion")} v
+                {preview.currentInstallation.version}
+              </Badge>
+              <Badge tone="primary">
+                {t("settings.agents.reinstallVersion")} v{preview.targetVersion}
+              </Badge>
+            </div>
+          ) : (
+            <Badge tone="primary">
+              {t("settings.agents.installVersion")} v{preview.targetVersion}
+            </Badge>
+          )}
           <Badge tone="neutral">{preview.ownership}</Badge>
           {preview.downloadSize !== null ? (
             <Badge tone="neutral">
@@ -150,18 +180,37 @@ function DistributionOption({
             <Badge tone="primary">{t("settings.agents.recommended")}</Badge>
           ) : null}
         </span>
-        <span className="mt-1 block text-body-xs text-on-surface-variant">
-          {candidate.resolvedVersion ||
-            candidate.requiredRuntime ||
-            candidate.reasonCode ||
-            t("settings.agents.distributionUnavailable")}
+        <span className="mt-1 flex flex-wrap items-center gap-1.5 text-body-xs text-on-surface-variant">
+          {candidate.resolvedVersion ? (
+            <span>
+              {t("settings.agents.versionLabel")} v{candidate.resolvedVersion}
+            </span>
+          ) : null}
+          {candidate.requiredRuntime ? (
+            <>
+              {candidate.resolvedVersion ? (
+                <span aria-hidden="true">·</span>
+              ) : null}
+              <span>{candidate.requiredRuntime}</span>
+            </>
+          ) : null}
+          {!candidate.resolvedVersion && !candidate.requiredRuntime ? (
+            <span>
+              {candidate.reasonCode ||
+                t("settings.agents.distributionUnavailable")}
+            </span>
+          ) : null}
         </span>
       </span>
-      <Badge tone={candidate.selectable ? "create" : "neutral"}>
-        {candidate.selectable
-          ? t("settings.agents.select")
-          : t("settings.agents.unavailable")}
-      </Badge>
+      {selected ? (
+        <Badge tone="primary">{t("settings.agents.selected")}</Badge>
+      ) : (
+        <Badge tone={candidate.selectable ? "create" : "neutral"}>
+          {candidate.selectable
+            ? t("settings.agents.select")
+            : t("settings.agents.unavailable")}
+        </Badge>
+      )}
     </button>
   );
 }

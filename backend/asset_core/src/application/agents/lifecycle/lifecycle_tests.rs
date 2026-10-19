@@ -236,6 +236,7 @@ async fn agent_market_lifecycle_e2e_install_update_failure_recovery_and_cancel()
             request_for(&service_v3, "reinstall", "1.2.0"),
             Some(cancellation),
             None,
+            None,
         )
         .await
         .expect_err("cancelled reinstall");
@@ -604,4 +605,51 @@ async fn startup_reconciliation_marks_mismatched_legacy_native_installation_inco
     assert!(registered.is_none());
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn test_dynamic_binary_update_uses_upstream_target_archive_and_cmd() {
+    let temp_root =
+        std::env::temp_dir().join(format!("lifecycle-binary-test-{}", uuid::Uuid::new_v4()));
+    let cache_dir = temp_root.join("cache").join("agent-market");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+
+    let cache = CatalogCache::new(cache_dir.clone());
+    let mut map = std::collections::HashMap::new();
+    let mut binary_targets = std::collections::HashMap::new();
+    binary_targets.insert(
+        "darwin-aarch64".to_string(),
+        crate::backend::infrastructure::agent_market::UpstreamBinaryTarget {
+            archive: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.0-darwin-arm64.zip"
+                .to_string(),
+            cmd: Some("./agy_acp_server.par".to_string()),
+            args: None,
+            sha256: None,
+        },
+    );
+    map.insert(
+        "antigravity".to_string(),
+        crate::backend::infrastructure::agent_market::UpstreamVersionInfo {
+            version: "1.4.0".to_string(),
+            source: crate::backend::infrastructure::agent_market::UpstreamProbeSource::AcpRegistry,
+            checked_at: "2026-10-16T00:00:00Z".to_string(),
+            binary_targets,
+        },
+    );
+    cache.save_upstream_versions(&map).unwrap();
+
+    let retrieved = cache
+        .get_upstream_info("antigravity")
+        .expect("upstream info found");
+    assert_eq!(retrieved.version, "1.4.0");
+    let target = retrieved
+        .find_binary_target("darwin", "aarch64")
+        .expect("target found");
+    assert_eq!(
+        target.archive,
+        "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.0-darwin-arm64.zip"
+    );
+    assert_eq!(target.cmd.as_deref(), Some("./agy_acp_server.par"));
+
+    let _ = std::fs::remove_dir_all(temp_root);
 }

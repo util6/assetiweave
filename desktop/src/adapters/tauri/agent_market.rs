@@ -17,6 +17,7 @@ use crate::{
             AgentInstallPreviewRequest, AgentInstallStartRequest, AgentLifecycleTaskSnapshot,
             AgentMarketError, AgentMarketListRequest, AgentUninstallStartRequest,
         },
+        infrastructure::tasks::{stages, StageStatus},
     },
 };
 
@@ -264,6 +265,9 @@ fn spawn_install_worker(
     let phase_tasks = tasks.clone();
     let phase_task_id = task_id.clone();
     let phase_app = app.clone();
+    let progress_tasks = tasks.clone();
+    let progress_task_id = task_id.clone();
+    let progress_app = app.clone();
     let runtime = state.runtime.clone();
     let task_id_for_runtime = task_id.clone();
     let worker_tasks = tasks.clone();
@@ -272,6 +276,40 @@ fn spawn_install_worker(
         Box::new(move |context| {
             let (bridge_stop, bridge, cancellation_flag) =
                 start_cancellation_bridge(&context, cancellation.clone());
+            let task_runtime = context.runtime().clone();
+            let task_id_for_stages = task_id_for_runtime.clone();
+
+            let current_stage: Arc<std::sync::Mutex<Option<&'static str>>> =
+                Arc::new(std::sync::Mutex::new(None));
+
+            let switch_stage = {
+                let task_runtime = task_runtime.clone();
+                let task_id = task_id_for_stages.clone();
+                let current_stage = current_stage.clone();
+                move |next_stage: &'static str| {
+                    let mut cur = current_stage.lock().unwrap();
+                    if let Some(prev) = *cur {
+                        if prev != next_stage {
+                            let _ = task_runtime.update_stage_status(
+                                &task_id,
+                                prev,
+                                StageStatus::Succeeded,
+                            );
+                        } else {
+                            return;
+                        }
+                    }
+                    *cur = Some(next_stage);
+                    let _ = task_runtime.update_stage_status(
+                        &task_id,
+                        next_stage,
+                        StageStatus::Running,
+                    );
+                }
+            };
+
+            switch_stage(stages::AGENT_DOWNLOAD);
+
             let _ = worker_tasks.update_agent_lifecycle(
                 &task_id_for_runtime,
                 crate::backend::infrastructure::agent_market::LifecycleTaskPhase::Preparing,
@@ -279,6 +317,10 @@ fn spawn_install_worker(
                 None,
                 Vec::new(),
             );
+            let switch_stage_clone = switch_stage.clone();
+            let task_runtime_progress = task_runtime.clone();
+            let task_id_progress = task_id_for_stages.clone();
+            let agent_id = params.agent_id.clone();
             let result = if cancellation.is_cancelled() {
                 Err(AppError::Cancelled(
                     "Agent installation cancelled".to_string(),
@@ -290,6 +332,25 @@ fn spawn_install_worker(
                             params,
                             Some(cancellation_flag.clone()),
                             Some(Arc::new(move |phase| {
+                                match phase {
+                                    crate::backend::infrastructure::agent_market::LifecycleTaskPhase::Preparing
+                                    | crate::backend::infrastructure::agent_market::LifecycleTaskPhase::ProbingRuntime
+                                    | crate::backend::infrastructure::agent_market::LifecycleTaskPhase::Downloading => {
+                                        switch_stage_clone(stages::AGENT_DOWNLOAD);
+                                    }
+                                    crate::backend::infrastructure::agent_market::LifecycleTaskPhase::Installing
+                                    | crate::backend::infrastructure::agent_market::LifecycleTaskPhase::ValidatingIntegrity
+                                    | crate::backend::infrastructure::agent_market::LifecycleTaskPhase::ValidatingLayout => {
+                                        switch_stage_clone(stages::AGENT_INSTALL);
+                                    }
+                                    crate::backend::infrastructure::agent_market::LifecycleTaskPhase::ProbingProtocol
+                                    | crate::backend::infrastructure::agent_market::LifecycleTaskPhase::ActivatingDatabase
+                                    | crate::backend::infrastructure::agent_market::LifecycleTaskPhase::ReloadingRegistry
+                                    | crate::backend::infrastructure::agent_market::LifecycleTaskPhase::CleaningUp => {
+                                        switch_stage_clone(stages::AGENT_VERIFY);
+                                    }
+                                    _ => {}
+                                }
                                 if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
                                     &phase_task_id,
                                     phase,
@@ -301,12 +362,71 @@ fn spawn_install_worker(
                                         .emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
                                 }
                             })),
+                            Some(Arc::new(move |downloaded, total| {
+                                let _ = task_runtime_progress.set_stage_progress(
+                                    &task_id_progress,
+                                    stages::AGENT_DOWNLOAD,
+                                    downloaded,
+                                    total,
+                                    total.map(|tot| {
+                                        format!(
+                                            "{:.1} / {:.1} MB",
+                                            downloaded as f64 / 1_048_576.0,
+                                            tot as f64 / 1_048_576.0
+                                        )
+                                    }),
+                                );
+                                if let Ok(snapshot) = progress_tasks
+                                    .update_agent_lifecycle_with_progress(
+                                        &progress_task_id,
+                                        crate::backend::infrastructure::agent_market::LifecycleTaskPhase::Downloading,
+                                        1,
+                                        None,
+                                        Some(downloaded),
+                                        total,
+                                        Vec::new(),
+                                    )
+                                {
+                                    let _ = progress_app
+                                        .emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
+                                }
+                            })),
                         )
                         .await
                 })
             };
             bridge_stop.store(true, std::sync::atomic::Ordering::SeqCst);
             let _ = bridge.join();
+            if let Some(cur) = *current_stage.lock().unwrap() {
+                if let Err(error) = &result {
+                    let failure = crate::backend::infrastructure::tasks::TaskFailure {
+                        code: error.code(),
+                        message: error.to_string(),
+                        stage: cur.to_string(),
+                        identity: Some(agent_id),
+                        retryable: error.retryable(),
+                        path: None,
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    };
+                    let _ = task_runtime.finish_stage(
+                        &task_id_for_stages,
+                        cur,
+                        StageStatus::Failed,
+                        Vec::new(),
+                        vec![failure],
+                        Vec::new(),
+                    );
+                } else {
+                    let _ = task_runtime.finish_stage(
+                        &task_id_for_stages,
+                        cur,
+                        StageStatus::Succeeded,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    );
+                }
+            }
             let terminal = match &result {
                 Ok(outcome) => worker_tasks
                     .finish_agent_lifecycle(
@@ -358,6 +478,14 @@ fn spawn_uninstall_worker(
         Box::new(move |context| {
             let (bridge_stop, bridge, cancellation_flag) =
                 start_cancellation_bridge(&context, cancellation.clone());
+            let task_runtime = context.runtime().clone();
+            let task_id_for_stages = task_id_for_runtime.clone();
+
+            let _ = task_runtime.update_stage_status(
+                &task_id_for_stages,
+                stages::PREPARE,
+                StageStatus::Running,
+            );
             let _ = worker_tasks.update_agent_lifecycle(
                 &task_id_for_runtime,
                 crate::backend::infrastructure::agent_market::LifecycleTaskPhase::Preparing,
@@ -365,6 +493,9 @@ fn spawn_uninstall_worker(
                 None,
                 Vec::new(),
             );
+            let task_runtime_clone = task_runtime.clone();
+            let task_id_stages_clone = task_id_for_stages.clone();
+            let agent_id = params.agent_id.clone();
             let result = if cancellation.is_cancelled() {
                 Err(AppError::Cancelled("Agent uninstall cancelled".to_string()))
             } else {
@@ -374,6 +505,20 @@ fn spawn_uninstall_worker(
                             params,
                             Some(cancellation_flag.clone()),
                             Some(Arc::new(move |phase| {
+                                if phase
+                                    == crate::backend::infrastructure::agent_market::LifecycleTaskPhase::CleaningUp
+                                {
+                                    let _ = task_runtime_clone.update_stage_status(
+                                        &task_id_stages_clone,
+                                        stages::PREPARE,
+                                        StageStatus::Succeeded,
+                                    );
+                                    let _ = task_runtime_clone.update_stage_status(
+                                        &task_id_stages_clone,
+                                        stages::AGENT_CLEANUP,
+                                        StageStatus::Running,
+                                    );
+                                }
                                 if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
                                     &phase_task_id,
                                     phase,
@@ -391,6 +536,34 @@ fn spawn_uninstall_worker(
             };
             bridge_stop.store(true, std::sync::atomic::Ordering::SeqCst);
             let _ = bridge.join();
+            if let Err(error) = &result {
+                let failure = crate::backend::infrastructure::tasks::TaskFailure {
+                    code: error.code(),
+                    message: error.to_string(),
+                    stage: stages::AGENT_CLEANUP.to_string(),
+                    identity: Some(agent_id),
+                    retryable: error.retryable(),
+                    path: None,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                };
+                let _ = task_runtime.finish_stage(
+                    &task_id_for_stages,
+                    stages::AGENT_CLEANUP,
+                    StageStatus::Failed,
+                    Vec::new(),
+                    vec![failure],
+                    Vec::new(),
+                );
+            } else {
+                let _ = task_runtime.finish_stage(
+                    &task_id_for_stages,
+                    stages::AGENT_CLEANUP,
+                    StageStatus::Succeeded,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+            }
             let terminal = match &result {
                 Ok(installation) => worker_tasks
                     .finish_agent_lifecycle(

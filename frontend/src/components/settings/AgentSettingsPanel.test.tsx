@@ -15,8 +15,14 @@ import type { AppShortcut } from "../../types";
 import type { AgentMarketItem } from "../../services/agentRuntime";
 
 const listAgentMarketMock = vi.hoisted(() => vi.fn());
+const refreshAgentMarketMock = vi.hoisted(() => vi.fn());
+const getAgentMarketRefreshTaskMock = vi.hoisted(() => vi.fn());
+const previewAgentUninstallMock = vi.hoisted(() => vi.fn());
 const agentRuntime = vi.hoisted(() => ({
   listAgentMarket: undefined as undefined | typeof listAgentMarketMock,
+  refreshAgentMarket: undefined as undefined | typeof refreshAgentMarketMock,
+  getAgentMarketRefreshTask: undefined as undefined | typeof getAgentMarketRefreshTaskMock,
+  previewAgentUninstall: undefined as undefined | typeof previewAgentUninstallMock,
   listAgentCatalog: vi.fn(),
   listAgentModels: vi.fn(),
   cancelAgentModelProbe: vi.fn(),
@@ -38,6 +44,9 @@ beforeEach(() => {
   vi.stubGlobal("navigator", { language: "zh-CN" });
   vi.clearAllMocks();
   agentRuntime.listAgentMarket = undefined;
+  agentRuntime.refreshAgentMarket = undefined;
+  agentRuntime.getAgentMarketRefreshTask = undefined;
+  agentRuntime.previewAgentUninstall = undefined;
   agentRuntime.listAgentCatalog.mockResolvedValue(
     [
       "opencode",
@@ -756,6 +765,83 @@ describe("AgentSettingsPanel", () => {
       }),
     ).toBeNull();
   });
+
+  it("morphs the action button to 升级 when an update is available and triggers update preview", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    listAgentMarketMock.mockResolvedValue([
+      createMarketItem("opencode", true, "acp", false, true),
+    ]);
+
+    renderPanel();
+
+    const openCodeHeading = await screen.findByRole("heading", {
+      name: "OpenCode",
+    });
+    const openCodeRow = openCodeHeading.closest("article") as HTMLElement;
+    expect(openCodeRow).toBeTruthy();
+
+    expect(within(openCodeRow).queryByRole("button", { name: "重装" })).toBeNull();
+    const updateButton = within(openCodeRow).getByRole("button", { name: "升级" });
+    expect(updateButton).toBeTruthy();
+
+    fireEvent.click(updateButton);
+
+    await waitFor(() =>
+      expect(agentRuntime.previewAgentInstallation).toHaveBeenCalledWith({
+        agentId: "opencode",
+        action: "update",
+      }),
+    );
+  });
+
+  it("morphs the action button to 重装 when no update is available", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    listAgentMarketMock.mockResolvedValue([
+      createMarketItem("opencode", true, "acp", false, false),
+    ]);
+
+    renderPanel();
+
+    const openCodeHeading = await screen.findByRole("heading", {
+      name: "OpenCode",
+    });
+    const openCodeRow = openCodeHeading.closest("article") as HTMLElement;
+    expect(openCodeRow).toBeTruthy();
+
+    expect(within(openCodeRow).queryByRole("button", { name: "升级" })).toBeNull();
+    expect(within(openCodeRow).getByRole("button", { name: "重装" })).toBeTruthy();
+  });
+
+  it("renders 检查更新 button in market header and triggers refreshAgentMarket on click", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    agentRuntime.refreshAgentMarket = refreshAgentMarketMock;
+    agentRuntime.getAgentMarketRefreshTask = getAgentMarketRefreshTaskMock;
+
+    listAgentMarketMock.mockResolvedValue([
+      createMarketItem("opencode", true, "acp", false, false),
+    ]);
+    refreshAgentMarketMock.mockResolvedValue({
+      id: "task-refresh-1",
+      state: "succeeded",
+      error: null,
+    });
+
+    renderPanel();
+
+    const checkUpdatesBtn = await screen.findByRole("button", {
+      name: "检查更新",
+    });
+    expect(checkUpdatesBtn).toBeTruthy();
+
+    fireEvent.click(checkUpdatesBtn);
+
+    await waitFor(() =>
+      expect(refreshAgentMarketMock).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() =>
+      expect(listAgentMarketMock).toHaveBeenCalledTimes(2),
+    );
+  });
 });
 
 function renderSettingsPanel(options: Parameters<typeof renderPanel>[0] = {}) {
@@ -794,6 +880,7 @@ function createMarketItem(
   installed: boolean,
   protocol: "acp" | "native" = "acp",
   healthStale = false,
+  updateAvailable = false,
 ): AgentMarketItem {
   const displayName =
     id === "opencode"
@@ -871,13 +958,13 @@ function createMarketItem(
           healthStale,
           selectedModelId: null,
           modelStatus: null,
-          updateAvailable: false,
+          updateAvailable,
           operation: null,
           lastCheckedAt: null,
           error: null,
           warnings: [],
         }
       : null,
-    updateAvailable: false,
+    updateAvailable,
   };
 }

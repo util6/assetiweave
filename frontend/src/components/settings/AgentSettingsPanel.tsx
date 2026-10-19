@@ -108,14 +108,17 @@ export function AgentSettingsPanel({
       ),
     [lifecycleTasks?.tasks],
   );
-  const canRefreshAgentMarket = Object.prototype.hasOwnProperty.call(
-    agentRuntime,
-    "refreshAgentMarket",
-  );
-  const canPreviewAgentUninstall = Object.prototype.hasOwnProperty.call(
-    agentRuntime,
-    "previewAgentUninstall",
-  );
+  const canRefreshAgentMarket =
+    Object.prototype.hasOwnProperty.call(agentRuntime, "refreshAgentMarket") &&
+    typeof (agentRuntime as { refreshAgentMarket?: unknown })
+      .refreshAgentMarket === "function";
+  const canPreviewAgentUninstall =
+    Object.prototype.hasOwnProperty.call(
+      agentRuntime,
+      "previewAgentUninstall",
+    ) &&
+    typeof (agentRuntime as { previewAgentUninstall?: unknown })
+      .previewAgentUninstall === "function";
   const canManageAgentLifecycle =
     typeof agentRuntime.listAgentMarket === "function";
   const settingsOnly = view === "settings";
@@ -597,18 +600,19 @@ export function AgentSettingsPanel({
       {view === "market" && canRefreshAgentMarket ? (
         <div className="flex justify-end">
           <Button
-            aria-label={t("settings.agents.refresh")}
             disabled={marketRefreshBusy}
             onClick={() => void refreshMarketCatalog()}
-            size="icon"
+            size="sm"
+            variant="outline"
+            className="gap-2 rounded-xl"
             title={t("settings.agents.refresh")}
             type="button"
-            variant="ghost"
           >
             <RefreshCw
               className={marketRefreshBusy ? "animate-spin" : undefined}
-              size={16}
+              size={14}
             />
+            <span>{t("settings.agents.checkForUpdates")}</span>
           </Button>
         </div>
       ) : null}
@@ -669,63 +673,73 @@ export function AgentSettingsPanel({
         className="rounded-2xl border border-theme-card-border bg-theme-card/65 p-2.5 shadow-[var(--theme-shadow-card)]"
       >
         <div className="space-y-2">
-          {filteredAgents.map((agent) => (
-            <div
-              className={clsx(
-                focusAgentId === agent.id &&
-                  "rounded-xl ring-2 ring-theme-nav-active-border/70 ring-offset-2 ring-offset-theme-card",
-              )}
-              key={agent.id}
-              ref={(element) => {
-                agentRowRefs.current[agent.id] = element;
-              }}
-            >
-              <AgentConnectionRow
-                agent={agent}
-                appShortcuts={appShortcuts}
-                connectionMessage={connectionMessages[agent.id]}
-                connectionState={connectionStates[agent.id]}
-                isTesting={testingAgentId === agent.id}
-                isManaging={isAgentManaging(agent.id)}
-                onInstall={
-                  !settingsOnly && canManageAgentLifecycle
-                    ? () => void manageMarketAgent(agent)
-                    : undefined
-                }
-                onUpdate={
-                  !settingsOnly && canManageAgentLifecycle
-                    ? () => void runMarketLifecycle(agent, "update")
-                    : undefined
-                }
-                onReinstall={
-                  !settingsOnly && canManageAgentLifecycle
-                    ? () => void runMarketLifecycle(agent, "reinstall")
-                    : undefined
-                }
-                onUninstall={
-                  !settingsOnly && canPreviewAgentUninstall
-                    ? () => void previewUninstall(agent)
-                    : undefined
-                }
-                onEdit={settingsOnly ? () => setInfoAgent(agent) : undefined}
-                onSelectModel={
-                  settingsOnly &&
-                  agent.installed?.installationStatus !== "incompatible"
-                    ? () => openModelDialog(agent)
-                    : undefined
-                }
-                onTest={
-                  settingsOnly &&
-                  agent.installed?.installationStatus !== "incompatible"
-                    ? () => void testConnection(agent)
-                    : undefined
-                }
-                selectedModel={selectedModels[agent.id]}
-                t={t}
-                view={view}
-              />
-            </div>
-          ))}
+          {filteredAgents.map((agent) => {
+            const activeTask = lifecycleTasks?.tasks.find(
+              (task) =>
+                task.agentId === agent.id && isActiveAgentLifecycleTask(task),
+            );
+            const latestTask = lifecycleTasks?.tasks.find(
+              (task) => task.agentId === agent.id,
+            );
+            return (
+              <div
+                className={clsx(
+                  focusAgentId === agent.id &&
+                    "rounded-xl ring-2 ring-theme-nav-active-border/70 ring-offset-2 ring-offset-theme-card",
+                )}
+                key={agent.id}
+                ref={(element) => {
+                  agentRowRefs.current[agent.id] = element;
+                }}
+              >
+                <AgentConnectionRow
+                  agent={agent}
+                  appShortcuts={appShortcuts}
+                  connectionMessage={connectionMessages[agent.id]}
+                  connectionState={connectionStates[agent.id]}
+                  isTesting={testingAgentId === agent.id}
+                  isManaging={isAgentManaging(agent.id)}
+                  lifecycleTask={activeTask ?? latestTask}
+                  onInstall={
+                    !settingsOnly && canManageAgentLifecycle
+                      ? () => void manageMarketAgent(agent)
+                      : undefined
+                  }
+                  onUpdate={
+                    !settingsOnly && canManageAgentLifecycle
+                      ? () => void runMarketLifecycle(agent, "update")
+                      : undefined
+                  }
+                  onReinstall={
+                    !settingsOnly && canManageAgentLifecycle
+                      ? () => void runMarketLifecycle(agent, "reinstall")
+                      : undefined
+                  }
+                  onUninstall={
+                    !settingsOnly && canPreviewAgentUninstall
+                      ? () => void previewUninstall(agent)
+                      : undefined
+                  }
+                  onEdit={settingsOnly ? () => setInfoAgent(agent) : undefined}
+                  onSelectModel={
+                    settingsOnly &&
+                    agent.installed?.installationStatus !== "incompatible"
+                      ? () => openModelDialog(agent)
+                      : undefined
+                  }
+                  onTest={
+                    settingsOnly &&
+                    agent.installed?.installationStatus !== "incompatible"
+                      ? () => void testConnection(agent)
+                      : undefined
+                  }
+                  selectedModel={selectedModels[agent.id]}
+                  t={t}
+                  view={view}
+                />
+              </div>
+            );
+          })}
           {filteredAgents.length === 0 ? (
             <div className="grid min-h-40 place-items-center rounded-xl border border-dashed border-theme-card-border px-4 text-center">
               <div>

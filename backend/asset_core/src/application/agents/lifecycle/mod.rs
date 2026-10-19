@@ -139,7 +139,7 @@ impl AgentLifecycleCoordinator {
         &self,
         request: AgentInstallStartRequest,
     ) -> Result<InstallOutcome, AgentMarketError> {
-        self.install_with_cancellation_and_progress(request, None, None)
+        self.install_with_cancellation_and_progress(request, None, None, None)
             .await
     }
 
@@ -148,8 +148,9 @@ impl AgentLifecycleCoordinator {
         request: AgentInstallStartRequest,
         cancellation: Option<Arc<AtomicBool>>,
         phase_sink: Option<Arc<dyn Fn(LifecycleTaskPhase) + Send + Sync>>,
+        progress_sink: Option<Arc<dyn Fn(u64, Option<u64>) + Send + Sync>>,
     ) -> Result<InstallOutcome, AgentMarketError> {
-        install::run(self, request, cancellation, phase_sink).await
+        install::run(self, request, cancellation, phase_sink, progress_sink).await
     }
 
     pub async fn uninstall_with_cancellation_and_progress(

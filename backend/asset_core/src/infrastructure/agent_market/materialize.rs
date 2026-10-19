@@ -56,12 +56,14 @@ pub async fn materialize_and_activate(
     runtime_root: &Path,
     cancellation: Option<Arc<AtomicBool>>,
     phase_sink: Option<Arc<dyn Fn(LifecycleTaskPhase) + Send + Sync>>,
+    progress_sink: Option<Arc<dyn Fn(u64, Option<u64>) + Send + Sync>>,
 ) -> Result<MaterializeOutcome, AgentMarketError> {
     let mut context = InstallContext::new(staging.to_path_buf(), item.version.clone());
     context.installation_id = uuid::Uuid::new_v4().to_string();
     context.timeout = Duration::from_secs(10 * 60);
     context.cancellation = cancellation;
     context.phase_sink = phase_sink;
+    context.progress_sink = progress_sink;
     context.report_phase(LifecycleTaskPhase::Preparing);
     context.report_phase(match distribution {
         Distribution::System { .. } => LifecycleTaskPhase::ProbingRuntime,
@@ -232,20 +234,39 @@ pub fn download_and_materialize_binary(
             expected_size,
             timeout: context.timeout,
         };
-        crate::backend::infrastructure::http_client::download_to_file(&client, spec, &cancelled)
-            .map_err(|error| match error {
-                InfraError::Cancelled(_) => {
-                    market_error("cancelled", "Agent installation was cancelled.", true)
-                }
-                InfraError::Validation(message) if message == "artifact_size_invalid" => {
-                    market_error(
-                        "artifact_size_invalid",
-                        "The Agent artifact exceeds or differs from the catalog size limit.",
-                        false,
-                    )
-                }
-                other => market_error("download_failed", other, true),
-            })?;
+        let ctx = context.clone();
+        let progress = move |current: u64, total: Option<u64>| {
+            ctx.report_progress(current, total);
+        };
+        crate::backend::infrastructure::http_client::download_to_file_with_progress(
+            &client, spec, &cancelled, &progress,
+        )
+        .map_err(|error| match error {
+            InfraError::Cancelled(_) => {
+                market_error("cancelled", "Agent installation was cancelled.", true)
+            }
+            InfraError::NotFound(message) => market_error(
+                "upstream_version_not_found",
+                format!("Upstream artifact not found (404/410): {message}"),
+                false,
+            ),
+            InfraError::Timeout(message) => market_error(
+                "network_error",
+                format!("Network timeout during download: {message}"),
+                true,
+            ),
+            InfraError::Validation(message) if message == "artifact_size_invalid" => market_error(
+                "artifact_size_invalid",
+                "The Agent artifact exceeds or differs from the catalog size limit.",
+                false,
+            ),
+            InfraError::External(message) if message.contains("network") => market_error(
+                "network_error",
+                format!("Network error during download: {message}"),
+                true,
+            ),
+            other => market_error("download_failed", other, true),
+        })?;
     }
 
     context.report_phase(LifecycleTaskPhase::ValidatingIntegrity);
@@ -434,12 +455,29 @@ pub async fn conformance(
 }
 
 pub fn install_error(error: InstallError) -> AgentMarketError {
-    let (code, retryable) = match error {
+    let err_str = error.to_string();
+    let (code, retryable) = match &error {
         InstallError::RuntimeMissing(_) => ("runtime_missing", true),
         InstallError::IntegrityMismatch => ("artifact_integrity_failed", false),
         InstallError::ArchiveInvalid(_) => ("archive_invalid", false),
         InstallError::Cancelled => ("cancelled", true),
-        InstallError::Timeout => ("timeout", true),
+        InstallError::Timeout => ("network_error", true),
+        InstallError::Failed(_)
+            if err_str.contains("404")
+                || err_str.contains("Not Found")
+                || err_str.contains("E404") =>
+        {
+            ("upstream_version_not_found", false)
+        }
+        InstallError::Failed(_)
+            if err_str.contains("ETIMEDOUT")
+                || err_str.contains("ECONNREFUSED")
+                || err_str.contains("ENOTFOUND")
+                || err_str.contains("network")
+                || err_str.contains("fetch failed") =>
+        {
+            ("network_error", true)
+        }
         _ => ("installation_failed", true),
     };
     market_error(code, error, retryable)

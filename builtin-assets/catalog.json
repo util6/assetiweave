@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-04T00:00:00Z",
+  "updated_at": "2026-10-17T00:00:00Z",
   "items": [
     {
       "id": "io.github.util6.codex-session",
@@ -16,7 +16,7 @@
         "codex",
         "node"
       ],
-      "expected_package_hash": "1cf3bcda13fedc1a6e16a7d3d5d0dbec7c795348c2116efb1989ed5693a112c4",
+      "expected_package_hash": "72b87e8bfcdca2c78c0fe143037e65dfa4abaccfcbbc432580bd05c132700099",
       "expected_content_hash": "51053c265f4a4c158e2ac6a7f2f0671203e7001452f83b39a2694b832d4bdcc8",
       "source": {
         "type": "github",
@@ -38,7 +38,7 @@
         "sqlite",
         "node"
       ],
-      "expected_package_hash": "819e24b40a1483c391868c08561bf523ae788f67d511f3adde9f8551389873aa",
+      "expected_package_hash": "ab6d118fb4f2373bce230537be66285d4ba8fa2ee16691b88cfe262393115de6",
       "expected_content_hash": "c5a17ca30a1cce031528ecea7ed0bfa51ad1d748f098de44a394dac2c1d4e3b5",
       "source": {
         "type": "github",
@@ -59,7 +59,7 @@
         "claude-code",
         "node"
       ],
-      "expected_package_hash": "39cac535992595427abed2f1676774717d4c8dab28ff568432fd710044c9c657",
+      "expected_package_hash": "24bedbdde2ff7e930d2a67221b7ede758958b063859f8a5bac1b86a97535daf1",
       "expected_content_hash": "17aff181d7013a2f4dd696d582707ec0448aaf8e42db9aa0c71a7b15919553be",
       "source": {
         "type": "github",
@@ -103,7 +103,7 @@
         "node",
         "browser-cookie-auth"
       ],
-      "expected_package_hash": "6b4d4e3340cab66d8b47e64aa0fdfb58eca69ceb2ee5604966c9a3ab6034e9f0",
+      "expected_package_hash": "d188d206eb3506a5203fca58d8ef5c28a84dbfd610702dadb82d5954bde20ad4",
       "expected_content_hash": "4b8898eedf120ab640cc5cc6db7a03fb3ec8a1cf8a3f370cdd17c9a9a51a2ab1",
       "source": {
         "type": "github",
@@ -147,7 +147,7 @@
         "node",
         "browser-cookie-auth"
       ],
-      "expected_package_hash": "5fefeb3ff616b8e9724bf435cef2916480f0692091099038d2faa9ad1b12f478",
+      "expected_package_hash": "3e5a4698cc7f4637437a9df784de37660e4bc4646a6ede1a24c56eb2819345f8",
       "expected_content_hash": "1d456c5f66703228492755d295555b3f3c12b17caf0ab3308f274617c8ffa365",
       "source": {
         "type": "github",

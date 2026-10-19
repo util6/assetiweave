@@ -65,7 +65,8 @@ impl BinaryInstaller {
             hasher.update(&buffer[..count]);
         }
         let digest = hasher.finalize();
-        if hex_lower(&digest) != *sha256 {
+        let digest_hex = hex_lower(&digest);
+        if !sha256.trim().is_empty() && digest_hex != *sha256 {
             return Err(InstallError::IntegrityMismatch);
         }
         file.seek(std::io::SeekFrom::Start(0))
@@ -96,11 +97,16 @@ impl BinaryInstaller {
             }
         }
         let program = context.staging_dir.join(executable);
+        let effective_sha256 = if sha256.trim().is_empty() {
+            digest_hex
+        } else {
+            sha256.clone()
+        };
         runtime_from_local(
             context,
             program,
             launch_args.clone(),
-            Some(serde_json::json!({ "sha256": sha256, "size": file_len })),
+            Some(serde_json::json!({ "sha256": effective_sha256, "size": file_len })),
         )
     }
 }
@@ -325,3 +331,7 @@ fn make_executable(path: &std::path::Path) -> Result<(), InstallError> {
 fn hex_lower(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
+
+#[cfg(test)]
+#[path = "binary_tests.rs"]
+mod tests;

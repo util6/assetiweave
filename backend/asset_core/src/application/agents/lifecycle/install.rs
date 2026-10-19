@@ -3,13 +3,15 @@ use std::sync::{atomic::AtomicBool, Arc};
 use super::{market_error, AgentLifecycleCoordinator};
 use crate::backend::{
     domain::agents::{
-        AgentInstallation, InstallationStatus, Ownership, ProtocolStatus, RuntimeStatus,
+        AgentInstallation, Distribution, InstallationStatus, Ownership, ProtocolStatus,
+        RuntimeStatus,
     },
     infrastructure::agent_market::{
         error::{AgentMarketError, LifecycleTaskPhase},
         layout::{ensure_runtime_root, is_safe_managed_install_path},
         materialize::materialize_and_activate,
         types::AgentInstallStartRequest,
+        CatalogCache,
     },
 };
 
@@ -24,6 +26,7 @@ pub async fn run(
     request: AgentInstallStartRequest,
     cancellation: Option<Arc<AtomicBool>>,
     phase_sink: Option<Arc<dyn Fn(LifecycleTaskPhase) + Send + Sync>>,
+    progress_sink: Option<Arc<dyn Fn(u64, Option<u64>) + Send + Sync>>,
 ) -> Result<InstallOutcome, AgentMarketError> {
     coordinator
         .runtime_manager
@@ -122,6 +125,83 @@ pub async fn run(
         ));
     }
 
+    let target_version = if request.action == "update" {
+        CatalogCache::in_app_cache()
+            .and_then(|c| c.get_upstream_version(&item.id))
+            .filter(|up_ver| {
+                if let Some(cur) = current.as_ref() {
+                    crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
+                        up_ver,
+                        &cur.agent_version,
+                    )
+                } else {
+                    false
+                }
+            })
+            .unwrap_or_else(|| item.version.clone())
+    } else {
+        item.version.clone()
+    };
+
+    let mut item_effective = item.clone();
+    let mut distribution_effective = distribution.clone();
+    if target_version != item.version {
+        item_effective.version = target_version.clone();
+        match &mut distribution_effective {
+            Distribution::Npx { version, .. } => {
+                *version = target_version.clone();
+            }
+            Distribution::Uvx { version, .. } => {
+                *version = target_version.clone();
+            }
+            Distribution::Binary {
+                url,
+                size,
+                sha256,
+                target,
+                executable,
+                launch_args,
+                ..
+            } => {
+                let upstream_info =
+                    CatalogCache::in_app_cache().and_then(|c| c.get_upstream_info(&item.id));
+                let matched_target = upstream_info
+                    .as_ref()
+                    .and_then(|info| info.find_binary_target(&target.os, &target.arch));
+
+                if let Some(upstream_target) = matched_target {
+                    *url = upstream_target.archive.clone();
+                    if let Some(cmd) = &upstream_target.cmd {
+                        let clean_cmd = cmd.trim_start_matches("./");
+                        *executable = clean_cmd.to_string();
+                    }
+                    if let Some(args) = &upstream_target.args {
+                        *launch_args = args.clone();
+                    }
+                    if let Some(hash) = &upstream_target.sha256 {
+                        *sha256 = hash.clone();
+                    } else {
+                        *sha256 = String::new();
+                    }
+                    *size = None;
+                } else {
+                    let mut new_url = url.clone();
+                    if new_url.contains(&item.version) {
+                        new_url = new_url.replace(&item.version, &target_version);
+                    }
+                    if new_url.contains("agy-acp-server-agy_acp_server_") {
+                        new_url =
+                            new_url.replace("agy-acp-server-agy_acp_server_", "agy-acp-server-");
+                    }
+                    *url = new_url;
+                    *size = None;
+                    *sha256 = String::new();
+                }
+            }
+            _ => {}
+        }
+    }
+
     ensure_runtime_root(&coordinator.runtime_root)?;
     let task_id = uuid::Uuid::new_v4().to_string();
     let staging = coordinator.runtime_root.join(".staging").join(&task_id);
@@ -129,12 +209,13 @@ pub async fn run(
         .map_err(|error| market_error("staging_unavailable", error, true))?;
 
     let materialize_res = materialize_and_activate(
-        item,
-        distribution,
+        &item_effective,
+        &distribution_effective,
         &staging,
         &coordinator.runtime_root,
         cancellation,
         phase_sink.clone(),
+        progress_sink.clone(),
     )
     .await;
 
@@ -155,7 +236,7 @@ pub async fn run(
         agent_id: item.id.clone(),
         installation_id: outcome.installation_id.clone(),
         display_name: item.display_name.clone(),
-        catalog_item_version: item.version.clone(),
+        catalog_item_version: target_version.clone(),
         agent_version: outcome.version.clone(),
         protocol: item.protocol.clone(),
         distribution_id: distribution.id().to_string(),

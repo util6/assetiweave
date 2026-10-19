@@ -3,8 +3,8 @@ use std::fmt;
 use super::{PackageIdentity, PackageKind};
 use crate::backend::{
     infrastructure::tasks::{
-        CancelOutcome, ExternalRegistrationOutcome, TaskFn, TaskKind, TaskRuntime, TaskSnapshot,
-        TaskSpec, TaskState,
+        stages, CancelOutcome, ExternalRegistrationOutcome, PipelineDescriptor, TaskFn, TaskKind,
+        TaskRuntime, TaskSnapshot, TaskSpec, TaskState,
     },
     infrastructure::InfraError,
 };
@@ -125,9 +125,54 @@ impl LifecycleTaskCoordinator {
         task_id: String,
         key: LifecycleRequestKey,
     ) -> Result<LifecycleReservationOutcome, InfraError> {
+        let (title, pipeline) = match key.operation {
+            LifecycleOp::Install | LifecycleOp::Upgrade => {
+                let action_name = if matches!(key.operation, LifecycleOp::Upgrade) {
+                    "更新"
+                } else {
+                    "安装"
+                };
+                let pipeline = PipelineDescriptor::builder()
+                    .stage(stages::AGENT_DOWNLOAD, "下载分发包")
+                    .stage(stages::AGENT_INSTALL, "安装运行时")
+                    .stage(stages::AGENT_VERIFY, "验证 ACP 协议")
+                    .build();
+                (
+                    format!(
+                        "{} Agent: {}",
+                        action_name, key.resource.identity.package_id
+                    ),
+                    pipeline,
+                )
+            }
+            LifecycleOp::Remove => {
+                let pipeline = PipelineDescriptor::builder()
+                    .stage(stages::PREPARE, "检查依赖并解绑")
+                    .stage(stages::AGENT_CLEANUP, "清理文件与注销")
+                    .build();
+                (
+                    format!("卸载 Agent: {}", key.resource.identity.package_id),
+                    pipeline,
+                )
+            }
+            _ => {
+                let pipeline = PipelineDescriptor::builder()
+                    .stage(stages::PREPARE, "准备")
+                    .stage(stages::VERIFY, "验证")
+                    .build();
+                (
+                    format!("管理 Agent: {}", key.resource.identity.package_id),
+                    pipeline,
+                )
+            }
+        };
+
         let task_spec = TaskSpec::global(TaskKind::ExtensionLifecycle, Some(key.dedup_key()))
             .with_task_id(task_id.clone())
-            .with_conflict_key(key.conflict_key());
+            .with_conflict_key(key.conflict_key())
+            .with_pipeline(pipeline)
+            .with_category("agent/lifecycle")
+            .with_title(title);
         match self.runtime.register_external(task_spec)? {
             ExternalRegistrationOutcome::Started(_) => Ok(LifecycleReservationOutcome::Started),
             ExternalRegistrationOutcome::Existing(existing) => {

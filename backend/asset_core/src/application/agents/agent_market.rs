@@ -39,6 +39,18 @@ impl AppService {
             .catalog()
             .catalog_version
             .clone();
+
+        if let Ok(client) = crate::backend::infrastructure::http_client::shared_http_client() {
+            let upstream_versions =
+                crate::backend::infrastructure::agent_market::UpstreamProbe::probe_catalog_items(
+                    &client,
+                    &catalog.items,
+                );
+            if let Some(cache) = CatalogCache::in_app_cache() {
+                let _ = cache.save_upstream_versions(&upstream_versions);
+            }
+        }
+
         Ok(AgentMarketRefreshResult {
             status: status.to_string(),
             catalog_version: catalog.catalog_version.clone(),
@@ -56,6 +68,9 @@ impl AppService {
     ) -> AppResult<Vec<AgentMarketItemView>> {
         let catalog = CatalogCache::best_available()?;
         let installations = self.list_agent_installations().await?;
+        let upstream_versions = CatalogCache::in_app_cache()
+            .map(|cache| cache.read_upstream_versions())
+            .unwrap_or_default();
         let context = host_distribution_context();
         let query = request
             .query
@@ -98,6 +113,32 @@ impl AppService {
                 .iter()
                 .find(|candidate| candidate.recommended)
                 .map(|candidate| candidate.distribution_id.clone());
+            let update_available = installed.as_ref().is_some_and(|installation| {
+                if installation.installation_status == "incompatible"
+                    || installation.protocol != item.protocol
+                {
+                    return false;
+                }
+                let upstream_newer = upstream_versions
+                    .get(&item.id)
+                    .map(|up| {
+                        crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
+                            &up.version,
+                            &installation.version,
+                        )
+                    })
+                    .unwrap_or(false);
+                let catalog_newer =
+                    crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
+                        &item.version,
+                        &installation.version,
+                    );
+                upstream_newer || catalog_newer
+            });
+            let mut installed_view = installed;
+            if let Some(ref mut inst_view) = installed_view {
+                inst_view.update_available = update_available;
+            }
             views.push(AgentMarketItemView {
                 id: item.id.clone(),
                 catalog_version: catalog.catalog().catalog_version.clone(),
@@ -110,12 +151,8 @@ impl AppService {
                 verification: item.verification.clone(),
                 distributions: candidates,
                 recommended_distribution_id,
-                update_available: installed.as_ref().is_some_and(|installation| {
-                    installation.installation_status != "incompatible"
-                        && installation.protocol == item.protocol
-                        && installation.version != item.version
-                }),
-                installed,
+                update_available,
+                installed: installed_view,
             });
         }
         Ok(views)
@@ -127,20 +164,85 @@ impl AppService {
     }
 
     pub async fn list_installed_agents(&self) -> AppResult<Vec<AgentInstallationView>> {
+        let catalog = CatalogCache::best_available().ok();
+        let upstream_versions = CatalogCache::in_app_cache()
+            .map(|cache| cache.read_upstream_versions())
+            .unwrap_or_default();
         Ok(self
             .list_agent_installations()
             .await?
             .iter()
-            .map(installation_view)
+            .map(|inst| {
+                let mut view = installation_view(inst);
+                if let Some(ref cat) = catalog {
+                    if let Some(item) = cat.catalog().items.iter().find(|i| i.id == inst.agent_id) {
+                        let is_compatible = view.installation_status != "incompatible"
+                            && view.protocol == item.protocol;
+                        if is_compatible {
+                            let upstream_newer = upstream_versions
+                                .get(&inst.agent_id)
+                                .map(|up| {
+                                    crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
+                                        &up.version,
+                                        &view.version,
+                                    )
+                                })
+                                .unwrap_or(false);
+                            let catalog_newer =
+                                crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
+                                    &item.version,
+                                    &view.version,
+                                );
+                            view.update_available = upstream_newer || catalog_newer;
+                        }
+                    }
+                }
+                view
+            })
             .collect())
     }
 
     pub async fn get_installed_agent(&self, agent_id: String) -> AppResult<AgentInstallationView> {
+        let catalog = CatalogCache::best_available().ok();
+        let upstream_versions = CatalogCache::in_app_cache()
+            .map(|cache| cache.read_upstream_versions())
+            .unwrap_or_default();
         self.list_agent_installations()
             .await?
             .into_iter()
             .find(|installation| installation.agent_id == agent_id)
-            .map(|installation| installation_view(&installation))
+            .map(|installation| {
+                let mut view = installation_view(&installation);
+                if let Some(ref cat) = catalog {
+                    if let Some(item) = cat
+                        .catalog()
+                        .items
+                        .iter()
+                        .find(|i| i.id == installation.agent_id)
+                    {
+                        let is_compatible = view.installation_status != "incompatible"
+                            && view.protocol == item.protocol;
+                        if is_compatible {
+                            let upstream_newer = upstream_versions
+                                .get(&installation.agent_id)
+                                .map(|up| {
+                                    crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
+                                        &up.version,
+                                        &view.version,
+                                    )
+                                })
+                                .unwrap_or(false);
+                            let catalog_newer =
+                                crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
+                                    &item.version,
+                                    &view.version,
+                                );
+                            view.update_available = upstream_newer || catalog_newer;
+                        }
+                    }
+                }
+                view
+            })
             .ok_or_else(|| {
                 AppError::from(AgentMarketError::new(
                     "agent_not_installed",
