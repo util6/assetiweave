@@ -30,13 +30,13 @@ fn memory_is_an_independent_default_navigation_module() {
 }
 
 #[test]
-fn opencode_default_profile_uses_config_skills_path() {
+fn opencode_default_profile_uses_cross_platform_config_anchor() {
     let profile = default_profiles()
         .into_iter()
         .find(|profile| profile.id == "opencode")
         .expect("opencode profile");
 
-    assert_eq!(profile.target_paths, vec!["~/.config/opencode/skills"]);
+    assert_eq!(profile.target_paths, vec!["@config/opencode/skills"]);
 }
 
 #[test]
@@ -145,4 +145,11 @@ fn system_skill_source_is_shared_across_tenants() {
 
     assert_eq!(tenant_a.root_path, "~/.assetiweave/skills/.system");
     assert_eq!(tenant_a, tenant_b);
+}
+
+#[test]
+fn active_default_sources_retains_library_and_system_sources() {
+    let active = super::active_default_sources_for_tenant("test-tenant");
+    assert!(active.iter().any(|s| s.id == "assetiweave-system-skills"));
+    assert!(active.iter().any(|s| s.id == "assetiweave-library-skills"));
 }

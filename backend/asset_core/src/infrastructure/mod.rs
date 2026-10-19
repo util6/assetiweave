@@ -19,6 +19,7 @@ pub mod logging;
 pub mod logs;
 pub mod logs_error;
 pub mod path_utils;
+pub mod project_path;
 pub mod runtime;
 pub mod scanner;
 pub mod search;

@@ -18,6 +18,10 @@ impl AppService {
         db_path: PathBuf,
         role: RuntimeRole,
     ) -> AppResult<std::sync::Arc<AppRuntime>> {
+        if let Some(parent) = db_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(AppError::external)?;
+        }
+        crate::backend::infrastructure::runtime::storage_migration::migrate_legacy_storage_if_needed(&db_path)?;
         let pool = store::open_migrated_pool(&db_path).await?;
         let orphaned_tasks = store::reconcile_orphaned_tasks_sqlx(&pool).await?;
         if !orphaned_tasks.is_empty() {

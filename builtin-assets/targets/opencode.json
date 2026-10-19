@@ -5,7 +5,7 @@
   "default_targets": [
     {
       "asset_kind": "skill",
-      "path": "~/.config/opencode/skills"
+      "path": "@config/opencode/skills"
     }
   ],
   "supported_kinds": [

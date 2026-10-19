@@ -2,8 +2,8 @@
 
 use crate::backend::{
     application::system::default_data::{
-        default_app_shortcuts, default_navigation_model, default_profiles_from_catalog,
-        default_sources_for_tenant, is_default_app_profile_id,
+        active_default_sources_for_tenant, default_app_shortcuts, default_navigation_model,
+        default_profiles_from_catalog, default_sources_for_tenant, is_default_app_profile_id,
     },
     application::AppResult,
     domain::TargetProfile,
@@ -38,7 +38,7 @@ pub async fn seed_tenant_defaults_with_catalog(
     catalog: &TargetCatalog,
 ) -> AppResult<()> {
     if count_rows_sqlx(pool, tenant_id, "sources").await? == 0 {
-        for source in default_sources_for_tenant(tenant_id) {
+        for source in active_default_sources_for_tenant(tenant_id) {
             upsert_source_sqlx(pool, tenant_id, &source).await?;
         }
     }
@@ -207,6 +207,7 @@ fn legacy_profile_target_paths(profile_id: &str) -> Vec<Vec<String>> {
     let mut paths = vec![vec![legacy_path.to_string()]];
     if profile_id == "opencode" {
         paths.push(vec!["~/.opencode/skills".to_string()]);
+        paths.push(vec!["~/.config/opencode/skills".to_string()]);
     }
     paths
 }

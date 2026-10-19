@@ -89,26 +89,15 @@ impl RuntimeConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|| defaults.home_dir.join(".assetiweave"));
 
-        let app_data_dir = if let Some(proj) = directories::ProjectDirs::from("", "", "AssetIWeave")
-        {
-            if proj.data_dir().parent() == Some(&defaults.data_dir) {
-                proj.data_dir().to_path_buf()
-            } else {
-                defaults.data_dir.join("AssetIWeave")
-            }
-        } else {
-            defaults.data_dir.join("AssetIWeave")
-        };
-
         let mut db_path = parsed
             .db_path
             .map(PathBuf::from)
-            .unwrap_or_else(|| app_data_dir.join("app.db"));
+            .unwrap_or_else(|| home_dir.join("app.db"));
 
         let mut log_dir = parsed
             .log_dir
             .map(PathBuf::from)
-            .unwrap_or_else(|| app_data_dir.join("logs"));
+            .unwrap_or_else(|| home_dir.join("logs"));
 
         let mut policy_path = parsed.policy_path.map(PathBuf::from);
 

@@ -25,6 +25,12 @@ impl SandboxContext {
     }
 
     pub fn default_system_root() -> PathBuf {
+        if let Ok(env_home) = std::env::var("ASSETIWEAVE_HOME") {
+            let p = PathBuf::from(env_home);
+            if !p.as_os_str().is_empty() {
+                return p.join("sandboxes").join("profiles");
+            }
+        }
         dirs::home_dir()
             .map(|h| h.join(".assetiweave").join("sandboxes").join("profiles"))
             .unwrap_or_else(|| PathBuf::from("./sandboxes/profiles"))

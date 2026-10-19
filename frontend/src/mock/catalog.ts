@@ -279,7 +279,7 @@ export const fallbackProfiles: TargetProfile[] = [
     id: "cursor",
     name: "Cursor",
     app_kind: "cursor",
-    target_paths: ["~/Library/Application Support/Cursor/skills"],
+    target_paths: ["@config/Cursor/skills"],
     supported_kinds: ["skill", "prompt", "rule", "custom"],
     deployment_strategy: "symlink_to_source",
     enabled: true,

@@ -72,6 +72,9 @@ pub struct BuiltinSkillInstallResult {
 }
 
 pub fn system_skill_root() -> AppResult<PathBuf> {
+    if let Ok(home) = crate::backend::infrastructure::path_utils::app_home_dir() {
+        return Ok(home.join("skills").join(".system"));
+    }
     let home =
         dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
     Ok(home.join(".assetiweave").join("skills").join(".system"))

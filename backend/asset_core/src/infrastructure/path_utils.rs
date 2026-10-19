@@ -29,6 +29,9 @@ pub fn app_db_path() -> InfraResult<PathBuf> {
     {
         fs::create_dir_all(parent)?;
     }
+    crate::backend::infrastructure::runtime::storage_migration::migrate_legacy_storage_if_needed(
+        &path,
+    )?;
     Ok(path)
 }
 
@@ -38,15 +41,21 @@ pub fn ensure_app_library_dirs() -> InfraResult<()> {
     Ok(())
 }
 
+pub fn app_home_dir() -> InfraResult<PathBuf> {
+    Ok(
+        crate::backend::infrastructure::runtime::config::runtime_config()?
+            .home_dir
+            .clone(),
+    )
+}
+
 pub fn default_skill_backup_root() -> InfraResult<PathBuf> {
     default_skill_backup_root_for_tenant("default")
 }
 
 pub fn default_skill_backup_root_for_tenant(tenant_id: &str) -> InfraResult<PathBuf> {
-    let home =
-        dirs::home_dir().ok_or_else(|| InfraError::NotFound("无法确定用户主目录".to_string()))?;
+    let home = app_home_dir()?;
     Ok(home
-        .join(".assetiweave")
         .join("tenants")
         .join(safe_tenant_path_segment(tenant_id))
         .join("library")
@@ -54,25 +63,18 @@ pub fn default_skill_backup_root_for_tenant(tenant_id: &str) -> InfraResult<Path
 }
 
 pub fn legacy_skill_backup_root() -> InfraResult<PathBuf> {
-    let home =
-        dirs::home_dir().ok_or_else(|| InfraError::NotFound("无法确定用户主目录".to_string()))?;
-    Ok(home.join(".assetiweave").join("library").join("skills"))
+    let home = app_home_dir()?;
+    Ok(home.join("library").join("skills"))
 }
 
 pub fn memory_legacy_archive_root() -> InfraResult<PathBuf> {
-    let home = crate::backend::infrastructure::runtime::config::runtime_config()?
-        .home_dir
-        .clone();
+    let home = app_home_dir()?;
     Ok(home.join("library").join("memory-legacy"))
 }
 
 pub fn default_database_backup_root() -> InfraResult<PathBuf> {
-    let home =
-        dirs::home_dir().ok_or_else(|| InfraError::NotFound("无法确定用户主目录".to_string()))?;
-    Ok(home
-        .join(".assetiweave")
-        .join("library")
-        .join("database-backups"))
+    let home = app_home_dir()?;
+    Ok(home.join("library").join("database-backups"))
 }
 
 pub fn expand_path(path: &str) -> InfraResult<PathBuf> {
@@ -383,7 +385,14 @@ pub fn detect_target_provider(
 
 pub fn is_app_library_path(path: &Path) -> bool {
     let filesystem = crate::backend::infrastructure::host_filesystem::HostFilesystem::current();
-    if let Some(home) = dirs::home_dir() {
+    if let Ok(home) = app_home_dir() {
+        let tenants_root = home.join("tenants");
+        if let Some(parts) = filesystem.relative_components(path, &tenants_root) {
+            if parts.len() >= 3 && parts[1] == "library" && parts[2] == "skills" {
+                return true;
+            }
+        }
+    } else if let Some(home) = dirs::home_dir() {
         let tenants_root = home.join(".assetiweave").join("tenants");
         if let Some(parts) = filesystem.relative_components(path, &tenants_root) {
             if parts.len() >= 3 && parts[1] == "library" && parts[2] == "skills" {
@@ -468,6 +477,45 @@ fn hash_dir(path: &Path) -> InfraResult<String> {
     }
 
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub fn validate_safe_target_path(path: &str) -> InfraResult<()> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(InfraError::Validation("path must not be empty".to_string()));
+    }
+    if trimmed == "/" || trimmed == "\\" || trimmed == "~" || trimmed == "%USERPROFILE%" {
+        return Err(InfraError::Validation(format!(
+            "path points to root or home directory which is unsafe: {path}"
+        )));
+    }
+    if trimmed.split(['/', '\\']).any(|part| part == "..") {
+        return Err(InfraError::Validation(format!(
+            "path contains parent directory traversal: {path}"
+        )));
+    }
+    let expanded = expand_path(trimmed)?;
+    if expanded.parent().is_none() {
+        return Err(InfraError::Validation(format!(
+            "path cannot be system root: {path}"
+        )));
+    }
+    if let Ok(home) = dirs::home_dir().ok_or_else(|| InfraError::NotFound("home".to_string())) {
+        if expanded == home {
+            return Err(InfraError::Validation(format!(
+                "path cannot directly be user home directory: {path}"
+            )));
+        }
+    }
+    let system_roots = ["/System", "/Windows", "/usr", "/bin", "/sbin", "/etc"];
+    for sys in system_roots {
+        if expanded.starts_with(sys) {
+            return Err(InfraError::Validation(format!(
+                "path points to protected system directory: {path}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

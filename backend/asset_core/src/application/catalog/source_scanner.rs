@@ -95,14 +95,16 @@ where
                 let error_message = error.to_string();
                 if should_remove_source_on_scan_error(&error_message) {
                     tracing::warn!(
-                        action = "source.scan.removed",
+                        action = "source.scan.missing",
                         source_id = %source.id,
                         source_name = %source.name,
                         root_path = %source.root_path,
                         error = %error_message,
-                        "来源路径不存在，已移除"
+                        "来源路径不存在，标记失效"
                     );
-                    delete_source_sqlx(pool, tenant_id, &source.id).await?;
+                    source.last_scanned_at = Some(now);
+                    source.last_scan_status = Some(format!("error: {error_message}"));
+                    upsert_source_sqlx(pool, tenant_id, &source).await?;
                     continue;
                 }
                 source.last_scanned_at = Some(now);
@@ -216,23 +218,22 @@ async fn prune_missing_sources(
     sources: Vec<Source>,
 ) -> AppResult<Vec<Source>> {
     let mut retained_sources = Vec::new();
-    let mut missing_source_ids = Vec::new();
-    for source in sources {
+    let now = Utc::now().to_rfc3339();
+    for mut source in sources {
         if source_root_is_missing(&source) {
             tracing::warn!(
-                action = "source.prune_missing",
+                action = "source.missing",
                 source_id = %source.id,
                 source_name = %source.name,
                 root_path = %source.root_path,
-                "来源路径不存在，已从索引移除"
+                "来源路径不存在，标记失效并跳过扫描"
             );
-            missing_source_ids.push(source.id);
+            source.last_scanned_at = Some(now.clone());
+            source.last_scan_status = Some("error: source path does not exist".to_string());
+            upsert_source_sqlx(pool, tenant_id, &source).await?;
         } else {
             retained_sources.push(source);
         }
-    }
-    for source_id in missing_source_ids {
-        delete_source_sqlx(pool, tenant_id, &source_id).await?;
     }
     Ok(retained_sources)
 }
@@ -263,6 +264,7 @@ async fn upsert_source_sqlx(pool: &SqlitePool, tenant_id: &str, source: &Source)
     Ok(crate::backend::store::upsert_source_sqlx(pool, tenant_id, source).await?)
 }
 
+#[allow(dead_code)]
 async fn delete_source_sqlx(pool: &SqlitePool, tenant_id: &str, source_id: &str) -> AppResult<()> {
     Ok(crate::backend::store::delete_source_sqlx(pool, tenant_id, source_id).await?)
 }

@@ -231,3 +231,29 @@ fn non_utf8_paths_never_alias_identity_or_persistence_keys() {
         "target conflict key must reject non-utf8 components"
     );
 }
+
+#[test]
+fn validate_safe_target_path_accepts_valid_portable_paths() {
+    assert!(super::validate_safe_target_path("~/.codex/skills").is_ok());
+    assert!(super::validate_safe_target_path("@config/Cursor/skills").is_ok());
+    assert!(super::validate_safe_target_path("projects/sub/skills").is_ok());
+}
+
+#[test]
+fn validate_safe_target_path_rejects_unsafe_and_escaped_paths() {
+    // Empty
+    assert!(super::validate_safe_target_path("").is_err());
+    assert!(super::validate_safe_target_path("   ").is_err());
+
+    // Naked root or home
+    assert!(super::validate_safe_target_path("/").is_err());
+    assert!(super::validate_safe_target_path("~").is_err());
+    assert!(super::validate_safe_target_path("%USERPROFILE%").is_err());
+
+    // Directory traversal
+    assert!(super::validate_safe_target_path("skills/../../etc").is_err());
+
+    // Protected system directory
+    assert!(super::validate_safe_target_path("/System/Library").is_err());
+    assert!(super::validate_safe_target_path("/usr/bin").is_err());
+}

@@ -22,10 +22,7 @@ fn explicit_db_override_does_not_relocate_log_dir() {
     let value = RuntimeConfig::from_env_map(&env, &defaults).unwrap();
     assert_eq!(value.db_path, PathBuf::from("/fixture/test.db"));
     assert_eq!(value.home_dir, PathBuf::from("/fixture/custom"));
-    assert_eq!(
-        value.log_dir,
-        PathBuf::from("/fixture/data/AssetIWeave/logs")
-    );
+    assert_eq!(value.log_dir, PathBuf::from("/fixture/custom/logs"));
     assert_eq!(value.policy_path, None);
 }
 
@@ -37,13 +34,23 @@ fn defaults_when_env_is_empty() {
     assert_eq!(value.home_dir, PathBuf::from("/fixture/home/.assetiweave"));
     assert_eq!(
         value.db_path,
-        PathBuf::from("/fixture/data/AssetIWeave/app.db")
+        PathBuf::from("/fixture/home/.assetiweave/app.db")
     );
     assert_eq!(
         value.log_dir,
-        PathBuf::from("/fixture/data/AssetIWeave/logs")
+        PathBuf::from("/fixture/home/.assetiweave/logs")
     );
     assert_eq!(value.policy_path, None);
+}
+
+#[test]
+fn setting_home_relocates_both_db_and_log_dir() {
+    let defaults = test_defaults();
+    let env = BTreeMap::from([("ASSETIWEAVE_HOME".into(), OsString::from("/fixture/custom"))]);
+    let value = RuntimeConfig::from_env_map(&env, &defaults).unwrap();
+    assert_eq!(value.home_dir, PathBuf::from("/fixture/custom"));
+    assert_eq!(value.db_path, PathBuf::from("/fixture/custom/app.db"));
+    assert_eq!(value.log_dir, PathBuf::from("/fixture/custom/logs"));
 }
 
 #[test]

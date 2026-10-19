@@ -115,6 +115,25 @@ pub fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
     sources
 }
 
+pub fn active_default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
+    default_sources_for_tenant(tenant_id)
+        .into_iter()
+        .filter(|source| {
+            if source.id == "assetiweave-system-skills" || source.id == "assetiweave-library-skills"
+            {
+                return true;
+            }
+            if let Ok(expanded) =
+                crate::backend::infrastructure::path_utils::expand_path(&source.root_path)
+            {
+                expanded.exists()
+            } else {
+                false
+            }
+        })
+        .collect()
+}
+
 pub fn default_profiles_from_catalog(catalog: &TargetCatalog) -> Vec<TargetProfile> {
     default_profiles_from_descriptors(catalog.descriptors())
 }
