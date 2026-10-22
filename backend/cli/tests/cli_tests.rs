@@ -127,6 +127,85 @@ fn test_skill_list() {
 }
 
 #[test]
+fn test_skill_builtin_list() {
+    // 1. Table format
+    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let assert_table = cmd.args(["skill", "builtin", "list"]).assert().success();
+    let table_out = String::from_utf8(assert_table.get_output().stdout.clone()).unwrap();
+    assert!(table_out.contains("assetiweave-memory"));
+    assert!(table_out.contains("assetiweave-conversation-organizer"));
+
+    // 2. JSON format
+    let mut cmd_json = Command::cargo_bin("aiwc").unwrap();
+    let assert_json = cmd_json
+        .args(["skill", "builtin", "list", "--format", "json"])
+        .assert()
+        .success();
+    let json_out = String::from_utf8(assert_json.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&json_out).unwrap();
+    assert_eq!(json["ok"], true);
+    let arr = json["data"].as_array().expect("data array");
+    assert!(!arr.is_empty());
+    let memory_skill = arr
+        .iter()
+        .find(|item| item["name"] == "assetiweave-memory")
+        .expect("assetiweave-memory in builtin list");
+    assert_eq!(memory_skill["id"], "assetiweave.memory");
+    assert!(!memory_skill["description"].as_str().unwrap().is_empty());
+}
+
+#[test]
+fn test_skill_builtin_read() {
+    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let assert_read = cmd
+        .args(["skill", "builtin", "read", "assetiweave-memory"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert_read.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("name: assetiweave-memory"));
+    assert!(stdout.contains("AssetIWeave Memory"));
+}
+
+#[test]
+fn test_skill_read_alias() {
+    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let assert_read = cmd
+        .args(["skill", "read", "assetiweave-conversation-organizer"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert_read.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("name: assetiweave-conversation-organizer"));
+    assert!(stdout.contains("AssetIWeave 对话记录整理"));
+
+    let mut cmd_sk = Command::cargo_bin("aiwc").unwrap();
+    let assert_sk = cmd_sk
+        .args(["sk", "read", "assetiweave-memory"])
+        .assert()
+        .success();
+    let stdout_sk = String::from_utf8(assert_sk.get_output().stdout.clone()).unwrap();
+    assert!(stdout_sk.contains("name: assetiweave-memory"));
+}
+
+#[test]
+fn test_skill_read_invalid_name() {
+    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let assert_err = cmd
+        .args(["skill", "read", "non-existent-skill-xyz"])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8(assert_err.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("non-existent-skill-xyz"));
+
+    let mut cmd_builtin = Command::cargo_bin("aiwc").unwrap();
+    let assert_builtin_err = cmd_builtin
+        .args(["skill", "builtin", "read", "non-existent-skill-xyz"])
+        .assert()
+        .failure();
+    let stderr_builtin = String::from_utf8(assert_builtin_err.get_output().stderr.clone()).unwrap();
+    assert!(stderr_builtin.contains("non-existent-skill-xyz"));
+}
+
+#[test]
 fn test_source_list() {
     let mut cmd = Command::cargo_bin("aiwc").unwrap();
     cmd.args(["source", "list"]).assert().success();

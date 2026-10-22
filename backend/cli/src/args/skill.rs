@@ -11,6 +11,12 @@ pub enum SkillCommands {
     #[command(about = "List installed and available skills")]
     List,
 
+    #[command(alias = "b", about = "Inspect built-in skills")]
+    Builtin(SkillBuiltinArgs),
+
+    #[command(about = "Read raw markdown content of a built-in skill")]
+    Read(SkillReadArgs),
+
     #[command(about = "Mount a skill to a target profile")]
     Mount(SkillMountArgs),
 
@@ -37,6 +43,27 @@ pub enum SkillCommands {
 
     #[command(about = "Inspect acquired skill remote sources")]
     Remote(SkillRemoteArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct SkillBuiltinArgs {
+    #[command(subcommand)]
+    pub command: SkillBuiltinCommands,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SkillBuiltinCommands {
+    #[command(about = "List built-in skills with descriptions")]
+    List,
+
+    #[command(about = "Read raw markdown content of a built-in skill")]
+    Read(SkillReadArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct SkillReadArgs {
+    #[arg(help = "Built-in skill name or ID")]
+    pub name: String,
 }
 
 #[derive(Args, Debug)]

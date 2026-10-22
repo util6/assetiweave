@@ -20,6 +20,9 @@ mod tests;
 pub use agents::agent_market::{
     AgentInstallPreview, AgentMarketItemView, AgentMarketRefreshResult, AgentUninstallPreview,
 };
+pub use catalog::builtin_skills::{
+    get_builtin_skill_markdown, list_builtin_skills, BuiltinSkillMetadata,
+};
 pub use catalog::params::{
     AssetIdParams, AssetRefParams, CreateSourceParams, DeleteAssetParams, ImportSkillParams,
     ListAssetsParams, ProbeSourcePathParams, RequiredAssetIdParams, SkillAcquireParams,

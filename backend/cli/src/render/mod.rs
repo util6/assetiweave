@@ -131,6 +131,40 @@ pub fn render_skills(skills: &[CatalogAsset], format: OutputFormat) {
     }
 }
 
+pub fn render_builtin_skills(
+    skills: &[asset_core::application::BuiltinSkillMetadata],
+    format: OutputFormat,
+) {
+    match format {
+        OutputFormat::Json => {
+            render_ok_json(skills);
+        }
+        OutputFormat::Table => {
+            if skills.is_empty() {
+                println!("No built-in skills found.");
+                return;
+            }
+            let mut table = Table::new();
+            table.load_preset(UTF8_FULL);
+            table.set_content_arrangement(ContentArrangement::Dynamic);
+            table.set_header(vec![
+                Cell::new("Name").fg(Color::Cyan),
+                Cell::new("ID").fg(Color::Cyan),
+                Cell::new("Description").fg(Color::Cyan),
+            ]);
+            for item in skills {
+                table.add_row(vec![
+                    Cell::new(&item.name),
+                    Cell::new(&item.id),
+                    Cell::new(&item.description),
+                ]);
+            }
+            println!("{table}");
+            println!("\nTotal: {} built-in skills", skills.len());
+        }
+    }
+}
+
 pub fn render_assets(assets: &[CatalogAsset], format: OutputFormat) {
     match format {
         OutputFormat::Json => {
