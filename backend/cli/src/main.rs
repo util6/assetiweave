@@ -1,3 +1,4 @@
+pub mod affordance;
 mod args;
 mod commands;
 mod render;

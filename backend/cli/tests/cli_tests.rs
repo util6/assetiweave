@@ -541,3 +541,97 @@ fn test_conversation_outline_and_card_drilldown() {
         }
     }
 }
+
+#[test]
+fn test_conversation_affordance_long_help_and_concise_short_help() {
+    // 1. Top-level short help `conversation -h` should be concise and contain no affordance
+    let mut cmd_short = Command::cargo_bin("aiwc").unwrap();
+    let assert_short = cmd_short.args(["conversation", "-h"]).assert().success();
+    let out_short = String::from_utf8(assert_short.get_output().stdout.clone()).unwrap();
+    assert!(out_short.contains("Usage: aiwc conversation"));
+    assert!(!out_short.contains("Affordance:"));
+    assert!(!out_short.contains("Use this when"));
+    assert!(!out_short.contains("Avoid when"));
+
+    // 2. Top-level long help `conversation --help` should contain 5-dimension affordance
+    let mut cmd_long = Command::cargo_bin("aiwc").unwrap();
+    let assert_long = cmd_long.args(["conversation", "--help"]).assert().success();
+    let out_long = String::from_utf8(assert_long.get_output().stdout.clone()).unwrap();
+    assert!(out_long.contains("Affordance:"));
+    assert!(out_long.contains("Use this when:"));
+    assert!(out_long.contains("Avoid when:"));
+    assert!(out_long.contains("Examples:"));
+    assert!(out_long.contains("Related skills:"));
+    assert!(out_long.contains("Risk:"));
+    assert!(out_long.contains("aiwc skill builtin read assetiweave-conversation-recall"));
+
+    // 3. Subcommand short help `conversation search -h` should be concise
+    let mut cmd_search_short = Command::cargo_bin("aiwc").unwrap();
+    let assert_search_short = cmd_search_short
+        .args(["conversation", "search", "-h"])
+        .assert()
+        .success();
+    let out_search_short =
+        String::from_utf8(assert_search_short.get_output().stdout.clone()).unwrap();
+    assert!(out_search_short.contains("Usage: aiwc conversation search"));
+    assert!(!out_search_short.contains("Affordance:"));
+    assert!(!out_search_short.contains("Use this when"));
+
+    // 4. Subcommand long help `conversation search --help` should contain 5-dimension affordance
+    let mut cmd_search_long = Command::cargo_bin("aiwc").unwrap();
+    let assert_search_long = cmd_search_long
+        .args(["conversation", "search", "--help"])
+        .assert()
+        .success();
+    let out_search_long =
+        String::from_utf8(assert_search_long.get_output().stdout.clone()).unwrap();
+    assert!(out_search_long.contains("Affordance:"));
+    assert!(out_search_long.contains("Use this when:"));
+    assert!(out_search_long.contains("Avoid when:"));
+    assert!(out_search_long.contains("Examples:"));
+    assert!(out_search_long.contains("Related skills:"));
+    assert!(out_search_long.contains("Risk:"));
+    assert!(out_search_long.contains("aiwc skill builtin read assetiweave-conversation-recall"));
+
+    // 5. Verify other conversation subcommands have long help affordance
+    for subcmd in [
+        "outline", "card", "sync", "adapter", "source", "data", "list",
+    ] {
+        let mut cmd_sub = Command::cargo_bin("aiwc").unwrap();
+        let assert_sub = cmd_sub
+            .args(["conversation", subcmd, "--help"])
+            .assert()
+            .success();
+        let out_sub = String::from_utf8(assert_sub.get_output().stdout.clone()).unwrap();
+        assert!(
+            out_sub.contains("Affordance:"),
+            "subcommand {} missing Affordance header",
+            subcmd
+        );
+        assert!(
+            out_sub.contains("Use this when:"),
+            "subcommand {} missing Use this when",
+            subcmd
+        );
+        assert!(
+            out_sub.contains("Avoid when:"),
+            "subcommand {} missing Avoid when",
+            subcmd
+        );
+        assert!(
+            out_sub.contains("Examples:"),
+            "subcommand {} missing Examples",
+            subcmd
+        );
+        assert!(
+            out_sub.contains("Related skills:"),
+            "subcommand {} missing Related skills",
+            subcmd
+        );
+        assert!(
+            out_sub.contains("Risk:"),
+            "subcommand {} missing Risk",
+            subcmd
+        );
+    }
+}

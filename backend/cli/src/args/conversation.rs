@@ -1,7 +1,10 @@
 use clap::{Args, Subcommand};
 
 #[derive(Args, Debug)]
-#[command(about = "Manage normalized conversation records")]
+#[command(
+    about = "Manage normalized conversation records",
+    after_long_help = crate::affordance::conversation::help("conversation")
+)]
 pub struct ConversationArgs {
     #[command(subcommand)]
     pub command: ConversationCommands,
@@ -9,30 +12,52 @@ pub struct ConversationArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum ConversationCommands {
-    #[command(about = "Search normalized conversation cards for memory retrieval")]
+    #[command(
+        about = "Search normalized conversation cards for memory retrieval",
+        after_long_help = crate::affordance::conversation::help("search")
+    )]
     Search(ConversationSearchArgs),
 
-    #[command(about = "List normalized conversation sessions")]
+    #[command(
+        about = "List normalized conversation sessions",
+        after_long_help = crate::affordance::conversation::help("list")
+    )]
     List(ConversationListArgs),
 
     #[command(
-        about = "Inspect conversation structure with compact columnar outline (accepts session, turn, or card ID)"
+        about = "Inspect conversation structure with compact columnar outline (accepts session, turn, or card ID)",
+        after_long_help = crate::affordance::conversation::help("outline")
     )]
     Outline(ConversationOutlineArgs),
 
-    #[command(about = "Inspect and read individual conversation cards")]
+    #[command(
+        about = "Inspect and read individual conversation cards",
+        after_long_help = crate::affordance::conversation::help("card")
+    )]
     Card(ConversationCardArgs),
 
-    #[command(about = "Incrementally synchronize conversations from local adapters")]
+    #[command(
+        about = "Incrementally synchronize conversations from local adapters",
+        after_long_help = crate::affordance::conversation::help("sync")
+    )]
     Sync(ConversationSyncArgs),
 
-    #[command(about = "Manage conversation adapters")]
+    #[command(
+        about = "Manage conversation adapters",
+        after_long_help = crate::affordance::conversation::help("adapter")
+    )]
     Adapter(ConversationAdapterArgs),
 
-    #[command(about = "Inspect and sync conversation sources")]
+    #[command(
+        about = "Inspect and sync conversation sources",
+        after_long_help = crate::affordance::conversation::help("source")
+    )]
     Source(ConversationSourceArgs),
 
-    #[command(about = "Audit and repair normalized conversation data")]
+    #[command(
+        about = "Audit and repair normalized conversation data",
+        after_long_help = crate::affordance::conversation::help("data")
+    )]
     Data(ConversationDataArgs),
 }
 
@@ -121,7 +146,10 @@ pub struct ConversationCardArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum ConversationCardCommands {
-    #[command(about = "Get exact content for one conversation card")]
+    #[command(
+        about = "Get exact content for one conversation card",
+        after_long_help = crate::affordance::conversation::help("card get")
+    )]
     Get(ConversationCardGetArgs),
 }
 
