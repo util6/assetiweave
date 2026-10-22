@@ -194,7 +194,8 @@ fn test_skill_read_invalid_name() {
         .assert()
         .failure();
     let stderr = String::from_utf8(assert_err.get_output().stderr.clone()).unwrap();
-    assert!(stderr.contains("non-existent-skill-xyz"));
+    assert!(stderr.contains("Skill not found: non-existent-skill-xyz"));
+    assert!(stderr.contains("Hint: run 'aiwc skill builtin list'"));
 
     let mut cmd_builtin = Command::cargo_bin("aiwc").unwrap();
     let assert_builtin_err = cmd_builtin
@@ -202,7 +203,8 @@ fn test_skill_read_invalid_name() {
         .assert()
         .failure();
     let stderr_builtin = String::from_utf8(assert_builtin_err.get_output().stderr.clone()).unwrap();
-    assert!(stderr_builtin.contains("non-existent-skill-xyz"));
+    assert!(stderr_builtin.contains("Skill not found: non-existent-skill-xyz"));
+    assert!(stderr_builtin.contains("Hint: run 'aiwc skill builtin list'"));
 }
 
 #[test]

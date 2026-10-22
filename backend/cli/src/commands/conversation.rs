@@ -69,7 +69,6 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                     if full_err.contains("not found")
                         || full_err.contains("NotFound")
                         || full_err.contains("no session")
-                        || full_err.contains("failed to get conversation outline")
                     {
                         return Err(CliError::outline_not_found(&o.id).into());
                     } else {
@@ -90,10 +89,7 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                     Ok(card) => card,
                     Err(err) => {
                         let full_err = format!("{err:#}");
-                        if full_err.contains("not found")
-                            || full_err.contains("NotFound")
-                            || full_err.contains("failed to get conversation card")
-                        {
+                        if full_err.contains("not found") || full_err.contains("NotFound") {
                             return Err(CliError::card_not_found(&g.card_id).into());
                         } else {
                             return Err(CliError::new_with_hint(
@@ -125,7 +121,7 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                 Err(err) => {
                     let full_err = format!("{err:#}");
                     if let Some(ref adapter_id) = s.adapter {
-                        if full_err.contains("not found") || full_err.contains("adapter") {
+                        if full_err.contains("not found") || full_err.contains("NotFound") {
                             return Err(CliError::adapter_not_found(adapter_id).into());
                         }
                     }
@@ -153,10 +149,7 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                     Ok(res) => res,
                     Err(err) => {
                         let full_err = format!("{err:#}");
-                        if full_err.contains("not found")
-                            || full_err.contains("NotFound")
-                            || full_err.contains("failed to inspect conversation adapter")
-                        {
+                        if full_err.contains("not found") || full_err.contains("NotFound") {
                             return Err(CliError::adapter_not_found(&i.adapter_id).into());
                         } else {
                             return Err(CliError::new_with_hint(
@@ -186,12 +179,7 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                     Err(err) => {
                         let full_err = format!("{err:#}");
                         if full_err.contains("not found") || full_err.contains("NotFound") {
-                            return Err(CliError::new_with_hint(
-                                "SOURCE_NOT_FOUND",
-                                format!("Conversation source not found: {}", sc.source_id),
-                                "run 'aiwc conversation source list'",
-                            )
-                            .into());
+                            return Err(CliError::source_not_found(&sc.source_id).into());
                         } else {
                             return Err(err);
                         }

@@ -56,6 +56,22 @@ fn test_conversation_error_helpers() {
         Some("run 'aiwc conversation adapter list'".to_string())
     );
 
+    let source_err = CliError::source_not_found("src1");
+    assert_eq!(source_err.code, "SOURCE_NOT_FOUND");
+    assert_eq!(source_err.message, "Conversation source not found: src1");
+    assert_eq!(
+        source_err.hint,
+        Some("run 'aiwc conversation source list'".to_string())
+    );
+
+    let skill_err = CliError::skill_not_found("s1");
+    assert_eq!(skill_err.code, "SKILL_NOT_FOUND");
+    assert_eq!(skill_err.message, "Skill not found: s1");
+    assert_eq!(
+        skill_err.hint,
+        Some("run 'aiwc skill builtin list'".to_string())
+    );
+
     let search_err = CliError::search_query_required();
     assert_eq!(search_err.code, "INVALID_PARAMETER");
     assert_eq!(search_err.message, "Conversation search query is required");

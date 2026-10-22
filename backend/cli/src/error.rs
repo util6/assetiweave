@@ -67,6 +67,22 @@ impl CliError {
         )
     }
 
+    pub fn source_not_found(id: impl std::fmt::Display) -> Self {
+        Self::new_with_hint(
+            "SOURCE_NOT_FOUND",
+            format!("Conversation source not found: {id}"),
+            "run 'aiwc conversation source list'",
+        )
+    }
+
+    pub fn skill_not_found(name: impl std::fmt::Display) -> Self {
+        Self::new_with_hint(
+            "SKILL_NOT_FOUND",
+            format!("Skill not found: {name}"),
+            "run 'aiwc skill builtin list'",
+        )
+    }
+
     pub fn search_query_required() -> Self {
         Self::new_with_hint(
             "INVALID_PARAMETER",

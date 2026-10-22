@@ -3,6 +3,7 @@ use crate::args::skill::{
     SkillBuiltinCommands, SkillCommands, SkillGroupCommands, SkillRemoteCommands,
 };
 use crate::args::{asset::AssetArgs, skill::SkillArgs, OutputFormat};
+use crate::error::CliError;
 use crate::render;
 use crate::service::CliService;
 use anyhow::Result;
@@ -123,7 +124,7 @@ pub async fn handle_asset(args: AssetArgs, format: OutputFormat) -> Result<()> {
 
 fn handle_skill_read(name: &str) -> Result<()> {
     let markdown = asset_core::application::get_builtin_skill_markdown(name)
-        .ok_or_else(|| anyhow::anyhow!("Built-in skill '{}' not found", name))?;
+        .ok_or_else(|| CliError::skill_not_found(name))?;
     if markdown.ends_with('\n') {
         print!("{}", markdown);
     } else {

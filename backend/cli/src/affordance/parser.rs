@@ -30,69 +30,44 @@ impl CommandAffordance {
         let mut out = String::new();
         out.push_str("Affordance:\n");
 
-        if !self.use_this_when.trim().is_empty() {
-            out.push_str("  Use this when:\n");
-            for line in self.use_this_when.lines() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    out.push_str(&format!("    {}\n", trimmed));
-                }
-            }
-            out.push('\n');
-        }
-
-        if !self.avoid_when.trim().is_empty() {
-            out.push_str("  Avoid when:\n");
-            for line in self.avoid_when.lines() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    out.push_str(&format!("    {}\n", trimmed));
-                }
-            }
-            out.push('\n');
-        }
-
-        if !self.examples.is_empty() {
-            out.push_str("  Examples:\n");
-            for ex in &self.examples {
-                let trimmed = ex.trim();
-                if !trimmed.is_empty() {
-                    if trimmed.starts_with('-') || trimmed.starts_with('*') {
-                        out.push_str(&format!("    {}\n", trimmed));
-                    } else {
-                        out.push_str(&format!("    - {}\n", trimmed));
-                    }
-                }
-            }
-            out.push('\n');
-        }
-
-        if !self.related_skills.is_empty() {
-            out.push_str("  Related skills:\n");
-            for skill in &self.related_skills {
-                let trimmed = skill.trim();
-                if !trimmed.is_empty() {
-                    if trimmed.starts_with('-') || trimmed.starts_with('*') {
-                        out.push_str(&format!("    {}\n", trimmed));
-                    } else {
-                        out.push_str(&format!("    - {}\n", trimmed));
-                    }
-                }
-            }
-            out.push('\n');
-        }
-
-        if !self.risk.trim().is_empty() {
-            out.push_str("  Risk:\n");
-            for line in self.risk.lines() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    out.push_str(&format!("    {}\n", trimmed));
-                }
-            }
-        }
+        append_text_section(&mut out, "Use this when", &self.use_this_when);
+        append_text_section(&mut out, "Avoid when", &self.avoid_when);
+        append_list_section(&mut out, "Examples", &self.examples);
+        append_list_section(&mut out, "Related skills", &self.related_skills);
+        append_text_section(&mut out, "Risk", &self.risk);
 
         out.trim_end().to_string()
+    }
+}
+
+fn append_text_section(out: &mut String, title: &str, content: &str) {
+    let trimmed_content = content.trim();
+    if !trimmed_content.is_empty() {
+        out.push_str(&format!("  {title}:\n"));
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                out.push_str(&format!("    {trimmed}\n"));
+            }
+        }
+        out.push('\n');
+    }
+}
+
+fn append_list_section(out: &mut String, title: &str, items: &[String]) {
+    if !items.is_empty() {
+        out.push_str(&format!("  {title}:\n"));
+        for item in items {
+            let trimmed = item.trim();
+            if !trimmed.is_empty() {
+                if trimmed.starts_with('-') || trimmed.starts_with('*') {
+                    out.push_str(&format!("    {trimmed}\n"));
+                } else {
+                    out.push_str(&format!("    - {trimmed}\n"));
+                }
+            }
+        }
+        out.push('\n');
     }
 }
 

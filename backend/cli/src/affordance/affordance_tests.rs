@@ -118,6 +118,7 @@ fn test_conversation_builtin_affordance_integrity() {
         "list",
         "outline",
         "card",
+        "card get",
         "sync",
         "adapter",
         "source",
