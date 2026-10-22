@@ -390,3 +390,29 @@ pub fn render_harvester_templates(
         }
     }
 }
+
+pub fn render_error(err: &anyhow::Error, format: OutputFormat) {
+    let cli_err = crate::error::CliError::from_anyhow(err);
+    match format {
+        OutputFormat::Json => {
+            let envelope = serde_json::json!({
+                "ok": false,
+                "error": cli_err
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&envelope).unwrap_or_default()
+            );
+        }
+        OutputFormat::Table => {
+            eprintln!("Error: {}", cli_err.message);
+            if let Some(hint) = &cli_err.hint {
+                if hint.starts_with("run ") {
+                    eprintln!("Hint: {}", hint);
+                } else {
+                    eprintln!("Hint: run '{}'", hint);
+                }
+            }
+        }
+    }
+}

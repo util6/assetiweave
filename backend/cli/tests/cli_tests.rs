@@ -635,3 +635,158 @@ fn test_conversation_affordance_long_help_and_concise_short_help() {
         );
     }
 }
+
+#[test]
+fn test_conversation_error_actionable_hints_text_mode() {
+    // 1. Outline not found
+    let mut cmd_outline = Command::cargo_bin("aiwc").unwrap();
+    let assert_outline = cmd_outline
+        .args(["conversation", "outline", "non-existent-outline-id"])
+        .assert()
+        .failure();
+    let stderr_outline = String::from_utf8(assert_outline.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr_outline.contains("Error: Conversation outline not found: non-existent-outline-id")
+    );
+    assert!(stderr_outline.contains("Hint: run 'aiwc conversation list'"));
+
+    // 2. Card not found
+    let mut cmd_card = Command::cargo_bin("aiwc").unwrap();
+    let assert_card = cmd_card
+        .args(["conversation", "card", "get", "non-existent-card-id"])
+        .assert()
+        .failure();
+    let stderr_card = String::from_utf8(assert_card.get_output().stderr.clone()).unwrap();
+    assert!(stderr_card.contains("Error: Conversation card not found: non-existent-card-id"));
+    assert!(
+        stderr_card.contains("Hint: run 'aiwc conversation outline' or 'aiwc conversation search'")
+    );
+
+    // 3. Adapter not found
+    let mut cmd_adapter = Command::cargo_bin("aiwc").unwrap();
+    let assert_adapter = cmd_adapter
+        .args([
+            "conversation",
+            "adapter",
+            "inspect",
+            "non-existent-adapter-id",
+        ])
+        .assert()
+        .failure();
+    let stderr_adapter = String::from_utf8(assert_adapter.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr_adapter.contains("Error: Conversation adapter not found: non-existent-adapter-id")
+    );
+    assert!(stderr_adapter.contains("Hint: run 'aiwc conversation adapter list'"));
+
+    // 4. Search missing query
+    let mut cmd_search = Command::cargo_bin("aiwc").unwrap();
+    let assert_search = cmd_search
+        .args(["conversation", "search"])
+        .assert()
+        .failure();
+    let stderr_search = String::from_utf8(assert_search.get_output().stderr.clone()).unwrap();
+    assert!(stderr_search.contains("Error: Conversation search query is required"));
+    assert!(stderr_search.contains(
+        "Hint: run 'aiwc conversation search --query <QUERY>' or 'aiwc conversation list'"
+    ));
+}
+
+#[test]
+fn test_conversation_error_actionable_hints_json_mode() {
+    // 1. Outline not found in JSON
+    let mut cmd_outline = Command::cargo_bin("aiwc").unwrap();
+    let assert_outline = cmd_outline
+        .args([
+            "conversation",
+            "outline",
+            "non-existent-outline-id",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .failure();
+    let stdout_outline = String::from_utf8(assert_outline.get_output().stdout.clone()).unwrap();
+    let json_outline: Value = serde_json::from_str(&stdout_outline).unwrap();
+    assert_eq!(json_outline["ok"], false);
+    assert_eq!(json_outline["error"]["code"], "OUTLINE_NOT_FOUND");
+    assert!(json_outline["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("non-existent-outline-id"));
+    assert_eq!(
+        json_outline["error"]["hint"],
+        "run 'aiwc conversation list'"
+    );
+
+    // 2. Card not found in JSON
+    let mut cmd_card = Command::cargo_bin("aiwc").unwrap();
+    let assert_card = cmd_card
+        .args([
+            "conversation",
+            "card",
+            "get",
+            "non-existent-card-id",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .failure();
+    let stdout_card = String::from_utf8(assert_card.get_output().stdout.clone()).unwrap();
+    let json_card: Value = serde_json::from_str(&stdout_card).unwrap();
+    assert_eq!(json_card["ok"], false);
+    assert_eq!(json_card["error"]["code"], "CARD_NOT_FOUND");
+    assert!(json_card["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("non-existent-card-id"));
+    assert_eq!(
+        json_card["error"]["hint"],
+        "run 'aiwc conversation outline' or 'aiwc conversation search'"
+    );
+
+    // 3. Adapter not found in JSON
+    let mut cmd_adapter = Command::cargo_bin("aiwc").unwrap();
+    let assert_adapter = cmd_adapter
+        .args([
+            "conversation",
+            "adapter",
+            "inspect",
+            "non-existent-adapter-id",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .failure();
+    let stdout_adapter = String::from_utf8(assert_adapter.get_output().stdout.clone()).unwrap();
+    let json_adapter: Value = serde_json::from_str(&stdout_adapter).unwrap();
+    assert_eq!(json_adapter["ok"], false);
+    assert_eq!(json_adapter["error"]["code"], "ADAPTER_NOT_FOUND");
+    assert!(json_adapter["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("non-existent-adapter-id"));
+    assert_eq!(
+        json_adapter["error"]["hint"],
+        "run 'aiwc conversation adapter list'"
+    );
+
+    // 4. Search missing query in JSON
+    let mut cmd_search = Command::cargo_bin("aiwc").unwrap();
+    let assert_search = cmd_search
+        .args(["conversation", "search", "--format", "json"])
+        .assert()
+        .failure();
+    let stdout_search = String::from_utf8(assert_search.get_output().stdout.clone()).unwrap();
+    let json_search: Value = serde_json::from_str(&stdout_search).unwrap();
+    assert_eq!(json_search["ok"], false);
+    assert_eq!(json_search["error"]["code"], "INVALID_PARAMETER");
+    assert_eq!(
+        json_search["error"]["message"],
+        "Conversation search query is required"
+    );
+    assert_eq!(
+        json_search["error"]["hint"],
+        "run 'aiwc conversation search --query <QUERY>' or 'aiwc conversation list'"
+    );
+}

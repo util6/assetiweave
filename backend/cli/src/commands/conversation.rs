@@ -3,6 +3,7 @@ use crate::args::conversation::{
     ConversationDataCommands, ConversationSourceCommands,
 };
 use crate::args::OutputFormat;
+use crate::error::CliError;
 use crate::render;
 use crate::service::CliService;
 use anyhow::Result;
@@ -11,12 +12,22 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
     let service = CliService::bootstrap().await?;
     match args.command {
         ConversationCommands::Search(s) => {
-            let query = s.query.unwrap_or_default();
+            let query = match s.query {
+                Some(ref q) if !q.trim().is_empty() => q.trim().to_string(),
+                _ => return Err(CliError::search_query_required().into()),
+            };
             let res = service
                 .search_conversations(
                     query, s.kinds, s.limit, s.offset, s.since, s.until, s.timeline,
                 )
-                .await?;
+                .await
+                .map_err(|err| {
+                    CliError::new_with_hint(
+                        "INVALID_PARAMETER",
+                        format!("{err:#}"),
+                        "run 'aiwc conversation search --query <QUERY>' or 'aiwc conversation list'",
+                    )
+                })?;
             render::render_conversation_search(&res, format);
         }
         ConversationCommands::List(l) => {
@@ -51,12 +62,49 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
             render::render_conversation_sessions(&sessions, format, window_desc.as_deref());
         }
         ConversationCommands::Outline(o) => {
-            let outline = service.conversation().get_outline(o.id).await?;
+            let outline = match service.conversation().get_outline(o.id.clone()).await {
+                Ok(outline) => outline,
+                Err(err) => {
+                    let full_err = format!("{err:#}");
+                    if full_err.contains("not found")
+                        || full_err.contains("NotFound")
+                        || full_err.contains("no session")
+                        || full_err.contains("failed to get conversation outline")
+                    {
+                        return Err(CliError::outline_not_found(&o.id).into());
+                    } else {
+                        return Err(CliError::new_with_hint(
+                            "OUTLINE_FAILED",
+                            full_err,
+                            "run 'aiwc conversation list'",
+                        )
+                        .into());
+                    }
+                }
+            };
             render::render_json_value(&outline);
         }
         ConversationCommands::Card(c) => match c.command {
             ConversationCardCommands::Get(g) => {
-                let card = service.conversation().get_card(g.card_id).await?;
+                let card = match service.conversation().get_card(g.card_id.clone()).await {
+                    Ok(card) => card,
+                    Err(err) => {
+                        let full_err = format!("{err:#}");
+                        if full_err.contains("not found")
+                            || full_err.contains("NotFound")
+                            || full_err.contains("failed to get conversation card")
+                        {
+                            return Err(CliError::card_not_found(&g.card_id).into());
+                        } else {
+                            return Err(CliError::new_with_hint(
+                                "CARD_FAILED",
+                                full_err,
+                                "run 'aiwc conversation outline' or 'aiwc conversation search'",
+                            )
+                            .into());
+                        }
+                    }
+                };
                 if g.raw {
                     if card.content.ends_with('\n') {
                         print!("{}", card.content);
@@ -69,9 +117,26 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
             }
         },
         ConversationCommands::Sync(s) => {
-            let res = service
-                .sync_conversations(s.adapter, s.source, s.force)
-                .await?;
+            let res = match service
+                .sync_conversations(s.adapter.clone(), s.source, s.force)
+                .await
+            {
+                Ok(res) => res,
+                Err(err) => {
+                    let full_err = format!("{err:#}");
+                    if let Some(ref adapter_id) = s.adapter {
+                        if full_err.contains("not found") || full_err.contains("adapter") {
+                            return Err(CliError::adapter_not_found(adapter_id).into());
+                        }
+                    }
+                    return Err(CliError::new_with_hint(
+                        "SYNC_FAILED",
+                        full_err,
+                        "run 'aiwc conversation adapter list' or 'aiwc conversation list'",
+                    )
+                    .into());
+                }
+            };
             render::render_json_value(&res);
         }
         ConversationCommands::Adapter(a) => match a.command {
@@ -80,7 +145,29 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                 render::render_conversation_adapters(&adapters, format);
             }
             ConversationAdapterCommands::Inspect(i) => {
-                let res = service.conversation().inspect_adapter(i.adapter_id).await?;
+                let res = match service
+                    .conversation()
+                    .inspect_adapter(i.adapter_id.clone())
+                    .await
+                {
+                    Ok(res) => res,
+                    Err(err) => {
+                        let full_err = format!("{err:#}");
+                        if full_err.contains("not found")
+                            || full_err.contains("NotFound")
+                            || full_err.contains("failed to inspect conversation adapter")
+                        {
+                            return Err(CliError::adapter_not_found(&i.adapter_id).into());
+                        } else {
+                            return Err(CliError::new_with_hint(
+                                "ADAPTER_FAILED",
+                                full_err,
+                                "run 'aiwc conversation adapter list'",
+                            )
+                            .into());
+                        }
+                    }
+                };
                 render::render_json_value(&res);
             }
         },
@@ -90,10 +177,26 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                 render::render_json_value(&res);
             }
             ConversationSourceCommands::Sync(sc) => {
-                let res = service
+                let res = match service
                     .conversation()
-                    .sync_source(sc.source_id, sc.full)
-                    .await?;
+                    .sync_source(sc.source_id.clone(), sc.full)
+                    .await
+                {
+                    Ok(res) => res,
+                    Err(err) => {
+                        let full_err = format!("{err:#}");
+                        if full_err.contains("not found") || full_err.contains("NotFound") {
+                            return Err(CliError::new_with_hint(
+                                "SOURCE_NOT_FOUND",
+                                format!("Conversation source not found: {}", sc.source_id),
+                                "run 'aiwc conversation source list'",
+                            )
+                            .into());
+                        } else {
+                            return Err(err);
+                        }
+                    }
+                };
                 render::render_json_value(&res);
             }
         },
