@@ -416,6 +416,7 @@ pub async fn load_conversation_block_detail_sqlx(
             block_id: block_id.to_string(),
             part_id: Some(part.id.clone()),
             kind: part.kind.as_str().to_string(),
+            label: part.command_label.clone(),
             semantic_role: None,
             renderer: ConversationCardRenderer::Plain,
             role: part.role,

@@ -4922,6 +4922,7 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
             query: Some("stale-answer-snapshot".to_string()),
             limit: Some(20),
             offset: Some(0),
+            ..Default::default()
         })
         .await
         .expect("list sessions without stale question snapshot fields")

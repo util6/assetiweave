@@ -1024,7 +1024,7 @@ function ConversationContentCard({
           ) : null}
           {block.commandLabel ? (
             <span
-              className="max-w-48 truncate rounded-full border border-status-create/55 bg-status-create/10 px-2.5 py-0.5 text-label-caps text-status-create"
+              className="max-w-72 truncate rounded-full border border-status-create/55 bg-status-create/10 px-2.5 py-0.5 text-label-caps text-status-create sm:max-w-96"
               data-command-label={block.commandLabel}
               title={block.commandLabel}
             >
@@ -1887,6 +1887,7 @@ function createBlock(
   let signal = overrides.signal;
   let filePath = overrides.filePath;
   let toolName = overrides.toolName;
+  let commandLabel = part.command_label ?? null;
   if (part.metadata_json) {
     try {
       const meta = JSON.parse(part.metadata_json);
@@ -1896,6 +1897,8 @@ function createBlock(
           filePath = meta.file_path;
         if (!toolName && typeof meta.tool_name === "string")
           toolName = meta.tool_name;
+        if (!commandLabel && typeof meta.command_label === "string" && meta.command_label.trim())
+          commandLabel = meta.command_label.trim();
       }
     } catch {
       // Ignore JSON parse error in non-critical metadata inspection
@@ -1910,7 +1913,7 @@ function createBlock(
       renderer,
       role: part.role,
       text,
-      commandLabel: part.command_label,
+      commandLabel,
       translatedText: part.translated_text,
       format: overrides.format,
       signal,

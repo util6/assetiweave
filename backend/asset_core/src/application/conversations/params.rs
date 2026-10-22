@@ -230,7 +230,7 @@ pub struct ConversationDataRollbackParams {
     pub yes: bool,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 pub struct ConversationSessionListParams {
     #[serde(alias = "adapterId")]
     pub adapter_id: Option<String>,
@@ -239,6 +239,16 @@ pub struct ConversationSessionListParams {
     pub query: Option<String>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
+    #[serde(default, alias = "projectPath")]
+    pub project_path: Option<String>,
+    #[serde(default)]
+    pub since: Option<String>,
+    #[serde(default)]
+    pub until: Option<String>,
+    #[serde(default)]
+    pub window: Option<String>,
+    #[serde(default)]
+    pub range: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -249,10 +259,22 @@ pub struct ConversationSessionGetParams {
     pub roles: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct ConversationSessionOutlineParams {
     #[serde(alias = "anyId")]
     pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct ConversationOutlineParams {
+    #[serde(alias = "anyId")]
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct ConversationCardGetParams {
+    #[serde(alias = "cardId")]
+    pub card_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

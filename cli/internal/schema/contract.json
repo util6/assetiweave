@@ -10075,6 +10075,46 @@
             "format": "uint",
             "minimum": 0,
             "description": "Pagination offset"
+          },
+          "project_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "project path"
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "since"
+          },
+          "until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "until"
+          },
+          "window": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "window"
+          },
+          "range": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "range"
           }
         },
         "type": "object",
@@ -10393,6 +10433,46 @@
             "format": "uint",
             "minimum": 0,
             "description": "Pagination offset"
+          },
+          "project_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "project path"
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "since"
+          },
+          "until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "until"
+          },
+          "window": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "window"
+          },
+          "range": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "range"
           }
         },
         "type": "object",
@@ -11086,6 +11166,46 @@
             "format": "uint",
             "minimum": 0,
             "description": "Pagination offset"
+          },
+          "project_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "project path"
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "since"
+          },
+          "until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "until"
+          },
+          "window": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "window"
+          },
+          "range": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "range"
           }
         },
         "type": "object",
@@ -11364,6 +11484,46 @@
             "format": "uint",
             "minimum": 0,
             "description": "Pagination offset"
+          },
+          "project_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "project path"
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "since"
+          },
+          "until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "until"
+          },
+          "window": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "window"
+          },
+          "range": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "range"
           }
         },
         "type": "object",

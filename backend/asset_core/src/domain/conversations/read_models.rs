@@ -85,12 +85,24 @@ pub enum ConversationExportFormat {
     Raw,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationSessionListItem {
     #[serde(flatten)]
     pub session: ConversationSession,
     pub question_count: usize,
     pub turn_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_user_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_turn_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_start_turn_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_start_user_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_end_turn_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_end_user_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -112,6 +124,8 @@ pub struct ConversationBlockLocator {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub part_id: Option<String>,
     pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub semantic_role: Option<String>,
     pub renderer: ConversationCardRenderer,
@@ -165,6 +179,12 @@ pub struct ConversationCardRunGroup {
     pub card_kind: String,
     pub count: usize,
     pub card_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command_labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]

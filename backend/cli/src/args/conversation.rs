@@ -15,8 +15,13 @@ pub enum ConversationCommands {
     #[command(about = "List normalized conversation sessions")]
     List(ConversationListArgs),
 
-    #[command(about = "Inspect a conversation session with outline and cards")]
-    Session(ConversationSessionArgs),
+    #[command(
+        about = "Inspect conversation structure with compact columnar outline (accepts session, turn, or card ID)"
+    )]
+    Outline(ConversationOutlineArgs),
+
+    #[command(about = "Inspect and read individual conversation cards")]
+    Card(ConversationCardArgs),
 
     #[command(about = "Incrementally synchronize conversations from local adapters")]
     Sync(ConversationSyncArgs),
@@ -29,15 +34,6 @@ pub enum ConversationCommands {
 
     #[command(about = "Audit and repair normalized conversation data")]
     Data(ConversationDataArgs),
-
-    #[command(about = "Manage session question groups")]
-    Question(ConversationQuestionArgs),
-
-    #[command(about = "Locate and read individual conversation blocks")]
-    Block(ConversationBlockArgs),
-
-    #[command(about = "Manage conversation content parts")]
-    Part(ConversationPartArgs),
 }
 
 #[derive(Args, Debug)]
@@ -66,40 +62,79 @@ pub struct ConversationSearchArgs {
 
 #[derive(Args, Debug)]
 pub struct ConversationListArgs {
-    #[arg(long, default_value_t = 20, help = "Maximum sessions count")]
+    #[arg(long, default_value_t = 15, help = "Maximum sessions count")]
     pub limit: usize,
 
     #[arg(long, default_value_t = 0, help = "Result offset for pagination")]
     pub offset: usize,
+
+    #[arg(
+        long,
+        num_args = 1..=2,
+        value_name = "TIME",
+        help = "Time filter: single number in hours (e.g. 24), start time to now (e.g. '2026-10-13'), or two endpoints (e.g. 2026-10-13 2026-10-20)"
+    )]
+    pub time: Vec<String>,
+
+    #[arg(long, help = "Time window filter (e.g. 24, 24h, 48h)")]
+    pub window: Option<String>,
+
+    #[arg(
+        long,
+        help = "Start time filter (e.g. 24h, yesterday, today, or RFC3339)"
+    )]
+    pub since: Option<String>,
+
+    #[arg(
+        long,
+        help = "Time range filter like 'a..b' or 'a - b' (e.g. '2026-10-13..2026-10-16', 'yesterday..today')"
+    )]
+    pub range: Option<String>,
+
+    #[arg(long, help = "End time filter")]
+    pub until: Option<String>,
+
+    #[arg(long, help = "Filter by project path or name")]
+    pub project: Option<String>,
+
+    #[arg(long, help = "Filter by current project directory")]
+    pub current_project: bool,
+
+    #[arg(long, help = "Filter by adapter id")]
+    pub adapter: Option<String>,
+
+    #[arg(long, help = "Search query filter")]
+    pub query: Option<String>,
 }
 
 #[derive(Args, Debug)]
-pub struct ConversationSessionArgs {
+pub struct ConversationOutlineArgs {
+    #[arg(help = "Any identifier (session ID, turn ID, card ID or 8-hex prefix)")]
+    pub id: String,
+}
+
+#[derive(Args, Debug)]
+pub struct ConversationCardArgs {
     #[command(subcommand)]
-    pub command: ConversationSessionCommands,
+    pub command: ConversationCardCommands,
 }
 
 #[derive(Subcommand, Debug)]
-pub enum ConversationSessionCommands {
-    #[command(about = "Get one session with question groups (accepts short ID prefix)")]
-    Get(ConversationSessionGetArgs),
+pub enum ConversationCardCommands {
+    #[command(about = "Get exact content for one conversation card")]
+    Get(ConversationCardGetArgs),
+}
 
-    #[command(
-        about = "Get compact session outline tree with consecutive card folding (accepts any ID or 8-hex prefix)"
+#[derive(Args, Debug)]
+pub struct ConversationCardGetArgs {
+    #[arg(help = "Card ID or 8-hex prefix")]
+    pub card_id: String,
+
+    #[arg(
+        long,
+        help = "Output raw content directly to stdout without formatting"
     )]
-    Outline(ConversationSessionOutlineArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationSessionGetArgs {
-    #[arg(help = "Session identifier (full ID or short 8-hex prefix)")]
-    pub session_id: String,
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationSessionOutlineArgs {
-    #[arg(help = "Any identifier (session ID, card ID, turn ID or 8-hex prefix)")]
-    pub id: String,
+    pub raw: bool,
 }
 
 #[derive(Args, Debug)]
@@ -214,127 +249,4 @@ pub struct ConversationDataRollbackArgs {
 
     #[arg(long, help = "confirm rollback")]
     pub yes: bool,
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationQuestionArgs {
-    #[command(subcommand)]
-    pub command: ConversationQuestionCommands,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum ConversationQuestionCommands {
-    #[command(about = "List question groups in a session")]
-    List(ConversationQuestionListArgs),
-
-    #[command(about = "Get exact details for one question")]
-    Get(ConversationQuestionIdArgs),
-
-    #[command(about = "Merge a question into the previous question")]
-    Merge(ConversationQuestionMergeArgs),
-
-    #[command(about = "Split a question into two questions")]
-    Split(ConversationQuestionSplitArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationQuestionListArgs {
-    #[arg(help = "session ID")]
-    pub session_id: String,
-
-    #[arg(long, default_value_t = 50, help = "maximum questions")]
-    pub limit: usize,
-
-    #[arg(long, default_value_t = 0, help = "offset")]
-    pub offset: usize,
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationQuestionIdArgs {
-    #[arg(help = "question ID")]
-    pub question_id: String,
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationQuestionMergeArgs {
-    #[arg(help = "question ID to merge")]
-    pub question_id: String,
-
-    #[arg(long, help = "preview without merging")]
-    pub dry_run: bool,
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationQuestionSplitArgs {
-    #[arg(help = "question ID to split")]
-    pub question_id: String,
-
-    #[arg(long, help = "turn ID that starts the new question")]
-    pub before_turn: String,
-
-    #[arg(long, help = "preview without splitting")]
-    pub dry_run: bool,
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationBlockArgs {
-    #[command(subcommand)]
-    pub command: ConversationBlockCommands,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum ConversationBlockCommands {
-    #[command(about = "List block locators for one question")]
-    List(ConversationBlockListArgs),
-
-    #[command(about = "Get exact content for one conversation block")]
-    Get(ConversationBlockGetArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationBlockListArgs {
-    #[arg(help = "question ID")]
-    pub question_id: String,
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationBlockGetArgs {
-    #[arg(help = "block ID")]
-    pub block_id: String,
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationPartArgs {
-    #[command(subcommand)]
-    pub command: ConversationPartCommands,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum ConversationPartCommands {
-    #[command(about = "Manage stored part translations")]
-    Translation(ConversationPartTranslationArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationPartTranslationArgs {
-    #[command(subcommand)]
-    pub command: ConversationPartTranslationCommands,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum ConversationPartTranslationCommands {
-    #[command(about = "Update manual translation for a conversation part")]
-    Update(ConversationPartTranslationUpdateArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct ConversationPartTranslationUpdateArgs {
-    #[arg(help = "part ID")]
-    pub part_id: String,
-
-    #[arg(long, default_value = "session", help = "record kind: session or web")]
-    pub record_kind: String,
-
-    #[arg(long, help = "translated content to store")]
-    pub text: String,
 }

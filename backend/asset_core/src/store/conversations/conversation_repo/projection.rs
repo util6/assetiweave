@@ -275,6 +275,7 @@ pub(super) fn conversation_question_block_locator(
         block_id: format!("{}-question", turn.id),
         part_id: None,
         kind: "question".to_string(),
+        label: None,
         semantic_role: None,
         renderer: ConversationCardRenderer::Plain,
         role: crate::backend::domain::ConversationPartRole::User,
@@ -301,6 +302,7 @@ pub(super) fn conversation_card_block_locator(
         block_id: card.node_id.clone(),
         part_id: Some(part.id.clone()),
         kind: card.kind.clone(),
+        label: part.command_label.clone(),
         semantic_role: card.semantic_role.clone().or_else(|| {
             card.kind
                 .rsplit_once('.')

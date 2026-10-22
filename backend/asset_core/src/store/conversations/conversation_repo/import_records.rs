@@ -18,6 +18,18 @@ pub(super) struct ConversationSessionListItemRow {
     question_count: i64,
     turn_count: i64,
     #[sqlx(default)]
+    latest_user_prompt: Option<String>,
+    #[sqlx(default)]
+    window_turn_count: Option<i64>,
+    #[sqlx(default)]
+    window_start_turn_index: Option<i64>,
+    #[sqlx(default)]
+    window_start_user_prompt: Option<String>,
+    #[sqlx(default)]
+    window_end_turn_index: Option<i64>,
+    #[sqlx(default)]
+    window_end_user_prompt: Option<String>,
+    #[sqlx(default)]
     execution_origin: Option<String>,
     #[sqlx(default)]
     execution_purpose: Option<String>,
@@ -49,10 +61,23 @@ impl ConversationSessionListItemRow {
             execution_purpose: self.execution_purpose,
             user_visible: self.user_visible.map(|v| v != 0).unwrap_or(true),
         };
+        let window_turn_count = self.window_turn_count.and_then(|c| usize::try_from(c).ok());
+        let window_start_turn_index = self
+            .window_start_turn_index
+            .and_then(|c| usize::try_from(c).ok());
+        let window_end_turn_index = self
+            .window_end_turn_index
+            .and_then(|c| usize::try_from(c).ok());
         Ok(ConversationSessionListItem {
             session,
             question_count,
             turn_count,
+            latest_user_prompt: self.latest_user_prompt,
+            window_turn_count,
+            window_start_turn_index,
+            window_start_user_prompt: self.window_start_user_prompt,
+            window_end_turn_index,
+            window_end_user_prompt: self.window_end_user_prompt,
         })
     }
 }
@@ -114,6 +139,12 @@ impl RecentConversationSessionRecordRow {
                 session,
                 question_count,
                 turn_count,
+                latest_user_prompt: None,
+                window_turn_count: None,
+                window_start_turn_index: None,
+                window_start_user_prompt: None,
+                window_end_turn_index: None,
+                window_end_user_prompt: None,
             },
             last_activity_at: self.last_activity_at,
             cwd: self.cwd,

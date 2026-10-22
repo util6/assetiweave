@@ -20,6 +20,7 @@ pub mod event_handlers;
 pub mod params;
 pub mod usage_dto;
 
+pub use conversation_records::{resolve_time_window_bounds, resolve_unified_time};
 pub use event_handlers::{SearchIndexAdvanceConsumer, SessionMemoryConsumer};
 pub use usage_dto::{
     CurrencyCostDto, ModelPriceEntryDto, ModelPricingCatalogDto, ModelPricingStatusDto,

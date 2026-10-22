@@ -20,7 +20,7 @@ description: 通过 AssetIWeave 的统一 Memory API 与会话逐级取证体系
    - 当用户 Prompt、问题输入或上下文中已提供 8 位十六进制会话短 ID（例如 `2e003a42`）或完整 Session ID 时：
    - **第一步直接调用**骨架还原命令：
      ```bash
-     aiwc conversation session outline <short-id-or-any-id>
+     aiwc conversation outline <session-id>
      ```
 
 2. **入口 B：自然语言模糊回忆入口 (Natural Language Recall Entry · 用户核心场景)**
@@ -34,35 +34,65 @@ description: 通过 AssetIWeave 的统一 Memory API 与会话逐级取证体系
      `context resolve` 输出包含明确的会话标记 `## Session Memory [Session: <short-id>]`（且 references 中附带 `session_id`）。
      **强制规则**：一旦定位到候选会话，**必须当场提取其 8 位短 ID，并立即无缝触发 Tier 0 骨架还原**：
      ```bash
-     aiwc conversation session outline <short-id>
+     aiwc conversation outline <short-id>
      ```
    - **严禁二手摘要交差 (No Second-hand Summary)**：
      对于任何涉及技术方案、Bug 修复细节、关键配置或历史讨论的提问，**严禁仅凭 `context resolve` 的 3 行粗略摘要草草回复**！必须在第 1 轮对话内完成取证核实，将原始验证细节连同 **Session 短 ID** 一同交付给用户！
 
+### 命令拓扑 (Agent-Facing Command Map)
+
+| 目的 | 命令 | 说明 |
+| --- | --- | --- |
+| 骨架（唯一入口） | `aiwc conversation outline <id>` | 按 ID 类型自适应返回 **session / turn / card** 三级骨架，支持 8 位短 ID |
+| 单卡正文 | `aiwc conversation card get <card_id>` | O(1) 直读正文；`--raw` 直接输出纯文本到 stdout |
+| 定位会话 | `aiwc conversation list [--window 24h]` | 人读表格，用于拿到短 ID |
+| 跨会话检索 | `aiwc conversation search --query <q>` | 关键词命中卡片 |
+
+- `card get` 默认输出 `{card_id, session_id, turn_id, kind, label?, status?, content}`；加 `--raw` 则只吐 `content` 纯文本，适合管道与代码/日志提取。
+
+### 输出形态：列式 Matrix JSON (Columnar Matrix)
+
+所有骨架统一为 `{"columns": [...], "rows": [[...]]}`：列名只声明一次，行是**定长元组数组**。
+必须按 **columns 的列序**取值，不要指望行内出现字段名。
+
+**Session 级**（`level: "session"`）：`session_id`、`source_id`、`total_turns`、`created_at?`，以及
+`turns.columns = ["index","turn_id","question","activities","cards","answer_id"]`
+- `activities`：该轮工具/命令活动的**连续去重**摘要（如 `["Git status check","Build desktop crate"]`），不是逐条流水。
+- `cards`：该轮卡片数量（整数），据此判断是否需要放大到 Turn 级。
+- `answer_id`：该轮最终答案卡 ID，可直接下钻，无需扫描全部卡片。
+- `index` 为 **1-based** 轮次序号。
+
+**Turn 级**（`level: "turn"`）：`session_id`、`turn_id`、`turn_index`、`total_turns`、`user_question`，以及
+`cards.columns = ["order","card_id","kind","label","status","chars"]`
+- `label`：命令/工具的语义标签（Agent 设计里的 command_label），是判断卡片价值的最强信号。
+- `chars`：正文长度预估。**先看 chars 再决定是否下钻**，避免把超长输出拉进上下文。
+- 本层**绝不输出正文**。
+
+**Card 级**（`level: "card"`）：`session_id`、`turn_id`、`turn_index`、`turn_user_question`，以及
+`target { card_id, order, kind, label?, status?, chars }`，以及
+`neighborhood.columns = ["order","card_id","kind","label","is_target"]`
+- 邻域给出该卡在轮内的前后文坐标，用 `is_target` 定位自身。
+
+**统一信封与体积基线**
+- 所有命令输出统一为 `{"ok": true, "data": ...}`，`data` 才是骨架主体。
+- `outline` / `card get` **恒为 JSON**，`--format` 对它们无效，不要传（传了也不会改变形态）。
+- 体积参考：20 轮左右会话的 Session 级骨架约 **10~15 KB**，可直接整段读入；再往上放大才需要预算控制。
+
 ### 4 级逐级取证梯级 (4-Tier Progressive Evidence Protocol)
-1. **Tier 0: 会话骨架还原 (Session Outline)**
+
+1. **Tier 0 · 会话骨架**：`aiwc conversation outline <session-id>` → 一轮一行的全景地图。
+2. **Tier 1 · 意图透视**：只读 `question` 列自顶向下扫一遍，多数事实追溯/方案回顾在此即可定论。
+3. **Tier 2 · 门禁判定**：
+   - **推断充足** → 立即输出结论，**严禁多余下钻**；
+   - **事实缺失**（需要 diff、堆栈、配置、精确回复）→ 才进入 Tier 3。
+4. **Tier 3 · 逐级放大（三级缩放进阶，禁止跳级 dump）**：
    ```bash
-   aiwc conversation session outline <any-id>
+   aiwc conversation outline <turn-id>    # 该轮卡片清单：kind/label/status/chars
+   aiwc conversation outline <card-id>    # 单卡邻域坐标（可选，用于确认上下文）
+   aiwc conversation card get <card-id>   # 仅此时才取正文
    ```
-   获取会话的紧凑骨架树。
-   - 连续相同种类的卡片（如多张连续的 tool_call、tool_result 或 answer）已被自动折叠合并，输出结构包含 `card_kind`、`count` 与 `card_ids`。
-   - 骨架中**仅对用户提问（question / user prompt）保留完整提问文本**，其余卡片一律不含具体内容，极致压低上下文 Token 消耗。
-
-2. **Tier 1: 用户提问意图透视 (Question Intent Scan)**
-   - 优先自顶向下遍历 Tier 0 骨架中包含的各轮用户提问（Prompt）文本。
-   - 在绝大多数事实追溯、技术问答和上下文还原场景中，仅凭用户的问题轨迹即可明确该会话在何时探讨了何种方案、排查了什么问题，直接形成可信判断。
-
-3. **Tier 2: 判定门禁 (Decision Gate)**
-   在进入下一步之前，必须执行严格的门禁判断：
-   - **推断充足**：若根据用户的提问和骨架已足以回答用户问题，**立即输出结论，严禁多余下钻取证**！
-   - **事实缺失**：仅当必须获取具体的代码 diff、错误堆栈、配置参数或模型精确回复细节时，才允许进入 Tier 3。
-
-4. **Tier 3: 单点卡片按需下钻 (Point Drilldown on Card IDs)**
-   - 仅针对 Tier 2 判定必须阅读的极少数特定卡片，依据其 `card_id`（支持 8 字符短 ID）精准单点拉取：
-     ```bash
-     aiwc conversation block get <card-id>
-     ```
-   - **严禁全量 dump 会话正文**，每次仅查 1~2 张关键卡片，查完即止，按需取证。
+   - **严禁全量 dump 会话正文**，每次仅 `card get` 1~2 张关键卡片，查完即止。
+   - 优先按 `label` 与 `chars` 选卡：语义标签明确、体积适中的卡片命中率最高。
 
 ### 开发模式环境指引 (Development Mode Guidance)
 在 `assetiweave` 源码工作区内开发联调时，设置环境变量：
@@ -132,6 +162,13 @@ aiwc memory recall turn cancel <TURN_ID>
 只将 Recall 输出中的 `answer`、`sessionReferences`、`contentReferences` 和 `followUpSuggestions` 作为产品结果。
 
 ## 5. 故障排查 (Troubleshooting)
+
+### 瞬时故障先重试，不要急着诊断
+
+- `error returned from database: (code: 5) database is locked`：桌面版 AssetIWeave 正在写 `app.db`，属**瞬时占用**。
+  直接重试同一命令（建议间隔 3~20 秒、最多 10 次左右），通常第 2~5 次即成功，**不要**因此改走其他命令或放弃取证。
+
+### 环境诊断
 
 仅在 CLI 报错、Engine 连通性异常或怀疑协议契约不匹配时，按需执行环境诊断：
 

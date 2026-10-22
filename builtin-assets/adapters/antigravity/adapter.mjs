@@ -316,20 +316,51 @@ function extractUserRequestText(content) {
 // Antigravity-specific: infer project path from tool call args
 // ---------------------------------------------------------------------------
 
+function findGitRoot(startDir) {
+  if (!startDir || typeof startDir !== "string") return null;
+  try {
+    let current = path.resolve(startDir);
+    const root = path.parse(current).root;
+    while (current && current !== root) {
+      if (existsSync(path.join(current, ".git"))) {
+        return current;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  } catch {}
+  return null;
+}
+
 function inferProjectPathFromToolCalls(toolCalls) {
   if (!Array.isArray(toolCalls)) return null;
   for (const call of toolCalls) {
     const args = call?.args;
     if (!args || typeof args !== "object") continue;
-    for (const key of ["Cwd", "cwd", "DirectoryPath", "SearchPath", "TargetFile", "AbsolutePath"]) {
+    for (const key of [
+      "Cwd", "cwd",
+      "DirectoryPath", "directoryPath",
+      "SearchPath", "searchPath",
+      "TargetFile", "targetFile",
+      "AbsolutePath", "absolutePath",
+      "Path", "path",
+    ]) {
       const raw = args[key];
       const value = typeof raw === "string" ? raw.replace(/^"|"$/g, "") : null;
       if (value && value.startsWith("/") && !value.includes("/.gemini/")) {
-        // Return the directory portion for file paths
-        if (key === "TargetFile" || key === "AbsolutePath") {
-          return path.dirname(value);
+        let dir = value;
+        try {
+          if (existsSync(value)) {
+            dir = statSync(value).isDirectory() ? value : path.dirname(value);
+          } else if (path.extname(value) || /[\/\\][^.\/\\]+\.[A-Za-z0-9_-]+$/.test(value)) {
+            dir = path.dirname(value);
+          }
+        } catch {
+          dir = path.dirname(value);
         }
-        return value;
+        const gitRoot = findGitRoot(dir);
+        return gitRoot || dir;
       }
     }
   }
@@ -377,6 +408,9 @@ function toolCallParts(toolCalls, turnId) {
       const command = typeof rawCmd === "string" ? rawCmd.replace(/^"|"$/g, "") : null;
       const rawCwd = argsObj?.Cwd;
       const cwd = typeof rawCwd === "string" ? rawCwd.replace(/^"|"$/g, "") : null;
+      const rawSummary = typeof argsObj?.toolSummary === "string" ? argsObj.toolSummary.replace(/^"|"$/g, "").trim() : null;
+      const rawAction = typeof argsObj?.toolAction === "string" ? argsObj.toolAction.replace(/^"|"$/g, "").trim() : null;
+      const commandLabel = rawSummary || rawAction || null;
       if (command?.trim()) {
         parts.push({
           role: "tool",
@@ -388,9 +422,10 @@ function toolCallParts(toolCalls, turnId) {
           status: null,
           exit_code: null,
           source_execution_id: executionId,
+          command_label: commandLabel,
           metadata_json: metadata(
-            compactObject({ type: "command", cwd, source_execution_id: executionId, tool_name: toolName }),
-            { name: toolName, tool_name: toolName, tool_input: argsObj },
+            compactObject({ type: "command", cwd, source_execution_id: executionId, tool_name: toolName, command_label: commandLabel }),
+            { name: toolName, tool_name: toolName, tool_input: argsObj, command_label: commandLabel },
           ),
         });
       }
@@ -448,9 +483,13 @@ function toolCallParts(toolCalls, turnId) {
 
     // Generic / structured tool call
     const summary = typeof argsObj?.toolSummary === "string"
-      ? argsObj.toolSummary.replace(/^"|"$/g, "")
+      ? argsObj.toolSummary.replace(/^"|"$/g, "").trim()
       : null;
-    const displayName = summary || toolName;
+    const action = typeof argsObj?.toolAction === "string"
+      ? argsObj.toolAction.replace(/^"|"$/g, "").trim()
+      : null;
+    const toolLabel = summary || action || null;
+    const displayName = toolLabel || toolName;
 
     const isRead = /^(view_file|read_file|read_url_content|list_dir|list_directory|read_dir|read_resource)$/i.test(toolName);
     const isSearch = /^(grep_search|search_web|search_docs|find_files)$/i.test(toolName);
@@ -480,6 +519,7 @@ function toolCallParts(toolCalls, turnId) {
       status: null,
       exit_code: null,
       source_execution_id: executionId,
+      command_label: toolLabel,
       metadata_json: metadata(
         compactObject({
           type: "tool",
@@ -489,6 +529,7 @@ function toolCallParts(toolCalls, turnId) {
           signal: executionKind ? "ambient" : undefined,
           file_path: targetLocation,
           source_execution_id: executionId,
+          command_label: toolLabel,
         }),
         {
           name: toolName,
@@ -496,6 +537,7 @@ function toolCallParts(toolCalls, turnId) {
           tool_input: argsObj,
           execution_kind: executionKind,
           signal: executionKind ? "ambient" : undefined,
+          command_label: toolLabel,
         },
       ),
     });
@@ -587,7 +629,8 @@ function toolResultPart(step, fileOperation = null, sourceExecutionId = null, ma
   }
 
   const isCodeAction = type === "CODE_ACTION"
-    || ["write_to_file", "replace_file_content"].includes(toolName);
+    || ["write_to_file", "write_file", "replace_file_content", "edit_file", "apply_patch"].includes(toolName)
+    || (matchedCall && /write|replace|edit|patch/i.test(matchedCall.name));
 
   if (isCodeAction) {
     const diffText = materializeFileChangeText(content, fileOperation);
@@ -762,12 +805,51 @@ function fileOperationFromToolCall(call, knownFileContents) {
   const name = String(call?.name ?? "").toLowerCase();
   const args = call?.args;
   if (!args || typeof args !== "object") return null;
-  if (!["write_to_file", "replace_file_content", "delete_file", "move_file"].includes(name)) {
+  if (![
+    "write_to_file", "write_file",
+    "replace_file_content", "edit_file",
+    "delete_file", "move_file",
+  ].includes(name)) {
     return null;
   }
 
-  const targetFile = firstString(args.TargetFile, args.targetFile, args.Path, args.path);
+  const targetFile = firstString(
+    args.TargetFile, args.targetFile,
+    args.Path, args.path,
+    args.AbsolutePath, args.absolutePath,
+  );
   if (!targetFile) return null;
+
+  if (name === "edit_file") {
+    const target = firstString(args.Target, args.target);
+    const replacement = firstString(args.Replacement, args.replacement) ?? "";
+    return {
+      name: "edit_file",
+      targetFile,
+      target,
+      replacement,
+    };
+  }
+
+  if (name === "write_file") {
+    const content = firstString(args.Content, args.content, args.CodeContent, args.codeContent);
+    const isAppend = args.Append === true || args.Append === "true" || args.append === true;
+    const previous = knownFileContents.get(targetFile);
+    let finalContent = content;
+    let oldContent = previous;
+    if (isAppend && content != null) {
+      finalContent = (previous ?? "") + content;
+    }
+    if (finalContent != null) knownFileContents.set(targetFile, finalContent);
+    return {
+      name: "write_file",
+      targetFile,
+      content: finalContent,
+      oldContent,
+      isAppend,
+    };
+  }
+
   const content = firstString(args.CodeContent, args.codeContent, args.ReplacementContent, args.replacementContent);
   const oldContent = firstString(
     args.TargetContent,
@@ -802,7 +884,7 @@ function matchPendingFileOperation(operations, resultText) {
 
 function materializeFileChangeText(resultText, operation) {
   if (!operation || hasConcreteDiff(resultText)) return resultText;
-  if (operation.name === "write_to_file" && operation.content != null) {
+  if ((operation.name === "write_to_file" || operation.name === "write_file") && operation.content != null) {
     return operation.oldContent != null
       ? replaceFileDiff(operation.targetFile, operation.oldContent, operation.content)
       : createFileDiff(operation.targetFile, operation.content);
@@ -810,7 +892,36 @@ function materializeFileChangeText(resultText, operation) {
   if (operation.name === "replace_file_content" && operation.content != null && operation.oldContent != null) {
     return replaceFileDiff(operation.targetFile, operation.oldContent, operation.content);
   }
+  if (operation.name === "edit_file" && (operation.target != null || operation.replacement != null)) {
+    return editFileDiff(operation.targetFile, operation.target ?? "", operation.replacement ?? "", resultText);
+  }
   return resultText;
+}
+
+function editFileDiff(targetFile, target, replacement, resultText = "") {
+  const paths = diffPath(targetFile);
+  const oldLines = target ? diffLines(target).lines : [];
+  const newLines = replacement ? diffLines(replacement).lines : [];
+
+  let startLine = 1;
+  const lineMatch = String(resultText).match(/starting at line\s+(\d+)/i);
+  if (lineMatch) {
+    startLine = parseInt(lineMatch[1], 10) || 1;
+  }
+
+  const oldLen = oldLines.length;
+  const newLen = newLines.length;
+  const deletions = oldLines.map((line) => `-${line}`);
+  const additions = newLines.map((line) => `+${line}`);
+
+  return [
+    `diff --git ${paths.old} ${paths.next}`,
+    `--- ${paths.old}`,
+    `+++ ${paths.next}`,
+    `@@ -${startLine},${oldLen} +${startLine},${newLen} @@`,
+    ...deletions,
+    ...additions,
+  ].join("\n");
 }
 
 function hasConcreteDiff(value) {
@@ -1034,6 +1145,15 @@ function buildTurnsFromSteps(steps) {
     }
   }
   if (current) turns.push(current);
+  if (projectPath) {
+    for (const turn of turns) {
+      for (const part of turn.parts) {
+        if (part.kind === "command" && !part.cwd) {
+          part.cwd = projectPath;
+        }
+      }
+    }
+  }
   return { turns, projectPath };
 }
 

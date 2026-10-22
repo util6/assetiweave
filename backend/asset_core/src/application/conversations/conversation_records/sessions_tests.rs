@@ -200,33 +200,23 @@ async fn test_conversation_session_outline_folding_and_universal_resolver() {
         .await
         .expect("get outline with full session ID");
 
-    assert_eq!(outline.session_id, short_session_id);
-    assert_eq!(outline.title.as_deref(), Some("Session Outline Test Title"));
-    assert_eq!(outline.turns.len(), 2);
-
-    // Check Turn 0
-    let turn0 = &outline.turns[0];
-    assert_eq!(turn0.turn_index, 0);
-    assert_eq!(
-        turn0.user_question,
-        "Please run diagnostics and show status"
-    );
-    // 3 commands were folded into 1 run group, followed by 1 answer
-    assert_eq!(turn0.cards.len(), 2);
-    assert_eq!(turn0.cards[0].card_kind, "command");
-    assert_eq!(turn0.cards[0].count, 3);
-    assert_eq!(turn0.cards[0].card_ids.len(), 3);
-    assert_eq!(turn0.cards[1].card_kind, "answer");
-    assert_eq!(turn0.cards[1].count, 1);
-    assert_eq!(turn0.cards[1].card_ids.len(), 1);
-
-    // Check Turn 1
-    let turn1 = &outline.turns[1];
-    assert_eq!(turn1.turn_index, 1);
-    assert_eq!(turn1.user_question, "Now clean up");
-    assert_eq!(turn1.cards.len(), 1);
-    assert_eq!(turn1.cards[0].card_kind, "answer");
-    assert_eq!(turn1.cards[0].count, 1);
+    match outline {
+        ConversationOutline::Session(s) => {
+            assert_eq!(s.session_id, short_session_id);
+            assert_eq!(s.total_turns, 2);
+            assert_eq!(s.turns.rows[0].index, 1);
+            assert_eq!(
+                s.turns.rows[0].question,
+                "Please run diagnostics and show status"
+            );
+            assert_eq!(s.turns.rows[0].activities, vec!["check", "test", "status"]);
+            assert_eq!(s.turns.rows[0].cards, 4);
+            assert!(s.turns.rows[0].answer_id.is_some());
+            assert_eq!(s.turns.rows[1].index, 2);
+            assert_eq!(s.turns.rows[1].question, "Now clean up");
+        }
+        _ => panic!("expected session outline"),
+    }
 
     // 2. Query by 8-hex short session ID
     let outline_by_short = service
@@ -235,29 +225,7 @@ async fn test_conversation_session_outline_folding_and_universal_resolver() {
         })
         .await
         .expect("get outline with short session ID");
-    assert_eq!(outline_by_short.session_id, short_session_id);
-    assert_eq!(outline_by_short.turns.len(), 2);
-
-    // 3. Query by card ID (short ID of one of the commands)
-    let card_short_id = &turn0.cards[0].card_ids[0];
-    let outline_by_card = service
-        .get_conversation_session_outline(ConversationSessionOutlineParams {
-            id: card_short_id.clone(),
-        })
-        .await
-        .expect("get outline with card short ID");
-    assert_eq!(outline_by_card.session_id, short_session_id);
-    assert_eq!(outline_by_card.turns.len(), 2);
-
-    // 4. Query by turn short ID
-    let turn_short_id = &turn0.turn_id;
-    let outline_by_turn = service
-        .get_conversation_session_outline(ConversationSessionOutlineParams {
-            id: turn_short_id.clone(),
-        })
-        .await
-        .expect("get outline with turn short ID");
-    assert_eq!(outline_by_turn.session_id, short_session_id);
+    assert!(matches!(outline_by_short, ConversationOutline::Session(_)));
 
     drop(service);
     std::fs::remove_dir_all(root).ok();

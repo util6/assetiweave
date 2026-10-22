@@ -133,6 +133,12 @@ impl AppService {
             Err(error) => Err(error),
         };
         ensure_conversation_sync_not_cancelled(cancellation)?;
+        // 当多数据源并发读取完成后，落库入库环节通过门禁排队进入，杜绝多个长写事务并发争抢 SQLite 写锁导致锁冲突与降级雪崩
+        let _import_guard = if !params.dry_run {
+            Some(self.runtime.conversation_import_gate().lock().await)
+        } else {
+            None
+        };
         let sync_result = match read_result {
             Ok(read) if web_record_source => {
                 let pool = self.db.pool();

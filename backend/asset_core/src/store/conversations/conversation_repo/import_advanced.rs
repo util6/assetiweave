@@ -107,14 +107,14 @@ pub async fn import_conversation_sessions_advanced_sqlx(
     let mut completed_session_count = 0;
     let mut all_changed_session_ids = Vec::new();
     let mut succeeded_external_ids = Vec::new();
-    const SESSION_IMPORT_BATCH_SIZE: usize = 50;
+    const SESSION_IMPORT_BATCH_SIZE: usize = 25;
 
     for chunk in sessions.chunks(SESSION_IMPORT_BATCH_SIZE) {
         ensure_sync_import_active(cancellation)?;
 
         // 优先尝试以批量事务导入当前批次，减少 SQLite 写锁争抢与频繁磁盘 fsync
         let mut batch_success = false;
-        if let Ok(mut batch_tx) = crate::backend::store::begin_immediate(pool).await {
+        if let Ok(mut batch_tx) = begin_immediate_with_retry(pool, 8).await {
             let mut chunk_changed = Vec::new();
             let mut chunk_skipped = 0usize;
             let mut chunk_ok = true;
@@ -179,7 +179,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                     on_progress(completed_session_count, sessions.len());
                     continue;
                 }
-                let mut tx = match begin_immediate_with_retry(pool, 3).await {
+                let mut tx = match begin_immediate_with_retry(pool, 8).await {
                     Ok(tx) => tx,
                     Err(err) => {
                         let sanitized = sanitize_store_sync_error_message(&err.to_string());
@@ -514,7 +514,8 @@ async fn begin_immediate_with_retry(
         match crate::backend::store::begin_immediate(pool).await {
             Ok(tx) => return Ok(tx),
             Err(err) if attempts < max_attempts && is_retryable_db_lock_err(&err) => {
-                tokio::time::sleep(std::time::Duration::from_millis(100 * attempts as u64)).await;
+                let delay = std::time::Duration::from_millis(50 + (attempts as u64) * 80);
+                tokio::time::sleep(delay).await;
             }
             Err(err) => return Err(err),
         }
@@ -527,4 +528,6 @@ fn is_retryable_db_lock_err(err: &StoreError) -> bool {
         || msg.contains("code: 517")
         || msg.contains("code: 5")
         || msg.contains("busy")
+        || msg.contains("Resource temporarily unavailable")
+        || msg.contains("timed out")
 }

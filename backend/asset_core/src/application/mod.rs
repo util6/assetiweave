@@ -41,8 +41,9 @@ pub use conversations::{
         ConversationAdapterPackageUpdateCheckParams, ConversationAdapterPackageUpdatePolicyParams,
         ConversationAdapterPackageVersionChangeParams, ConversationAdapterUnregisterParams,
         ConversationAdapterWorkspaceUpgradeParams, ConversationBlockGetParams,
-        ConversationBlockListParams, ConversationDataAuditParams, ConversationDataRepairParams,
-        ConversationDataRollbackParams, ConversationIncrementalSearchParams,
+        ConversationBlockListParams, ConversationCardGetParams, ConversationDataAuditParams,
+        ConversationDataRepairParams, ConversationDataRollbackParams,
+        ConversationIncrementalSearchParams, ConversationOutlineParams,
         ConversationPartTranslationUpdateParams, ConversationQuestionGetParams,
         ConversationQuestionListParams, ConversationQuestionMergeParams,
         ConversationQuestionSplitParams, ConversationScriptCatalogParams,
@@ -52,6 +53,7 @@ pub use conversations::{
         ConversationSourceDisableParams, ConversationSourceUpsertParams, ConversationSyncMode,
         ConversationSyncParams,
     },
+    resolve_time_window_bounds, resolve_unified_time,
 };
 pub use memory::params::{
     MemoryContextResolveParams, MemoryProjectGetParams, MemoryRecallSearchParams,

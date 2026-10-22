@@ -1,7 +1,6 @@
 use crate::args::conversation::{
-    ConversationAdapterCommands, ConversationArgs, ConversationBlockCommands, ConversationCommands,
-    ConversationDataCommands, ConversationPartCommands, ConversationPartTranslationCommands,
-    ConversationQuestionCommands, ConversationSessionCommands, ConversationSourceCommands,
+    ConversationAdapterCommands, ConversationArgs, ConversationCardCommands, ConversationCommands,
+    ConversationDataCommands, ConversationSourceCommands,
 };
 use crate::args::OutputFormat;
 use crate::render;
@@ -21,19 +20,52 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
             render::render_conversation_search(&res, format);
         }
         ConversationCommands::List(l) => {
-            let sessions = service
-                .list_conversation_sessions(l.limit, l.offset)
-                .await?;
-            render::render_conversation_sessions(&sessions, format);
-        }
-        ConversationCommands::Session(s) => match s.command {
-            ConversationSessionCommands::Get(g) => {
-                let session = service.get_conversation_session(g.session_id).await?;
-                render::render_json_value(&session);
+            let (since, until, window_desc) = if !l.time.is_empty() {
+                let time_strs: Vec<&str> = l.time.iter().map(String::as_str).collect();
+                let (s, u, desc) = asset_core::application::resolve_unified_time(&time_strs)?;
+                (s, u, desc)
+            } else {
+                let desc = if let Some(r) = l.range.as_deref() {
+                    Some(format!("in range {r}"))
+                } else if let (Some(s), Some(u)) = (l.since.as_deref(), l.until.as_deref()) {
+                    Some(format!("between {s} and {u}"))
+                } else if let Some(s) = l.since.as_deref() {
+                    if s.contains("..") || s.contains(" - ") || s.contains(" to ") {
+                        Some(format!("in range {s}"))
+                    } else {
+                        Some(format!("since {s}"))
+                    }
+                } else if let Some(u) = l.until.as_deref() {
+                    Some(format!("until {u}"))
+                } else {
+                    l.window.as_deref().map(|w| format!("in past {w}"))
+                };
+                (l.since.clone(), l.until.clone(), desc)
+            };
+            let mut list_args = l;
+            if since.is_some() || until.is_some() {
+                list_args.since = since;
+                list_args.until = until;
             }
-            ConversationSessionCommands::Outline(o) => {
-                let outline = service.conversation().get_session_outline(o.id).await?;
-                render::render_json_value(&outline);
+            let sessions = service.list_conversation_sessions(&list_args).await?;
+            render::render_conversation_sessions(&sessions, format, window_desc.as_deref());
+        }
+        ConversationCommands::Outline(o) => {
+            let outline = service.conversation().get_outline(o.id).await?;
+            render::render_json_value(&outline);
+        }
+        ConversationCommands::Card(c) => match c.command {
+            ConversationCardCommands::Get(g) => {
+                let card = service.conversation().get_card(g.card_id).await?;
+                if g.raw {
+                    if card.content.ends_with('\n') {
+                        print!("{}", card.content);
+                    } else {
+                        println!("{}", card.content);
+                    }
+                } else {
+                    render::render_ok_json(&card);
+                }
             }
         },
         ConversationCommands::Sync(s) => {
@@ -87,54 +119,6 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                     .await?;
                 render::render_json_value(&res);
             }
-        },
-        ConversationCommands::Question(q) => match q.command {
-            ConversationQuestionCommands::List(l) => {
-                let res = service
-                    .conversation()
-                    .list_questions(l.session_id, l.limit, l.offset)
-                    .await?;
-                render::render_json_value(&res);
-            }
-            ConversationQuestionCommands::Get(g) => {
-                let res = service.conversation().get_question(g.question_id).await?;
-                render::render_json_value(&res);
-            }
-            ConversationQuestionCommands::Merge(m) => {
-                let res = service
-                    .conversation()
-                    .merge_question(m.question_id, m.dry_run)
-                    .await?;
-                render::render_json_value(&res);
-            }
-            ConversationQuestionCommands::Split(sp) => {
-                let res = service
-                    .conversation()
-                    .split_question(sp.question_id, sp.before_turn, sp.dry_run)
-                    .await?;
-                render::render_json_value(&res);
-            }
-        },
-        ConversationCommands::Block(b) => match b.command {
-            ConversationBlockCommands::List(l) => {
-                let res = service.conversation().list_blocks(l.question_id).await?;
-                render::render_json_value(&res);
-            }
-            ConversationBlockCommands::Get(g) => {
-                let res = service.conversation().get_block(g.block_id).await?;
-                render::render_json_value(&res);
-            }
-        },
-        ConversationCommands::Part(p) => match p.command {
-            ConversationPartCommands::Translation(t) => match t.command {
-                ConversationPartTranslationCommands::Update(u) => {
-                    let res = service
-                        .conversation()
-                        .update_part_translation(u.part_id, u.record_kind, u.text)
-                        .await?;
-                    render::render_json_value(&res);
-                }
-            },
         },
     }
     Ok(())

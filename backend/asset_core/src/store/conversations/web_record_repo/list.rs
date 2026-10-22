@@ -100,6 +100,12 @@ pub async fn list_web_record_sessions_sqlx(
                 },
                 question_count,
                 turn_count,
+                latest_user_prompt: None,
+                window_turn_count: None,
+                window_start_turn_index: None,
+                window_start_user_prompt: None,
+                window_end_turn_index: None,
+                window_end_user_prompt: None,
             })
         })
         .collect()

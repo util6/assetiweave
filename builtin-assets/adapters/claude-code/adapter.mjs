@@ -390,6 +390,8 @@ function toolUsePart(value) {
   const filePath = toolFilePath(input);
   const range = toolLineRange(input);
   const executionCommand = command?.trim() || filePath;
+  const rawDescription = stringField(input, ["description", "desc"]);
+  const commandLabel = rawDescription?.trim() || toolName || null;
   if (executionKind && executionCommand?.trim()) {
     return [{
       role: "tool",
@@ -401,7 +403,7 @@ function toolUsePart(value) {
       status: null,
       exit_code: null,
       source_execution_id: sourceExecutionId(value),
-      command_label: toolName ?? null,
+      command_label: commandLabel,
       metadata_json: metadata(
         compactObject({ type: "command", cwd }),
         compactObject({
@@ -412,6 +414,7 @@ function toolUsePart(value) {
           line_start: range.lineStart,
           line_end: range.lineEnd,
           line_limit: range.limit,
+          command_label: commandLabel,
         }),
       ),
     }];

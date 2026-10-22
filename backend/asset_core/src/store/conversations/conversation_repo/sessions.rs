@@ -1,16 +1,32 @@
 use super::*;
 
-pub async fn list_conversation_sessions_sqlx(
+#[derive(Debug, Clone, Default)]
+pub struct ConversationSessionListFilter<'a> {
+    pub adapter_id: Option<&'a str>,
+    pub source_id: Option<&'a str>,
+    pub query: Option<&'a str>,
+    pub project_path: Option<&'a str>,
+    pub since: Option<&'a str>,
+    pub until: Option<&'a str>,
+    pub limit: usize,
+    pub offset: usize,
+}
+
+pub async fn list_conversation_sessions_filtered_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-    adapter_id: Option<&str>,
-    source_id: Option<&str>,
-    query: Option<&str>,
-    limit: usize,
-    offset: usize,
+    filter: ConversationSessionListFilter<'_>,
 ) -> StoreResult<Vec<ConversationSessionListItem>> {
-    let needle = normalize_query(query);
-    let id_needle = query.and_then(crate::backend::domain::conversation_id_search_term);
+    let needle = normalize_query(filter.query);
+    let id_needle = filter
+        .query
+        .and_then(crate::backend::domain::conversation_id_search_term);
+    let project_needle = filter
+        .project_path
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(str::to_ascii_lowercase);
+
     let rows = sqlx::query_as::<_, ConversationSessionListItemRow>(
         r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
@@ -26,7 +42,62 @@ pub async fn list_conversation_sessions_sqlx(
                    SELECT COUNT(*)
                    FROM conversation_turns t
                    WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
-               ) AS turn_count
+               ) AS turn_count,
+               (
+                   SELECT t.user_text
+                   FROM conversation_turns t
+                   WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
+                   ORDER BY t.turn_index DESC
+                   LIMIT 1
+               ) AS latest_user_prompt,
+               CASE WHEN ?8 IS NOT NULL OR ?9 IS NOT NULL THEN (
+                   SELECT COUNT(*)
+                   FROM conversation_turns t
+                   WHERE t.tenant_id = s.tenant_id
+                     AND t.session_id = s.id
+                     AND (?8 IS NULL OR COALESCE(t.started_at, t.imported_at) >= ?8)
+                     AND (?9 IS NULL OR COALESCE(t.started_at, t.imported_at) <= ?9)
+               ) ELSE NULL END AS window_turn_count,
+               CASE WHEN ?8 IS NOT NULL OR ?9 IS NOT NULL THEN (
+                   SELECT t.turn_index
+                   FROM conversation_turns t
+                   WHERE t.tenant_id = s.tenant_id
+                     AND t.session_id = s.id
+                     AND (?8 IS NULL OR COALESCE(t.started_at, t.imported_at) >= ?8)
+                     AND (?9 IS NULL OR COALESCE(t.started_at, t.imported_at) <= ?9)
+                   ORDER BY t.turn_index ASC
+                   LIMIT 1
+               ) ELSE NULL END AS window_start_turn_index,
+               CASE WHEN ?8 IS NOT NULL OR ?9 IS NOT NULL THEN (
+                   SELECT t.user_text
+                   FROM conversation_turns t
+                   WHERE t.tenant_id = s.tenant_id
+                     AND t.session_id = s.id
+                     AND (?8 IS NULL OR COALESCE(t.started_at, t.imported_at) >= ?8)
+                     AND (?9 IS NULL OR COALESCE(t.started_at, t.imported_at) <= ?9)
+                   ORDER BY t.turn_index ASC
+                   LIMIT 1
+               ) ELSE NULL END AS window_start_user_prompt,
+               CASE WHEN ?8 IS NOT NULL OR ?9 IS NOT NULL THEN (
+                   SELECT t.turn_index
+                   FROM conversation_turns t
+                   WHERE t.tenant_id = s.tenant_id
+                     AND t.session_id = s.id
+                     AND (?8 IS NULL OR COALESCE(t.started_at, t.imported_at) >= ?8)
+                     AND (?9 IS NULL OR COALESCE(t.started_at, t.imported_at) <= ?9)
+                   ORDER BY t.turn_index DESC
+                   LIMIT 1
+               ) ELSE NULL END AS window_end_turn_index,
+               CASE WHEN ?8 IS NOT NULL OR ?9 IS NOT NULL THEN (
+                   SELECT t.user_text
+                   FROM conversation_turns t
+                   WHERE t.tenant_id = s.tenant_id
+                     AND t.session_id = s.id
+                     AND (?8 IS NULL OR COALESCE(t.started_at, t.imported_at) >= ?8)
+                     AND (?9 IS NULL OR COALESCE(t.started_at, t.imported_at) <= ?9)
+                   ORDER BY t.turn_index DESC
+                   LIMIT 1
+               ) ELSE NULL END AS window_end_user_prompt
         FROM conversation_sessions s
         WHERE s.tenant_id = ?1
           AND s.user_visible = 1
@@ -50,23 +121,44 @@ pub async fn list_conversation_sessions_sqlx(
                     ), ?4) > 0
               )
           )
+          AND (
+              ?10 IS NULL
+              OR s.project_path = ?10
+              OR instr(lower(COALESCE(s.project_path, '')), ?10) > 0
+          )
+          AND (
+              (?8 IS NULL AND ?9 IS NULL)
+              OR EXISTS (
+                  SELECT 1
+                  FROM conversation_turns t
+                  WHERE t.tenant_id = s.tenant_id
+                    AND t.session_id = s.id
+                    AND (?8 IS NULL OR COALESCE(t.started_at, t.imported_at) >= ?8)
+                    AND (?9 IS NULL OR COALESCE(t.started_at, t.imported_at) <= ?9)
+              )
+              OR (
+                  (?8 IS NULL OR COALESCE(s.updated_at, s.imported_at) >= ?8)
+                  AND (?9 IS NULL OR COALESCE(s.updated_at, s.imported_at) <= ?9)
+              )
+          )
         ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
         LIMIT ?6 OFFSET ?7
         "#,
     )
     .bind(tenant_id)
-    .bind(adapter_id)
-    .bind(source_id)
+    .bind(filter.adapter_id)
+    .bind(filter.source_id)
     .bind(needle.as_deref())
     .bind(id_needle.as_deref())
-    .bind(
-        i64::try_from(limit)
-            .map_err(|_| StoreError::external(format!("invalid conversation limit: {limit}")))?,
-    )
-    .bind(
-        i64::try_from(offset)
-            .map_err(|_| StoreError::external(format!("invalid conversation offset: {offset}")))?,
-    )
+    .bind(i64::try_from(filter.limit).map_err(|_| {
+        StoreError::external(format!("invalid conversation limit: {}", filter.limit))
+    })?)
+    .bind(i64::try_from(filter.offset).map_err(|_| {
+        StoreError::external(format!("invalid conversation offset: {}", filter.offset))
+    })?)
+    .bind(filter.since)
+    .bind(filter.until)
+    .bind(project_needle.as_deref())
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
@@ -74,6 +166,32 @@ pub async fn list_conversation_sessions_sqlx(
     rows.into_iter()
         .map(ConversationSessionListItemRow::into_item)
         .collect()
+}
+
+pub async fn list_conversation_sessions_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    adapter_id: Option<&str>,
+    source_id: Option<&str>,
+    query: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> StoreResult<Vec<ConversationSessionListItem>> {
+    list_conversation_sessions_filtered_sqlx(
+        pool,
+        tenant_id,
+        ConversationSessionListFilter {
+            adapter_id,
+            source_id,
+            query,
+            project_path: None,
+            since: None,
+            until: None,
+            limit,
+            offset,
+        },
+    )
+    .await
 }
 
 pub(super) const LIST_RECENT_CONVERSATION_SESSIONS_SQL: &str = r#"

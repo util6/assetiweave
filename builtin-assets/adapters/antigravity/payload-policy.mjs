@@ -14,7 +14,7 @@ const EXACT_SEARCH_TOOLS = new Set([
 ]);
 
 const EXACT_FILE_CHANGE_TOOLS = new Set([
-  "write_to_file", "replace_file_content", "edit_file", "apply_patch", "create_file", "patch", "str_replace_editor", "code_action",
+  "write_to_file", "write_file", "replace_file_content", "edit_file", "apply_patch", "create_file", "patch", "str_replace_editor", "code_action",
 ]);
 
 const EXACT_PLAN_TOOLS = new Set([
