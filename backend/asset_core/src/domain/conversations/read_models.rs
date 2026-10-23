@@ -223,6 +223,19 @@ pub struct ConversationSearchIndexRebuildReport {
     pub duration_ms: u64,
 }
 
+/// 零件级全文索引的可用状态。
+///
+/// `ready` 之外的取值意味着会话列表的文本搜索已降级为标题级匹配，界面需要给出可见提示。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ConversationPartIndexStatus {
+    pub status: String,
+    pub is_ready: bool,
+    pub part_count: i64,
+    pub last_error: Option<String>,
+    pub rebuilt_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ConversationSearchHit {
     pub session: ConversationSessionListItem,

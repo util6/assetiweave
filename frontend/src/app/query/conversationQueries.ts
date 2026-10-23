@@ -1,8 +1,10 @@
 import { queryOptions } from "@tanstack/react-query";
 import {
+  getConversationPartIndexStatus,
   listConversationAdapters,
   listConversationSessions,
   listWebRecordSessions,
+  type ConversationPartIndexStatus,
   type ConversationSessionListParams,
 } from "../../services/conversations";
 import type {
@@ -17,6 +19,8 @@ export const conversationKeys = {
     ["tenant", scope.tenantId, scope.epoch, "conversations"] as const,
   adapters: (scope: QueryScope, recordKind: ConversationRecordKind) =>
     [...conversationKeys.root(scope), "adapters", recordKind] as const,
+  partIndex: (scope: QueryScope) =>
+    [...conversationKeys.root(scope), "part-index"] as const,
   sessions: (
     scope: QueryScope,
     recordKind: ConversationRecordKind,
@@ -80,6 +84,21 @@ export function conversationAdaptersQueryOptions(
     networkMode: "always",
     retry: false,
     staleTime: DEFAULT_CONVERSATION_STALE_TIME,
+  });
+}
+
+/**
+ * 零件级全文索引状态：未就绪时会话列表搜索降级为标题级，界面据此给出提示并允许后台重建。
+ */
+export function conversationPartIndexQueryOptions(scope: QueryScope) {
+  return queryOptions<ConversationPartIndexStatus>({
+    queryKey: conversationKeys.partIndex(scope),
+    queryFn: getConversationPartIndexStatus,
+    networkMode: "always",
+    retry: false,
+    staleTime: 2000,
+    refetchInterval: (query) =>
+      query.state.data?.is_ready === false ? 3000 : false,
   });
 }
 

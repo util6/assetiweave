@@ -164,6 +164,9 @@ export const conversationsEn = {
   "conversation.searchIndex.metric": "Local index",
   "conversation.searchIndex.rebuild": "Rebuild index",
   "conversation.searchIndex.building": "Building index...",
+  "conversation.partIndex.degraded":
+    "The body index is rebuilding, so search currently matches titles only.",
+  "conversation.partIndex.rebuild": "Rebuild index now",
   "conversation.toolbar.import": "Import",
   "conversation.toolbar.apps": "Apps",
   "conversation.toolbar.sessions": "Sessions",

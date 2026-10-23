@@ -394,6 +394,15 @@ export interface ConversationSearchIndexStatus {
   supported_modes: Array<"lexical" | "semantic" | "hybrid">;
 }
 
+export interface ConversationPartIndexStatus {
+  status: "ready" | "building" | "stale";
+  is_ready: boolean;
+  part_count: number;
+  last_error: string | null;
+  rebuilt_at: string | null;
+  updated_at: string | null;
+}
+
 export interface ConversationSearchIndexTaskSnapshot {
   id: string;
   status: ConversationSyncTaskStatus;
@@ -1373,6 +1382,33 @@ export async function getConversationSearchIndexStatus(): Promise<ConversationSe
   } catch (error) {
     if (isTauriRuntime()) throw error;
     return previewConversationSearchIndexStatus("missing");
+  }
+}
+
+export async function getConversationPartIndexStatus(): Promise<ConversationPartIndexStatus> {
+  try {
+    return await invoke<ConversationPartIndexStatus>(
+      "get_conversation_part_index_status",
+    );
+  } catch (error) {
+    if (isTauriRuntime()) throw error;
+    return {
+      status: "ready",
+      is_ready: true,
+      part_count: 0,
+      last_error: null,
+      rebuilt_at: null,
+      updated_at: null,
+    };
+  }
+}
+
+export async function startConversationPartIndexRebuild(): Promise<unknown> {
+  try {
+    return await invoke<unknown>("start_conversation_part_index_rebuild");
+  } catch (error) {
+    if (isTauriRuntime()) throw error;
+    return null;
   }
 }
 

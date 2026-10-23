@@ -6,6 +6,7 @@ pub mod conversation_adapter_installer_fetch;
 pub mod conversation_adapters;
 pub mod conversation_maintenance;
 pub mod conversation_maintenance_ops;
+pub mod conversation_part_index;
 pub mod conversation_pricing;
 pub mod conversation_pricing_sync;
 pub mod conversation_records;

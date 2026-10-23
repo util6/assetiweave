@@ -207,6 +207,8 @@ pub(crate) fn command_handler(
         search_conversation_records,
         search_recent_incremental_conversation_records,
         get_conversation_search_index_status,
+        get_conversation_part_index_status,
+        start_conversation_part_index_rebuild,
         start_conversation_search_index_rebuild,
         get_conversation_search_index_task,
         export_web_record_session,
