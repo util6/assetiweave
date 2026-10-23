@@ -9,14 +9,13 @@ use crate::backend::domain::conversations::{
     ConversationSearchPage, ConversationSessionDetail, ConversationSessionListItem,
 };
 use crate::backend::domain::{
-    conversation_turn_fingerprint, group_turn_ids_by_question, ConversationAdapter,
-    ConversationAdapterCatalogRelease, ConversationAdapterKind, ConversationAdapterPackage,
-    ConversationAdapterPackageOrigin, ConversationAdapterPackageVersion,
-    ConversationAdapterRuntimeGateStatus, ConversationAdapterTrustState,
-    ConversationCardKindDefinition, ConversationGroupingOrigin, ConversationPart,
-    ConversationQuestion, ConversationQuestionTurn, ConversationSession, ConversationSource,
-    ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus, ConversationTurn,
-    NormalizedConversationSession,
+    conversation_turn_fingerprint, ConversationAdapter, ConversationAdapterCatalogRelease,
+    ConversationAdapterKind, ConversationAdapterPackage, ConversationAdapterPackageOrigin,
+    ConversationAdapterPackageVersion, ConversationAdapterRuntimeGateStatus,
+    ConversationAdapterTrustState, ConversationCardKindDefinition, ConversationGroupingOrigin,
+    ConversationPart, ConversationQuestion, ConversationQuestionTurn, ConversationSession,
+    ConversationSource, ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus,
+    ConversationTurn, NormalizedConversationSession,
 };
 use crate::backend::store::{StoreError, StoreResult};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};

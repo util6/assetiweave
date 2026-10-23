@@ -1035,6 +1035,182 @@ async fn sqlx_web_records_round_trip_structured_cards_and_preserve_translation()
     cleanup_database(&db_path);
 }
 
+#[tokio::test]
+async fn sqlx_web_record_question_columns_mirror_membership_and_freeze_ids() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-web-record-question-columns-sqlx-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let source = fixture_source();
+    let template = fixture_session().turns[0].clone();
+    let mut initial = fixture_session();
+    initial.turns = vec![
+        web_turn(&template, "turn-1", 0, "How does sync work?"),
+        web_turn(&template, "turn-2", 1, "Export it"),
+    ];
+    let mut reconciled = initial.clone();
+    reconciled.turns[1].user_text = "继续".to_string();
+    let mut appended = reconciled.clone();
+    appended
+        .turns
+        .push(web_turn(&template, "turn-3", 2, "继续"));
+
+    let (initial_reads, reconciled_reads, appended_reads, detail) = async {
+        super::super::conversation_repo::upsert_conversation_source_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+        )
+        .await
+        .map_err(StoreError::external)?;
+        import_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[initial],
+            false,
+        )
+        .await
+        .map_err(StoreError::external)?;
+        let initial_reads = load_web_turn_question_reads(database.pool()).await?;
+
+        import_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[reconciled],
+            false,
+        )
+        .await
+        .map_err(StoreError::external)?;
+        let reconciled_reads = load_web_turn_question_reads(database.pool()).await?;
+
+        import_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[appended],
+            false,
+        )
+        .await
+        .map_err(StoreError::external)?;
+        let appended_reads = load_web_turn_question_reads(database.pool()).await?;
+
+        let session_id = stable_id("web-record-session", &[&source.id, "web-session-1"]);
+        let detail =
+            load_web_record_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+                .await?;
+        StoreResult::Ok((initial_reads, reconciled_reads, appended_reads, detail))
+    }
+    .await
+    .expect("freeze web record question ids");
+
+    for reads in [&initial_reads, &reconciled_reads, &appended_reads] {
+        assert_web_turn_question_reads_agree(reads);
+    }
+    let question_id_of = |reads: &BTreeMap<String, (String, String)>, external_id: &str| {
+        reads
+            .get(external_id)
+            .unwrap_or_else(|| panic!("turn {external_id} has a question read"))
+            .0
+            .clone()
+    };
+    let origin_of = |reads: &BTreeMap<String, (String, String)>, external_id: &str| {
+        reads
+            .get(external_id)
+            .unwrap_or_else(|| panic!("turn {external_id} has a question read"))
+            .1
+            .clone()
+    };
+
+    let first_question_id = question_id_of(&initial_reads, "turn-1");
+    let second_question_id = question_id_of(&initial_reads, "turn-2");
+    assert_ne!(first_question_id, second_question_id);
+    assert_eq!(
+        question_id_of(&reconciled_reads, "turn-2"),
+        second_question_id,
+        "web record question ids stay frozen across a rewritten session"
+    );
+    assert_eq!(
+        question_id_of(&appended_reads, "turn-3"),
+        second_question_id,
+        "an acknowledgement turn joins the previous web record group"
+    );
+    assert_eq!(origin_of(&appended_reads, "turn-2"), "auto_merged");
+    assert_eq!(origin_of(&appended_reads, "turn-3"), "auto_merged");
+    assert_eq!(origin_of(&appended_reads, "turn-1"), "imported");
+
+    assert_eq!(detail.questions.len(), 2);
+    assert_eq!(detail.questions[0].turns.len(), 1);
+    assert_eq!(detail.questions[1].turns.len(), 2);
+    assert_eq!(detail.questions[1].turns[1].external_id, "turn-3");
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+fn web_turn(
+    template: &NormalizedConversationTurn,
+    external_id: &str,
+    turn_index: i64,
+    user_text: &str,
+) -> NormalizedConversationTurn {
+    NormalizedConversationTurn {
+        external_id: external_id.to_string(),
+        turn_index,
+        user_text: user_text.to_string(),
+        ..template.clone()
+    }
+}
+
+/// 同一会话的两条读法：web 轮次列与 web 成员表，逐轮对齐后返回列视图。
+async fn load_web_turn_question_reads(
+    pool: &SqlitePool,
+) -> StoreResult<BTreeMap<String, (String, String)>> {
+    let column_rows = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT external_id, question_id, question_origin FROM web_record_turns WHERE tenant_id = ?1",
+    )
+    .bind(TEST_TENANT_ID)
+    .fetch_all(pool)
+    .await
+    .map_err(StoreError::external)?;
+    let membership_rows = sqlx::query_as::<_, (String, String, String)>(
+        r#"
+        SELECT t.external_id, qt.question_id, qt.assignment_origin
+        FROM web_record_question_turns qt
+        JOIN web_record_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+        WHERE qt.tenant_id = ?1
+        "#,
+    )
+    .bind(TEST_TENANT_ID)
+    .fetch_all(pool)
+    .await
+    .map_err(StoreError::external)?;
+    let to_map = |rows: Vec<(String, String, String)>| {
+        rows.into_iter()
+            .map(|(external_id, question_id, origin)| (external_id, (question_id, origin)))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let columns = to_map(column_rows);
+    let membership = to_map(membership_rows);
+    assert_eq!(
+        columns, membership,
+        "web record turn columns and membership disagree"
+    );
+    Ok(columns)
+}
+
+fn assert_web_turn_question_reads_agree(reads: &BTreeMap<String, (String, String)>) {
+    assert!(!reads.is_empty(), "no web record turn question reads found");
+    for (external_id, (question_id, _)) in reads {
+        assert!(
+            !question_id.is_empty(),
+            "web record turn {external_id} has an empty question id"
+        );
+    }
+}
+
 async fn count_legacy_conversation_sessions_sqlx(
     pool: &SqlitePool,
     source_id: &str,

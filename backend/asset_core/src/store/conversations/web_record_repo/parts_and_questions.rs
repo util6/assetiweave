@@ -76,11 +76,38 @@ pub async fn load_web_record_part_translation_state_sqlx_tx(
         .collect())
 }
 
+pub async fn load_web_record_turn_question_assignments_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    session_id: &str,
+) -> StoreResult<BTreeMap<String, (String, ConversationGroupingOrigin)>> {
+    let rows = sqlx::query_as::<_, (String, String, String)>(
+        r#"
+        SELECT id, question_id, question_origin
+        FROM web_record_turns
+        WHERE tenant_id = ?1 AND session_id = ?2
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+    Ok(rows
+        .into_iter()
+        .filter(|(_, question_id, _)| !question_id.is_empty())
+        .map(|(turn_id, question_id, origin)| {
+            (turn_id, (question_id, decode_turn_question_origin(&origin)))
+        })
+        .collect())
+}
+
 pub async fn insert_web_record_questions_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
     turns: &[ConversationTurn],
+    existing: &BTreeMap<String, (String, ConversationGroupingOrigin)>,
     now: &str,
 ) -> StoreResult<()> {
     let mut ordered_turns = turns.to_vec();
@@ -89,19 +116,50 @@ pub async fn insert_web_record_questions_sqlx_tx(
             .cmp(&right.turn_index)
             .then_with(|| left.id.cmp(&right.id))
     });
-    let groups = group_turn_ids_by_question(
-        ordered_turns
-            .iter()
-            .map(|turn| (turn.id.clone(), turn.user_text.clone()))
-            .collect::<Vec<_>>(),
-    );
-    for (_index, group) in groups.into_iter().enumerate() {
-        let first_turn_id = group
-            .turn_ids
-            .first()
-            .ok_or_else(|| StoreError::Validation("empty web record question group".to_string()))?;
-        let question_id = stable_id("web-record-question", &[session_id, first_turn_id]);
-        for (order, turn_id) in group.turn_ids.iter().enumerate() {
+    let inputs = ordered_turns
+        .iter()
+        .map(|turn| TurnQuestionInput {
+            turn_id: turn.id.clone(),
+            user_text: turn.user_text.clone(),
+            existing: existing.get(&turn.id).cloned(),
+        })
+        .collect::<Vec<_>>();
+    let assignments = plan_turn_question_assignments("web-record-question", session_id, &inputs);
+
+    for assignment in &assignments {
+        sqlx::query(
+            r#"
+            UPDATE web_record_turns
+            SET question_id = ?1, question_origin = ?2
+            WHERE tenant_id = ?3 AND id = ?4
+            "#,
+        )
+        .bind(&assignment.question_id)
+        .bind(encode_enum_app(assignment.origin)?)
+        .bind(tenant_id)
+        .bind(&assignment.turn_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(StoreError::external)?;
+    }
+
+    let mut groups: Vec<(String, Vec<String>, ConversationGroupingOrigin)> = Vec::new();
+    for assignment in &assignments {
+        match groups.last_mut() {
+            Some((question_id, turn_ids, origin)) if *question_id == assignment.question_id => {
+                turn_ids.push(assignment.turn_id.clone());
+                *origin = assignment.origin;
+            }
+            _ => groups.push((
+                assignment.question_id.clone(),
+                vec![assignment.turn_id.clone()],
+                assignment.origin,
+            )),
+        }
+    }
+
+    for (question_id, turn_ids, origin) in groups {
+        for (order, turn_id) in turn_ids.iter().enumerate() {
             sqlx::query(
                 r#"
                 INSERT INTO web_record_question_turns (
@@ -109,26 +167,34 @@ pub async fn insert_web_record_questions_sqlx_tx(
                     assignment_origin, assigned_at, updated_at
                 )
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+                ON CONFLICT(tenant_id, turn_id) DO UPDATE SET
+                    question_id = excluded.question_id,
+                    turn_order = excluded.turn_order,
+                    assignment_origin = excluded.assignment_origin,
+                    updated_at = excluded.updated_at
                 "#,
             )
             .bind(tenant_id)
             .bind(&question_id)
             .bind(turn_id)
             .bind(order as i64)
-            .bind(encode_enum_app(group.origin)?)
+            .bind(encode_enum_app(origin)?)
             .bind(now)
             .execute(&mut **tx)
             .await
             .map_err(StoreError::external)?;
         }
         let aggregate =
-            build_question_aggregate_sqlx_tx(tx, tenant_id, session_id, &group.turn_ids).await?;
+            build_question_aggregate_sqlx_tx(tx, tenant_id, session_id, &turn_ids).await?;
         sqlx::query(
             r#"
             INSERT INTO web_record_questions (
                 tenant_id, id, session_id, title, created_at, updated_at
             )
             VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+            ON CONFLICT(tenant_id, id) DO UPDATE SET
+                title = excluded.title,
+                updated_at = excluded.updated_at
             "#,
         )
         .bind(tenant_id)
