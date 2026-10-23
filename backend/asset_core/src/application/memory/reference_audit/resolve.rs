@@ -174,14 +174,7 @@ pub(super) async fn resolve_orphan(
         }
     }
     if let Some(turn_id) = reference.turn_id.as_deref() {
-        if let Some(question_id) = turn_question(
-            pool,
-            tenant_id,
-            turns,
-            reference,
-            turn_id,
-        )
-        .await?
+        if let Some(question_id) = turn_question(pool, tenant_id, turns, reference, turn_id).await?
         {
             return Ok(Resolution::Remapped {
                 question_id,
@@ -191,14 +184,8 @@ pub(super) async fn resolve_orphan(
         if let Some(index) =
             turn_index(pool, tenant_id, turns, &reference.session_id, turn_id).await?
         {
-            let candidates = nearest_question(
-                pool,
-                tenant_id,
-                turns,
-                &reference.session_id,
-                index,
-            )
-            .await?;
+            let candidates =
+                nearest_question(pool, tenant_id, turns, &reference.session_id, index).await?;
             match candidates.as_slice() {
                 [(question_id, _)] => {
                     return Ok(Resolution::Remapped {

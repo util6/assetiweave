@@ -201,7 +201,9 @@ describe("Usage Components", () => {
   it("formats instance display name by removing local sessions suffix", () => {
     expect(formatInstanceDisplayName("Codex local sessions")).toBe("Codex");
     expect(formatInstanceDisplayName("Codex (local sessions)")).toBe("Codex");
-    expect(formatInstanceDisplayName("Antigravity local session")).toBe("Antigravity");
+    expect(formatInstanceDisplayName("Antigravity local session")).toBe(
+      "Antigravity",
+    );
     expect(formatInstanceDisplayName("Claude")).toBe("Claude");
   });
 
@@ -329,11 +331,7 @@ describe("Usage Components", () => {
   it("renders DateRangePicker, handles open, preset click, and clear", () => {
     const onChange = vi.fn();
     const { rerender } = render(
-      <DateRangePicker
-        startDate={null}
-        endDate={null}
-        onChange={onChange}
-      />,
+      <DateRangePicker startDate={null} endDate={null} onChange={onChange} />,
     );
 
     // Initial placeholder

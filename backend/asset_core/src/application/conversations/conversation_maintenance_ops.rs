@@ -322,8 +322,8 @@ pub async fn apply_safe_conversation_repairs_sqlx(
         ],
     };
     let mut deleted_parts = 0u64;
-    let mut deleted_memberships = 0u64;
-    let mut deleted_questions = 0u64;
+    let deleted_memberships = 0u64;
+    let deleted_questions = 0u64;
     let mut deleted_turns = 0u64;
     ensure_maintenance_not_cancelled(cancellation)?;
     let mut tx = pool.begin().await.map_err(AppError::external)?;

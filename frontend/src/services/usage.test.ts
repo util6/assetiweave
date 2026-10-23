@@ -59,7 +59,10 @@ describe("usage service in browser / mock mode", () => {
     expect(snapshot.id).toBeDefined();
     expect(snapshot.progress.modelsCount).toBeGreaterThan(0);
 
-    const selectiveSnapshot = await updateModelPricingCatalog(false, ["gpt-5.6-luna", "gemini-3.8-flash"]);
+    const selectiveSnapshot = await updateModelPricingCatalog(false, [
+      "gpt-5.6-luna",
+      "gemini-3.8-flash",
+    ]);
     expect(selectiveSnapshot.progress.modelsCount).toBe(2);
   });
 

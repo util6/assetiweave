@@ -23,7 +23,13 @@ export default defineConfig({
     port: 1420,
     host: "127.0.0.1",
     watch: {
-      ignored: ["**/desktop/**", "**/backend/**", "**/src-tauri/**", "**/crates/**", "**/cli/**"],
+      ignored: [
+        "**/desktop/**",
+        "**/backend/**",
+        "**/src-tauri/**",
+        "**/crates/**",
+        "**/cli/**",
+      ],
     },
   },
   test: {

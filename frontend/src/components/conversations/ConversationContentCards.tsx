@@ -1897,7 +1897,11 @@ function createBlock(
           filePath = meta.file_path;
         if (!toolName && typeof meta.tool_name === "string")
           toolName = meta.tool_name;
-        if (!commandLabel && typeof meta.command_label === "string" && meta.command_label.trim())
+        if (
+          !commandLabel &&
+          typeof meta.command_label === "string" &&
+          meta.command_label.trim()
+        )
           commandLabel = meta.command_label.trim();
       }
     } catch {

@@ -3852,17 +3852,10 @@ async fn sqlx_session_list_counts_question_groups_from_turn_columns() {
         .expect("insert source");
     seed_grouped_turns_without_question_rows(pool, &source.id).await;
 
-    let sessions = list_conversation_sessions_sqlx(
-        pool,
-        TEST_TENANT_ID,
-        None,
-        Some(&source.id),
-        None,
-        20,
-        0,
-    )
-    .await
-    .expect("list sessions");
+    let sessions =
+        list_conversation_sessions_sqlx(pool, TEST_TENANT_ID, None, Some(&source.id), None, 20, 0)
+            .await
+            .expect("list sessions");
     let recent = list_recent_conversation_sessions_sqlx(
         pool,
         TEST_TENANT_ID,
@@ -3904,10 +3897,26 @@ async fn seed_grouped_turns_without_question_rows(pool: &SqlitePool, source_id: 
     .await
     .expect("insert session");
     for (turn_id, turn_index, question_id) in [
-        ("conversation-turn-count-1", 0, "conversation-question-count-a"),
-        ("conversation-turn-count-2", 1, "conversation-question-count-a"),
-        ("conversation-turn-count-3", 2, "conversation-question-count-b"),
-        ("conversation-turn-count-4", 3, "conversation-question-count-b"),
+        (
+            "conversation-turn-count-1",
+            0,
+            "conversation-question-count-a",
+        ),
+        (
+            "conversation-turn-count-2",
+            1,
+            "conversation-question-count-a",
+        ),
+        (
+            "conversation-turn-count-3",
+            2,
+            "conversation-question-count-b",
+        ),
+        (
+            "conversation-turn-count-4",
+            3,
+            "conversation-question-count-b",
+        ),
     ] {
         sqlx::query(
             r#"

@@ -1091,9 +1091,7 @@ export async function startSourceScan(
   });
 }
 
-export async function getSourceScanTask(
-  taskId: string,
-): Promise<TaskView> {
+export async function getSourceScanTask(taskId: string): Promise<TaskView> {
   return await invoke<TaskView>("get_source_scan_task", {
     taskId,
   });
@@ -1103,9 +1101,7 @@ export async function listSourceScanTasks(): Promise<TaskView[]> {
   return await invoke<TaskView[]>("list_source_scan_tasks");
 }
 
-export async function cancelSourceScan(
-  taskId: string,
-): Promise<TaskView> {
+export async function cancelSourceScan(taskId: string): Promise<TaskView> {
   return await invoke<TaskView>("cancel_source_scan", { taskId });
 }
 

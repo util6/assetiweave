@@ -296,8 +296,12 @@ export function normalizeTaskView(raw: unknown): TaskView {
       clearable: false,
     }) as TaskCapabilitiesView,
     revision: typeof data.revision === "number" ? data.revision : 0,
-    changeClass: ((data.changeClass ?? data.change_class ?? "structural") as TaskChangeClass),
-    change_class: ((data.changeClass ?? data.change_class ?? "structural") as TaskChangeClass),
+    changeClass: (data.changeClass ??
+      data.change_class ??
+      "structural") as TaskChangeClass,
+    change_class: (data.changeClass ??
+      data.change_class ??
+      "structural") as TaskChangeClass,
     agentSessionRef: taskSessionRef,
     agent_session_ref: taskSessionRef,
   };

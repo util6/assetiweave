@@ -175,13 +175,18 @@ export const settingsEn = {
   "settings.agents.lifecycle.verifying": "Verifying ACP...",
   "settings.agents.lifecycle.cleaningUp": "Cleaning up...",
   "settings.agents.lifecycle.preparing": "Preparing...",
-  "settings.agents.lifecycle.downloadProgress": "Downloaded {{downloaded}} / {{total}}",
-  "settings.agents.lifecycle.error.upstreamNotFound": "Source version not found",
-  "settings.agents.lifecycle.error.upstreamNotFoundDesc": "Upstream release artifact not found or removed (HTTP 404)",
+  "settings.agents.lifecycle.downloadProgress":
+    "Downloaded {{downloaded}} / {{total}}",
+  "settings.agents.lifecycle.error.upstreamNotFound":
+    "Source version not found",
+  "settings.agents.lifecycle.error.upstreamNotFoundDesc":
+    "Upstream release artifact not found or removed (HTTP 404)",
   "settings.agents.lifecycle.error.networkError": "Network connection error",
-  "settings.agents.lifecycle.error.networkErrorDesc": "Download or connection failed, please check network or proxy settings",
+  "settings.agents.lifecycle.error.networkErrorDesc":
+    "Download or connection failed, please check network or proxy settings",
   "settings.agents.lifecycle.error.installFailed": "Installation failed",
-  "settings.agents.lifecycle.error.protocolHandshakeFailed": "ACP handshake failed",
+  "settings.agents.lifecycle.error.protocolHandshakeFailed":
+    "ACP handshake failed",
   "settings.agents.lifecycle.error.cancelled": "Cancelled",
   "settings.agents.installPreviewDescription":
     "Review the pinned version, distribution and local write scope before starting the lifecycle task.",

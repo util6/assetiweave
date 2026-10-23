@@ -295,9 +295,12 @@ export function ConversationsPage({
   const sessionsQuery = useQuery(
     conversationSessionsQueryOptions(activeScope, currentRecordKind, query),
   );
-  const partIndexQuery = useQuery(conversationPartIndexQueryOptions(activeScope));
+  const partIndexQuery = useQuery(
+    conversationPartIndexQueryOptions(activeScope),
+  );
   const partIndexDegraded = partIndexQuery.data?.is_ready === false;
-  const [partIndexRebuildStarting, setPartIndexRebuildStarting] = useState(false);
+  const [partIndexRebuildStarting, setPartIndexRebuildStarting] =
+    useState(false);
 
   const adapters = adaptersQuery.data ?? [];
   const sessions = sessionsQuery.data ?? [];

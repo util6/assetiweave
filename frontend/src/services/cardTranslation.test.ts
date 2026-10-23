@@ -92,7 +92,9 @@ describe("cardTranslation", () => {
       version: "1.0.0",
     });
 
-    expect(invoke).toHaveBeenCalledWith("check_opencode_translation_availability");
+    expect(invoke).toHaveBeenCalledWith(
+      "check_opencode_translation_availability",
+    );
   });
 
   it("sends the generated prompt to the Tauri translation command", async () => {

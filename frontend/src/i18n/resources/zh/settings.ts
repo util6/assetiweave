@@ -170,11 +170,14 @@ export const settingsZh = {
   "settings.agents.lifecycle.verifying": "验证 ACP...",
   "settings.agents.lifecycle.cleaningUp": "正在清理...",
   "settings.agents.lifecycle.preparing": "准备中...",
-  "settings.agents.lifecycle.downloadProgress": "已下载 {{downloaded}} / {{total}}",
+  "settings.agents.lifecycle.downloadProgress":
+    "已下载 {{downloaded}} / {{total}}",
   "settings.agents.lifecycle.error.upstreamNotFound": "源头无此版本",
-  "settings.agents.lifecycle.error.upstreamNotFoundDesc": "上游未找到该版本或已下线 (HTTP 404)",
+  "settings.agents.lifecycle.error.upstreamNotFoundDesc":
+    "上游未找到该版本或已下线 (HTTP 404)",
   "settings.agents.lifecycle.error.networkError": "网络连接异常",
-  "settings.agents.lifecycle.error.networkErrorDesc": "下载或连接上游失败，请检查网络配置或代理",
+  "settings.agents.lifecycle.error.networkErrorDesc":
+    "下载或连接上游失败，请检查网络配置或代理",
   "settings.agents.lifecycle.error.installFailed": "安装失败",
   "settings.agents.lifecycle.error.protocolHandshakeFailed": "ACP 握手失败",
   "settings.agents.lifecycle.error.cancelled": "已取消",

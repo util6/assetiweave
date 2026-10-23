@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, cleanup, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  cleanup,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationPricingSettingsPanel } from "./ConversationPricingSettingsPanel";
 import * as usageService from "@/services/usage";
@@ -84,8 +90,12 @@ describe("ConversationPricingSettingsPanel", () => {
   };
 
   it("renders exchange rate and local models view by default", async () => {
-    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(mockStatus);
-    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(mockCatalog);
+    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(
+      mockStatus,
+    );
+    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(
+      mockCatalog,
+    );
 
     render(<ConversationPricingSettingsPanel />);
 
@@ -98,12 +108,18 @@ describe("ConversationPricingSettingsPanel", () => {
   });
 
   it("handles modifying exchange rate and saving", async () => {
-    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(mockStatus);
-    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(mockCatalog);
-    const setRateSpy = vi.spyOn(usageService, "setModelPricingExchangeRate").mockResolvedValue({
-      ...mockStatus,
-      exchangeRate: 7.35,
-    });
+    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(
+      mockStatus,
+    );
+    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(
+      mockCatalog,
+    );
+    const setRateSpy = vi
+      .spyOn(usageService, "setModelPricingExchangeRate")
+      .mockResolvedValue({
+        ...mockStatus,
+        exchangeRate: 7.35,
+      });
 
     render(<ConversationPricingSettingsPanel />);
 
@@ -121,28 +137,34 @@ describe("ConversationPricingSettingsPanel", () => {
   });
 
   it("triggers online pricing synchronization", async () => {
-    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(mockStatus);
-    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(mockCatalog);
-    const syncSpy = vi.spyOn(usageService, "updateModelPricingCatalog").mockResolvedValue({
-      id: "task-sync-1",
-      status: "completed",
-      force: true,
-      progress: {
-        phase: "completed",
-        modelsCount: 42,
-        recalculatedEventsCount: 15,
-        exchangeRate: 7.25,
-      },
-      startedAt: new Date().toISOString(),
-      result: {
-        channelUsed: "litellm",
-        modelsCount: 42,
-        exchangeRate: 7.25,
-        recalculatedEventsCount: 15,
-        catalogVersion: "v1",
-        updatedAt: new Date().toISOString(),
-      },
-    });
+    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(
+      mockStatus,
+    );
+    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(
+      mockCatalog,
+    );
+    const syncSpy = vi
+      .spyOn(usageService, "updateModelPricingCatalog")
+      .mockResolvedValue({
+        id: "task-sync-1",
+        status: "completed",
+        force: true,
+        progress: {
+          phase: "completed",
+          modelsCount: 42,
+          recalculatedEventsCount: 15,
+          exchangeRate: 7.25,
+        },
+        startedAt: new Date().toISOString(),
+        result: {
+          channelUsed: "litellm",
+          modelsCount: 42,
+          exchangeRate: 7.25,
+          recalculatedEventsCount: 15,
+          catalogVersion: "v1",
+          updatedAt: new Date().toISOString(),
+        },
+      });
 
     render(<ConversationPricingSettingsPanel />);
 
@@ -157,8 +179,12 @@ describe("ConversationPricingSettingsPanel", () => {
   });
 
   it("searches and filters models", async () => {
-    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(mockStatus);
-    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(mockCatalog);
+    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(
+      mockStatus,
+    );
+    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(
+      mockCatalog,
+    );
 
     render(<ConversationPricingSettingsPanel />);
 
@@ -172,9 +198,15 @@ describe("ConversationPricingSettingsPanel", () => {
   });
 
   it("supports editing a model price and saving it", async () => {
-    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(mockStatus);
-    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(mockCatalog);
-    const saveEntrySpy = vi.spyOn(usageService, "saveModelPriceEntry").mockResolvedValue(mockStatus);
+    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(
+      mockStatus,
+    );
+    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(
+      mockCatalog,
+    );
+    const saveEntrySpy = vi
+      .spyOn(usageService, "saveModelPriceEntry")
+      .mockResolvedValue(mockStatus);
 
     render(<ConversationPricingSettingsPanel />);
 

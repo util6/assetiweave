@@ -820,14 +820,15 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         .expect("apply conversation repair");
     assert_eq!(repaired["dry_run"], false);
     assert_eq!(repaired["applied"]["deleted_parts"], 1);
-    assert_eq!(repaired["applied"]["deleted_memberships"], 1);
+    assert_eq!(repaired["applied"]["deleted_turns"], 1);
+    assert_eq!(repaired["applied"]["deleted_memberships"], 0);
     let backup_path = repaired["rollback"]["backup_path"]
         .as_str()
         .expect("repair rollback backup path");
     assert!(Path::new(backup_path).is_file());
     assert!(Path::new(backup_path).starts_with(root.join("conversation-repair-backups")));
     let resolved_issue_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE tenant_id = 'default' AND status = 'resolved' AND category IN ('orphan_parts', 'orphan_memberships')",
+        "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE tenant_id = 'default' AND status = 'resolved' AND category IN ('orphan_parts', 'orphan_turns')",
     )
     .fetch_one(service.db.pool())
     .await
