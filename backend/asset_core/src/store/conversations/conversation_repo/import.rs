@@ -81,8 +81,6 @@ pub async fn import_conversation_sessions_with_control_sqlx(
         });
     }
 
-    audit_invalid_conversation_question_turns_sqlx(pool, tenant_id).await?;
-
     let now = Utc::now().to_rfc3339();
     let sync_run_id = stable_id("conversation-sync", &[&source.id, &now]);
     let mut warning_count = 0usize;
@@ -160,8 +158,6 @@ pub async fn import_conversation_sessions_with_control_sqlx(
             }
             prune_conversation_turns_sqlx_tx(&mut tx, tenant_id, &session.id, normalized).await?;
             ensure_question_groups_for_session_sqlx_tx(&mut tx, tenant_id, &session.id, &now)
-                .await?;
-            rebuild_session_question_aggregates_sqlx_tx(&mut tx, tenant_id, &session.id, &now)
                 .await?;
             insert_conversation_sync_delta_sqlx_tx(
                 &mut tx,
