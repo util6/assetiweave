@@ -125,22 +125,6 @@ pub(super) async fn load_question_turns_sqlx_tx(
     rows.iter().map(map_sqlx_conversation_turn).collect()
 }
 
-pub(super) async fn max_question_turn_order_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    question_id: &str,
-) -> StoreResult<i64> {
-    let max_order: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
-        "SELECT MAX(turn_order) FROM conversation_question_turns WHERE tenant_id = ?1 AND question_id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(question_id)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    Ok(max_order.unwrap_or(-1))
-}
-
 pub(super) async fn load_conversation_question_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
@@ -188,92 +172,6 @@ pub(super) async fn question_ids_for_session_sqlx_tx(
     .fetch_all(&mut **tx)
     .await
     .map_err(StoreError::external)
-}
-
-pub(super) async fn load_question_turn_ids_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    question_id: &str,
-) -> StoreResult<Vec<String>> {
-    sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT turn_id
-        FROM conversation_question_turns
-        WHERE tenant_id = ?1 AND question_id = ?2
-        ORDER BY turn_order ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(question_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(StoreError::external)
-}
-
-pub(super) async fn renumber_question_turns_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    question_id: &str,
-    updated_at: &str,
-) -> StoreResult<()> {
-    let turn_ids = load_question_turn_ids_sqlx_tx(tx, tenant_id, question_id).await?;
-    for (index, turn_id) in turn_ids.iter().enumerate() {
-        sqlx::query(
-            r#"
-            UPDATE conversation_question_turns
-            SET turn_order = ?1, updated_at = ?2
-            WHERE tenant_id = ?3 AND question_id = ?4 AND turn_id = ?5
-            "#,
-        )
-        .bind(index as i64)
-        .bind(updated_at)
-        .bind(tenant_id)
-        .bind(question_id)
-        .bind(turn_id)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-    }
-    Ok(())
-}
-
-pub(super) async fn ensure_question_ids_are_adjacent_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-    question_ids: &[String],
-) -> StoreResult<()> {
-    let ordered = question_ids_for_session_sqlx_tx(tx, tenant_id, session_id).await?;
-    let selected = question_ids.iter().collect::<BTreeSet<_>>();
-    let positions = ordered
-        .iter()
-        .enumerate()
-        .filter_map(|(index, id)| selected.contains(id).then_some(index))
-        .collect::<Vec<_>>();
-    if positions.len() != question_ids.len() {
-        return Err(StoreError::Validation(
-            "all questions must exist in the session".to_string(),
-        ));
-    }
-    if positions
-        .windows(2)
-        .any(|window| window[1] != window[0] + 1)
-    {
-        return Err(StoreError::Validation(
-            "questions must be adjacent".to_string(),
-        ));
-    }
-    if positions
-        .iter()
-        .map(|index| &ordered[*index])
-        .zip(question_ids.iter())
-        .any(|(actual, requested)| actual != requested)
-    {
-        return Err(StoreError::Validation(
-            "question ids must be supplied in session order".to_string(),
-        ));
-    }
-    Ok(())
 }
 
 pub(super) async fn renumber_questions_for_session_sqlx_tx(
