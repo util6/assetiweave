@@ -111,6 +111,32 @@ async fn migrations_create_fresh_schema_and_track_version() {
 }
 
 #[tokio::test]
+async fn migrations_drop_conversation_part_link_edge_tables() {
+    let db_path = temp_database_path("conversation-part-link-drop");
+    migrate_database(&db_path).await.expect("run migrations");
+
+    let conn = Connection::open(&db_path).expect("open migrated database");
+    let edge_table_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('conversation_part_links', 'web_record_part_links')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query part link tables");
+    let edge_index_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND (name IN ('idx_conversation_part_links_target', 'idx_web_record_part_links_target') OR tbl_name IN ('conversation_part_links', 'web_record_part_links'))",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query part link indexes");
+
+    assert_eq!(edge_table_count, 0);
+    assert_eq!(edge_index_count, 0);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
 async fn conversation_question_contract_contains_only_stable_metadata() {
     let db_path = temp_database_path("conversation-question-contract");
     migrate_database(&db_path).await.expect("run migrations");
