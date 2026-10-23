@@ -92,6 +92,109 @@ async fn sqlx_web_records_use_independent_tables_and_remove_legacy_session_rows(
 }
 
 #[tokio::test]
+async fn sqlx_web_record_details_derive_execution_pairs_from_parts() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-web-record-execution-pairs-sqlx-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let source = fixture_source();
+    let mut session = fixture_session();
+    session.turns[0].parts = vec![
+        NormalizedConversationPart {
+            role: ConversationPartRole::Assistant,
+            kind: ConversationPartKind::Command,
+            text: None,
+            language: None,
+            command: Some("cat README.md".to_string()),
+            cwd: Some("/tmp/qwen".to_string()),
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: Some("exec-web-1".to_string()),
+            content_card: Some(ConversationContentCardDescriptor {
+                schema_version: 1,
+                kind: "qwen-web.command".to_string(),
+                semantic_role: Some("command".to_string()),
+                renderer: Some("command".to_string()),
+            }),
+            metadata_json: None,
+        },
+        NormalizedConversationPart {
+            role: ConversationPartRole::Tool,
+            kind: ConversationPartKind::Tool,
+            text: Some("# AssetIWeave".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: Some("success".to_string()),
+            exit_code: Some(0),
+            command_label: None,
+            source_execution_id: Some("exec-web-1".to_string()),
+            content_card: Some(ConversationContentCardDescriptor {
+                schema_version: 1,
+                kind: "qwen-web.result".to_string(),
+                semantic_role: Some("result".to_string()),
+                renderer: Some("terminal_output".to_string()),
+            }),
+            metadata_json: None,
+        },
+    ];
+
+    let detail = async {
+        super::super::conversation_repo::upsert_conversation_source_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+        )
+        .await
+        .map_err(StoreError::external)?;
+        import_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[session],
+            false,
+        )
+        .await
+        .map_err(StoreError::external)?;
+        let sessions = list_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            None,
+            Some(&source.id),
+            None,
+            20,
+            0,
+        )
+        .await?;
+        load_web_record_session_detail_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &sessions[0].session.id,
+        )
+        .await
+    }
+    .await
+    .expect("derive web execution pairs from parts");
+
+    let execution_nodes = detail.questions[0]
+        .projected_content_nodes
+        .iter()
+        .filter(|node| node.source_execution_id.as_deref() == Some("exec-web-1"))
+        .collect::<Vec<_>>();
+    assert_eq!(execution_nodes.len(), 2);
+    assert_eq!(execution_nodes[0].semantic_role.as_deref(), Some("command"));
+    assert_eq!(execution_nodes[1].semantic_role.as_deref(), Some("result"));
+    assert!(execution_nodes[0].part_order < execution_nodes[1].part_order);
+    assert_eq!(execution_nodes[1].status.as_deref(), Some("success"));
+    assert_eq!(execution_nodes[1].exit_code, Some(0));
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
 async fn sqlx_web_record_sessions_do_not_store_project_paths() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-web-record-no-project-path-sqlx-{}.sqlite",
