@@ -142,36 +142,47 @@ async fn conversation_question_contract_contains_only_stable_metadata() {
     migrate_database(&db_path).await.expect("run migrations");
 
     let conn = Connection::open(&db_path).expect("open migrated database");
-    for table in ["conversation_questions", "web_record_questions"] {
+    for table in [
+        "conversation_questions",
+        "conversation_question_turns",
+        "conversation_question_turn_audits",
+        "web_record_questions",
+        "web_record_question_turns",
+    ] {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |row| row.get(0),
+            )
+            .expect("query dropped table");
+        assert_eq!(count, 0, "{table} must not exist in converged schema");
+    }
+    for table in ["conversation_turns", "web_record_turns"] {
         let columns = conn
             .prepare(&format!(
                 "SELECT name FROM pragma_table_info('{table}') ORDER BY cid"
             ))
-            .expect("prepare question columns")
+            .expect("prepare turn columns")
             .query_map([], |row| row.get::<_, String>(0))
-            .expect("query question columns")
+            .expect("query turn columns")
             .collect::<Result<Vec<_>, _>>()
-            .expect("collect question columns");
-        assert_eq!(
-            columns,
-            vec![
-                "tenant_id",
-                "id",
-                "session_id",
-                "title",
-                "created_at",
-                "updated_at"
-            ]
-        );
+            .expect("collect turn columns");
+        assert!(columns.contains(&"question_id".to_string()));
+        assert!(columns.contains(&"question_origin".to_string()));
     }
-    let audit_table_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversation_data_audit_issues'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("query conversation audit table");
-    assert_eq!(audit_table_count, 1);
+    let index_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN (
+                'idx_conversation_turns_tenant_session_question',
+                'idx_conversation_turns_tenant_question',
+                'idx_web_record_turns_tenant_session_question'
+            )",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query question indexes");
+    assert_eq!(index_count, 3);
     cleanup_database(&db_path);
 }
 
@@ -186,6 +197,26 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
     conn.execute_batch(
         r#"
             PRAGMA foreign_keys = OFF;
+            CREATE TABLE IF NOT EXISTS conversation_question_turns (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                question_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                turn_order INTEGER NOT NULL,
+                assignment_origin TEXT NOT NULL DEFAULT 'imported',
+                assigned_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, question_id, turn_id)
+            );
+            CREATE TABLE IF NOT EXISTS web_record_question_turns (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                question_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                turn_order INTEGER NOT NULL,
+                assignment_origin TEXT NOT NULL DEFAULT 'imported',
+                assigned_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, question_id, turn_id)
+            );
             INSERT INTO conversation_sessions (
                 tenant_id, id, source_id, adapter_id, external_id, title, project_path,
                 started_at, updated_at, source_locator, source_fingerprint, missing,
@@ -976,6 +1007,26 @@ async fn migrations_backfill_turn_question_columns_from_membership() {
     conn.execute_batch(
         r#"
             PRAGMA foreign_keys = OFF;
+            CREATE TABLE IF NOT EXISTS conversation_question_turns (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                question_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                turn_order INTEGER NOT NULL,
+                assignment_origin TEXT NOT NULL DEFAULT 'imported',
+                assigned_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, question_id, turn_id)
+            );
+            CREATE TABLE IF NOT EXISTS web_record_question_turns (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                question_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                turn_order INTEGER NOT NULL,
+                assignment_origin TEXT NOT NULL DEFAULT 'imported',
+                assigned_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, question_id, turn_id)
+            );
             INSERT INTO conversation_sessions (
                 tenant_id, id, source_id, adapter_id, external_id, title, project_path,
                 started_at, updated_at, source_locator, source_fingerprint, missing,
@@ -1116,6 +1167,26 @@ async fn migrations_backfill_turn_question_columns_from_membership() {
 }
 
 const LEGACY_TURN_QUESTION_ROLLBACK: &str = r#"
+    CREATE TABLE IF NOT EXISTS conversation_question_turns (
+        tenant_id TEXT NOT NULL DEFAULT 'default',
+        question_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        turn_order INTEGER NOT NULL,
+        assignment_origin TEXT NOT NULL DEFAULT 'imported',
+        assigned_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, question_id, turn_id)
+    );
+    CREATE TABLE IF NOT EXISTS web_record_question_turns (
+        tenant_id TEXT NOT NULL DEFAULT 'default',
+        question_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        turn_order INTEGER NOT NULL,
+        assignment_origin TEXT NOT NULL DEFAULT 'imported',
+        assigned_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, question_id, turn_id)
+    );
     DROP INDEX IF EXISTS idx_conversation_turns_tenant_session_question;
     DROP INDEX IF EXISTS idx_conversation_turns_tenant_question;
     DROP INDEX IF EXISTS idx_web_record_turns_tenant_session_question;
@@ -1123,7 +1194,7 @@ const LEGACY_TURN_QUESTION_ROLLBACK: &str = r#"
     ALTER TABLE conversation_turns DROP COLUMN question_origin;
     ALTER TABLE web_record_turns DROP COLUMN question_id;
     ALTER TABLE web_record_turns DROP COLUMN question_origin;
-    DELETE FROM _sqlx_migrations WHERE version = 202610230004;
+    DELETE FROM _sqlx_migrations WHERE version IN (202610230004, 202610230007);
 "#;
 
 fn load_turn_question_columns(db_path: &std::path::Path) -> Vec<(String, String, String, String)> {
@@ -1171,6 +1242,26 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
     conn.execute_batch(
         r#"
             PRAGMA foreign_keys = OFF;
+            CREATE TABLE IF NOT EXISTS conversation_question_turns (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                question_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                turn_order INTEGER NOT NULL,
+                assignment_origin TEXT NOT NULL DEFAULT 'imported',
+                assigned_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, question_id, turn_id)
+            );
+            CREATE TABLE IF NOT EXISTS web_record_question_turns (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                question_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                turn_order INTEGER NOT NULL,
+                assignment_origin TEXT NOT NULL DEFAULT 'imported',
+                assigned_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, question_id, turn_id)
+            );
             INSERT INTO conversation_sessions (
                 tenant_id, id, source_id, adapter_id, external_id, title, project_path,
                 started_at, updated_at, source_locator, source_fingerprint, missing,
@@ -1291,6 +1382,176 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
     assert_eq!(web_output_indexed, 1);
     assert_eq!(status, "ready");
     assert_eq!(part_count, 3);
+
+    cleanup_database(&db_path);
+}
+
+const LEGACY_QUESTION_TABLES_ROLLBACK: &str = r#"
+    CREATE TABLE IF NOT EXISTS conversation_questions (
+        tenant_id TEXT NOT NULL DEFAULT 'default',
+        id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        title TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, id)
+    );
+    CREATE TABLE IF NOT EXISTS conversation_question_turns (
+        tenant_id TEXT NOT NULL DEFAULT 'default',
+        question_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        turn_order INTEGER NOT NULL,
+        assignment_origin TEXT NOT NULL DEFAULT 'imported',
+        assigned_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, question_id, turn_id)
+    );
+    CREATE TABLE IF NOT EXISTS conversation_question_turn_audits (
+        tenant_id TEXT NOT NULL DEFAULT 'default',
+        record_kind TEXT NOT NULL,
+        question_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        detected_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, record_kind, question_id, turn_id, reason)
+    );
+    CREATE TABLE IF NOT EXISTS web_record_questions (
+        tenant_id TEXT NOT NULL DEFAULT 'default',
+        id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        title TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, id)
+    );
+    CREATE TABLE IF NOT EXISTS web_record_question_turns (
+        tenant_id TEXT NOT NULL DEFAULT 'default',
+        question_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        turn_order INTEGER NOT NULL,
+        assignment_origin TEXT NOT NULL DEFAULT 'imported',
+        assigned_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, question_id, turn_id)
+    );
+    INSERT INTO conversation_questions (tenant_id, id, session_id, title, created_at, updated_at)
+    SELECT tenant_id, question_id, session_id, user_text, imported_at, imported_at
+    FROM conversation_turns
+    WHERE question_id <> ''
+    GROUP BY tenant_id, session_id, question_id;
+
+    INSERT INTO conversation_question_turns (tenant_id, question_id, turn_id, turn_order, assignment_origin, assigned_at, updated_at)
+    SELECT tenant_id, question_id, id, turn_index, question_origin, imported_at, imported_at
+    FROM conversation_turns
+    WHERE question_id <> '';
+
+    INSERT INTO web_record_questions (tenant_id, id, session_id, title, created_at, updated_at)
+    SELECT tenant_id, question_id, session_id, user_text, imported_at, imported_at
+    FROM web_record_turns
+    WHERE question_id <> ''
+    GROUP BY tenant_id, session_id, question_id;
+
+    INSERT INTO web_record_question_turns (tenant_id, question_id, turn_id, turn_order, assignment_origin, assigned_at, updated_at)
+    SELECT tenant_id, question_id, id, turn_index, question_origin, imported_at, imported_at
+    FROM web_record_turns
+    WHERE question_id <> '';
+
+    DELETE FROM _sqlx_migrations WHERE version = 202610230007;
+"#;
+
+#[tokio::test]
+async fn migrations_drop_and_rollback_conversation_question_tables() {
+    let db_path = temp_database_path("conversation-question-drop-rollback");
+    migrate_database(&db_path).await.expect("initial migration");
+
+    // 1. 验证迁移后五张表不存在
+    let conn = Connection::open(&db_path).expect("open migrated db");
+    for table in [
+        "conversation_questions",
+        "conversation_question_turns",
+        "conversation_question_turn_audits",
+        "web_record_questions",
+        "web_record_question_turns",
+    ] {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |row| row.get(0),
+            )
+            .expect("check dropped table");
+        assert_eq!(count, 0, "{table} must not exist after drop migration");
+    }
+
+    // 2. 插入测试会话和轮次
+    conn.execute_batch(
+        r#"
+        PRAGMA foreign_keys = OFF;
+        INSERT INTO conversation_sessions (
+            tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at
+        ) VALUES ('default', 's-rb-1', 'src-1', 'adp-1', 'ext-rb-1', 'Session RB', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z');
+        INSERT INTO conversation_turns (
+            tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, imported_at, question_id, question_origin
+        ) VALUES
+            ('default', 't-rb-1', 's-rb-1', 'ext-t-1', 0, 'First prompt', 'fp-1', 0, '2026-10-23T00:00:00Z', 'q-rb-1', 'imported'),
+            ('default', 't-rb-2', 's-rb-1', 'ext-t-2', 1, 'Second prompt', 'fp-2', 0, '2026-10-23T00:00:00Z', 'q-rb-1', 'auto_merged');
+        "#,
+    )
+    .expect("insert test turns");
+
+    // 3. 执行可逆回滚：恢复五张表并回填数据
+    conn.execute_batch(LEGACY_QUESTION_TABLES_ROLLBACK)
+        .expect("execute rollback");
+
+    // 4. 验证回滚后数据完整恢复
+    let restored_question_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_questions WHERE id = 'q-rb-1'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query restored question");
+    assert_eq!(restored_question_count, 1);
+    let restored_turns_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_question_turns WHERE question_id = 'q-rb-1'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query restored question turns");
+    assert_eq!(restored_turns_count, 2);
+    drop(conn);
+
+    // 5. 重新前向迁移，验证可重入
+    migrate_database(&db_path).await.expect("re-apply migration");
+
+    let conn = Connection::open(&db_path).expect("open re-migrated db");
+    for table in [
+        "conversation_questions",
+        "conversation_question_turns",
+        "conversation_question_turn_audits",
+        "web_record_questions",
+        "web_record_question_turns",
+    ] {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |row| row.get(0),
+            )
+            .expect("check dropped table again");
+        assert_eq!(count, 0, "{table} must be dropped after re-migrating");
+    }
+
+    // 轮次上的数据完好无损
+    let turn_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_turns WHERE session_id = 's-rb-1' AND question_id = 'q-rb-1'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query turns");
+    assert_eq!(turn_count, 2);
 
     cleanup_database(&db_path);
 }
