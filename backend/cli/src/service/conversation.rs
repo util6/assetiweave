@@ -9,6 +9,8 @@ use asset_core::application::{
 use asset_core::domain::conversations::ConversationCardDetail;
 use serde_json::Value;
 
+use crate::args::conversation::ConversationSyncArgs;
+
 pub struct ConversationOperations<'a> {
     app_service: &'a AppService,
 }
@@ -40,25 +42,18 @@ impl<'a> ConversationOperations<'a> {
         Ok(serde_json::to_value(sources)?)
     }
 
-    pub async fn sync_conversations(
-        &self,
-        adapter_id: Option<String>,
-        source_id: Option<String>,
-        full: bool,
-        dry_run: bool,
-        record_kind: Option<String>,
-    ) -> Result<Value> {
-        let mode = if full {
+    pub async fn sync_conversations(&self, args: &ConversationSyncArgs) -> Result<Value> {
+        let mode = if args.full {
             ConversationSyncMode::Full
         } else {
             ConversationSyncMode::Incremental
         };
         let params = ConversationSyncParams {
-            source_id,
-            adapter_id,
-            record_kind,
+            source_id: args.source.clone(),
+            adapter_id: args.adapter.clone(),
+            record_kind: args.kind.clone(),
             mode,
-            dry_run,
+            dry_run: args.dry_run,
         };
         let is_tty = std::io::stderr().is_terminal();
         let result = self

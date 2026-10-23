@@ -395,19 +395,6 @@ impl CliService {
             .context("failed to list conversation sessions")
     }
 
-    pub async fn sync_conversations(
-        &self,
-        adapter_id: Option<String>,
-        source_id: Option<String>,
-        full: bool,
-        dry_run: bool,
-        record_kind: Option<String>,
-    ) -> Result<serde_json::Value> {
-        self.conversation()
-            .sync_conversations(adapter_id, source_id, full, dry_run, record_kind)
-            .await
-    }
-
     pub fn list_conversation_adapters(
         &self,
     ) -> Result<Vec<asset_core::domain::conversations::ConversationAdapter>> {

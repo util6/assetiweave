@@ -159,6 +159,8 @@ Incrementally synchronize conversations from local adapters.
 ### Avoid when
 - Just inspecting or querying already synchronized conversations (use `list`, `search`, or `outline`).
 - Repairing damaged conversation indexes or recovering from corrupted state (use `aiwc conversation data repair`).
+- Running `--full` when routine incremental synchronization is sufficient (full reparsing incurs much higher resource/time cost).
+- Running large-scale synchronizations in unknown environments without testing with `--dry-run` first.
 
 ### Examples
 - `aiwc conversation sync`

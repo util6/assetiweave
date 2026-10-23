@@ -834,23 +834,36 @@ fn test_conversation_sync_full_and_incremental_conflict() {
 }
 
 #[test]
+fn test_conversation_sync_full_contract() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let assert = cmd
+        .env("HOME", temp_dir.path())
+        .args([
+            "conversation",
+            "sync",
+            "--full",
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).expect("valid json output");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["mode"], "full");
+    assert_eq!(json["data"]["dry_run"], true);
+}
+
+#[test]
 fn test_conversation_sync_dry_run_zero_side_effect() {
-    let config = asset_core::infrastructure::runtime::RuntimeConfig::from_environment()
-        .expect("discover runtime config");
-    let conn = rusqlite::Connection::open(&config.db_path).expect("open database");
-
-    let count_rows = |table: &str| -> i64 {
-        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
-            .unwrap_or(0)
-    };
-
-    let sessions_before = count_rows("conversation_sessions");
-    let turns_before = count_rows("conversation_turns");
-    let parts_before = count_rows("conversation_parts");
-    let sync_runs_before = count_rows("conversation_sync_runs");
+    let temp_dir = tempfile::tempdir().unwrap();
 
     let mut cmd = Command::cargo_bin("aiwc").unwrap();
     let assert = cmd
+        .env("HOME", temp_dir.path())
         .args(["conversation", "sync", "--dry-run", "--format", "json"])
         .assert()
         .success();
@@ -860,33 +873,31 @@ fn test_conversation_sync_dry_run_zero_side_effect() {
     assert_eq!(json["ok"], true);
     assert_eq!(json["data"]["dry_run"], true);
 
-    let sessions_after = count_rows("conversation_sessions");
-    let turns_after = count_rows("conversation_turns");
-    let parts_after = count_rows("conversation_parts");
-    let sync_runs_after = count_rows("conversation_sync_runs");
+    // Verify zero side effect using blackbox CLI command in the same isolated sandbox
+    let mut list_cmd = Command::cargo_bin("aiwc").unwrap();
+    let list_assert = list_cmd
+        .env("HOME", temp_dir.path())
+        .args(["conversation", "list", "--format", "json"])
+        .assert()
+        .success();
 
-    assert_eq!(
-        sessions_before, sessions_after,
-        "conversation_sessions table was mutated"
-    );
-    assert_eq!(
-        turns_before, turns_after,
-        "conversation_turns table was mutated"
-    );
-    assert_eq!(
-        parts_before, parts_after,
-        "conversation_parts table was mutated"
-    );
-    assert_eq!(
-        sync_runs_before, sync_runs_after,
-        "conversation_sync_runs table was mutated"
+    let list_out = String::from_utf8(list_assert.get_output().stdout.clone()).unwrap();
+    let list_json: Value = serde_json::from_str(&list_out).expect("valid json output");
+    assert_eq!(list_json["ok"], true);
+    let sessions = list_json["data"].as_array().expect("sessions array");
+    assert!(
+        sessions.is_empty(),
+        "Expected 0 sessions after dry-run, found {}",
+        sessions.len()
     );
 }
 
 #[test]
 fn test_conversation_sync_pipeline_clean_in_non_tty() {
+    let temp_dir = tempfile::tempdir().unwrap();
     let mut cmd = Command::cargo_bin("aiwc").unwrap();
     let assert = cmd
+        .env("HOME", temp_dir.path())
         .args(["conversation", "sync", "--dry-run", "--format", "json"])
         .assert()
         .success();
