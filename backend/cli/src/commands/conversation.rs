@@ -114,7 +114,7 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
         },
         ConversationCommands::Sync(s) => {
             let res = match service
-                .sync_conversations(s.adapter.clone(), s.source, s.force)
+                .sync_conversations(s.adapter.clone(), s.source, s.full, s.dry_run, s.kind)
                 .await
             {
                 Ok(res) => res,

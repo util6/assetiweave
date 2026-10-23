@@ -38,6 +38,34 @@ impl<'a> ConversationOperations<'a> {
         Ok(serde_json::to_value(sources)?)
     }
 
+    pub async fn sync_conversations(
+        &self,
+        adapter_id: Option<String>,
+        source_id: Option<String>,
+        full: bool,
+        dry_run: bool,
+        record_kind: Option<String>,
+    ) -> Result<Value> {
+        let mode = if full {
+            ConversationSyncMode::Full
+        } else {
+            ConversationSyncMode::Incremental
+        };
+        let params = ConversationSyncParams {
+            source_id,
+            adapter_id,
+            record_kind,
+            mode,
+            dry_run,
+        };
+        let result = self
+            .app_service
+            .sync_conversations(params)
+            .await
+            .context("failed to synchronize conversations")?;
+        Ok(serde_json::to_value(result)?)
+    }
+
     pub async fn sync_source(&self, source_id: String, full: bool) -> Result<Value> {
         let params = ConversationSyncParams {
             source_id: Some(source_id),

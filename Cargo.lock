@@ -963,6 +963,7 @@ dependencies = [
  "clap_complete",
  "comfy-table",
  "predicates",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

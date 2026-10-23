@@ -173,8 +173,30 @@ pub struct ConversationSyncArgs {
     #[arg(long, help = "Optional source directory to sync")]
     pub source: Option<String>,
 
-    #[arg(long, help = "Force full re-synchronization")]
-    pub force: bool,
+    #[arg(
+        long,
+        alias = "force",
+        conflicts_with = "incremental",
+        help = "Force full re-synchronization of all discoverable sessions (alias: --force)"
+    )]
+    pub full: bool,
+
+    #[arg(
+        long,
+        conflicts_with = "full",
+        help = "Explicitly run incremental synchronization (default behavior)"
+    )]
+    pub incremental: bool,
+
+    #[arg(long, help = "Dry-run preview without modifying database")]
+    pub dry_run: bool,
+
+    #[arg(
+        long,
+        value_parser = ["session", "web"],
+        help = "Filter synchronization by record kind: 'session' or 'web'"
+    )]
+    pub kind: Option<String>,
 }
 
 #[derive(Args, Debug)]

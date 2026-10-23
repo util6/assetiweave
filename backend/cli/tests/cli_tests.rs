@@ -792,3 +792,93 @@ fn test_conversation_error_actionable_hints_json_mode() {
         "run 'aiwc conversation search --query <QUERY>' or 'aiwc conversation list'"
     );
 }
+
+#[test]
+fn test_conversation_sync_help_options() {
+    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let assert = cmd
+        .args(["conversation", "sync", "--help"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(output.contains("--full"));
+    assert!(output.contains("--incremental"));
+    assert!(output.contains("--dry-run"));
+    assert!(output.contains("--kind"));
+}
+
+#[test]
+fn test_conversation_sync_full_and_incremental_conflict() {
+    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let assert = cmd
+        .args(["conversation", "sync", "--full", "--incremental"])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains("cannot be used with") || stderr.contains("conflict"),
+        "Expected conflict error message, got: {stderr}"
+    );
+
+    // Also verify alias --force conflicts with --incremental
+    let mut cmd_force = Command::cargo_bin("aiwc").unwrap();
+    let assert_force = cmd_force
+        .args(["conversation", "sync", "--force", "--incremental"])
+        .assert()
+        .failure();
+    let stderr_force = String::from_utf8(assert_force.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr_force.contains("cannot be used with") || stderr_force.contains("conflict"),
+        "Expected conflict error message for --force, got: {stderr_force}"
+    );
+}
+
+#[test]
+fn test_conversation_sync_dry_run_zero_side_effect() {
+    let config = asset_core::infrastructure::runtime::RuntimeConfig::from_environment()
+        .expect("discover runtime config");
+    let conn = rusqlite::Connection::open(&config.db_path).expect("open database");
+
+    let count_rows = |table: &str| -> i64 {
+        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap_or(0)
+    };
+
+    let sessions_before = count_rows("conversation_sessions");
+    let turns_before = count_rows("conversation_turns");
+    let parts_before = count_rows("conversation_parts");
+    let sync_runs_before = count_rows("conversation_sync_runs");
+
+    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let assert = cmd
+        .args(["conversation", "sync", "--dry-run", "--format", "json"])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).expect("valid json output");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["dry_run"], true);
+
+    let sessions_after = count_rows("conversation_sessions");
+    let turns_after = count_rows("conversation_turns");
+    let parts_after = count_rows("conversation_parts");
+    let sync_runs_after = count_rows("conversation_sync_runs");
+
+    assert_eq!(
+        sessions_before, sessions_after,
+        "conversation_sessions table was mutated"
+    );
+    assert_eq!(
+        turns_before, turns_after,
+        "conversation_turns table was mutated"
+    );
+    assert_eq!(
+        parts_before, parts_after,
+        "conversation_parts table was mutated"
+    );
+    assert_eq!(
+        sync_runs_before, sync_runs_after,
+        "conversation_sync_runs table was mutated"
+    );
+}

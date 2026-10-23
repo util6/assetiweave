@@ -150,7 +150,10 @@ Read-only: Safe, returns exact card record content without side effects.
 Incrementally synchronize conversations from local adapters.
 
 ### Use this when
-- Pulling and normalizing the latest conversation sessions from local IDE / agent adapters into AssetIWeave.
+- Pulling and normalizing the latest conversation sessions from local IDE / agent adapters into AssetIWeave (`--incremental` by default).
+- Forcing a full re-parse and resync of all discoverable sessions (`--full` or `--force`).
+- Previewing sync operations safely without persisting changes to SQLite (`--dry-run`).
+- Filtering synchronization by record kind (`--kind session` or `--kind web`).
 - Updating local SQLite tables and search indexes after new chat turns in external tools.
 
 ### Avoid when
@@ -160,6 +163,10 @@ Incrementally synchronize conversations from local adapters.
 ### Examples
 - `aiwc conversation sync`
 - `aiwc conversation sync --adapter codex`
+- `aiwc conversation sync --full`
+- `aiwc conversation sync --incremental`
+- `aiwc conversation sync --dry-run`
+- `aiwc conversation sync --kind session`
 - `aiwc conversation sync --force`
 
 ### Related skills
