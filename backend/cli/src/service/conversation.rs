@@ -1,3 +1,5 @@
+use std::io::{IsTerminal, Write};
+
 use anyhow::{Context, Result};
 use asset_core::application::{
     AppService, ConversationAdapterPackageInspectParams, ConversationCardGetParams,
@@ -58,11 +60,30 @@ impl<'a> ConversationOperations<'a> {
             mode,
             dry_run,
         };
+        let is_tty = std::io::stderr().is_terminal();
         let result = self
             .app_service
-            .sync_conversations(params)
-            .await
-            .context("failed to synchronize conversations")?;
+            .sync_conversations_with_progress(
+                params,
+                move |completed, total, current_detail, _completed_adapters| {
+                    if is_tty {
+                        if let Some(ref detail) = current_detail {
+                            eprint!("\r\x1b[2K⠋ [{completed}/{total}] {detail}");
+                        } else {
+                            eprint!("\r\x1b[2K⠋ [{completed}/{total}] 同步中...");
+                        }
+                        let _ = std::io::stderr().flush();
+                    }
+                },
+            )
+            .await;
+
+        if std::io::stderr().is_terminal() {
+            eprint!("\r\x1b[2K");
+            let _ = std::io::stderr().flush();
+        }
+
+        let result = result.context("failed to synchronize conversations")?;
         Ok(serde_json::to_value(result)?)
     }
 

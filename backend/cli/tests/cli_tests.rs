@@ -882,3 +882,27 @@ fn test_conversation_sync_dry_run_zero_side_effect() {
         "conversation_sync_runs table was mutated"
     );
 }
+
+#[test]
+fn test_conversation_sync_pipeline_clean_in_non_tty() {
+    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let assert = cmd
+        .args(["conversation", "sync", "--dry-run", "--format", "json"])
+        .assert()
+        .success();
+
+    let output = assert.get_output();
+    let json: Value = serde_json::from_slice(&output.stdout).expect("stdout must be valid json");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["dry_run"], true);
+
+    let stderr_str = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr_str.contains('\r'),
+        "stderr should not contain carriage returns in non-tty mode: {stderr_str}"
+    );
+    assert!(
+        !stderr_str.contains("\x1b["),
+        "stderr should not contain ANSI escape codes in non-tty mode: {stderr_str}"
+    );
+}
