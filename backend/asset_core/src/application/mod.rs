@@ -20,6 +20,9 @@ mod tests;
 pub use agents::agent_market::{
     AgentInstallPreview, AgentMarketItemView, AgentMarketRefreshResult, AgentUninstallPreview,
 };
+pub use catalog::builtin_skills::{
+    get_builtin_skill_markdown, list_builtin_skills, BuiltinSkillMetadata,
+};
 pub use catalog::params::{
     AssetIdParams, AssetRefParams, CreateSourceParams, DeleteAssetParams, ImportSkillParams,
     ListAssetsParams, ProbeSourcePathParams, RequiredAssetIdParams, SkillAcquireParams,
@@ -41,8 +44,9 @@ pub use conversations::{
         ConversationAdapterPackageUpdateCheckParams, ConversationAdapterPackageUpdatePolicyParams,
         ConversationAdapterPackageVersionChangeParams, ConversationAdapterUnregisterParams,
         ConversationAdapterWorkspaceUpgradeParams, ConversationBlockGetParams,
-        ConversationBlockListParams, ConversationDataAuditParams, ConversationDataRepairParams,
-        ConversationDataRollbackParams, ConversationIncrementalSearchParams,
+        ConversationBlockListParams, ConversationCardGetParams, ConversationDataAuditParams,
+        ConversationDataRepairParams, ConversationDataRollbackParams,
+        ConversationIncrementalSearchParams, ConversationOutlineParams,
         ConversationPartTranslationUpdateParams, ConversationQuestionGetParams,
         ConversationQuestionListParams, ConversationQuestionMergeParams,
         ConversationQuestionSplitParams, ConversationScriptCatalogParams,
@@ -52,6 +56,7 @@ pub use conversations::{
         ConversationSourceDisableParams, ConversationSourceUpsertParams, ConversationSyncMode,
         ConversationSyncParams,
     },
+    resolve_time_window_bounds, resolve_unified_time,
 };
 pub use memory::params::{
     MemoryContextResolveParams, MemoryProjectGetParams, MemoryRecallSearchParams,

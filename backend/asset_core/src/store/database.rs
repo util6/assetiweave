@@ -212,23 +212,20 @@ async fn repair_known_modified_conversation_question_contract_migration(
     }
 
     for table in ["conversation_questions", "web_record_questions"] {
-        if !table_exists(pool, table).await? {
-            return Err(StoreError::Validation(format!(
-                "cannot repair migration 202608250005 checksum: missing {table}"
-            )));
-        }
-        for removed_column in [
-            "question_index",
-            "question_text",
-            "answer_text",
-            "code_text",
-            "command_text",
-            "grouping_origin",
-        ] {
-            if column_exists(pool, table, removed_column).await? {
-                return Err(StoreError::Validation(format!(
-                    "cannot repair migration 202608250005 checksum: {table}.{removed_column} still exists"
-                )));
+        if table_exists(pool, table).await? {
+            for removed_column in [
+                "question_index",
+                "question_text",
+                "answer_text",
+                "code_text",
+                "command_text",
+                "grouping_origin",
+            ] {
+                if column_exists(pool, table, removed_column).await? {
+                    return Err(StoreError::Validation(format!(
+                        "cannot repair migration 202608250005 checksum: {table}.{removed_column} still exists"
+                    )));
+                }
             }
         }
     }

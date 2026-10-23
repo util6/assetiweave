@@ -57,6 +57,8 @@
 | `conversation.data.audit` | `audit_conversation_data`<br>`conversation.data.audit` | `assetiweave-cli conversation data audit` | `audit_conversation_data` | `read` | `false` |
 | `conversation.data.repair` | `conversation.data.repair`<br>`repair_conversation_data` | `assetiweave-cli conversation data repair` | `repair_conversation_data` | `high-risk-write` | `true` |
 | `conversation.data.rollback` | `conversation.data.rollback`<br>`rollback_conversation_data` | `assetiweave-cli conversation data rollback` | `rollback_conversation_data` | `high-risk-write` | `true` |
+| `conversation.part.index.rebuild` | `conversation.part.index.rebuild`<br>`start_conversation_part_index_rebuild` | `assetiweave-cli conversation part index rebuild` | `start_conversation_part_index_rebuild` | `write` | `false` |
+| `conversation.part.index.status` | `conversation.part.index.status`<br>`get_conversation_part_index_status` | `assetiweave-cli conversation part index status` | `get_conversation_part_index_status` | `read` | `false` |
 | `conversation.part.translation.update` | `conversation.part.translation.update`<br>`update_conversation_part_translation` | `assetiweave-cli conversation part translation update <part-id> --text <text>` | `update_conversation_part_translation` | `write` | `false` |
 | `conversation.question.get` | `conversation.question.get`<br>`get_conversation_question` | `assetiweave-cli conversation question get <question-id>` | `get_conversation_question` | `read` | `false` |
 | `conversation.question.list` | `conversation.question.list`<br>`list_conversation_questions` | `assetiweave-cli conversation question list <session-id>` | `list_conversation_questions` | `read` | `false` |

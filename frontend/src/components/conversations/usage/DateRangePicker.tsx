@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, X } from "lucide-react";
+import {
+  Calendar as CalendarIcon,
+  ChevronLeft,
+  ChevronRight,
+  X,
+} from "lucide-react";
 import { cn } from "../../../lib/utils";
 
 export interface DateRangePickerProps {
@@ -20,7 +25,12 @@ function toDateString(d: Date): string {
 function parseDateString(str?: string | null): Date | null {
   if (!str) return null;
   const parts = str.split("-").map(Number);
-  if (parts.length !== 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) {
+  if (
+    parts.length !== 3 ||
+    isNaN(parts[0]) ||
+    isNaN(parts[1]) ||
+    isNaN(parts[2])
+  ) {
     return null;
   }
   return new Date(parts[0], parts[1] - 1, parts[2]);
@@ -43,7 +53,8 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const initialDate = parseDateString(endDate) || parseDateString(startDate) || new Date();
+  const initialDate =
+    parseDateString(endDate) || parseDateString(startDate) || new Date();
   const [viewYear, setViewYear] = useState<number>(initialDate.getFullYear());
   const [viewMonth, setViewMonth] = useState<number>(initialDate.getMonth());
 
@@ -67,7 +78,10 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     if (!isOpen) return;
 
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
         setIsOpen(false);
       }
     };
@@ -228,7 +242,8 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
           "flex h-9 items-center gap-2 rounded-xl border border-theme-control-border/80 bg-theme-control/60 px-3 text-body-sm font-medium text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] cursor-pointer transition-all",
           "hover:border-theme-nav-active-border/60 hover:text-on-surface",
           isOpen && "border-theme-nav-active-border ring-1 ring-primary/20",
-          isRangeActive && "text-primary font-medium border-primary/40 bg-primary/5",
+          isRangeActive &&
+            "text-primary font-medium border-primary/40 bg-primary/5",
         )}
       >
         <CalendarIcon className="h-4 w-4 shrink-0 text-on-surface-variant" />
@@ -306,8 +321,12 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                   className={cn(
                     "relative flex h-8 items-center justify-center",
                     isInside && "bg-primary/10",
-                    isStart && normalizedRange?.start !== normalizedRange?.end && "rounded-l-xl bg-primary/10",
-                    isEnd && normalizedRange?.start !== normalizedRange?.end && "rounded-r-xl bg-primary/10",
+                    isStart &&
+                      normalizedRange?.start !== normalizedRange?.end &&
+                      "rounded-l-xl bg-primary/10",
+                    isEnd &&
+                      normalizedRange?.start !== normalizedRange?.end &&
+                      "rounded-r-xl bg-primary/10",
                   )}
                 >
                   <button
@@ -323,10 +342,15 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                       day.isCurrentMonth
                         ? "text-on-surface"
                         : "text-on-surface-variant/35",
-                      day.isToday && !isStart && !isEnd && "border border-primary/40 font-semibold",
+                      day.isToday &&
+                        !isStart &&
+                        !isEnd &&
+                        "border border-primary/40 font-semibold",
                       (isStart || isEnd) &&
                         "bg-primary text-primary-foreground font-semibold shadow-sm hover:bg-primary/90",
-                      !isStart && !isEnd && "hover:bg-theme-control hover:text-on-surface",
+                      !isStart &&
+                        !isEnd &&
+                        "hover:bg-theme-control hover:text-on-surface",
                     )}
                   >
                     {day.date.getDate()}

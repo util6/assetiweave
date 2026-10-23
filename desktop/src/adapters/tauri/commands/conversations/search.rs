@@ -34,6 +34,24 @@ pub(crate) async fn search_recent_incremental_conversation_records(
 }
 
 #[tauri::command]
+pub(crate) async fn get_conversation_part_index_status(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<crate::backend::domain::ConversationPartIndexStatus> {
+    AppService::from_runtime(&state.runtime)
+        .get_conversation_part_index_status()
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn start_conversation_part_index_rebuild(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Option<crate::backend::infrastructure::tasks::task_models::TaskSnapshot>> {
+    AppService::from_runtime(&state.runtime)
+        .start_conversation_part_index_rebuild()
+        .await
+}
+
+#[tauri::command]
 pub(crate) async fn get_conversation_search_index_status(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<ConversationSearchIndexStatus> {

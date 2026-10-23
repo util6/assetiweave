@@ -97,7 +97,8 @@ function NotificationItem({
 
   const isFailed = notification.isFailure;
   const isPartial = notification.task.outcome === "partial_success";
-  const hasLongMessage = notification.message && notification.message.length > 50;
+  const hasLongMessage =
+    notification.message && notification.message.length > 50;
 
   return (
     <div

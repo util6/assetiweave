@@ -49,41 +49,8 @@ pub async fn insert_web_record_parts_sqlx_tx(
         .await
         .map_err(StoreError::external)?;
     }
-    sqlx::query(
-        r#"
-        DELETE FROM web_record_part_links
-        WHERE tenant_id = ?1 AND part_id IN (
-            SELECT id FROM web_record_parts WHERE tenant_id = ?1 AND turn_id = ?2
-        )
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(turn_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    let links = crate::backend::store::extract_part_links_for_turn(turn_id, parts);
-    for link in links {
-        sqlx::query(
-            r#"
-            INSERT INTO web_record_part_links (
-                tenant_id, part_id, relation, target_kind, target_id, metadata_json
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-            ON CONFLICT(tenant_id, part_id, relation, target_id) DO UPDATE SET
-                metadata_json = excluded.metadata_json
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(&link.part_id)
-        .bind(&link.relation)
-        .bind(&link.target_kind)
-        .bind(&link.target_id)
-        .bind(&link.metadata_json)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-    }
+    // 索引随零件写入增量维护：只重建这个轮次的索引行，不触碰其它轮次。
+    replace_turn_part_index_sqlx_tx(tx, tenant_id, turn_id, ConversationRecordKind::Web).await?;
     Ok(())
 }
 
@@ -111,11 +78,38 @@ pub async fn load_web_record_part_translation_state_sqlx_tx(
         .collect())
 }
 
+pub async fn load_web_record_turn_question_assignments_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    session_id: &str,
+) -> StoreResult<BTreeMap<String, (String, ConversationGroupingOrigin)>> {
+    let rows = sqlx::query_as::<_, (String, String, String)>(
+        r#"
+        SELECT id, question_id, question_origin
+        FROM web_record_turns
+        WHERE tenant_id = ?1 AND session_id = ?2
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+    Ok(rows
+        .into_iter()
+        .filter(|(_, question_id, _)| !question_id.is_empty())
+        .map(|(turn_id, question_id, origin)| {
+            (turn_id, (question_id, decode_turn_question_origin(&origin)))
+        })
+        .collect())
+}
+
 pub async fn insert_web_record_questions_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
     turns: &[ConversationTurn],
+    existing: &BTreeMap<String, (String, ConversationGroupingOrigin)>,
     now: &str,
 ) -> StoreResult<()> {
     let mut ordered_turns = turns.to_vec();
@@ -124,141 +118,33 @@ pub async fn insert_web_record_questions_sqlx_tx(
             .cmp(&right.turn_index)
             .then_with(|| left.id.cmp(&right.id))
     });
-    let groups = group_turn_ids_by_question(
-        ordered_turns
-            .iter()
-            .map(|turn| (turn.id.clone(), turn.user_text.clone()))
-            .collect::<Vec<_>>(),
-    );
-    for (_index, group) in groups.into_iter().enumerate() {
-        let first_turn_id = group
-            .turn_ids
-            .first()
-            .ok_or_else(|| StoreError::Validation("empty web record question group".to_string()))?;
-        let question_id = stable_id("web-record-question", &[session_id, first_turn_id]);
-        for (order, turn_id) in group.turn_ids.iter().enumerate() {
-            sqlx::query(
-                r#"
-                INSERT INTO web_record_question_turns (
-                    tenant_id, question_id, turn_id, turn_order,
-                    assignment_origin, assigned_at, updated_at
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
-                "#,
-            )
-            .bind(tenant_id)
-            .bind(&question_id)
-            .bind(turn_id)
-            .bind(order as i64)
-            .bind(encode_enum_app(group.origin)?)
-            .bind(now)
-            .execute(&mut **tx)
-            .await
-            .map_err(StoreError::external)?;
-        }
-        let aggregate =
-            build_question_aggregate_sqlx_tx(tx, tenant_id, session_id, &group.turn_ids).await?;
+    let inputs = ordered_turns
+        .iter()
+        .map(|turn| TurnQuestionInput {
+            turn_id: turn.id.clone(),
+            user_text: turn.user_text.clone(),
+            existing: existing.get(&turn.id).cloned(),
+        })
+        .collect::<Vec<_>>();
+    let assignments = plan_turn_question_assignments("web-record-question", session_id, &inputs);
+
+    for assignment in &assignments {
         sqlx::query(
             r#"
-            INSERT INTO web_record_questions (
-                tenant_id, id, session_id, title, created_at, updated_at
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+            UPDATE web_record_turns
+            SET question_id = ?1, question_origin = ?2
+            WHERE tenant_id = ?3 AND id = ?4
             "#,
         )
+        .bind(&assignment.question_id)
+        .bind(encode_enum_app(assignment.origin)?)
         .bind(tenant_id)
-        .bind(&question_id)
-        .bind(session_id)
-        .bind(first_line(&aggregate.question_text))
-        .bind(now)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-        sqlx::query(
-            "DELETE FROM conversation_question_fts WHERE tenant_id = ?1 AND question_id = ?2",
-        )
-        .bind(tenant_id)
-        .bind(&question_id)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-        sqlx::query(
-            r#"
-            INSERT INTO conversation_question_fts (
-                tenant_id, question_id, session_id, question_text, answer_text, code_text, command_text
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(&question_id)
-        .bind(session_id)
-        .bind(&aggregate.question_text)
-        .bind(&aggregate.answer_text)
-        .bind(&aggregate.code_text)
-        .bind(&aggregate.command_text)
+        .bind(&assignment.turn_id)
         .execute(&mut **tx)
         .await
         .map_err(StoreError::external)?;
     }
     Ok(())
-}
-
-pub async fn build_question_aggregate_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-    turn_ids: &[String],
-) -> StoreResult<QuestionAggregate> {
-    let mut question_text = Vec::new();
-    let mut answer_text = Vec::new();
-    let mut code_text = Vec::new();
-    let mut command_text = Vec::new();
-    let adapter_id = sqlx::query_scalar::<_, String>(
-        "SELECT adapter_id FROM web_record_sessions WHERE tenant_id = ?1 AND id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    let card_kinds_json = sqlx::query_scalar::<_, String>(
-        "SELECT card_kinds_json FROM conversation_adapters WHERE tenant_id = ?1 AND id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(&adapter_id)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(StoreError::external)?
-    .unwrap_or_else(|| "[]".to_string());
-    let card_kinds: Vec<ConversationCardKindDefinition> = decode_json_app(card_kinds_json)?;
-    for turn_id in turn_ids {
-        let user_text: String = sqlx::query_scalar::<_, String>(
-            "SELECT user_text FROM web_record_turns WHERE tenant_id = ?1 AND id = ?2",
-        )
-        .bind(tenant_id)
-        .bind(turn_id)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-        question_text.push(user_text);
-        for part in load_web_record_parts_sqlx_tx(tx, tenant_id, turn_id).await? {
-            append_projected_cards_to_question_aggregate(
-                &part,
-                &adapter_id,
-                &card_kinds,
-                &mut answer_text,
-                &mut code_text,
-                &mut command_text,
-            )?;
-        }
-    }
-    Ok(QuestionAggregate {
-        question_text: question_text.join("\n\n"),
-        answer_text: answer_text.join("\n\n"),
-        code_text: code_text.join("\n\n"),
-        command_text: command_text.join("\n\n"),
-    })
 }
 
 pub async fn load_web_record_parts_sqlx_tx(

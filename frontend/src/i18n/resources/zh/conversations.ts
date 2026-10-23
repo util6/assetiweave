@@ -154,6 +154,9 @@ export const conversationsZh = {
   "conversation.searchIndex.metric": "本地索引",
   "conversation.searchIndex.rebuild": "重建索引",
   "conversation.searchIndex.building": "索引构建中...",
+  "conversation.partIndex.degraded":
+    "正文索引重建中，搜索暂按标题匹配；重建完成后自动恢复全文匹配。",
+  "conversation.partIndex.rebuild": "立即重建索引",
   "conversation.toolbar.import": "导入",
   "conversation.toolbar.apps": "APP",
   "conversation.toolbar.sessions": "Session",

@@ -95,13 +95,16 @@ pub async fn resolve_conversation_session_id_prefix_sqlx(
     Ok(rows[0].clone())
 }
 
+/// 分组标识 → 完整标识。候选集来自轮次列，并额外并入跳转表里的墓碑标识，
+/// 使合并前的旧标识继续解析到幸存分组。
 pub async fn resolve_conversation_question_id_prefix_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     prefix_or_id: &str,
 ) -> StoreResult<String> {
     if prefix_or_id.len() >= 36 {
-        return Ok(prefix_or_id.to_string());
+        return resolve_conversation_question_redirect_pool_sqlx(pool, tenant_id, prefix_or_id)
+            .await;
     }
     let clean_prefix = prefix_or_id
         .strip_prefix("conversation-question-")
@@ -110,9 +113,22 @@ pub async fn resolve_conversation_question_id_prefix_sqlx(
     let like_pattern_domain = format!("conversation-question-{}%", clean_prefix);
 
     let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM conversation_questions WHERE tenant_id = ?1 AND (id LIKE ?2 OR id LIKE ?3) LIMIT 11",
+        r#"
+        WITH candidates AS (
+            SELECT question_id AS id
+            FROM conversation_turns
+            WHERE tenant_id = ?1 AND (question_id = ?2 OR question_id LIKE ?3 OR question_id LIKE ?4)
+            UNION
+            SELECT source_question_id AS id
+            FROM conversation_question_redirects
+            WHERE tenant_id = ?1
+              AND (source_question_id = ?2 OR source_question_id LIKE ?3 OR source_question_id LIKE ?4)
+        )
+        SELECT id FROM candidates LIMIT 11
+        "#,
     )
     .bind(tenant_id)
+    .bind(prefix_or_id)
     .bind(&like_pattern_verbatim)
     .bind(&like_pattern_domain)
     .fetch_all(pool)
@@ -125,23 +141,34 @@ pub async fn resolve_conversation_question_id_prefix_sqlx(
             prefix_or_id
         )));
     }
-    if rows.len() > 1 {
-        let max_display = std::cmp::min(rows.len(), 5);
-        let examples = rows[..max_display].join(", ");
-        let indicator = if rows.len() > 5 { "..." } else { "" };
+    let mut matched = BTreeSet::new();
+    for row in &rows {
+        matched
+            .insert(resolve_conversation_question_redirect_pool_sqlx(pool, tenant_id, row).await?);
+    }
+    if matched.len() > 1 {
+        let examples = matched
+            .iter()
+            .take(5)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let indicator = if matched.len() > 5 { "..." } else { "" };
         return Err(StoreError::Conflict(format!(
             "ambiguous prefix {:?}: {} questions match (e.g. {}{})",
             prefix_or_id,
-            if rows.len() > 10 {
+            if matched.len() > 10 {
                 "10+".to_string()
             } else {
-                rows.len().to_string()
+                matched.len().to_string()
             },
             examples,
             indicator
         )));
     }
-    Ok(rows[0].clone())
+    matched.into_iter().next().ok_or_else(|| {
+        StoreError::NotFound(format!("no question matches prefix {:?}", prefix_or_id))
+    })
 }
 
 pub async fn resolve_conversation_turn_id_prefix_sqlx(
@@ -294,9 +321,10 @@ pub async fn resolve_any_id_to_session_id_sqlx(
             FROM conversation_sessions s
             WHERE s.tenant_id = ?1 AND (s.id = ?2 OR s.id LIKE ?3 OR s.id LIKE ?4)
             UNION
-            SELECT q.session_id, 'session' AS kind
-            FROM conversation_questions q
-            WHERE q.tenant_id = ?1 AND (q.id = ?2 OR q.id LIKE ?3 OR q.id LIKE ?4)
+            SELECT t.session_id, 'session' AS kind
+            FROM conversation_turns t
+            WHERE t.tenant_id = ?1
+              AND (t.question_id = ?2 OR t.question_id LIKE ?3 OR t.question_id LIKE ?4)
             UNION
             SELECT t.session_id, 'session' AS kind
             FROM conversation_turns t
@@ -311,9 +339,10 @@ pub async fn resolve_any_id_to_session_id_sqlx(
             FROM web_record_sessions s
             WHERE s.tenant_id = ?1 AND (s.id = ?2 OR s.id LIKE ?3 OR s.id LIKE ?4)
             UNION
-            SELECT q.session_id, 'web' AS kind
-            FROM web_record_questions q
-            WHERE q.tenant_id = ?1 AND (q.id = ?2 OR q.id LIKE ?3 OR q.id LIKE ?4)
+            SELECT t.session_id, 'web' AS kind
+            FROM web_record_turns t
+            WHERE t.tenant_id = ?1
+              AND (t.question_id = ?2 OR t.question_id LIKE ?3 OR t.question_id LIKE ?4)
             UNION
             SELECT t.session_id, 'web' AS kind
             FROM web_record_turns t

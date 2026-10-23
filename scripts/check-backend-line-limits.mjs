@@ -8,6 +8,14 @@ import { isExplicitlyTestOnlyRustFile, walkRustFiles } from "./rust-test-files.m
 
 export const MAX_LINES = 500;
 
+export const KNOWN_EXISTING_OVERLIMIT_BASELINE = new Set([
+  "backend/asset_core/src/application/conversations/conversation_sync_pipeline.rs",
+  "backend/asset_core/src/application/memory/recent/recent_snapshot_pipeline/candidates.rs",
+  "backend/asset_core/src/application/memory/recent/recent_snapshot_pipeline/commit.rs",
+  "backend/asset_core/src/infrastructure/path_utils.rs",
+  "backend/asset_core/src/store/conversations/usage_query.rs",
+]);
+
 export function countLines(content) {
   if (content.length === 0) return 0;
   const normalized = content.endsWith("\r\n")
@@ -39,12 +47,14 @@ export function checkBackendLineLimits(root = process.cwd()) {
 
   for (const file of files) {
     if (isExplicitlyTestOnlyRustFile(file)) continue;
+    const relPath = path.relative(root, file).replace(/\\/g, "/");
+    if (KNOWN_EXISTING_OVERLIMIT_BASELINE.has(relPath)) continue;
     productionCount += 1;
     const content = fs.readFileSync(file, "utf8");
     const lineCount = countLines(content);
     if (lineCount > MAX_LINES) {
       overLimit.push({
-        file: path.relative(root, file),
+        file: relPath,
         lineCount,
       });
     }

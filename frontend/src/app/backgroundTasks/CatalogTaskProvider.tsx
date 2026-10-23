@@ -53,10 +53,7 @@ export function sourceScanQueryOptions(scope: QueryScope) {
       return selectLatest(tasks);
     },
     structuralSharing: (oldData, newData) =>
-      mergeTaskSnapshot(
-        oldData as TaskView | null,
-        newData as TaskView | null,
-      ),
+      mergeTaskSnapshot(oldData as TaskView | null, newData as TaskView | null),
     staleTime: 1000,
     networkMode: "always",
   });
@@ -215,10 +212,7 @@ export function useCatalogTasks(): CatalogTaskContextValue {
       scanScope: SourceScanScope = "all",
     ) => {
       const task = await startSourceScan(kind, scanScope);
-      queryClient.setQueryData<TaskView | null>(
-        scanQueryKey,
-        task,
-      );
+      queryClient.setQueryData<TaskView | null>(scanQueryKey, task);
       return task;
     },
     [queryClient, scanQueryKey],
@@ -227,10 +221,7 @@ export function useCatalogTasks(): CatalogTaskContextValue {
   const cancelScan = useCallback(
     async (taskId: string) => {
       const task = await cancelSourceScan(taskId);
-      queryClient.setQueryData<TaskView | null>(
-        scanQueryKey,
-        task,
-      );
+      queryClient.setQueryData<TaskView | null>(scanQueryKey, task);
       return task;
     },
     [queryClient, scanQueryKey],

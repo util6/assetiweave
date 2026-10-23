@@ -161,15 +161,20 @@ describe("ConversationMarkdown", () => {
     );
 
     await waitFor(() => {
-      const diagramEl = container.querySelector('[data-mermaid-diagram="true"]');
+      const diagramEl = container.querySelector(
+        '[data-mermaid-diagram="true"]',
+      );
       expect(diagramEl).not.toBeNull();
       expect(diagramEl?.tagName.toLowerCase()).toBe("pre");
       expect(diagramEl?.textContent).toContain("syntax error");
 
       expect(document.body.textContent).not.toContain("Syntax error in text");
-      expect(document.getElementById("dconversation-mermaid-legacy-dirty")).toBeNull();
-      expect(document.querySelectorAll('[id^="dconversation-mermaid-"]')).toHaveLength(0);
+      expect(
+        document.getElementById("dconversation-mermaid-legacy-dirty"),
+      ).toBeNull();
+      expect(
+        document.querySelectorAll('[id^="dconversation-mermaid-"]'),
+      ).toHaveLength(0);
     });
   });
 });
-

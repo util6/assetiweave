@@ -213,8 +213,7 @@ export function AgentConnectionRow({
             {onInstall ? (
               <Button
                 disabled={
-                  lifecycleBlocked ||
-                  (reinstallRequired && !onReinstall)
+                  lifecycleBlocked || (reinstallRequired && !onReinstall)
                 }
                 onClick={reinstallRequired ? onReinstall : onInstall}
                 title={lifecycleBlockReason}
@@ -254,11 +253,7 @@ export function AgentConnectionRow({
               ) : null
             ) : null}
             {onUninstall && agent.installed ? (
-              <Button
-                onClick={onUninstall}
-                type="button"
-                variant="outline"
-              >
+              <Button onClick={onUninstall} type="button" variant="outline">
                 {t("settings.agents.uninstall")}
               </Button>
             ) : null}
@@ -422,10 +417,7 @@ function classifyLifecycleError(
     };
   }
 
-  if (
-    rawMsg.includes("404") ||
-    rawMsg.includes("upstream_version_not_found")
-  ) {
+  if (rawMsg.includes("404") || rawMsg.includes("upstream_version_not_found")) {
     return {
       type: "upstream_not_found",
       badgeLabel: t("settings.agents.lifecycle.error.upstreamNotFound"),
@@ -487,4 +479,3 @@ function classifyLifecycleError(
 
   return null;
 }
-

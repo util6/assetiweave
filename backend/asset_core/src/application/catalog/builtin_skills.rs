@@ -71,6 +71,43 @@ pub struct BuiltinSkillInstallResult {
     pub changed: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BuiltinSkillMetadata {
+    pub name: String,
+    pub id: String,
+    pub description: String,
+}
+
+pub fn list_builtin_skills() -> Vec<BuiltinSkillMetadata> {
+    EMBEDDED_SKILLS
+        .iter()
+        .map(|embedded| {
+            let skill_str = std::str::from_utf8(embedded.skill).unwrap_or_default();
+            let description = parse_embedded_skill_frontmatter(skill_str)
+                .map(|(_, desc)| desc)
+                .unwrap_or_default();
+            BuiltinSkillMetadata {
+                name: embedded.name.to_string(),
+                id: embedded.id.to_string(),
+                description,
+            }
+        })
+        .collect()
+}
+
+pub fn get_builtin_skill_markdown(name_or_id: &str) -> Option<&'static str> {
+    EMBEDDED_SKILLS
+        .iter()
+        .find(|s| {
+            s.name == name_or_id
+                || s.id == name_or_id
+                || s.name.strip_prefix("assetiweave-") == Some(name_or_id)
+                || s.name.eq_ignore_ascii_case(name_or_id)
+                || s.id.eq_ignore_ascii_case(name_or_id)
+        })
+        .and_then(|s| std::str::from_utf8(s.skill).ok())
+}
+
 pub fn system_skill_root() -> AppResult<PathBuf> {
     if let Ok(home) = crate::backend::infrastructure::path_utils::app_home_dir() {
         return Ok(home.join("skills").join(".system"));
@@ -197,21 +234,12 @@ fn validate_embedded_skills() -> AppResult<()> {
     Ok(())
 }
 
-fn validate_embedded_skill_frontmatter(
-    skill: &str,
-    expected_name: &str,
-    directory: &str,
-) -> AppResult<()> {
+pub fn parse_embedded_skill_frontmatter(skill: &str) -> Option<(String, String)> {
     let normalized = normalize_embedded_skill_text(skill);
     let frontmatter = normalized.strip_prefix("---\n").and_then(|body| {
         body.split_once("\n---\n")
             .map(|(frontmatter, _)| frontmatter)
-    });
-    let Some(frontmatter) = frontmatter else {
-        return Err(AppError::Validation(format!(
-            "embedded Skill {directory} has invalid frontmatter"
-        )));
-    };
+    })?;
 
     let mut name = None;
     let mut description = None;
@@ -220,13 +248,27 @@ fn validate_embedded_skill_frontmatter(
             continue;
         };
         match key.trim() {
-            "name" => name = Some(value.trim()),
-            "description" => description = Some(value.trim()),
+            "name" => name = Some(value.trim().to_string()),
+            "description" => description = Some(value.trim().to_string()),
             _ => {}
         }
     }
 
-    if name != Some(expected_name) || description.is_none_or(str::is_empty) {
+    Some((name?, description?))
+}
+
+fn validate_embedded_skill_frontmatter(
+    skill: &str,
+    expected_name: &str,
+    directory: &str,
+) -> AppResult<()> {
+    let Some((name, description)) = parse_embedded_skill_frontmatter(skill) else {
+        return Err(AppError::Validation(format!(
+            "embedded Skill {directory} has invalid frontmatter"
+        )));
+    };
+
+    if name != expected_name || description.is_empty() {
         return Err(AppError::Validation(format!(
             "embedded Skill {directory} has invalid frontmatter"
         )));

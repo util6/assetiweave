@@ -11,15 +11,17 @@ pub async fn list_web_record_sessions_sqlx(
 ) -> StoreResult<Vec<ConversationSessionListItem>> {
     let needle = normalize_query(query);
     let id_needle = query.and_then(crate::backend::domain::conversation_id_search_term);
+    // 正文索引重建期间正文匹配不可用，列表搜索降级为标题级，避免给出误导性的空结果。
+    let body_search_ready = conversation_part_index_ready_sqlx(pool, tenant_id).await?;
     let rows = sqlx::query_as::<_, WebRecordSessionListItemRow>(
         r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, NULL AS project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
                (
-                   SELECT COUNT(*)
-                   FROM web_record_questions q
-                   WHERE q.tenant_id = s.tenant_id AND q.session_id = s.id
+                   SELECT COUNT(DISTINCT t.question_id)
+                   FROM web_record_turns t
+                   WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                ) AS question_count,
                (
                    SELECT COUNT(*)
@@ -35,18 +37,20 @@ pub async fn list_web_record_sessions_sqlx(
               OR instr(lower(s.title), ?4) > 0
               OR instr(lower(s.external_id), ?4) > 0
               OR (?5 IS NOT NULL AND instr(lower(s.id), ?5) > 0)
-              OR EXISTS (
+              OR (?8 = 1 AND ?4 IS NOT NULL AND EXISTS (
                   SELECT 1
-                  FROM conversation_question_fts f
+                  FROM conversation_part_fts f
                   WHERE f.tenant_id = s.tenant_id
                     AND f.session_id = s.id
-                    AND (
-                        instr(lower(f.question_text), ?4) > 0
-                        OR instr(lower(f.answer_text), ?4) > 0
-                        OR instr(lower(f.code_text), ?4) > 0
-                        OR instr(lower(f.command_text), ?4) > 0
-                    )
-              )
+                    AND instr(lower(f.text), ?4) > 0
+              ))
+              OR (?8 = 1 AND ?4 IS NOT NULL AND EXISTS (
+                  SELECT 1
+                  FROM web_record_turns t
+                  WHERE t.tenant_id = s.tenant_id
+                    AND t.session_id = s.id
+                    AND instr(lower(t.user_text), ?4) > 0
+              ))
           )
         ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
         LIMIT ?6 OFFSET ?7
@@ -67,6 +71,7 @@ pub async fn list_web_record_sessions_sqlx(
             .map_err(|_| format!("invalid web record offset: {offset}"))
             .map_err(StoreError::external)?,
     )
+    .bind(i64::from(body_search_ready))
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
@@ -100,6 +105,12 @@ pub async fn list_web_record_sessions_sqlx(
                 },
                 question_count,
                 turn_count,
+                latest_user_prompt: None,
+                window_turn_count: None,
+                window_start_turn_index: None,
+                window_start_user_prompt: None,
+                window_end_turn_index: None,
+                window_end_user_prompt: None,
             })
         })
         .collect()
@@ -212,90 +223,14 @@ pub async fn load_web_record_session_detail_sqlx(
     .ok_or_else(|| StoreError::NotFound(format!("web record session not found: {session_id}")))?;
     let session = map_sqlx_conversation_session(&session_row).map_err(StoreError::external)?;
 
-    let question_rows = sqlx::query(
-        r#"
-        SELECT id, session_id, title, created_at, updated_at
-        FROM web_record_questions
-        WHERE tenant_id = ?1 AND session_id = ?2
-        ORDER BY COALESCE((
-            SELECT MIN(t.turn_index)
-            FROM web_record_question_turns qt_order
-            JOIN web_record_turns t
-              ON t.tenant_id = qt_order.tenant_id AND t.id = qt_order.turn_id
-            WHERE qt_order.tenant_id = web_record_questions.tenant_id
-              AND qt_order.question_id = web_record_questions.id
-        ), 9223372036854775807) ASC, created_at ASC, id ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_all(pool)
-    .await
-    .map_err(StoreError::external)?;
-    let questions = question_rows
-        .iter()
-        .map(map_sqlx_conversation_question)
-        .collect::<StoreResult<Vec<_>>>()?;
-
-    let question_turn_rows = sqlx::query(
-        r#"
-        SELECT qt.question_id, qt.turn_id, qt.turn_order,
-               qt.assignment_origin, qt.assigned_at, qt.updated_at
-        FROM web_record_question_turns qt
-        JOIN web_record_questions q
-          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
-        JOIN web_record_turns t
-          ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
-        WHERE qt.tenant_id = ?1
-          AND q.session_id = ?2
-          AND q.session_id = t.session_id
-        ORDER BY COALESCE((SELECT MIN(t_order.turn_index) FROM web_record_question_turns qt_order JOIN web_record_turns t_order ON t_order.tenant_id = qt_order.tenant_id AND t_order.id = qt_order.turn_id WHERE qt_order.tenant_id = q.tenant_id AND qt_order.question_id = q.id), 9223372036854775807) ASC, qt.turn_order ASC, t.turn_index ASC,
-                 qt.turn_id ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_all(pool)
-    .await
-    .map_err(StoreError::external)?;
-    let mut question_turns_by_question = BTreeMap::<String, Vec<ConversationQuestionTurn>>::new();
-    for row in &question_turn_rows {
-        let membership = map_sqlx_conversation_question_turn(row).map_err(StoreError::external)?;
-        question_turns_by_question
-            .entry(membership.question_id.clone())
-            .or_default()
-            .push(membership);
-    }
-
-    #[derive(Debug, FromRow)]
-    pub struct WebRecordDetailTurnRow {
-        pub id: String,
-        pub session_id: String,
-        pub external_id: String,
-        pub turn_index: i64,
-        pub user_text: String,
-        pub title: Option<String>,
-        pub started_at: Option<String>,
-        pub ended_at: Option<String>,
-        pub fingerprint: String,
-        pub missing: i64,
-        pub imported_at: String,
-        pub question_id: String,
-        pub model: Option<String>,
-    }
-
-    let turn_rows = sqlx::query_as::<_, WebRecordDetailTurnRow>(
+    let turn_rows = sqlx::query_as::<_, ConversationTurnQuestionRow>(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
-               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
-               qt.question_id, t.model
-        FROM web_record_question_turns qt
-        JOIN web_record_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
-        JOIN web_record_questions q ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
-        WHERE q.tenant_id = ?1
-          AND q.session_id = ?2
-          AND q.session_id = t.session_id
-        ORDER BY COALESCE((SELECT MIN(t_order.turn_index) FROM web_record_question_turns qt_order JOIN web_record_turns t_order ON t_order.tenant_id = qt_order.tenant_id AND t_order.id = qt_order.turn_id WHERE qt_order.tenant_id = q.tenant_id AND qt_order.question_id = q.id), 9223372036854775807) ASC, qt.turn_order ASC, t.turn_index ASC
+               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
+               t.question_id, t.question_origin
+        FROM web_record_turns t
+        WHERE t.tenant_id = ?1 AND t.session_id = ?2
+        ORDER BY t.turn_index ASC, t.id ASC
         "#,
     )
     .bind(tenant_id)
@@ -303,27 +238,10 @@ pub async fn load_web_record_session_detail_sqlx(
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
-    let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
-    for row in turn_rows {
-        let question_id = row.question_id;
-        turns_by_question
-            .entry(question_id)
-            .or_default()
-            .push(ConversationTurn {
-                id: row.id,
-                session_id: row.session_id,
-                external_id: row.external_id,
-                turn_index: row.turn_index,
-                user_text: row.user_text,
-                title: row.title,
-                started_at: row.started_at,
-                ended_at: row.ended_at,
-                fingerprint: row.fingerprint,
-                missing: row.missing == 1,
-                imported_at: row.imported_at,
-                model: row.model,
-            });
-    }
+    let turns = turn_rows
+        .into_iter()
+        .map(ConversationTurnQuestionRow::into_grouped_turn)
+        .collect::<Vec<_>>();
 
     let part_rows = sqlx::query(
         r#"
@@ -361,31 +279,12 @@ pub async fn load_web_record_session_detail_sqlx(
     .unwrap_or_else(|| "[]".to_string());
     let card_kinds: Vec<crate::backend::domain::ConversationCardKindDefinition> =
         decode_json_app(card_kinds_json)?;
-    let mut question_details = Vec::with_capacity(questions.len());
-    for question in questions {
-        let question_turns = question_turns_by_question
-            .remove(&question.id)
-            .unwrap_or_default();
-        let turns = turns_by_question.remove(&question.id).unwrap_or_default();
-        let mut parts = Vec::new();
-        for turn in &turns {
-            parts.extend(parts_by_turn.remove(&turn.id).unwrap_or_default());
-        }
-        let projected_content_nodes = project_question_content_nodes(
-            &question.id,
-            &question_turns,
-            &parts,
-            &session.adapter_id,
-            &card_kinds,
-        )?;
-        question_details.push(ConversationQuestionDetail {
-            question: project_question_title(question, &turns),
-            question_turns,
-            turns,
-            parts,
-            projected_content_nodes,
-        });
-    }
+    let question_details = build_question_details_from_turn_columns(
+        turns,
+        parts_by_turn,
+        &session.adapter_id,
+        &card_kinds,
+    )?;
     Ok(ConversationSessionDetail {
         session,
         questions: question_details,

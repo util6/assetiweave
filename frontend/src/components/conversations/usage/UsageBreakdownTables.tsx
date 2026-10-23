@@ -16,7 +16,12 @@ import {
 } from "../../apps/AppShortcutIcon";
 import type { AppShortcut } from "../../../types";
 import { Button } from "../../ui/button";
-import { ChevronLeft, ChevronRight, FolderGit2, FolderArchive } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  FolderGit2,
+  FolderArchive,
+} from "lucide-react";
 
 export function formatInstanceDisplayName(name: string): string {
   if (!name) return "";
@@ -90,8 +95,14 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
     validDatePage * DATES_PAGE_SIZE,
   );
 
-  const totalProjectPages = Math.max(1, Math.ceil(projects.length / PROJECTS_PAGE_SIZE));
-  const validProjectPage = Math.min(Math.max(1, projectPage), totalProjectPages);
+  const totalProjectPages = Math.max(
+    1,
+    Math.ceil(projects.length / PROJECTS_PAGE_SIZE),
+  );
+  const validProjectPage = Math.min(
+    Math.max(1, projectPage),
+    totalProjectPages,
+  );
   const pagedProjects = projects.slice(
     (validProjectPage - 1) * PROJECTS_PAGE_SIZE,
     validProjectPage * PROJECTS_PAGE_SIZE,
@@ -115,7 +126,9 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
                   <th className="pb-2.5 pr-3 text-right">缓存 Tokens</th>
                   <th className="pb-2.5 pr-3 text-right">输出 Tokens</th>
                   <th className="pb-2.5 pr-3 text-right">参考单价</th>
-                  <th className="pb-2.5 pr-2 text-right font-bold text-primary">预估费用</th>
+                  <th className="pb-2.5 pr-2 text-right font-bold text-primary">
+                    预估费用
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-theme-border/20">
@@ -170,7 +183,9 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
           <div>
             <div className="mb-3.5 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <h3 className="text-body-md font-bold text-on-surface">按实例</h3>
+                <h3 className="text-body-md font-bold text-on-surface">
+                  按实例
+                </h3>
                 {sources.length > 0 && (
                   <span className="rounded-full bg-theme-control/70 border border-theme-control-border/60 px-2 py-0.5 text-[11px] font-mono text-on-surface-variant">
                     {sources.length} 个实例
@@ -186,8 +201,12 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
                     <th className="pb-3 pr-3 text-right">输入 Tokens</th>
                     <th className="pb-3 pr-3 text-right">缓存 Tokens</th>
                     <th className="pb-3 pr-3 text-right">输出 Tokens</th>
-                    <th className="pb-3 pr-3 text-right font-bold">合计 Tokens</th>
-                    <th className="pb-3 pr-2 text-right font-bold text-primary">预估费用</th>
+                    <th className="pb-3 pr-3 text-right font-bold">
+                      合计 Tokens
+                    </th>
+                    <th className="pb-3 pr-2 text-right font-bold text-primary">
+                      预估费用
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-theme-border/20">
@@ -342,8 +361,12 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
                 <th className="pb-2.5 pr-4 text-right font-bold">
                   合计 Tokens
                 </th>
-                <th className="pb-2.5 pr-4 text-right font-bold text-primary">预估费用</th>
-                <th className="pb-2.5 pr-2 text-right font-semibold text-on-surface-variant">请求数</th>
+                <th className="pb-2.5 pr-4 text-right font-bold text-primary">
+                  预估费用
+                </th>
+                <th className="pb-2.5 pr-2 text-right font-semibold text-on-surface-variant">
+                  请求数
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-theme-border/20">
@@ -384,19 +407,22 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
                             <span
                               className={cn(
                                 "text-caption font-semibold truncate",
-                                isSelected ? "text-primary font-bold" : "text-on-surface",
+                                isSelected
+                                  ? "text-primary font-bold"
+                                  : "text-on-surface",
                               )}
                             >
                               {p.displayName}
                             </span>
-                            {!p.isUnassigned && p.projectPath !== p.displayName && (
-                              <span
-                                className="text-[11px] font-mono text-on-surface-variant/70 truncate"
-                                title={p.projectPath}
-                              >
-                                {p.projectPath}
-                              </span>
-                            )}
+                            {!p.isUnassigned &&
+                              p.projectPath !== p.displayName && (
+                                <span
+                                  className="text-[11px] font-mono text-on-surface-variant/70 truncate"
+                                  title={p.projectPath}
+                                >
+                                  {p.projectPath}
+                                </span>
+                              )}
                           </div>
                           {isSelected && (
                             <span className="ml-auto shrink-0 rounded-full bg-primary/20 text-primary text-[10px] px-1.5 py-0.5 font-medium">
@@ -455,7 +481,9 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setProjectPage((p) => Math.min(totalProjectPages, p + 1))}
+                onClick={() =>
+                  setProjectPage((p) => Math.min(totalProjectPages, p + 1))
+                }
                 disabled={validProjectPage >= totalProjectPages}
                 className="h-8 gap-1 rounded-xl border-theme-control-border/80 bg-theme-control/60 px-2.5 text-caption text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] transition-all hover:border-theme-nav-active-border/60 hover:text-on-surface disabled:opacity-40 cursor-pointer"
               >
@@ -490,8 +518,12 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
                 <th className="pb-2.5 pr-4 text-right font-bold">
                   合计 Tokens
                 </th>
-                <th className="pb-2.5 pr-4 text-right font-bold text-primary">预估费用</th>
-                <th className="pb-2.5 pr-2 text-right font-semibold text-on-surface-variant">请求数</th>
+                <th className="pb-2.5 pr-4 text-right font-bold text-primary">
+                  预估费用
+                </th>
+                <th className="pb-2.5 pr-2 text-right font-semibold text-on-surface-variant">
+                  请求数
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-theme-border/20">
@@ -562,7 +594,9 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setDatePage((p) => Math.min(totalDatePages, p + 1))}
+                onClick={() =>
+                  setDatePage((p) => Math.min(totalDatePages, p + 1))
+                }
                 disabled={validDatePage >= totalDatePages}
                 className="h-8 gap-1 rounded-xl border-theme-control-border/80 bg-theme-control/60 px-2.5 text-caption text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] transition-all hover:border-theme-nav-active-border/60 hover:text-on-surface disabled:opacity-40"
               >

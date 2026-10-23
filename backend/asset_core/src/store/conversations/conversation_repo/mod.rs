@@ -9,14 +9,13 @@ use crate::backend::domain::conversations::{
     ConversationSearchPage, ConversationSessionDetail, ConversationSessionListItem,
 };
 use crate::backend::domain::{
-    conversation_turn_fingerprint, group_turn_ids_by_question, ConversationAdapter,
-    ConversationAdapterCatalogRelease, ConversationAdapterKind, ConversationAdapterPackage,
-    ConversationAdapterPackageOrigin, ConversationAdapterPackageVersion,
-    ConversationAdapterRuntimeGateStatus, ConversationAdapterTrustState,
-    ConversationCardKindDefinition, ConversationGroupingOrigin, ConversationPart,
-    ConversationQuestion, ConversationQuestionTurn, ConversationSession, ConversationSource,
-    ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus, ConversationTurn,
-    NormalizedConversationSession,
+    conversation_turn_fingerprint, ConversationAdapter, ConversationAdapterCatalogRelease,
+    ConversationAdapterKind, ConversationAdapterPackage, ConversationAdapterPackageOrigin,
+    ConversationAdapterPackageVersion, ConversationAdapterRuntimeGateStatus,
+    ConversationAdapterTrustState, ConversationCardKindDefinition, ConversationGroupingOrigin,
+    ConversationPart, ConversationQuestion, ConversationQuestionTurn, ConversationSession,
+    ConversationSource, ConversationSourceKind, ConversationSyncRun, ConversationSyncStatus,
+    ConversationTurn, NormalizedConversationSession,
 };
 use crate::backend::store::{StoreError, StoreResult};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
@@ -39,9 +38,10 @@ pub mod import_prune;
 pub mod import_records;
 pub mod merge_split;
 pub mod observations;
+pub mod outline;
 pub mod package_releases;
 pub mod packages;
-pub mod part_links;
+pub mod part_index;
 pub mod prefixes;
 pub mod projection;
 pub mod reproject;
@@ -64,9 +64,10 @@ pub use import_prune::*;
 pub use import_records::*;
 pub use merge_split::*;
 pub use observations::*;
+pub use outline::*;
 pub use package_releases::*;
 pub use packages::*;
-pub use part_links::*;
+pub use part_index::*;
 pub use prefixes::*;
 pub use projection::*;
 pub use reproject::*;

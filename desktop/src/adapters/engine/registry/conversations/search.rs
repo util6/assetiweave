@@ -80,6 +80,30 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation search index rebuild")
     ),
     command!(
+        "conversation.part.index.status",
+        "conversation.part.index.status",
+        "Get the local conversation part index status",
+        Read,
+        Friendly,
+        false,
+        NoParams,
+        ServiceAsync => |service, _params| service.get_conversation_part_index_status().await,
+        &[],
+        Some("assetiweave-cli conversation part index status")
+    ),
+    command!(
+        "conversation.part.index.rebuild",
+        "conversation.part.index.rebuild",
+        "Rebuild the derived local conversation part index",
+        Write,
+        Friendly,
+        false,
+        NoParams,
+        ServiceAsync => |service, _params| service.start_conversation_part_index_rebuild().await,
+        &[],
+        Some("assetiweave-cli conversation part index rebuild")
+    ),
+    command!(
         "conversation.part.translation.update",
         "conversation.part.translation.update",
         "Overwrite the stored translation for a conversation content part",
@@ -237,6 +261,30 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         false,
         NoParams,
         ServiceAsync => |service, _params| service.rebuild_conversation_search_index().await,
+        &[],
+        None
+    ),
+    command!(
+        "get_conversation_part_index_status",
+        "conversation.part.index.status",
+        "Get the local conversation part index status",
+        Read,
+        App,
+        false,
+        NoParams,
+        ServiceAsync => |service, _params| service.get_conversation_part_index_status().await,
+        &[],
+        None
+    ),
+    command!(
+        "start_conversation_part_index_rebuild",
+        "conversation.part.index.rebuild",
+        "Rebuild the conversation part index",
+        Write,
+        App,
+        false,
+        NoParams,
+        ServiceAsync => |service, _params| service.start_conversation_part_index_rebuild().await,
         &[],
         None
     ),

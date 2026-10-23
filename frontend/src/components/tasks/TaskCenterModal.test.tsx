@@ -646,7 +646,8 @@ describe("TaskCenterModal", () => {
         state: "failed",
         outcome: "failure",
         errorSummary: "近期记忆快照生成失败: 重试达到上限",
-        resultSummary: "Memory 流水线执行完毕 (会话成功: 0, 失败: 0, 快照已更新: false)",
+        resultSummary:
+          "Memory 流水线执行完毕 (会话成功: 0, 失败: 0, 快照已更新: false)",
         stages: [
           {
             id: "session_facts",
@@ -698,5 +699,3 @@ describe("TaskCenterModal", () => {
     });
   });
 });
-
-

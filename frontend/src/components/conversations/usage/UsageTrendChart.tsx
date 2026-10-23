@@ -195,14 +195,8 @@ export const UsageTrendChart: React.FC<UsageTrendChartProps> = ({
 
             {/* Line gradient: smooth glow curve */}
             <linearGradient id="chartLineGradient" x1="0" y1="0" x2="1" y2="0">
-              <stop
-                offset="0%"
-                stopColor="rgb(var(--color-primary-strong))"
-              />
-              <stop
-                offset="50%"
-                stopColor="rgb(var(--theme-glow))"
-              />
+              <stop offset="0%" stopColor="rgb(var(--color-primary-strong))" />
+              <stop offset="50%" stopColor="rgb(var(--theme-glow))" />
               <stop
                 offset="100%"
                 stopColor="rgb(var(--color-primary-strong))"
@@ -210,8 +204,20 @@ export const UsageTrendChart: React.FC<UsageTrendChartProps> = ({
             </linearGradient>
 
             {/* Subtle line glow filter */}
-            <filter id="chartLineGlow" x="-20%" y="-20%" width="140%" height="140%">
-              <feDropShadow dx="0" dy="3" stdDeviation="4" floodColor="rgb(var(--theme-glow))" floodOpacity="0.3" />
+            <filter
+              id="chartLineGlow"
+              x="-20%"
+              y="-20%"
+              width="140%"
+              height="140%"
+            >
+              <feDropShadow
+                dx="0"
+                dy="3"
+                stdDeviation="4"
+                floodColor="rgb(var(--theme-glow))"
+                floodOpacity="0.3"
+              />
             </filter>
           </defs>
 
@@ -378,7 +384,9 @@ export const UsageTrendChart: React.FC<UsageTrendChartProps> = ({
               </div>
               <div className="flex justify-between gap-4">
                 <span className="text-on-surface-variant">输入 Tokens:</span>
-                <span className="font-mono">{formatChineseTokens(activePoint.inputTokens)}</span>
+                <span className="font-mono">
+                  {formatChineseTokens(activePoint.inputTokens)}
+                </span>
               </div>
               <div className="flex justify-between gap-4">
                 <span className="text-on-surface-variant">缓存 Tokens:</span>
@@ -388,7 +396,9 @@ export const UsageTrendChart: React.FC<UsageTrendChartProps> = ({
               </div>
               <div className="flex justify-between gap-4">
                 <span className="text-on-surface-variant">输出 Tokens:</span>
-                <span className="font-mono">{formatChineseTokens(activePoint.outputTokens)}</span>
+                <span className="font-mono">
+                  {formatChineseTokens(activePoint.outputTokens)}
+                </span>
               </div>
             </div>
           </div>

@@ -5,7 +5,7 @@ use crate::backend::domain::{
 };
 
 #[tokio::test]
-async fn test_reproject_conversation_session_materializes_parts_and_links() {
+async fn test_reproject_conversation_session_materializes_parts_and_derives_execution_pairs() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-reproject-{}.sqlite",
         uuid::Uuid::new_v4()
@@ -157,18 +157,39 @@ async fn test_reproject_conversation_session_materializes_parts_and_links() {
     assert_eq!(detail.questions.len(), 1);
     assert_eq!(detail.questions[0].parts.len(), 3);
 
-    // Verify part_links were created
-    let turn_id = stable_id("conversation-turn", &[&session_id, "turn-1"]);
-    let links = load_conversation_part_links_for_turn_sqlx(pool, tenant_id, &turn_id)
-        .await
-        .unwrap();
-
-    assert!(!links.is_empty());
-    assert!(links.iter().any(|l| l.relation == "execution_result"));
-    assert!(links.iter().any(|l| l.relation == "execution_command"));
-    assert!(links
+    // 执行分组由零件表在读取时派生：同一 source_execution_id 的命令与结果按
+    // part_index 排序、按卡片语义角色区分，不依赖任何关系边表。
+    let question = &detail.questions[0];
+    assert_eq!(
+        question
+            .parts
+            .iter()
+            .map(|part| part.part_index)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    for part in &question.parts[..2] {
+        assert_eq!(part.source_execution_id.as_deref(), Some("exec-10"));
+    }
+    let execution_nodes = question
+        .projected_content_nodes
         .iter()
-        .any(|l| l.relation == "spawned_session" && l.target_id == "child-session-99"));
+        .filter(|node| node.source_execution_id.as_deref() == Some("exec-10"))
+        .collect::<Vec<_>>();
+    assert_eq!(execution_nodes.len(), 2);
+    assert_eq!(execution_nodes[0].semantic_role.as_deref(), Some("command"));
+    assert_eq!(execution_nodes[1].semantic_role.as_deref(), Some("result"));
+    assert!(execution_nodes[0].part_order < execution_nodes[1].part_order);
+    assert_eq!(execution_nodes[1].status.as_deref(), Some("success"));
+    assert_eq!(execution_nodes[1].exit_code, Some(0));
+
+    // 子代理卡片显示的子会话标识来自卡片正文，不来自关系边表。
+    let subagent_node = question
+        .projected_content_nodes
+        .iter()
+        .find(|node| node.semantic_role.as_deref() == Some("subagent"))
+        .expect("subagent card must project a content node");
+    assert!(subagent_node.content.contains("child-session-99"));
 
     // 2. Second materialization: simulated replay with updated title and projection_version = 2
     let mut updated_normalized = normalized.clone();
@@ -211,6 +232,16 @@ async fn test_reproject_conversation_session_materializes_parts_and_links() {
         versions.get(&normalized.external_id).map(|s| s.as_str()),
         Some("v1")
     );
+
+    // 重复同步不再放大写入：零件行数仍等于本轮的零件数量，且不再产生关系边行。
+    let part_row_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversation_parts WHERE tenant_id = ?1")
+            .bind(tenant_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(part_row_count, 3);
+
     drop(database);
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(format!("{}-wal", db_path.display()));

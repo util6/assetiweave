@@ -32,7 +32,9 @@ const mockAgent: AgentCatalogItem = {
   hasSelectableDistribution: true,
 };
 
-function createPreview(action: "install" | "update" | "reinstall" = "update"): AgentInstallPreview {
+function createPreview(
+  action: "install" | "update" | "reinstall" = "update",
+): AgentInstallPreview {
   return {
     agentId: "antigravity",
     catalogVersion: "2026-09-07",

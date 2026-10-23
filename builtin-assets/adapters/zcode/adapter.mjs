@@ -90,17 +90,49 @@ function sqlString(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
 
-function sqliteJson(dbPath, sql) {
-  const result = spawnSync("sqlite3", ["-json", dbPath, sql], {
-    encoding: "utf8",
-    maxBuffer: SQLITE_MAX_BUFFER_BYTES,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error((result.stderr || `sqlite3 exited with ${result.status}`).trim());
+function sleepSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {}
   }
-  const text = result.stdout.trim();
-  return text ? JSON.parse(text) : [];
+}
+
+function sqliteJson(dbPath, sql, maxRetries = 3) {
+  const resolved = path.resolve(expandPath(dbPath));
+  const uri = `file:${resolved}?mode=ro`;
+  let lastError = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    let result = spawnSync("sqlite3", ["-json", "-cmd", ".timeout 10000", uri, sql], {
+      encoding: "utf8",
+      maxBuffer: SQLITE_MAX_BUFFER_BYTES,
+    });
+
+    if (result.status !== 0 && result.stderr && (result.stderr.includes("unable to open database") || result.stderr.includes("URI"))) {
+      result = spawnSync("sqlite3", ["-json", "-cmd", ".timeout 10000", resolved, sql], {
+        encoding: "utf8",
+        maxBuffer: SQLITE_MAX_BUFFER_BYTES,
+      });
+    }
+
+    if (!result.error && result.status === 0) {
+      const text = result.stdout.trim();
+      return text ? JSON.parse(text) : [];
+    }
+
+    const errMsg = (result.error ? result.error.message : result.stderr || `sqlite3 exited with ${result.status}`).trim();
+    lastError = new Error(errMsg);
+
+    if (errMsg.includes("database is locked") || errMsg.includes("busy")) {
+      sleepSync(200 * (attempt + 1));
+      continue;
+    }
+    break;
+  }
+
+  throw lastError;
 }
 
 function parseJson(text) {
@@ -316,6 +348,7 @@ function normalizedPart({
   cwd = null,
   status = null,
   exit_code = null,
+  command_label = null,
   source_execution_id = null,
   metadata_json = null,
 }) {
@@ -328,6 +361,7 @@ function normalizedPart({
     cwd,
     status,
     exit_code,
+    command_label,
     source_execution_id,
     metadata_json,
   };
@@ -355,6 +389,8 @@ function normalizeAssistantPart(data, sourceExecutionId = null) {
     const cwd = nestedString(data, ["cwd", "workdir", "working_directory", "workingDirectory"]);
     const status = nestedString(data, ["status"]);
     const exitCode = nestedInt(data, ["exit_code", "exitCode", "code"]);
+    const rawLabel = nestedString(data, ["title", "label", "tool", "tool_name", "toolName"]);
+    const commandLabel = rawLabel?.trim() || null;
     const parts = [];
     if (command) {
       parts.push(
@@ -363,9 +399,10 @@ function normalizeAssistantPart(data, sourceExecutionId = null) {
           kind: "command",
           command,
           cwd,
+          command_label: commandLabel,
           source_execution_id: sourceExecutionId,
           metadata_json: contentCardMetadata(
-            { type: "command", cwd },
+            { type: "command", cwd, command_label: commandLabel },
             smallMetadata(data),
           ),
         }),
@@ -378,6 +415,7 @@ function normalizeAssistantPart(data, sourceExecutionId = null) {
             text,
             status,
             exit_code: exitCode,
+            command_label: commandLabel,
             source_execution_id: sourceExecutionId,
             metadata_json: contentCardMetadata(
               {
@@ -385,6 +423,7 @@ function normalizeAssistantPart(data, sourceExecutionId = null) {
                 format: "plain",
                 status,
                 exit_code: exitCode,
+                command_label: commandLabel,
               },
               smallMetadata(data),
             ),
@@ -401,6 +440,7 @@ function normalizeAssistantPart(data, sourceExecutionId = null) {
           text,
           status,
           exit_code: exitCode,
+          command_label: commandLabel,
           source_execution_id: sourceExecutionId,
           metadata_json: contentCardMetadata(
             {
@@ -408,6 +448,7 @@ function normalizeAssistantPart(data, sourceExecutionId = null) {
               format: "plain",
               status,
               exit_code: exitCode,
+              command_label: commandLabel,
             },
             smallMetadata(data),
           ),
@@ -419,8 +460,9 @@ function normalizeAssistantPart(data, sourceExecutionId = null) {
         role: "tool",
         kind: "tool",
         text: String(data?.tool || data?.tool_name || data?.type || "tool"),
+        command_label: commandLabel,
         metadata_json: contentCardMetadata(
-          { type: "tool", format: "plain" },
+          { type: "tool", format: "plain", command_label: commandLabel },
           smallMetadata(data),
         ),
       }),

@@ -260,7 +260,7 @@ function queryWorkbuddyDbTitles(candidateRoots = []) {
   for (const dbPath of dbPaths) {
     try {
       const sql = "SELECT id, title, custom_title, cwd FROM sessions WHERE deleted_at IS NULL;";
-      const res = spawnSync("sqlite3", ["-json", dbPath, sql], {
+      const res = spawnSync("sqlite3", ["-json", "-cmd", ".timeout 10000", dbPath, sql], {
         encoding: "utf8",
         maxBuffer: 32 * 1024 * 1024,
       });
@@ -553,12 +553,17 @@ function parseJsonl(text, sessionIdFallback, filePath) {
       let command = null;
       let desc = null;
       let kind = "tool";
+      let commandLabel = null;
       if (toolName === "Bash" && args?.command) {
         kind = "command";
         command = args.command;
         desc = args.description || args.command;
+        const rawDesc = typeof args.description === "string" ? args.description.trim() : null;
+        commandLabel = rawDesc || null;
       } else {
         desc = typeof args === "object" ? JSON.stringify(args) : String(args || "");
+        const rawDesc = typeof args?.description === "string" ? args.description.trim() : (typeof args?.subagent_type === "string" ? args.subagent_type.trim() : null);
+        commandLabel = rawDesc || null;
       }
 
       currentTurn.parts.push({
@@ -571,7 +576,8 @@ function parseJsonl(text, sessionIdFallback, filePath) {
         status: null,
         exit_code: null,
         source_execution_id: callId,
-        metadata_json: JSON.stringify({ tool_name: toolName, execution_kind: executionKind, signal, file_path: args?.path }),
+        command_label: commandLabel,
+        metadata_json: JSON.stringify({ tool_name: toolName, execution_kind: executionKind, signal, file_path: args?.path, command_label: commandLabel }),
         content_card: {
           schema_version: 1,
           kind: kind === "command" ? `${ADAPTER_ID}.command` : `${ADAPTER_ID}.tool`,

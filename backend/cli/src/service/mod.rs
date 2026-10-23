@@ -20,10 +20,24 @@ pub struct CliService {
 
 impl CliService {
     pub async fn bootstrap() -> Result<Self> {
-        let app_service = AppService::open_for_engine()
-            .await
-            .context("failed to bootstrap AppService in OneShot CLI mode")?;
-        Ok(Self { app_service })
+        match AppService::open_for_engine().await {
+            Ok(app_service) => Ok(Self { app_service }),
+            Err(err) => {
+                let err_detail = format!("{:#}", err);
+                if err_detail.contains("missing in the resolved migrations") {
+                    anyhow::bail!(
+                        "failed to bootstrap AppService in OneShot CLI mode: detected outdated aiwc binary against database migrations.\n\
+                         Caused by:\n    {}\n\n\
+                         Hint: If developing in assetiweave workspace, set ASSETIWEAVE_ENV=development to use target/debug/aiwc, or run:\n    \
+                         cargo build -p cli --bin aiwc\n\
+                         or update the global CLI with:\n    \
+                         pnpm cli:install",
+                        err_detail
+                    );
+                }
+                Err(err).context("failed to bootstrap AppService in OneShot CLI mode")
+            }
+        }
     }
 
     pub fn get_version_static() -> VersionViewModel {
@@ -354,59 +368,31 @@ impl CliService {
 
     pub async fn list_conversation_sessions(
         &self,
-        limit: usize,
-        offset: usize,
+        args: &crate::args::conversation::ConversationListArgs,
     ) -> Result<Vec<asset_core::domain::conversations::ConversationSessionListItem>> {
+        let project_path = if args.current_project {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        } else {
+            args.project.clone()
+        };
         let params = asset_core::application::ConversationSessionListParams {
-            adapter_id: None,
+            adapter_id: args.adapter.clone(),
             source_id: None,
-            query: None,
-            limit: Some(limit),
-            offset: Some(offset),
+            query: args.query.clone(),
+            limit: Some(args.limit),
+            offset: Some(args.offset),
+            project_path,
+            since: args.since.clone(),
+            until: args.until.clone(),
+            window: args.window.clone(),
+            range: args.range.clone(),
         };
         self.app_service
             .list_conversation_sessions(params)
             .await
             .context("failed to list conversation sessions")
-    }
-
-    pub async fn get_conversation_session(&self, session_id: String) -> Result<serde_json::Value> {
-        let params = asset_core::application::ConversationSessionGetParams {
-            session_id,
-            roles: None,
-        };
-        let session = self
-            .app_service
-            .get_conversation_session(params)
-            .await
-            .context("failed to get conversation session")?;
-        Ok(serde_json::to_value(session)?)
-    }
-
-    pub async fn sync_conversations(
-        &self,
-        adapter_id: Option<String>,
-        source_id: Option<String>,
-        force: bool,
-    ) -> Result<serde_json::Value> {
-        let mode = if force {
-            asset_core::application::ConversationSyncMode::Full
-        } else {
-            asset_core::application::ConversationSyncMode::Incremental
-        };
-        let params = asset_core::application::ConversationSyncParams {
-            source_id,
-            adapter_id,
-            record_kind: None,
-            mode,
-            dry_run: false,
-        };
-        let result = self
-            .app_service
-            .sync_conversations(params)
-            .await
-            .context("failed to synchronize conversations")?;
-        Ok(serde_json::to_value(result)?)
     }
 
     pub fn list_conversation_adapters(
