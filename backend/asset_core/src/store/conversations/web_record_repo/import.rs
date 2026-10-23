@@ -60,6 +60,9 @@ pub async fn import_web_record_sessions_sqlx(
                 load_web_record_part_translation_state_sqlx_tx(&mut tx, tenant_id, &session.id)
                     .await
                     .map_err(StoreError::external)?;
+            let existing_question_assignments =
+                load_web_record_turn_question_assignments_sqlx_tx(&mut tx, tenant_id, &session.id)
+                    .await?;
             delete_web_record_session_sqlx_tx(&mut tx, tenant_id, &session.id).await?;
             insert_web_record_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
 
@@ -86,6 +89,7 @@ pub async fn import_web_record_sessions_sqlx(
                 tenant_id,
                 &session.id,
                 &stored_turns,
+                &existing_question_assignments,
                 &now,
             )
             .await?;

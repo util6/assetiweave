@@ -168,6 +168,12 @@ pub async fn merge_conversation_questions_sqlx(
         .map_err(StoreError::external)?;
     }
     renumber_questions_for_session_sqlx_tx(&mut tx, tenant_id, &session_id).await?;
+    sync_conversation_turn_question_columns_from_membership_sqlx_tx(
+        &mut tx,
+        tenant_id,
+        &session_id,
+    )
+    .await?;
     rebuild_session_question_aggregates_sqlx_tx(&mut tx, tenant_id, &session_id, &now).await?;
     super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
     tx.commit().await.map_err(StoreError::external)?;
@@ -301,6 +307,12 @@ pub async fn split_conversation_question_sqlx(
     }
     renumber_question_turns_sqlx_tx(&mut tx, tenant_id, question_id, &now).await?;
     renumber_questions_for_session_sqlx_tx(&mut tx, tenant_id, &question.session_id).await?;
+    sync_conversation_turn_question_columns_from_membership_sqlx_tx(
+        &mut tx,
+        tenant_id,
+        &question.session_id,
+    )
+    .await?;
     rebuild_session_question_aggregates_sqlx_tx(&mut tx, tenant_id, &question.session_id, &now)
         .await?;
     super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;

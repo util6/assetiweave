@@ -2,7 +2,7 @@ use crate::backend::domain::conversations::{
     ConversationQuestionDetail, ConversationSessionDetail, ConversationSessionListItem,
 };
 use crate::backend::domain::{
-    conversation_turn_fingerprint, group_turn_ids_by_question, ConversationCardKindDefinition,
+    conversation_turn_fingerprint, ConversationCardKindDefinition, ConversationGroupingOrigin,
     ConversationPart, ConversationQuestionTurn, ConversationSession, ConversationSource,
     ConversationSyncRun, ConversationSyncStatus, ConversationTurn, NormalizedConversationSession,
 };
@@ -15,11 +15,12 @@ use std::collections::BTreeMap;
 use super::{
     codec::{decode_json_app, encode_enum_app, encode_json_app},
     conversation_repo::{
-        append_projected_cards_to_question_aggregate, insert_conversation_sync_delta_sqlx_tx,
-        map_sqlx_conversation_part, map_sqlx_conversation_question,
-        map_sqlx_conversation_question_turn, map_sqlx_conversation_session,
+        append_projected_cards_to_question_aggregate, decode_turn_question_origin,
+        insert_conversation_sync_delta_sqlx_tx, map_sqlx_conversation_part,
+        map_sqlx_conversation_question, map_sqlx_conversation_question_turn,
+        map_sqlx_conversation_session, plan_turn_question_assignments,
         project_question_content_nodes, project_question_title, ConversationImportResult,
-        CONVERSATION_IMPORT_BATCH_SIZE,
+        TurnQuestionInput, CONVERSATION_IMPORT_BATCH_SIZE,
     },
 };
 
