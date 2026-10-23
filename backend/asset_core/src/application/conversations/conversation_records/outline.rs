@@ -1,9 +1,16 @@
 use crate::backend::application::{
     AppError, AppResult, AppService, ConversationCardGetParams, ConversationOutlineParams,
 };
-use crate::backend::domain::conversations::*;
+use crate::backend::domain::conversations::outline::{
+    CardOutline, CardTargetMeta, MatrixView, NeighborhoodCardRow, SessionOutline, SessionTurnRow,
+    TurnCardRow, TurnOutline,
+};
+use crate::backend::domain::conversations::{
+    ConversationCardDetail, ConversationOutline, ConversationQuestionDetail,
+    ConversationRecordKind, ConversationSessionDetail,
+};
 use crate::backend::domain::ConversationPartRole;
-use crate::backend::store::conversations::*;
+use crate::backend::store::conversations::outline::ResolvedOutlineTarget;
 use sqlx::SqlitePool;
 
 impl AppService {
