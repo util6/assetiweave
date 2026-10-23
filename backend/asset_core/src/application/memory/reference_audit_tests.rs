@@ -426,3 +426,34 @@ async fn web_record_references_are_audited_against_web_questions() {
     drop(service);
     fs::remove_dir_all(root).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn session_without_any_group_is_reported_as_invalidated() {
+    let (service, root) = open_service("no-group").await;
+    seed(
+        service.db.pool(),
+        &[
+            "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-no-group', 'session', 's-empty', 'q-gone', NULL, 'block-e-no-group', 'hash-e-no-group', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
+        ],
+    )
+    .await;
+
+    let repaired = service
+        .repair_memory_references(MemoryReferenceRepairParams {
+            dry_run: false,
+            yes: true,
+        })
+        .await
+        .expect("invalidate reference without candidates");
+    assert!(repaired.repairs.is_empty());
+    assert_eq!(repaired.counts.orphaned, 0);
+    assert_eq!(repaired.counts.manual_review, 1);
+    assert_eq!(repaired.manual_review[0].reason, "session_group_missing");
+    assert_eq!(
+        reference_question(&service, "memory_evidence_snapshots", "e-no-group").await,
+        Some("q-gone".to_string())
+    );
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
