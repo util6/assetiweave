@@ -2070,6 +2070,378 @@ async fn sqlx_merge_and_split_conversation_questions_preserve_grouping() {
 }
 
 #[tokio::test]
+async fn sqlx_merge_rewrites_grouping_on_turn_columns_only() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-merge-turn-columns-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "merge-turn-columns-external",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let (session_id, first_question_id, second_question_id) =
+        import_read_path_fixture(database.pool(), &adapter, &source).await;
+    install_grouping_write_audit(database.pool()).await;
+
+    let merged = merge_conversation_questions_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &[first_question_id.clone(), second_question_id.clone()],
+        false,
+    )
+    .await
+    .expect("merge the two groups");
+    let writes = load_grouping_write_audit(database.pool()).await;
+
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|write| write.target != "conversation_turns"
+                && write.target != "conversation_question_redirects")
+            .count(),
+        0,
+        "merge must not write the legacy question tables: {writes:?}"
+    );
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|write| write.target == "conversation_turns" && write.operation == "UPDATE")
+            .count(),
+        3,
+        "merge must rewrite the grouping columns of every merged turn: {writes:?}"
+    );
+    assert!(
+        writes
+            .iter()
+            .any(|write| write.target == "conversation_question_redirects"),
+        "merge must leave a tombstone for the merged-away identifier: {writes:?}"
+    );
+
+    let detail =
+        load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+            .await
+            .expect("load the merged session");
+    assert_eq!(detail.questions.len(), 1);
+    assert_eq!(detail.questions[0].question.id, first_question_id);
+    assert_eq!(
+        detail.questions[0]
+            .turns
+            .iter()
+            .map(|turn| turn.external_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["t1", "t2", "t3"]
+    );
+    assert!(detail.questions[0]
+        .question_turns
+        .iter()
+        .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual));
+
+    assert_eq!(
+        resolve_conversation_question_id_prefix_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &second_question_id
+        )
+        .await
+        .expect("resolve the merged-away identifier"),
+        first_question_id
+    );
+    let legacy_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversation_questions WHERE tenant_id = ?1")
+            .bind(TEST_TENANT_ID)
+            .fetch_one(database.pool())
+            .await
+            .expect("count legacy question rows");
+    assert_eq!(
+        legacy_rows, 2,
+        "legacy question rows are left untouched until the drop ticket"
+    );
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn sqlx_merge_rejects_groups_separated_by_another_group() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-merge-non-adjacent-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "merge-non-adjacent-external",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let mut session = fixture_session("v1");
+    session.turns = vec![
+        fixture_turn("t1", 0, "Alpha question"),
+        fixture_turn("t2", 1, "Beta question"),
+        fixture_turn("t3", 2, "继续"),
+        fixture_turn("t4", 3, "Gamma question"),
+    ];
+
+    let (error, detail) = async {
+        upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+        upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+        import_conversation_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[session],
+            false,
+        )
+        .await?;
+        let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+        let detail =
+            load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+                .await?;
+        let question_ids = detail
+            .questions
+            .iter()
+            .map(|question| question.question.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(question_ids.len(), 3);
+        let error = merge_conversation_questions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &[question_ids[0].clone(), question_ids[2].clone()],
+            false,
+        )
+        .await
+        .expect_err("merging across an unrelated group must be rejected");
+        let detail =
+            load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+                .await?;
+        Ok::<_, StoreError>((error, detail))
+    }
+    .await
+    .expect("reject the non-adjacent merge");
+
+    assert!(
+        matches!(error, StoreError::Validation(_)),
+        "non-adjacent merge must be a validation error, got {error:?}"
+    );
+    assert!(
+        error.to_string().contains("adjacent"),
+        "the error must explain the adjacency constraint: {error}"
+    );
+    assert_eq!(
+        detail.questions.len(),
+        3,
+        "a rejected merge must not change the grouping"
+    );
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn sqlx_split_rewrites_grouping_on_turn_columns_only() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-split-turn-columns-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "split-turn-columns-external",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let (session_id, first_question_id, second_question_id) =
+        import_read_path_fixture(database.pool(), &adapter, &source).await;
+
+    let (split, writes, detail) = async {
+        merge_conversation_questions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &[first_question_id.clone(), second_question_id.clone()],
+            false,
+        )
+        .await?;
+        let merged = load_conversation_question_detail_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &first_question_id,
+        )
+        .await?;
+        install_grouping_write_audit(database.pool()).await;
+        let split = split_conversation_question_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &first_question_id,
+            &merged.turns[2].id,
+            false,
+        )
+        .await?;
+        let writes = load_grouping_write_audit(database.pool()).await;
+        let detail =
+            load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+                .await?;
+        Ok::<_, StoreError>((split, writes, detail))
+    }
+    .await
+    .expect("split the merged group");
+
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|write| write.target != "conversation_turns")
+            .count(),
+        0,
+        "split must not write any other table: {writes:?}"
+    );
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|write| write.target == "conversation_turns" && write.operation == "UPDATE")
+            .count(),
+        3,
+        "split must rewrite the grouping columns of the whole source group: {writes:?}"
+    );
+
+    assert_eq!(detail.questions.len(), 2);
+    assert_eq!(
+        detail.questions[0]
+            .turns
+            .iter()
+            .map(|turn| turn.external_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["t1", "t2"]
+    );
+    assert_eq!(
+        detail.questions[1]
+            .turns
+            .iter()
+            .map(|turn| turn.external_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["t3"]
+    );
+    assert!(detail.questions.iter().all(|question| question
+        .question_turns
+        .iter()
+        .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual)));
+    let new_question_id = split.affected_question_ids[1].clone();
+    assert_eq!(detail.questions[1].question.id, new_question_id);
+    assert_eq!(
+        resolve_conversation_question_id_prefix_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &new_question_id[..new_question_id.len().min(24)]
+        )
+        .await
+        .expect("resolve the split-off identifier by prefix"),
+        new_question_id
+    );
+
+    // 拆分产生的标识可以继续参与合并。
+    let remerged = merge_conversation_questions_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &[first_question_id.clone(), new_question_id.clone()],
+        false,
+    )
+    .await
+    .expect("merge the split-off group back");
+    assert_eq!(remerged.questions.len(), 1);
+    assert_eq!(remerged.questions[0].turns.len(), 3);
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn sqlx_merge_and_split_dry_run_write_nothing() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-mutation-dry-run-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "mutation-dry-run-external",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let (session_id, first_question_id, second_question_id) =
+        import_read_path_fixture(database.pool(), &adapter, &source).await;
+    install_grouping_write_audit(database.pool()).await;
+
+    let merge_preview = merge_conversation_questions_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &[first_question_id.clone(), second_question_id.clone()],
+        true,
+    )
+    .await
+    .expect("preview the merge");
+    assert!(merge_preview.dry_run);
+    assert_eq!(merge_preview.questions.len(), 2);
+    let merge_writes = load_grouping_write_audit(database.pool()).await;
+    assert!(
+        merge_writes.is_empty(),
+        "a merge preview must not write anything: {merge_writes:?}"
+    );
+    let tombstones: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_question_redirects WHERE tenant_id = ?1",
+    )
+    .bind(TEST_TENANT_ID)
+    .fetch_one(database.pool())
+    .await
+    .expect("count tombstones");
+    assert_eq!(tombstones, 0, "a merge preview must not write tombstones");
+    assert_eq!(
+        load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+            .await
+            .expect("reload the previewed session")
+            .questions
+            .len(),
+        2
+    );
+
+    let merged = merge_conversation_questions_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &[first_question_id.clone(), second_question_id.clone()],
+        false,
+    )
+    .await
+    .expect("merge the two groups");
+    clear_grouping_write_audit(database.pool()).await;
+    let split_preview = split_conversation_question_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &first_question_id,
+        &merged.questions[0].turns[2].id,
+        true,
+    )
+    .await
+    .expect("preview the split");
+    assert!(split_preview.dry_run);
+    let split_writes = load_grouping_write_audit(database.pool()).await;
+    assert!(
+        split_writes.is_empty(),
+        "a split preview must not write anything: {split_writes:?}"
+    );
+    assert_eq!(
+        load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+            .await
+            .expect("reload the previewed session")
+            .questions
+            .len(),
+        1
+    );
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
 async fn sqlx_searches_session_and_web_conversation_cards() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-conversation-search-sqlx-{}.sqlite",
@@ -3269,6 +3641,67 @@ fn cleanup_database(db_path: &std::path::Path) {
     let _ = std::fs::remove_file(db_path);
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+}
+
+/// 写入审计：用触发器记录「哪张表、哪种操作」被写过，用来确认合并 / 拆分不碰旧表。
+const GROUPING_WRITE_AUDIT_TABLES: [&str; 6] = [
+    "conversation_questions",
+    "conversation_question_turns",
+    "conversation_question_turn_audits",
+    "conversation_question_redirects",
+    "conversation_parts",
+    "conversation_turns",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GroupingWrite {
+    target: String,
+    operation: String,
+}
+
+async fn install_grouping_write_audit(pool: &SqlitePool) {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS grouping_write_audit (
+            target TEXT NOT NULL,
+            operation TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await
+    .expect("create the write audit table");
+    for table in GROUPING_WRITE_AUDIT_TABLES {
+        for operation in ["INSERT", "UPDATE", "DELETE"] {
+            let statement = format!(
+                "CREATE TRIGGER IF NOT EXISTS grouping_write_audit_{table}_{operation} \
+                 AFTER {operation} ON {table} \
+                 BEGIN INSERT INTO grouping_write_audit (target, operation) \
+                 VALUES ('{table}', '{operation}'); END"
+            );
+            sqlx::query(AssertSqlSafe(statement))
+                .execute(pool)
+                .await
+                .expect("install a write audit trigger");
+        }
+    }
+}
+
+async fn clear_grouping_write_audit(pool: &SqlitePool) {
+    sqlx::query("DELETE FROM grouping_write_audit")
+        .execute(pool)
+        .await
+        .expect("clear the write audit");
+}
+
+async fn load_grouping_write_audit(pool: &SqlitePool) -> Vec<GroupingWrite> {
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT target, operation FROM grouping_write_audit ORDER BY rowid ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("read the write audit")
+    .into_iter()
+    .map(|(target, operation)| GroupingWrite { target, operation })
+    .collect()
 }
 
 pub async fn delete_conversation_adapter_sqlx(

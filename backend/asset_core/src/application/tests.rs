@@ -5196,9 +5196,10 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
         r#"
         INSERT INTO conversation_turns (
             tenant_id, id, session_id, external_id, turn_index, user_text, title,
-            started_at, ended_at, fingerprint, missing, imported_at
+            started_at, ended_at, fingerprint, missing, imported_at,
+            question_id, question_origin
         )
-        VALUES (?1, ?2, ?3, ?4, 1, ?5, NULL, NULL, NULL, ?6, 0, ?7)
+        VALUES (?1, ?2, ?3, ?4, 1, ?5, NULL, NULL, NULL, ?6, 0, ?7, ?8, 'imported')
         "#,
     )
     .bind(&tenant_id)
@@ -5208,43 +5209,11 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
     .bind("Second prompt")
     .bind("app-membership-fingerprint")
     .bind(now)
+    .bind(&second_question_id_for_db)
     .execute(&pool)
     .await
     .map_err(AppError::external)
     .expect("insert second turn");
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_questions (
-            tenant_id, id, session_id, title, created_at, updated_at
-        )
-        VALUES (?1, ?2, ?3, NULL, ?4, ?4)
-        "#,
-    )
-    .bind(&tenant_id)
-    .bind(&second_question_id_for_db)
-    .bind(&session_id)
-    .bind(now)
-    .execute(&pool)
-    .await
-    .map_err(AppError::external)
-    .expect("insert second question");
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_question_turns (
-            tenant_id, question_id, turn_id, turn_order,
-            assignment_origin, assigned_at, updated_at
-        )
-        VALUES (?1, ?2, ?3, 0, 'imported', ?4, ?4)
-        "#,
-    )
-    .bind(&tenant_id)
-    .bind(&second_question_id_for_db)
-    .bind(&second_turn_id_for_db)
-    .bind(now)
-    .execute(&pool)
-    .await
-    .map_err(AppError::external)
-    .expect("insert question turn");
 
     let merged = service
         .merge_conversation_questions(ConversationQuestionMergeParams {

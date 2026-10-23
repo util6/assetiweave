@@ -186,46 +186,6 @@ async fn write_conversation_turn_question_columns_sqlx_tx(
     Ok(())
 }
 
-/// 把成员表上的分组回写到轮次列，用于合并 / 拆分这类显式改写分组的入口，
-/// 确保双写期间两条读法始终逐轮一致。
-pub(super) async fn sync_conversation_turn_question_columns_from_membership_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-) -> StoreResult<()> {
-    sqlx::query(
-        r#"
-        UPDATE conversation_turns
-        SET question_id = (
-                SELECT qt.question_id
-                FROM conversation_question_turns qt
-                WHERE qt.tenant_id = conversation_turns.tenant_id
-                  AND qt.turn_id = conversation_turns.id
-            ),
-            question_origin = (
-                SELECT qt.assignment_origin
-                FROM conversation_question_turns qt
-                WHERE qt.tenant_id = conversation_turns.tenant_id
-                  AND qt.turn_id = conversation_turns.id
-            )
-        WHERE tenant_id = ?1
-          AND session_id = ?2
-          AND EXISTS (
-              SELECT 1
-              FROM conversation_question_turns qt
-              WHERE qt.tenant_id = conversation_turns.tenant_id
-                AND qt.turn_id = conversation_turns.id
-          )
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    Ok(())
-}
-
 async fn replace_conversation_question_turn_memberships_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
@@ -393,41 +353,6 @@ pub(super) async fn prune_orphan_questions_for_session_sqlx_tx(
         .map_err(StoreError::external)?;
     }
 
-    Ok(())
-}
-
-pub(super) async fn reject_invalid_conversation_question_turns_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-) -> StoreResult<()> {
-    let rows = sqlx::query_as::<_, InvalidConversationQuestionTurnRow>(
-        r#"
-        SELECT qt.question_id, qt.turn_id,
-               CASE
-                   WHEN q.id IS NULL THEN 'missing_question'
-                   WHEN t.id IS NULL THEN 'missing_turn'
-                   ELSE 'cross_session'
-               END AS reason
-        FROM conversation_question_turns qt
-        LEFT JOIN conversation_questions q
-          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
-        LEFT JOIN conversation_turns t
-          ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
-        WHERE qt.tenant_id = ?1
-          AND (q.id IS NULL OR t.id IS NULL OR q.session_id <> t.session_id)
-        ORDER BY qt.question_id ASC, qt.turn_id ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    if let Some(first) = rows.first() {
-        return Err(StoreError::Validation(format!(
-            "invalid question turn membership ({}): question={}, turn={}",
-            first.reason, first.question_id, first.turn_id
-        )));
-    }
     Ok(())
 }
 
