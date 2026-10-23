@@ -17,7 +17,7 @@ pub async fn merge_conversation_questions_sqlx(
     let mut questions = Vec::with_capacity(question_ids.len());
     for question_id in question_ids {
         let resolved_question_id =
-            resolve_conversation_question_redirect_sqlx_tx(&mut tx, tenant_id, question_id).await?;
+            resolve_conversation_question_redirect_sqlx(&mut *tx, tenant_id, question_id).await?;
         questions.push(
             load_conversation_question_sqlx_tx(&mut tx, tenant_id, &resolved_question_id)
                 .await?

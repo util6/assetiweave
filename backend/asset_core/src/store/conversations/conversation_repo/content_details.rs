@@ -35,96 +35,84 @@ pub async fn list_conversation_question_details_sqlx(
         .collect())
 }
 
+/// 单问题详情：分组身份取自轮次列，成员与顺序由轮次序列重放。
+///
+/// 与 `load_conversation_question_details_for_session_sqlx` 共用同一套派生实现，
+/// 因此问题详情、block locator 与导出对同一分组必然给出一致的定位信息。
 pub async fn load_conversation_question_detail_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     question_id: &str,
 ) -> StoreResult<ConversationQuestionDetail> {
-    let question_row = sqlx::query(
-        r#"
-        SELECT id, session_id, title, created_at, updated_at
-        FROM conversation_questions
-        WHERE tenant_id = ?1 AND id = ?2
-        "#,
+    let question_id =
+        resolve_conversation_question_redirect_pool_sqlx(pool, tenant_id, question_id).await?;
+    let session_id = load_question_session_id_for_record_sqlx(
+        pool,
+        tenant_id,
+        ConversationRecordKind::Session,
+        &question_id,
     )
-    .bind(tenant_id)
-    .bind(question_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(StoreError::external)?
+    .await?
     .ok_or_else(|| {
         StoreError::external(format!("conversation question not found: {question_id}"))
     })?;
-    let question = map_sqlx_conversation_question(&question_row)?;
-    let question_turns = load_question_turn_memberships_sqlx(pool, tenant_id, question_id).await?;
 
-    let turn_rows = sqlx::query(
+    let turn_rows = sqlx::query_as::<_, ConversationTurnQuestionRow>(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
-               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at, t.model
-        FROM conversation_question_turns qt
-        JOIN conversation_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
-        JOIN conversation_questions q
-          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
-        WHERE qt.tenant_id = ?1
-          AND qt.question_id = ?2
-          AND q.session_id = t.session_id
-        ORDER BY qt.turn_order ASC, t.turn_index ASC
+               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
+               t.question_id, t.question_origin
+        FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session_question
+        WHERE t.tenant_id = ?1 AND t.session_id = ?2 AND t.question_id = ?3
+        ORDER BY t.turn_index ASC, t.id ASC
         "#,
     )
     .bind(tenant_id)
-    .bind(question_id)
+    .bind(&session_id)
+    .bind(&question_id)
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
     let turns = turn_rows
-        .iter()
-        .map(map_sqlx_conversation_turn)
-        .collect::<StoreResult<Vec<_>>>()?;
+        .into_iter()
+        .map(ConversationTurnQuestionRow::into_grouped_turn)
+        .collect::<Vec<_>>();
 
     let part_rows = sqlx::query(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
                p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
-        FROM conversation_parts p
-        JOIN conversation_question_turns qt ON qt.tenant_id = p.tenant_id AND qt.turn_id = p.turn_id
-        JOIN conversation_questions q
-          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
-        JOIN conversation_turns t
-          ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
-        WHERE qt.tenant_id = ?1
-          AND qt.question_id = ?2
-          AND q.session_id = t.session_id
-        ORDER BY qt.turn_order ASC, p.part_index ASC
+        FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session_question
+        JOIN conversation_parts p INDEXED BY idx_conversation_parts_tenant_turn
+          ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
+        WHERE t.tenant_id = ?1 AND t.session_id = ?2 AND t.question_id = ?3
+        ORDER BY t.turn_index ASC, p.part_index ASC
         "#,
     )
     .bind(tenant_id)
-    .bind(question_id)
+    .bind(&session_id)
+    .bind(&question_id)
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
-    let parts = part_rows
-        .iter()
-        .map(map_sqlx_conversation_part)
-        .collect::<StoreResult<Vec<_>>>()?;
+    let mut parts_by_turn = BTreeMap::<String, Vec<ConversationPart>>::new();
+    for row in &part_rows {
+        let part = map_sqlx_conversation_part(row)?;
+        parts_by_turn
+            .entry(part.turn_id.clone())
+            .or_default()
+            .push(part);
+    }
+
     let (adapter_id, card_kinds) =
-        load_conversation_card_projection_context_sqlx(pool, tenant_id, &question.session_id)
-            .await?;
-    let projected_content_nodes = project_question_content_nodes(
-        &question.id,
-        &question_turns,
-        &parts,
-        &adapter_id,
-        &card_kinds,
-    )?;
-    Ok(ConversationQuestionDetail {
-        question: project_question_title(question, &turns),
-        question_turns,
-        turns,
-        parts,
-        projected_content_nodes,
-    })
+        load_conversation_card_projection_context_sqlx(pool, tenant_id, &session_id).await?;
+    build_question_details_from_turn_columns(turns, parts_by_turn, &adapter_id, &card_kinds)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            StoreError::external(format!("conversation question not found: {question_id}"))
+        })
 }
 
 pub async fn list_conversation_block_locators_sqlx(
@@ -134,33 +122,28 @@ pub async fn list_conversation_block_locators_sqlx(
     question_id: &str,
 ) -> StoreResult<Vec<ConversationBlockLocator>> {
     let tables = record_kind.tables();
-    let session_id = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
-        "SELECT session_id FROM {} WHERE tenant_id = ?1 AND id = ?2",
-        tables.questions
-    )))
-    .bind(tenant_id)
-    .bind(question_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(StoreError::external)?
-    .ok_or_else(|| {
-        StoreError::external(format!("conversation question not found: {question_id}"))
-    })?;
+    let question_id =
+        resolve_conversation_question_redirect_pool_sqlx(pool, tenant_id, question_id).await?;
+    let session_id =
+        load_question_session_id_for_record_sqlx(pool, tenant_id, record_kind, &question_id)
+            .await?
+            .ok_or_else(|| {
+                StoreError::external(format!("conversation question not found: {question_id}"))
+            })?;
 
     let turn_rows = sqlx::query(AssertSqlSafe(format!(
         r#"
-        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
-               t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at, t.model
-        FROM {question_turns} qt
-        JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
-        WHERE qt.tenant_id = ?1 AND qt.question_id = ?2
-        ORDER BY qt.turn_order ASC, t.turn_index ASC
+        SELECT id, session_id, external_id, turn_index, user_text, title,
+               started_at, ended_at, fingerprint, missing, imported_at, model
+        FROM {turns}
+        WHERE tenant_id = ?1 AND session_id = ?2 AND question_id = ?3
+        ORDER BY turn_index ASC, id ASC
         "#,
-        question_turns = tables.question_turns,
         turns = tables.turns,
     )))
     .bind(tenant_id)
-    .bind(question_id)
+    .bind(&session_id)
+    .bind(&question_id)
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
@@ -174,16 +157,17 @@ pub async fn list_conversation_block_locators_sqlx(
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
                p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
-        FROM {question_turns} qt
-        JOIN {parts} p ON p.tenant_id = qt.tenant_id AND p.turn_id = qt.turn_id
-        WHERE qt.tenant_id = ?1 AND qt.question_id = ?2
-        ORDER BY qt.turn_order ASC, p.part_index ASC
+        FROM {turns} t
+        JOIN {parts} p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
+        WHERE t.tenant_id = ?1 AND t.session_id = ?2 AND t.question_id = ?3
+        ORDER BY t.turn_index ASC, p.part_index ASC
         "#,
-        question_turns = tables.question_turns,
+        turns = tables.turns,
         parts = tables.parts,
     )))
     .bind(tenant_id)
-    .bind(question_id)
+    .bind(&session_id)
+    .bind(&question_id)
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
@@ -218,7 +202,7 @@ pub async fn list_conversation_block_locators_sqlx(
         locators.push(conversation_question_block_locator(
             record_kind,
             &session_id,
-            question_id,
+            &question_id,
             turn,
         ));
     }
@@ -227,7 +211,7 @@ pub async fn list_conversation_block_locators_sqlx(
             locators.push(conversation_card_block_locator(
                 record_kind,
                 &session_id,
-                question_id,
+                &question_id,
                 part,
                 card,
             ));
@@ -335,13 +319,11 @@ pub async fn load_conversation_block_detail_sqlx(
             r#"
             SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
                    t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
-                   qt.question_id
+                   t.question_id
             FROM {turns} t
-            JOIN {question_turns} qt ON qt.tenant_id = t.tenant_id AND qt.turn_id = t.id
             WHERE t.tenant_id = ?1 AND t.id = ?2
             "#,
             turns = tables.turns,
-            question_turns = tables.question_turns,
         )))
         .bind(tenant_id)
         .bind(&resolved_turn_id)
@@ -352,6 +334,8 @@ pub async fn load_conversation_block_detail_sqlx(
             StoreError::external(format!("conversation question block not found: {block_id}"))
         })?;
         let (question_id, turn) = row.into_turn();
+        let question_id =
+            resolve_conversation_question_redirect_pool_sqlx(pool, tenant_id, &question_id).await?;
         let locator =
             conversation_question_block_locator(record_kind, &turn.session_id, &question_id, &turn);
         return Ok(ConversationBlockDetail {
@@ -370,14 +354,12 @@ pub async fn load_conversation_block_detail_sqlx(
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
                p.content_card_json, p.translated_text, p.source_execution_id, p.command_label,
-               qt.question_id, t.session_id
+               t.question_id, t.session_id
         FROM {parts} p
-        JOIN {question_turns} qt ON qt.tenant_id = p.tenant_id AND qt.turn_id = p.turn_id
         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         WHERE p.tenant_id = ?1 AND p.id = ?2
         "#,
         parts = tables.parts,
-        question_turns = tables.question_turns,
         turns = tables.turns,
     )))
     .bind(tenant_id)
@@ -456,8 +438,27 @@ pub async fn load_conversation_block_detail_sqlx(
     })
 }
 
-pub(super) async fn resolve_conversation_question_redirect_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
+/// 分组身份 → 所属会话。分组标识只落在轮次列上，问题表与成员表不再参与解析。
+pub(super) async fn load_question_session_id_for_record_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    record_kind: ConversationRecordKind,
+    question_id: &str,
+) -> StoreResult<Option<String>> {
+    let tables = record_kind.tables();
+    sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
+        "SELECT session_id FROM {} WHERE tenant_id = ?1 AND question_id = ?2 LIMIT 1",
+        tables.turns
+    )))
+    .bind(tenant_id)
+    .bind(question_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(StoreError::external)
+}
+
+pub(super) async fn resolve_conversation_question_redirect_sqlx(
+    conn: &mut sqlx::SqliteConnection,
     tenant_id: &str,
     question_id: &str,
 ) -> StoreResult<String> {
@@ -474,11 +475,20 @@ pub(super) async fn resolve_conversation_question_redirect_sqlx_tx(
         )
         .bind(tenant_id)
         .bind(&current)
-        .fetch_optional(&mut **tx)
+        .fetch_optional(&mut *conn)
         .await
         .map_err(StoreError::external)? else {
             return Ok(current);
         };
         current = target;
     }
+}
+
+pub(super) async fn resolve_conversation_question_redirect_pool_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    question_id: &str,
+) -> StoreResult<String> {
+    let mut conn = pool.acquire().await.map_err(StoreError::external)?;
+    resolve_conversation_question_redirect_sqlx(&mut conn, tenant_id, question_id).await
 }

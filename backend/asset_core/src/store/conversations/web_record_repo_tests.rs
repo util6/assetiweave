@@ -1150,6 +1150,93 @@ async fn sqlx_web_record_question_columns_mirror_membership_and_freeze_ids() {
     cleanup_database(&db_path);
 }
 
+#[tokio::test]
+async fn sqlx_web_record_block_reads_use_turn_columns_after_legacy_rows_are_dropped() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-web-record-read-path-turn-columns-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let source = fixture_source();
+    let template = fixture_session().turns[0].clone();
+    let mut session = fixture_session();
+    session.turns = vec![
+        web_turn(&template, "turn-1", 0, "How does sync work?"),
+        web_turn(&template, "turn-2", 1, "Export it"),
+    ];
+    let pool = database.pool();
+
+    super::super::conversation_repo::upsert_conversation_source_sqlx(pool, TEST_TENANT_ID, &source)
+        .await
+        .expect("upsert source");
+    import_web_record_sessions_sqlx(pool, TEST_TENANT_ID, &source, &[session], false)
+        .await
+        .expect("import web record session");
+
+    let session_id = stable_id("web-record-session", &[&source.id, "web-session-1"]);
+    let question_id: String = sqlx::query_scalar(
+        "SELECT question_id FROM web_record_turns WHERE tenant_id = ?1 AND external_id = 'turn-1'",
+    )
+    .bind(TEST_TENANT_ID)
+    .fetch_one(pool)
+    .await
+    .expect("load web turn question column");
+    for statement in [
+        "DELETE FROM web_record_question_turns WHERE tenant_id = ?1",
+        "DELETE FROM web_record_questions WHERE tenant_id = ?1",
+    ] {
+        sqlx::query(statement)
+            .bind(TEST_TENANT_ID)
+            .execute(pool)
+            .await
+            .expect("clear legacy web grouping rows");
+    }
+
+    let fragment = crate::backend::domain::conversation_id_fragment(&question_id);
+    let (kind, resolved_session_id) =
+        super::super::conversation_repo::resolve_any_id_to_session_id_sqlx(
+            pool,
+            TEST_TENANT_ID,
+            &fragment,
+        )
+        .await
+        .expect("resolve web question fragment to its session");
+    assert_eq!(kind, ConversationRecordKind::Web);
+    assert_eq!(resolved_session_id, session_id);
+
+    let locators = super::super::conversation_repo::list_conversation_block_locators_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        ConversationRecordKind::Web,
+        &question_id,
+    )
+    .await
+    .expect("list web block locators from turn columns");
+    assert_eq!(locators.len(), 2);
+    assert!(locators
+        .iter()
+        .all(|locator| locator.record_kind == "web" && locator.question_id == question_id));
+
+    let question_locator = locators
+        .iter()
+        .find(|locator| locator.kind == "question")
+        .expect("web question block locator");
+    let block = super::super::conversation_repo::load_conversation_block_detail_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        ConversationRecordKind::Web,
+        &question_locator.block_id,
+    )
+    .await
+    .expect("load web question block from turn columns");
+    assert_eq!(block.content, "How does sync work?");
+    assert_eq!(block.locator.question_id, question_id);
+    assert_eq!(block.locator.record_kind, "web");
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
 fn web_turn(
     template: &NormalizedConversationTurn,
     external_id: &str,

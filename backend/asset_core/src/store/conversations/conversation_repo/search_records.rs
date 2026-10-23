@@ -19,10 +19,10 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
             FROM {sessions} s
             WHERE s.tenant_id = ?1 AND s.missing = 0 AND s.id >= ?2 AND s.id < ?3
             UNION
-            SELECT q.session_id
-            FROM {questions} q
-            JOIN {sessions} s ON s.tenant_id = q.tenant_id AND s.id = q.session_id
-            WHERE q.tenant_id = ?1 AND s.missing = 0 AND q.id >= ?4 AND q.id < ?5
+            SELECT t.session_id
+            FROM {turns} t
+            JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
+            WHERE t.tenant_id = ?1 AND s.missing = 0 AND t.question_id >= ?4 AND t.question_id < ?5
             UNION
             SELECT t.session_id
             FROM {turns} t
@@ -37,7 +37,6 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
         )
         "#,
         sessions = tables.sessions,
-        questions = tables.questions,
         turns = tables.turns,
         parts = tables.parts,
     );

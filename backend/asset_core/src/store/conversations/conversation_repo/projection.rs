@@ -219,36 +219,6 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
     build_question_details_from_turn_columns(turns, parts_by_turn, &adapter_id, &card_kinds)
 }
 
-pub(super) async fn load_question_turn_memberships_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    question_id: &str,
-) -> StoreResult<Vec<ConversationQuestionTurn>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT qt.question_id, qt.turn_id, qt.turn_order,
-               qt.assignment_origin, qt.assigned_at, qt.updated_at
-        FROM conversation_question_turns qt
-        JOIN conversation_questions q
-          ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id
-        JOIN conversation_turns t
-          ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
-        WHERE qt.tenant_id = ?1
-          AND qt.question_id = ?2
-          AND q.session_id = t.session_id
-        ORDER BY qt.turn_order ASC, t.turn_index ASC, qt.turn_id ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(question_id)
-    .fetch_all(pool)
-    .await
-    .map_err(StoreError::external)?;
-    rows.iter()
-        .map(map_sqlx_conversation_question_turn)
-        .collect()
-}
-
 pub fn project_question_title(
     mut question: ConversationQuestion,
     turns: &[ConversationTurn],
