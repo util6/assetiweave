@@ -2843,6 +2843,124 @@ async fn sqlx_observation_reconciles_drift_and_triggers_self_healing() {
 }
 
 #[tokio::test]
+async fn sqlx_dirty_failed_session_is_retried_without_affecting_unchanged_neighbours() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-observation-dirty-retry-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "dirty-retry-adapter",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+
+    upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter)
+        .await
+        .expect("upsert adapter");
+    upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source)
+        .await
+        .expect("upsert source");
+
+    let descriptors = ["session-1", "session-2"]
+        .into_iter()
+        .map(
+            |external_id| crate::backend::domain::conversations::ConversationSessionObservation {
+                external_id: external_id.to_string(),
+                updated_at: None,
+                source_locator: None,
+                version_token: "v1".to_string(),
+            },
+        )
+        .collect::<Vec<_>>();
+    let hydrated = BTreeSet::from(["session-1".to_string(), "session-2".to_string()]);
+
+    let load_versions = || async {
+        load_conversation_session_versions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source.id,
+            ConversationRecordKind::Session,
+            None,
+            None,
+            crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+            None,
+        )
+        .await
+    };
+
+    persist_conversation_session_observations_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &source.id,
+        ConversationRecordKind::Session,
+        &descriptors,
+        &hydrated,
+        None,
+        None,
+        crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+        None,
+    )
+    .await
+    .expect("persist clean observations");
+
+    let before_failure = load_versions().await.expect("load versions before failure");
+    assert_eq!(
+        before_failure.keys().cloned().collect::<Vec<_>>(),
+        vec!["session-1".to_string(), "session-2".to_string()]
+    );
+
+    record_conversation_session_failure_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &source.id,
+        "session",
+        "session-2",
+        Some("v1"),
+    )
+    .await
+    .expect("record session-2 failure");
+
+    let after_failure = load_versions().await.expect("load versions after failure");
+    assert_eq!(
+        after_failure.keys().cloned().collect::<Vec<_>>(),
+        vec!["session-1".to_string()],
+        "only the failed session must leave known versions so it is re-read next round"
+    );
+    assert_eq!(
+        after_failure.get("session-1").map(String::as_str),
+        Some("v1"),
+        "unchanged neighbour must stay skippable"
+    );
+
+    persist_conversation_session_observations_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &source.id,
+        ConversationRecordKind::Session,
+        &descriptors[1..],
+        &BTreeSet::from(["session-2".to_string()]),
+        None,
+        None,
+        crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+        None,
+    )
+    .await
+    .expect("persist recovered observation");
+
+    let after_recovery = load_versions().await.expect("load versions after recovery");
+    assert_eq!(
+        after_recovery.keys().cloned().collect::<Vec<_>>(),
+        vec!["session-1".to_string(), "session-2".to_string()],
+        "successful re-parse must clear dirty and restore incremental skipping"
+    );
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
 async fn sqlx_payload_policy_state_requests_one_reparse_for_existing_records() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-conversation-payload-policy-state-{}.sqlite",

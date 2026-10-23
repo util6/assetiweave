@@ -2127,26 +2127,18 @@ esac
     .unwrap();
     assert_eq!(session_count, 2);
 
-    let (s2_dirty, s2_err_code, s2_err_msg, s2_attempts): (i64, Option<String>, Option<String>, i64) =
-        sqlx::query_as(
-            "SELECT dirty, error_code, error_message, attempt_count FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
-        )
-        .bind(tenant_id)
-        .bind(&source_id)
-        .fetch_one(pool)
-        .await
-        .unwrap();
+    let s2_dirty: i64 = sqlx::query_scalar(
+        "SELECT dirty FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
+    )
+    .bind(tenant_id)
+    .bind(&source_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     assert_eq!(s2_dirty, 1);
-    assert_eq!(s2_err_code.as_deref(), Some("adapter_process_error"));
-    assert!(s2_err_msg
-        .as_deref()
-        .unwrap()
-        .contains("~/source/session2.json"));
-    assert!(!s2_err_msg.as_deref().unwrap().contains("/Users/testuser/"));
-    assert_eq!(s2_attempts, 1);
 
-    let (s1_dirty, s1_err_code): (i64, Option<String>) = sqlx::query_as(
-        "SELECT dirty, error_code FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-1'",
+    let s1_dirty: i64 = sqlx::query_scalar(
+        "SELECT dirty FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-1'",
     )
     .bind(tenant_id)
     .bind(&source_id)
@@ -2154,7 +2146,6 @@ esac
     .await
     .unwrap();
     assert_eq!(s1_dirty, 0);
-    assert!(s1_err_code.is_none());
 
     // Round 2: fix session-2, perform incremental sync
     fs::remove_file(&marker_path).unwrap();
@@ -2183,18 +2174,15 @@ esac
     .unwrap();
     assert_eq!(session_count_r2, 3);
 
-    let (s2_r2_dirty, s2_r2_err_code, s2_r2_err_msg): (i64, Option<String>, Option<String>) =
-        sqlx::query_as(
-            "SELECT dirty, error_code, error_message FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
-        )
-        .bind(tenant_id)
-        .bind(&source_id)
-        .fetch_one(pool)
-        .await
-        .unwrap();
+    let s2_r2_dirty: i64 = sqlx::query_scalar(
+        "SELECT dirty FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
+    )
+    .bind(tenant_id)
+    .bind(&source_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     assert_eq!(s2_r2_dirty, 0);
-    assert!(s2_r2_err_code.is_none());
-    assert!(s2_r2_err_msg.is_none());
 
     // Round 3: incremental sync again, all clean, zero active sessions
     let result3 = service

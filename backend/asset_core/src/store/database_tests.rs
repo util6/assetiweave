@@ -534,6 +534,174 @@ async fn migrations_repair_the_known_modified_question_contract_checksum() {
 }
 
 #[tokio::test]
+async fn conversation_session_observations_keeps_only_incremental_sync_columns() {
+    let db_path = temp_database_path("conversation-observation-slim");
+    migrate_database(&db_path).await.expect("run migrations");
+
+    let conn = Connection::open(&db_path).expect("open migrated database");
+    assert_eq!(
+        conversation_session_observation_columns(&conn),
+        expected_conversation_session_observation_columns()
+    );
+    let dirty_index_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_conversation_session_observations_dirty'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query observation dirty index");
+    assert_eq!(dirty_index_count, 1);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn migrations_rebuild_legacy_observation_table_preserving_incremental_state() {
+    let db_path = temp_database_path("conversation-observation-legacy-rebuild");
+    migrate_database(&db_path)
+        .await
+        .expect("create current database");
+
+    let conn = Connection::open(&db_path).expect("open current database");
+    conn.execute_batch(
+        r#"
+            DROP TABLE conversation_session_observations;
+            CREATE TABLE conversation_session_observations (
+                tenant_id TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                record_kind TEXT NOT NULL CHECK (record_kind IN ('session', 'web')),
+                external_id TEXT NOT NULL,
+                observed_version TEXT NOT NULL,
+                hydrated_version TEXT,
+                last_seen_at TEXT NOT NULL,
+                source_presence TEXT NOT NULL CHECK (source_presence IN ('present', 'absent', 'unknown')),
+                dirty INTEGER NOT NULL DEFAULT 0,
+                hydrated_adapter_hash TEXT,
+                hydrated_card_contract_version INTEGER,
+                hydrated_payload_policy_version INTEGER,
+                error_code TEXT,
+                error_message TEXT,
+                error_stage TEXT,
+                retryable INTEGER,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_attempt_at TEXT,
+                last_failure_at TEXT,
+                hydrated_projection_version INTEGER,
+                PRIMARY KEY (tenant_id, source_id, record_kind, external_id)
+            );
+            CREATE INDEX idx_conversation_session_observations_dirty
+            ON conversation_session_observations(tenant_id, source_id, record_kind, dirty);
+            INSERT INTO conversation_session_observations (
+                tenant_id, source_id, record_kind, external_id, observed_version,
+                hydrated_version, last_seen_at, source_presence, dirty,
+                hydrated_adapter_hash, hydrated_card_contract_version,
+                hydrated_payload_policy_version, error_code, error_message,
+                error_stage, retryable, attempt_count, last_attempt_at,
+                last_failure_at, hydrated_projection_version
+            ) VALUES (
+                'default', 'legacy-source', 'session', 'legacy-external', 'observed-v2',
+                'hydrated-v1', '2026-10-01T00:00:00Z', 'absent', 1,
+                'adapter-hash-v1', 7, 3, 'adapter_process_error', 'boom',
+                'adapter', 1, 4, '2026-10-01T00:00:00Z',
+                '2026-10-01T00:00:00Z', 5
+            );
+            DELETE FROM _sqlx_migrations WHERE version = 202610230001;
+            "#,
+    )
+    .expect("seed legacy observation schema");
+    drop(conn);
+
+    migrate_database(&db_path)
+        .await
+        .expect("slim legacy observation schema");
+
+    let conn = Connection::open(&db_path).expect("open rebuilt database");
+    assert_eq!(
+        conversation_session_observation_columns(&conn),
+        expected_conversation_session_observation_columns()
+    );
+    let (
+        observed_version,
+        hydrated_version,
+        last_seen_at,
+        dirty,
+        hydrated_adapter_hash,
+        hydrated_card_contract_version,
+        hydrated_payload_policy_version,
+        hydrated_projection_version,
+    ): (
+        String,
+        Option<String>,
+        String,
+        i64,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+    ) = conn
+        .query_row(
+            r#"
+            SELECT observed_version, hydrated_version, last_seen_at, dirty,
+                   hydrated_adapter_hash, hydrated_card_contract_version,
+                   hydrated_payload_policy_version, hydrated_projection_version
+            FROM conversation_session_observations
+            WHERE tenant_id = 'default' AND source_id = 'legacy-source'
+              AND record_kind = 'session' AND external_id = 'legacy-external'
+            "#,
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            },
+        )
+        .expect("query rebuilt observation row");
+    assert_eq!(observed_version, "observed-v2");
+    assert_eq!(hydrated_version.as_deref(), Some("hydrated-v1"));
+    assert_eq!(last_seen_at, "2026-10-01T00:00:00Z");
+    assert_eq!(dirty, 1);
+    assert_eq!(hydrated_adapter_hash.as_deref(), Some("adapter-hash-v1"));
+    assert_eq!(hydrated_card_contract_version, Some(7));
+    assert_eq!(hydrated_payload_policy_version, Some(3));
+    assert_eq!(hydrated_projection_version, Some(5));
+    cleanup_database(&db_path);
+}
+
+fn expected_conversation_session_observation_columns() -> Vec<&'static str> {
+    vec![
+        "tenant_id",
+        "source_id",
+        "record_kind",
+        "external_id",
+        "observed_version",
+        "hydrated_version",
+        "last_seen_at",
+        "dirty",
+        "hydrated_adapter_hash",
+        "hydrated_card_contract_version",
+        "hydrated_payload_policy_version",
+        "hydrated_projection_version",
+    ]
+}
+
+fn conversation_session_observation_columns(conn: &Connection) -> Vec<String> {
+    conn.prepare(
+        "SELECT name FROM pragma_table_info('conversation_session_observations') ORDER BY cid",
+    )
+    .expect("prepare observation columns")
+    .query_map([], |row| row.get::<_, String>(0))
+    .expect("query observation columns")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("collect observation columns")
+}
+
+#[tokio::test]
 async fn database_reuses_pool_for_queries_after_migration() {
     let db_path = temp_database_path("pool");
     let database = Database::open_async(&db_path).await.expect("open database");

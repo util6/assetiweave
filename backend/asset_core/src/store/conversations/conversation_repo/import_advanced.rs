@@ -60,7 +60,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
     let mut skipped_session_count = 0usize;
     let mut changed_session_count = 0usize;
 
-    // 先记录读取阶段失败的会话到 observation 表 (dirty = 1, presence = present)
+    // 先记录读取阶段失败的会话到 observation 表，dirty = 1 是下一轮重试的唯一信号
     for failure in &session_failures {
         let observed_version = descriptor_versions.and_then(|map| {
             map.get(failure.session_external_id.as_str())
@@ -73,10 +73,6 @@ pub async fn import_conversation_sessions_advanced_sqlx(
             "session",
             &failure.session_external_id,
             observed_version,
-            &failure.error_code,
-            &failure.error_message,
-            &failure.stage,
-            failure.retryable,
         )
         .await;
     }
@@ -197,10 +193,6 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                             "session",
                             &normalized.external_id,
                             session.source_fingerprint.as_deref(),
-                            "transaction_begin_failed",
-                            &sanitized,
-                            "storage",
-                            true,
                         )
                         .await;
                         completed_session_count += 1;
@@ -265,10 +257,6 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                             "session",
                             &session.external_id,
                             session.source_fingerprint.as_deref(),
-                            "storage_error",
-                            &sanitized,
-                            "storage",
-                            true,
                         )
                         .await;
                     }
