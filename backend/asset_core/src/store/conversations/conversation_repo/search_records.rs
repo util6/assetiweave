@@ -70,9 +70,9 @@ pub(super) async fn load_search_sessions_sqlx(
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
                (
-                   SELECT COUNT(*)
-                   FROM {questions} q
-                   WHERE q.tenant_id = s.tenant_id AND q.session_id = s.id
+                   SELECT COUNT(DISTINCT t.question_id)
+                   FROM {turns} t
+                   WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                ) AS question_count,
                (
                    SELECT COUNT(*)
@@ -88,7 +88,6 @@ pub(super) async fn load_search_sessions_sqlx(
         "#,
         sessions = tables.sessions,
         project_path_expr = tables.session_project_path_expr,
-        questions = tables.questions,
         turns = tables.turns,
     );
     let rows = sqlx::query_as::<_, ConversationSessionListItemRow>(AssertSqlSafe(query))
@@ -104,6 +103,7 @@ pub(super) async fn load_search_sessions_sqlx(
         .collect()
 }
 
+/// 会话内的分组由轮次列即时派生：分组身份、组间顺序与问题时间全部来自轮次序列。
 pub(super) async fn load_search_questions_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -114,27 +114,39 @@ pub(super) async fn load_search_questions_sqlx(
 ) -> StoreResult<BTreeMap<String, Vec<ConversationQuestion>>> {
     let query = format!(
         r#"
-        SELECT q.id, q.session_id, q.title,
-               q.created_at, q.updated_at
-        FROM {questions} q
-        JOIN {sessions} s ON s.tenant_id = q.tenant_id AND s.id = q.session_id
-        WHERE q.tenant_id = ?1
+        SELECT t.session_id AS session_id, t.question_id AS id,
+               MIN(t.turn_index) AS first_turn_index,
+               (
+                   SELECT COALESCE(t_first.started_at, t_first.imported_at)
+                   FROM {turns} t_first
+                   WHERE t_first.tenant_id = t.tenant_id
+                     AND t_first.session_id = t.session_id
+                     AND t_first.question_id = t.question_id
+                   ORDER BY t_first.turn_index ASC, t_first.id ASC
+                   LIMIT 1
+               ) AS created_at,
+               (
+                   SELECT COALESCE(t_last.started_at, t_last.imported_at)
+                   FROM {turns} t_last
+                   WHERE t_last.tenant_id = t.tenant_id
+                     AND t_last.session_id = t.session_id
+                     AND t_last.question_id = t.question_id
+                   ORDER BY t_last.turn_index DESC, t_last.id DESC
+                   LIMIT 1
+               ) AS updated_at
+        FROM {turns} t
+        JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
+        WHERE t.tenant_id = ?1
           AND (?2 IS NULL OR s.adapter_id = ?2)
           AND (?3 IS NULL OR s.source_id = ?3)
           AND (?4 IS NULL OR s.id IN (SELECT value FROM json_each(?4)))
-        ORDER BY q.session_id ASC,
-                 COALESCE((SELECT MIN(t.turn_index)
-                           FROM {question_turns} qt_order
-                           JOIN {turns} t ON t.tenant_id = qt_order.tenant_id AND t.id = qt_order.turn_id
-                           WHERE qt_order.tenant_id = q.tenant_id AND qt_order.question_id = q.id), 9223372036854775807),
-                 q.created_at ASC, q.id ASC
+        GROUP BY t.session_id, t.question_id
+        ORDER BY t.session_id ASC, first_turn_index ASC, t.question_id ASC
         "#,
-        questions = tables.questions,
         sessions = tables.sessions,
-        question_turns = tables.question_turns,
         turns = tables.turns,
     );
-    let rows = sqlx::query(AssertSqlSafe(query))
+    let rows = sqlx::query_as::<_, DerivedQuestionGroupRow>(AssertSqlSafe(query))
         .bind(tenant_id)
         .bind(adapter_id)
         .bind(source_id)
@@ -143,14 +155,29 @@ pub(super) async fn load_search_questions_sqlx(
         .await
         .map_err(StoreError::external)?;
     let mut questions_by_session = BTreeMap::<String, Vec<ConversationQuestion>>::new();
-    for row in &rows {
-        let question = map_sqlx_conversation_question(row)?;
+    for row in rows {
         questions_by_session
-            .entry(question.session_id.clone())
+            .entry(row.session_id.clone())
             .or_default()
-            .push(question);
+            .push(ConversationQuestion {
+                id: row.id,
+                session_id: row.session_id,
+                title: None,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+            });
     }
     Ok(questions_by_session)
+}
+
+#[derive(Debug, FromRow)]
+struct DerivedQuestionGroupRow {
+    session_id: String,
+    id: String,
+    #[allow(dead_code)]
+    first_turn_index: i64,
+    created_at: String,
+    updated_at: String,
 }
 
 pub(super) async fn load_search_turns_sqlx(
@@ -165,18 +192,16 @@ pub(super) async fn load_search_turns_sqlx(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
                t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
-               qt.question_id
+               t.question_id
         FROM {turns} t
-        JOIN {question_turns} qt ON qt.tenant_id = t.tenant_id AND qt.turn_id = t.id
         JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
         WHERE t.tenant_id = ?1
           AND (?2 IS NULL OR s.adapter_id = ?2)
           AND (?3 IS NULL OR s.source_id = ?3)
           AND (?4 IS NULL OR s.id IN (SELECT value FROM json_each(?4)))
-        ORDER BY qt.question_id ASC, qt.turn_order ASC, t.turn_index ASC
+        ORDER BY t.question_id ASC, t.turn_index ASC, t.id ASC
         "#,
         turns = tables.turns,
-        question_turns = tables.question_turns,
         sessions = tables.sessions,
     );
     let rows = sqlx::query_as::<_, ConversationTurnWithQuestionRow>(AssertSqlSafe(query))

@@ -19,9 +19,9 @@ pub async fn list_web_record_sessions_sqlx(
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
                (
-                   SELECT COUNT(*)
-                   FROM web_record_questions q
-                   WHERE q.tenant_id = s.tenant_id AND q.session_id = s.id
+                   SELECT COUNT(DISTINCT t.question_id)
+                   FROM web_record_turns t
+                   WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                ) AS question_count,
                (
                    SELECT COUNT(*)
