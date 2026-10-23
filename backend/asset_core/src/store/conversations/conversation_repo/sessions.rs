@@ -36,9 +36,9 @@ pub async fn list_conversation_sessions_filtered_sqlx(
                s.missing, s.created_at, s.imported_at,
                s.execution_origin, s.execution_purpose, s.user_visible,
                (
-                   SELECT COUNT(*)
-                   FROM conversation_questions q
-                   WHERE q.tenant_id = s.tenant_id AND q.session_id = s.id
+                   SELECT COUNT(DISTINCT t.question_id)
+                   FROM conversation_turns t
+                   WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                ) AS question_count,
                (
                    SELECT COUNT(*)
@@ -207,9 +207,9 @@ pub(super) const LIST_RECENT_CONVERSATION_SESSIONS_SQL: &str = r#"
                s.missing, s.created_at, s.imported_at,
                s.execution_origin, s.execution_purpose, s.user_visible,
                (
-                   SELECT COUNT(*)
-                   FROM conversation_questions q
-                   WHERE q.tenant_id = s.tenant_id AND q.session_id = s.id
+                   SELECT COUNT(DISTINCT t.question_id)
+                   FROM conversation_turns t
+                   WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                ) AS question_count,
                (
                    SELECT COUNT(*)

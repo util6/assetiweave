@@ -162,8 +162,6 @@ pub(super) struct ConversationRecordTables {
     pub(super) session_project_path_expr: &'static str,
     pub(super) turns: &'static str,
     pub(super) parts: &'static str,
-    pub(super) questions: &'static str,
-    pub(super) question_turns: &'static str,
     pub(super) session_id_prefix: &'static str,
     pub(super) question_id_prefix: &'static str,
     pub(super) turn_id_prefix: &'static str,
@@ -178,8 +176,6 @@ impl ConversationRecordKind {
                 session_project_path_expr: "s.project_path",
                 turns: "conversation_turns",
                 parts: "conversation_parts",
-                questions: "conversation_questions",
-                question_turns: "conversation_question_turns",
                 session_id_prefix: "conversation-session-",
                 question_id_prefix: "conversation-question-",
                 turn_id_prefix: "conversation-turn-",
@@ -190,8 +186,6 @@ impl ConversationRecordKind {
                 session_project_path_expr: "NULL",
                 turns: "web_record_turns",
                 parts: "web_record_parts",
-                questions: "web_record_questions",
-                question_turns: "web_record_question_turns",
                 session_id_prefix: "web-record-session-",
                 question_id_prefix: "web-record-question-",
                 turn_id_prefix: "web-record-turn-",
@@ -257,4 +251,32 @@ pub(super) fn stable_id(prefix: &str, parts: &[&str]) -> String {
         hasher.update(b"\0");
     }
     format!("{prefix}-{:x}", hasher.finalize())
+}
+
+pub(super) async fn begin_immediate_with_retry(
+    pool: &SqlitePool,
+    max_attempts: usize,
+) -> StoreResult<sqlx::Transaction<'static, sqlx::Sqlite>> {
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        match crate::backend::store::begin_immediate(pool).await {
+            Ok(tx) => return Ok(tx),
+            Err(err) if attempts < max_attempts && is_retryable_db_lock_err(&err) => {
+                let delay = std::time::Duration::from_millis(50 + (attempts as u64) * 80);
+                tokio::time::sleep(delay).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+pub(super) fn is_retryable_db_lock_err(err: &StoreError) -> bool {
+    let msg = err.to_string();
+    msg.contains("database is locked")
+        || msg.contains("code: 517")
+        || msg.contains("code: 5")
+        || msg.contains("busy")
+        || msg.contains("Resource temporarily unavailable")
+        || msg.contains("timed out")
 }

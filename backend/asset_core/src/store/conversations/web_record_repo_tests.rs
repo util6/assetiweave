@@ -1207,16 +1207,6 @@ async fn sqlx_web_record_block_reads_use_turn_columns_after_legacy_rows_are_drop
     .fetch_one(pool)
     .await
     .expect("load web turn question column");
-    for statement in [
-        "DELETE FROM web_record_question_turns WHERE tenant_id = ?1",
-        "DELETE FROM web_record_questions WHERE tenant_id = ?1",
-    ] {
-        sqlx::query(statement)
-            .bind(TEST_TENANT_ID)
-            .execute(pool)
-            .await
-            .expect("clear legacy web grouping rows");
-    }
 
     let fragment = crate::backend::domain::conversation_id_fragment(&question_id);
     let (kind, resolved_session_id) =
@@ -1277,7 +1267,7 @@ fn web_turn(
     }
 }
 
-/// 同一会话的两条读法：web 轮次列与 web 成员表，逐轮对齐后返回列视图。
+/// 读取 web 轮次列分组。
 async fn load_web_turn_question_reads(
     pool: &SqlitePool,
 ) -> StoreResult<BTreeMap<String, (String, String)>> {
@@ -1288,30 +1278,12 @@ async fn load_web_turn_question_reads(
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
-    let membership_rows = sqlx::query_as::<_, (String, String, String)>(
-        r#"
-        SELECT t.external_id, qt.question_id, qt.assignment_origin
-        FROM web_record_question_turns qt
-        JOIN web_record_turns t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
-        WHERE qt.tenant_id = ?1
-        "#,
-    )
-    .bind(TEST_TENANT_ID)
-    .fetch_all(pool)
-    .await
-    .map_err(StoreError::external)?;
     let to_map = |rows: Vec<(String, String, String)>| {
         rows.into_iter()
             .map(|(external_id, question_id, origin)| (external_id, (question_id, origin)))
             .collect::<BTreeMap<_, _>>()
     };
-    let columns = to_map(column_rows);
-    let membership = to_map(membership_rows);
-    assert_eq!(
-        columns, membership,
-        "web record turn columns and membership disagree"
-    );
-    Ok(columns)
+    Ok(to_map(column_rows))
 }
 
 fn assert_web_turn_question_reads_agree(reads: &BTreeMap<String, (String, String)>) {

@@ -53,8 +53,6 @@ pub async fn import_conversation_sessions_advanced_sqlx(
         });
     }
 
-    audit_invalid_conversation_question_turns_sqlx(pool, tenant_id).await?;
-
     let now = Utc::now().to_rfc3339();
     let sync_run_id = stable_id("conversation-sync", &[&source.id, &now]);
     let mut skipped_session_count = 0usize;
@@ -462,7 +460,6 @@ async fn import_single_session_sqlx_tx(
     }
     prune_conversation_turns_sqlx_tx(&mut *tx, tenant_id, &session.id, normalized).await?;
     ensure_question_groups_for_session_sqlx_tx(&mut *tx, tenant_id, &session.id, now).await?;
-    rebuild_session_question_aggregates_sqlx_tx(&mut *tx, tenant_id, &session.id, now).await?;
     insert_conversation_sync_delta_sqlx_tx(
         &mut *tx,
         tenant_id,
@@ -490,32 +487,4 @@ async fn import_single_session_sqlx_tx(
     .await?;
 
     Ok(Some(session.id.clone()))
-}
-
-async fn begin_immediate_with_retry(
-    pool: &SqlitePool,
-    max_attempts: usize,
-) -> StoreResult<sqlx::Transaction<'static, sqlx::Sqlite>> {
-    let mut attempts = 0;
-    loop {
-        attempts += 1;
-        match crate::backend::store::begin_immediate(pool).await {
-            Ok(tx) => return Ok(tx),
-            Err(err) if attempts < max_attempts && is_retryable_db_lock_err(&err) => {
-                let delay = std::time::Duration::from_millis(50 + (attempts as u64) * 80);
-                tokio::time::sleep(delay).await;
-            }
-            Err(err) => return Err(err),
-        }
-    }
-}
-
-fn is_retryable_db_lock_err(err: &StoreError) -> bool {
-    let msg = err.to_string();
-    msg.contains("database is locked")
-        || msg.contains("code: 517")
-        || msg.contains("code: 5")
-        || msg.contains("busy")
-        || msg.contains("Resource temporarily unavailable")
-        || msg.contains("timed out")
 }

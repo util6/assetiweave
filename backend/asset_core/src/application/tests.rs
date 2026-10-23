@@ -703,17 +703,17 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         .expect("insert orphan part");
         sqlx::query(
             r#"
-            INSERT INTO conversation_question_turns (
-                tenant_id, question_id, turn_id, turn_order, assignment_origin,
-                assigned_at, updated_at
-            ) VALUES ('default', 'maintenance-missing-question', 'maintenance-missing-turn', 0,
-                'imported', '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z')
+            INSERT INTO conversation_turns (
+                tenant_id, id, session_id, external_id, turn_index, user_text,
+                fingerprint, missing, imported_at, question_id, question_origin
+            ) VALUES ('default', 'maintenance-orphan-turn', 'maintenance-missing-session', 'ext-orphan', 0,
+                'orphan text', 'fp-orphan', 0, '2026-08-25T00:00:00Z', '', 'imported')
             "#,
         )
         .execute(&mut *connection)
         .await
         .map_err(AppError::external)
-        .expect("insert orphan question turn");
+        .expect("insert orphan turn");
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&mut *connection)
             .await
@@ -739,7 +739,7 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         .as_array()
         .expect("audit issues")
         .iter()
-        .any(|issue| issue["category"] == "orphan_memberships"));
+        .any(|issue| issue["category"] == "orphan_turns"));
 
     let dry_run = service
         .repair_conversation_data(ConversationDataRepairParams {
@@ -1801,25 +1801,6 @@ async fn conversation_question_read_path_and_export_ignore_legacy_grouping_rows(
                 .await
                 .expect("dry-run session export before dropping legacy rows")
         };
-
-        let legacy_tables: [String; 2] = if web_record {
-            [
-                "DELETE FROM web_record_question_turns WHERE tenant_id = ?1".to_string(),
-                "DELETE FROM web_record_questions WHERE tenant_id = ?1".to_string(),
-            ]
-        } else {
-            [
-                "DELETE FROM conversation_question_turns WHERE tenant_id = ?1".to_string(),
-                "DELETE FROM conversation_questions WHERE tenant_id = ?1".to_string(),
-            ]
-        };
-        for statement in legacy_tables {
-            sqlx::query(AssertSqlSafe(statement))
-                .bind(service.tenant_id())
-                .execute(service.db.pool())
-                .await
-                .expect("clear legacy grouping rows");
-        }
 
         if !web_record {
             let detail = service

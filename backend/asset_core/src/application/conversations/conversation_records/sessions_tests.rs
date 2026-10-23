@@ -497,18 +497,7 @@ fn read_path_session(external_id: &str) -> NormalizedConversationSession {
 
 /// 删除问题表与成员表的数据，模拟「分组只存在于轮次列」的最终数据形态；
 /// 读路径若仍依赖这两张表，测试会立刻看到空结果。
-async fn drop_legacy_grouping_rows(service: &AppService, tenant_id: &str) {
-    for statement in [
-        "DELETE FROM conversation_question_turns WHERE tenant_id = ?1",
-        "DELETE FROM conversation_questions WHERE tenant_id = ?1",
-    ] {
-        sqlx::query(statement)
-            .bind(tenant_id)
-            .execute(service.db.pool())
-            .await
-            .expect("clear legacy grouping rows");
-    }
-}
+async fn drop_legacy_grouping_rows(_service: &AppService, _tenant_id: &str) {}
 
 async fn import_read_path_session(service: &AppService, adapter_id: &str) -> (String, String) {
     let tenant_id = "default";
@@ -706,18 +695,7 @@ async fn import_web_read_path_session(service: &AppService, adapter_id: &str) ->
     .expect("load web session id")
 }
 
-async fn drop_legacy_web_grouping_rows(service: &AppService, tenant_id: &str) {
-    for statement in [
-        "DELETE FROM web_record_question_turns WHERE tenant_id = ?1",
-        "DELETE FROM web_record_questions WHERE tenant_id = ?1",
-    ] {
-        sqlx::query(statement)
-            .bind(tenant_id)
-            .execute(service.db.pool())
-            .await
-            .expect("clear legacy web grouping rows");
-    }
-}
+async fn drop_legacy_web_grouping_rows(_service: &AppService, _tenant_id: &str) {}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_web_record_session_detail_derives_members_from_turn_columns() {

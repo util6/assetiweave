@@ -20,33 +20,25 @@ pub(super) enum Resolution {
     },
 }
 
-/// 按会话/记录族给出「问题 → 轮次成员」相关表名前缀。
-fn question_tables(record_kind: &str) -> (&'static str, &'static str, &'static str) {
+/// 按会话/记录族给出轮次表名。
+fn turn_table(record_kind: &str) -> &'static str {
     if record_kind == "web" {
-        (
-            "web_record_questions",
-            "web_record_question_turns",
-            "web_record_turns",
-        )
+        "web_record_turns"
     } else {
-        (
-            "conversation_questions",
-            "conversation_question_turns",
-            "conversation_turns",
-        )
+        "conversation_turns"
     }
 }
 
 async fn question_exists(
     pool: &SqlitePool,
     tenant_id: &str,
-    questions: &str,
+    turns: &str,
     question_id: &str,
     session_id: &str,
 ) -> AppResult<bool> {
     let sql = format!(
-        "SELECT EXISTS(SELECT 1 FROM {questions} \
-         WHERE tenant_id = ?1 AND id = ?2 AND session_id = ?3)"
+        "SELECT EXISTS(SELECT 1 FROM {turns} \
+         WHERE tenant_id = ?1 AND question_id = ?2 AND session_id = ?3)"
     );
     Ok(sqlx::query_scalar::<_, i64>(AssertSqlSafe(sql))
         .bind(tenant_id)
@@ -90,15 +82,13 @@ async fn redirect_target(
 async fn turn_question(
     pool: &SqlitePool,
     tenant_id: &str,
-    questions: &str,
-    question_turns: &str,
+    turns: &str,
     reference: &ReferenceRow,
     turn_id: &str,
 ) -> AppResult<Option<String>> {
     let sql = format!(
-        "SELECT q.id FROM {question_turns} qt \
-         JOIN {questions} q ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id \
-         WHERE qt.tenant_id = ?1 AND qt.turn_id = ?2 AND q.session_id = ?3 LIMIT 1"
+        "SELECT question_id FROM {turns} \
+         WHERE tenant_id = ?1 AND id = ?2 AND session_id = ?3 AND question_id <> '' LIMIT 1"
     );
     Ok(sqlx::query_scalar::<_, String>(AssertSqlSafe(sql))
         .bind(tenant_id)
@@ -130,19 +120,15 @@ async fn turn_index(
 async fn nearest_question(
     pool: &SqlitePool,
     tenant_id: &str,
-    questions: &str,
-    question_turns: &str,
     turns: &str,
     session_id: &str,
     index: i64,
 ) -> AppResult<Vec<(String, i64)>> {
     let sql = format!(
-        "SELECT q.id, MIN(ABS(t.turn_index - ?3)) AS distance \
-         FROM {questions} q \
-         JOIN {question_turns} qt ON qt.tenant_id = q.tenant_id AND qt.question_id = q.id \
-         JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id \
-         WHERE q.tenant_id = ?1 AND q.session_id = ?2 \
-         GROUP BY q.id ORDER BY distance ASC, q.id ASC LIMIT 2"
+        "SELECT question_id, MIN(ABS(turn_index - ?3)) AS distance \
+         FROM {turns} \
+         WHERE tenant_id = ?1 AND session_id = ?2 AND question_id <> '' \
+         GROUP BY question_id ORDER BY distance ASC, question_id ASC LIMIT 2"
     );
     Ok(sqlx::query_as::<_, (String, i64)>(AssertSqlSafe(sql))
         .bind(tenant_id)
@@ -155,12 +141,14 @@ async fn nearest_question(
 async fn session_questions(
     pool: &SqlitePool,
     tenant_id: &str,
-    questions: &str,
+    turns: &str,
     session_id: &str,
 ) -> AppResult<Vec<String>> {
     let sql = format!(
-        "SELECT id FROM {questions} WHERE tenant_id = ?1 AND session_id = ?2 \
-         ORDER BY created_at, id"
+        "SELECT question_id FROM {turns} \
+         WHERE tenant_id = ?1 AND session_id = ?2 AND question_id <> '' \
+         GROUP BY question_id \
+         ORDER BY MIN(turn_index) ASC, question_id ASC"
     );
     Ok(sqlx::query_scalar::<_, String>(AssertSqlSafe(sql))
         .bind(tenant_id)
@@ -176,9 +164,9 @@ pub(super) async fn resolve_orphan(
     tenant_id: &str,
     reference: &ReferenceRow,
 ) -> AppResult<Resolution> {
-    let (questions, question_turns, turns) = question_tables(&reference.record_kind);
+    let turns = turn_table(&reference.record_kind);
     if let Some(target) = redirect_target(pool, tenant_id, reference).await? {
-        if question_exists(pool, tenant_id, questions, &target, &reference.session_id).await? {
+        if question_exists(pool, tenant_id, turns, &target, &reference.session_id).await? {
             return Ok(Resolution::Remapped {
                 question_id: target,
                 strategy: STRATEGY_REDIRECT,
@@ -189,8 +177,7 @@ pub(super) async fn resolve_orphan(
         if let Some(question_id) = turn_question(
             pool,
             tenant_id,
-            questions,
-            question_turns,
+            turns,
             reference,
             turn_id,
         )
@@ -207,8 +194,6 @@ pub(super) async fn resolve_orphan(
             let candidates = nearest_question(
                 pool,
                 tenant_id,
-                questions,
-                question_turns,
                 turns,
                 &reference.session_id,
                 index,
@@ -236,7 +221,7 @@ pub(super) async fn resolve_orphan(
             }
         }
     }
-    let groups = session_questions(pool, tenant_id, questions, &reference.session_id).await?;
+    let groups = session_questions(pool, tenant_id, turns, &reference.session_id).await?;
     match groups.as_slice() {
         [] => Ok(Resolution::Invalidated {
             strategy: STRATEGY_NO_GROUP,

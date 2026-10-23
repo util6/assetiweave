@@ -67,28 +67,18 @@ pub async fn load_conversation_search_index_documents_sqlx(
     for tables in [SearchDocumentTables::session(), SearchDocumentTables::web()] {
         let question_sql = format!(
             r#"
-            SELECT s.id AS session_id, q.id AS question_id, t.id AS turn_id, q.title AS question_title, t.user_text AS user_text,
+            SELECT s.id AS session_id, t.question_id AS question_id, t.id AS turn_id,
+                   {group_title} AS question_title, t.user_text AS user_text,
                    s.adapter_id AS adapter_id, s.source_id AS source_id, {project_path} AS project_path
             FROM {sessions} s
-            JOIN {questions} q ON q.tenant_id = s.tenant_id AND q.session_id = s.id
-            JOIN {question_turns} qt ON qt.tenant_id = q.tenant_id AND qt.question_id = q.id
-            JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+            JOIN {turns} t ON t.tenant_id = s.tenant_id AND t.session_id = s.id
             WHERE s.tenant_id = ?1 AND s.missing = 0 AND t.missing = 0
-            ORDER BY s.id, COALESCE((
-                SELECT MIN(t_order.turn_index)
-                FROM {question_turns} qt_order
-                JOIN {turns} t_order
-                  ON t_order.tenant_id = qt_order.tenant_id
-                 AND t_order.id = qt_order.turn_id
-                WHERE qt_order.tenant_id = q.tenant_id
-                  AND qt_order.question_id = q.id
-            ), 9223372036854775807), qt.turn_order
+            ORDER BY s.id, t.turn_index, t.id
             "#,
             sessions = tables.sessions,
-            questions = tables.questions,
-            question_turns = tables.question_turns,
             turns = tables.turns,
             project_path = tables.project_path,
+            group_title = group_title_expr(tables.turns),
         );
         for row in sqlx::query_as::<_, SearchIndexQuestionDocumentRow>(AssertSqlSafe(question_sql))
             .bind(tenant_id)
@@ -118,7 +108,8 @@ pub async fn load_conversation_search_index_documents_sqlx(
 
         let part_sql = format!(
             r#"
-            SELECT s.id AS session_id, q.id AS question_id, t.id AS turn_id, p.id AS part_id, q.title AS question_title, t.user_text AS user_text,
+            SELECT s.id AS session_id, t.question_id AS question_id, t.id AS turn_id, p.id AS part_id,
+                   {group_title} AS question_title, t.user_text AS user_text,
                    p.part_index AS part_index, p.role AS role, p.kind AS kind, p.text AS text, p.language AS language,
                    p.command AS command, p.cwd AS cwd, p.status AS status, p.exit_code AS exit_code,
                    p.metadata_json AS metadata_json, p.content_card_json AS content_card_json,
@@ -126,28 +117,17 @@ pub async fn load_conversation_search_index_documents_sqlx(
                    p.command_label AS command_label, s.adapter_id AS adapter_id, s.source_id AS source_id,
                    {project_path} AS project_path, COALESCE(a.card_kinds_json, '[]') AS card_kinds_json
             FROM {sessions} s
-            JOIN {questions} q ON q.tenant_id = s.tenant_id AND q.session_id = s.id
-            JOIN {question_turns} qt ON qt.tenant_id = q.tenant_id AND qt.question_id = q.id
-            JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id
+            JOIN {turns} t ON t.tenant_id = s.tenant_id AND t.session_id = s.id
             JOIN {parts} p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
             LEFT JOIN conversation_adapters a ON a.tenant_id = s.tenant_id AND a.id = s.adapter_id
             WHERE s.tenant_id = ?1 AND s.missing = 0 AND t.missing = 0
-            ORDER BY s.id, COALESCE((
-                SELECT MIN(t_order.turn_index)
-                FROM {question_turns} qt_order
-                JOIN {turns} t_order
-                  ON t_order.tenant_id = qt_order.tenant_id
-                 AND t_order.id = qt_order.turn_id
-                WHERE qt_order.tenant_id = q.tenant_id
-                  AND qt_order.question_id = q.id
-            ), 9223372036854775807), qt.turn_order, p.part_index
+            ORDER BY s.id, t.turn_index, p.part_index, p.id
             "#,
             sessions = tables.sessions,
-            questions = tables.questions,
-            question_turns = tables.question_turns,
             turns = tables.turns,
             parts = tables.parts,
             project_path = tables.project_path,
+            group_title = group_title_expr(tables.turns),
         );
         for row in sqlx::query_as::<_, SearchIndexPartDocumentRow>(AssertSqlSafe(part_sql))
             .bind(tenant_id)
@@ -227,8 +207,6 @@ fn map_search_part(row: &SearchIndexPartDocumentRow) -> StoreResult<Conversation
 struct SearchDocumentTables {
     record_kind: &'static str,
     sessions: &'static str,
-    questions: &'static str,
-    question_turns: &'static str,
     turns: &'static str,
     parts: &'static str,
     project_path: &'static str,
@@ -239,8 +217,6 @@ impl SearchDocumentTables {
         Self {
             record_kind: "session",
             sessions: "conversation_sessions",
-            questions: "conversation_questions",
-            question_turns: "conversation_question_turns",
             turns: "conversation_turns",
             parts: "conversation_parts",
             project_path: "COALESCE(s.project_path, '')",
@@ -251,13 +227,22 @@ impl SearchDocumentTables {
         Self {
             record_kind: "web",
             sessions: "web_record_sessions",
-            questions: "web_record_questions",
-            question_turns: "web_record_question_turns",
             turns: "web_record_turns",
             parts: "web_record_parts",
             project_path: "''",
         }
     }
+}
+
+/// 分组标题派生：取组内首轮的用户正文，与读路径的问题标题算法一致。
+fn group_title_expr(turns: &str) -> String {
+    format!(
+        "(SELECT t_title.user_text FROM {turns} t_title \
+          WHERE t_title.tenant_id = t.tenant_id \
+            AND t_title.session_id = t.session_id \
+            AND t_title.question_id = t.question_id \
+          ORDER BY t_title.turn_index ASC, t_title.id ASC LIMIT 1)"
+    )
 }
 
 fn search_question_title(title: Option<String>, question_text: &str) -> String {

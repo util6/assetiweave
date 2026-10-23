@@ -79,11 +79,11 @@ pub(super) struct AuditSnapshot {
     pub(super) stale_ledger: Vec<LedgerRow>,
 }
 
-fn question_table_for(record_kind: &str) -> &'static str {
+fn turn_table_for(record_kind: &str) -> &'static str {
     if record_kind == "web" {
-        "web_record_questions"
+        "web_record_turns"
     } else {
-        "conversation_questions"
+        "conversation_turns"
     }
 }
 
@@ -104,14 +104,18 @@ async fn load_orphans(
 ) -> AppResult<Vec<ReferenceRow>> {
     let mut rows = Vec::new();
     for record_kind in ["session", "web"] {
-        let questions = question_table_for(record_kind);
+        let turns = turn_table_for(record_kind);
         let sql = format!(
             "SELECT r.id, r.session_id, r.question_id, r.turn_id \
              FROM {table} r \
-             LEFT JOIN {questions} q ON q.tenant_id = r.tenant_id AND q.id = r.question_id \
-                AND q.session_id = r.session_id \
              WHERE r.tenant_id = ?1 AND r.question_id IS NOT NULL \
-                AND r.record_kind = ?2 AND q.id IS NULL"
+                AND r.record_kind = ?2 \
+                AND NOT EXISTS ( \
+                    SELECT 1 FROM {turns} t \
+                    WHERE t.tenant_id = r.tenant_id \
+                      AND t.session_id = r.session_id \
+                      AND t.question_id = r.question_id \
+                )"
         );
         let found =
             sqlx::query_as::<_, (String, String, String, Option<String>)>(AssertSqlSafe(sql))
