@@ -29,6 +29,7 @@ pub mod params;
 pub mod project_memory;
 pub mod project_memory_documents;
 pub mod recent;
+pub mod reference_audit;
 pub mod session_coordinator;
 pub mod session_memory;
 pub mod types;

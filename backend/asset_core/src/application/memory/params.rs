@@ -107,6 +107,16 @@ pub struct MemoryTaskRetryParams {
     pub task_id: String,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct MemoryReferenceRepairParams {
+    /// 只回放审计与修复计划；缺省为 dry-run。
+    #[serde(default, alias = "dryRun")]
+    pub dry_run: bool,
+    /// 写入必须显式确认。
+    #[serde(default)]
+    pub yes: bool,
+}
+
 /// Memory 流水线执行参数
 #[derive(Debug, Clone, Default)]
 pub struct MemoryPipelineParams {
