@@ -630,7 +630,7 @@ async fn migrations_rebuild_legacy_observation_table_preserving_incremental_stat
                 'adapter', 1, 4, '2026-10-01T00:00:00Z',
                 '2026-10-01T00:00:00Z', 5
             );
-            DELETE FROM _sqlx_migrations WHERE version = 202610230001;
+            DELETE FROM _sqlx_migrations WHERE version = 202610230002;
             "#,
     )
     .expect("seed legacy observation schema");
