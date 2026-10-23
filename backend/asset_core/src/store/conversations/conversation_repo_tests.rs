@@ -3647,3 +3647,399 @@ async fn import_conversation_sessions_drops_internal_agent_execution_workspaces(
             .unwrap();
     assert_eq!(count, 1);
 }
+
+// ---------------------------------------------------------------------------
+// 读路径切换：单问题详情、块定位与短标识全部由轮次列派生
+// ---------------------------------------------------------------------------
+
+/// 删除问题表与成员表的数据，模拟「分组只存在于轮次列」的最终数据形态。
+async fn drop_legacy_grouping_rows(pool: &SqlitePool) {
+    for statement in [
+        "DELETE FROM conversation_question_turns WHERE tenant_id = ?1",
+        "DELETE FROM conversation_questions WHERE tenant_id = ?1",
+    ] {
+        sqlx::query(statement)
+            .bind(TEST_TENANT_ID)
+            .execute(pool)
+            .await
+            .expect("clear legacy grouping rows");
+    }
+}
+
+/// 导入 v1 夹具（t1/t2 合并为一组，t3 独立一组），返回会话与两个分组标识。
+async fn import_read_path_fixture(
+    pool: &SqlitePool,
+    adapter: &crate::backend::domain::ConversationAdapter,
+    source: &ConversationSource,
+) -> (String, String, String) {
+    upsert_conversation_adapter_sqlx(pool, TEST_TENANT_ID, adapter)
+        .await
+        .unwrap();
+    upsert_conversation_source_sqlx(pool, TEST_TENANT_ID, source)
+        .await
+        .unwrap();
+    import_conversation_sessions_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        source,
+        &[fixture_session("v1")],
+        false,
+    )
+    .await
+    .unwrap();
+    let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+    let first_turn_id = stable_id("conversation-turn", &[&session_id, "t1"]);
+    let third_turn_id = stable_id("conversation-turn", &[&session_id, "t3"]);
+    (
+        session_id.clone(),
+        stable_id("conversation-question", &[&session_id, &first_turn_id]),
+        stable_id("conversation-question", &[&session_id, &third_turn_id]),
+    )
+}
+
+#[tokio::test]
+async fn sqlx_question_detail_reads_turn_columns_after_legacy_rows_are_dropped() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-question-detail-turn-columns-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "question-detail-turn-columns-external",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let pool = database.pool();
+    let (session_id, question_id, _) = import_read_path_fixture(pool, &adapter, &source).await;
+    let first_turn_id = stable_id("conversation-turn", &[&session_id, "t1"]);
+    let second_turn_id = stable_id("conversation-turn", &[&session_id, "t2"]);
+
+    drop_legacy_grouping_rows(pool).await;
+
+    let detail = load_conversation_question_detail_sqlx(pool, TEST_TENANT_ID, &question_id)
+        .await
+        .expect("load question detail from turn columns");
+
+    assert_eq!(detail.question.id, question_id);
+    assert_eq!(detail.question.session_id, session_id);
+    assert_eq!(
+        detail.question.title.as_deref(),
+        Some("How does sync work?")
+    );
+    assert_eq!(
+        detail
+            .turns
+            .iter()
+            .map(|turn| turn.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![first_turn_id.as_str(), second_turn_id.as_str()]
+    );
+    assert_eq!(
+        detail
+            .question_turns
+            .iter()
+            .map(|membership| (membership.turn_id.as_str(), membership.turn_order))
+            .collect::<Vec<_>>(),
+        vec![(first_turn_id.as_str(), 0), (second_turn_id.as_str(), 1)]
+    );
+    assert!(detail
+        .question_turns
+        .iter()
+        .all(|membership| membership.question_id == question_id));
+    assert_eq!(detail.parts.len(), 2);
+    assert!(detail
+        .projected_content_nodes
+        .iter()
+        .all(|node| node.question_id == question_id));
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn sqlx_block_locators_and_block_detail_read_turn_columns_after_legacy_rows_are_dropped() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-block-read-path-turn-columns-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "block-read-path-turn-columns-external",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let pool = database.pool();
+    let (session_id, question_id, _) = import_read_path_fixture(pool, &adapter, &source).await;
+    let first_turn_id = stable_id("conversation-turn", &[&session_id, "t1"]);
+
+    drop_legacy_grouping_rows(pool).await;
+
+    let locators = list_conversation_block_locators_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        ConversationRecordKind::Session,
+        &question_id,
+    )
+    .await
+    .expect("list block locators from turn columns");
+    assert_eq!(locators.len(), 4);
+    assert!(locators
+        .iter()
+        .all(|locator| locator.question_id == question_id && locator.session_id == session_id));
+
+    let question_locator = locators
+        .iter()
+        .find(|locator| locator.turn_id == first_turn_id && locator.kind == "question")
+        .expect("question block locator");
+    assert_eq!(
+        question_locator.block_id,
+        format!("{first_turn_id}-question")
+    );
+    assert_eq!(
+        question_locator.content_length,
+        "How does sync work?".chars().count()
+    );
+    let answer_locator = locators
+        .iter()
+        .find(|locator| {
+            locator.turn_id == first_turn_id && locator.semantic_role.as_deref() == Some("answer")
+        })
+        .expect("answer block locator");
+
+    let question_block = load_conversation_block_detail_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        ConversationRecordKind::Session,
+        &question_locator.block_id,
+    )
+    .await
+    .expect("load question block from turn columns");
+    assert_eq!(question_block.content, "How does sync work?");
+    assert_eq!(question_block.locator.question_id, question_id);
+    assert_eq!(question_block.locator.turn_id, first_turn_id);
+
+    let answer_block = load_conversation_block_detail_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        ConversationRecordKind::Session,
+        &answer_locator.block_id,
+    )
+    .await
+    .expect("load answer block from turn columns");
+    assert_eq!(answer_block.content, "answer for t1");
+    assert_eq!(answer_block.locator.question_id, question_id);
+    assert_eq!(answer_block.locator.part_id, answer_locator.part_id);
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+async fn resolve_question_prefix(pool: &SqlitePool, input: &str) -> StoreResult<String> {
+    resolve_conversation_question_id_prefix_sqlx(pool, TEST_TENANT_ID, input).await
+}
+
+#[tokio::test]
+async fn sqlx_question_short_id_prefix_resolves_prefixed_and_bare_forms_from_turn_columns() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-question-prefix-turn-columns-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "question-prefix-turn-columns-external",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let pool = database.pool();
+    let (_, question_id, second_question_id) =
+        import_read_path_fixture(pool, &adapter, &source).await;
+    let fragment = crate::backend::domain::conversation_id_fragment(&question_id);
+    let second_fragment = crate::backend::domain::conversation_id_fragment(&second_question_id);
+
+    drop_legacy_grouping_rows(pool).await;
+
+    assert_eq!(
+        resolve_question_prefix(pool, &fragment)
+            .await
+            .expect("resolve bare fragment"),
+        question_id
+    );
+    assert_eq!(
+        resolve_question_prefix(pool, &format!("conversation-question-{fragment}"))
+            .await
+            .expect("resolve prefixed fragment"),
+        question_id
+    );
+    assert_eq!(
+        resolve_question_prefix(pool, &question_id)
+            .await
+            .expect("resolve full identifier"),
+        question_id
+    );
+    assert_eq!(
+        resolve_question_prefix(pool, &second_fragment)
+            .await
+            .expect("resolve the second group"),
+        second_question_id
+    );
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn sqlx_question_short_id_prefix_reports_ambiguity_instead_of_guessing() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-question-prefix-ambiguous-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "question-prefix-ambiguous-external",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let pool = database.pool();
+    let (session_id, question_id, _) = import_read_path_fixture(pool, &adapter, &source).await;
+    let third_turn_id = stable_id("conversation-turn", &[&session_id, "t3"]);
+    let fragment = crate::backend::domain::conversation_id_fragment(&question_id);
+    let colliding_question_id = format!("conversation-question-{fragment}{}", "0".repeat(56));
+
+    sqlx::query("UPDATE conversation_turns SET question_id = ?1 WHERE tenant_id = ?2 AND id = ?3")
+        .bind(&colliding_question_id)
+        .bind(TEST_TENANT_ID)
+        .bind(&third_turn_id)
+        .execute(pool)
+        .await
+        .expect("force a colliding question prefix");
+    drop_legacy_grouping_rows(pool).await;
+
+    let error = resolve_question_prefix(pool, &fragment)
+        .await
+        .expect_err("ambiguous prefix must not resolve to one group");
+    assert!(
+        matches!(error, StoreError::Conflict(_)),
+        "ambiguous prefix must be a conflict, got {error:?}"
+    );
+    let message = error.to_string();
+    assert!(message.contains("ambiguous prefix"), "{message}");
+    assert!(message.contains("2 questions match"), "{message}");
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn sqlx_merged_question_id_still_resolves_to_the_surviving_group() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-question-tombstone-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "question-tombstone-external",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let pool = database.pool();
+    let (_, question_id, merged_question_id) =
+        import_read_path_fixture(pool, &adapter, &source).await;
+    let merged_fragment = crate::backend::domain::conversation_id_fragment(&merged_question_id);
+
+    merge_conversation_questions_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        &[question_id.clone(), merged_question_id.clone()],
+        false,
+    )
+    .await
+    .expect("merge the two groups");
+    drop_legacy_grouping_rows(pool).await;
+
+    assert_eq!(
+        resolve_question_prefix(pool, &merged_question_id)
+            .await
+            .expect("resolve merged-away full identifier"),
+        question_id
+    );
+    assert_eq!(
+        resolve_question_prefix(pool, &merged_fragment)
+            .await
+            .expect("resolve merged-away short identifier"),
+        question_id
+    );
+
+    let detail = load_conversation_question_detail_sqlx(pool, TEST_TENANT_ID, &merged_question_id)
+        .await
+        .expect("load the surviving group through the merged-away identifier");
+    assert_eq!(detail.question.id, question_id);
+    assert_eq!(detail.turns.len(), 3);
+
+    let locators = list_conversation_block_locators_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        ConversationRecordKind::Session,
+        &merged_question_id,
+    )
+    .await
+    .expect("list the surviving group blocks through the merged-away identifier");
+    assert_eq!(locators.len(), 6);
+    assert!(locators
+        .iter()
+        .all(|locator| locator.question_id == question_id));
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn sqlx_question_fragment_and_any_id_resolve_through_turn_columns() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-question-any-id-turn-columns-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "question-any-id-turn-columns-external",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let pool = database.pool();
+    let (session_id, question_id, _) = import_read_path_fixture(pool, &adapter, &source).await;
+    let fragment = crate::backend::domain::conversation_id_fragment(&question_id);
+
+    drop_legacy_grouping_rows(pool).await;
+
+    for identifier in [fragment.as_str(), question_id.as_str()] {
+        let (kind, resolved_session_id) =
+            resolve_any_id_to_session_id_sqlx(pool, TEST_TENANT_ID, identifier)
+                .await
+                .unwrap_or_else(|error| panic!("resolve {identifier} to its session: {error}"));
+        assert_eq!(kind, ConversationRecordKind::Session);
+        assert_eq!(resolved_session_id, session_id);
+    }
+
+    let sessions = list_conversation_sessions_by_id_fragment_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        ConversationRecordKind::Session,
+        None,
+        Some(&source.id),
+        &fragment,
+        20,
+        0,
+    )
+    .await
+    .expect("list sessions by question fragment");
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].session.id, session_id);
+
+    drop(database);
+    cleanup_database(&db_path);
+}

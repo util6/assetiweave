@@ -1750,6 +1750,167 @@ async fn conversation_blocks_list_locators_and_get_selected_content_for_each_rec
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_question_read_path_and_export_ignore_legacy_grouping_rows() {
+    for (web_record, record_kind) in [(false, "session"), (true, "web")] {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-question-read-path-{record_kind}-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create question read path root");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open service");
+        let session_id =
+            upsert_conversation_export_fixture(&service, &root, Vec::new(), None, web_record).await;
+        let question_id: String = sqlx::query_scalar(AssertSqlSafe(format!(
+            "SELECT question_id FROM {}_turns WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY turn_index ASC LIMIT 1",
+            if web_record { "web_record" } else { "conversation" }
+        )))
+        .bind(service.tenant_id())
+        .bind(&session_id)
+        .fetch_one(service.db.pool())
+        .await
+        .expect("load question id from turn columns");
+
+        let export_output_root = root.join("exports").to_string_lossy().to_string();
+        let export_before = if web_record {
+            service
+                .export_web_record_session(ConversationSessionExportParams {
+                    session_id: session_id.clone(),
+                    output_root: export_output_root.clone(),
+                    question_ids: vec![question_id.clone()],
+                    content_filter:
+                        crate::backend::domain::ConversationExportContentFilter::default(),
+                    format: crate::backend::domain::ConversationExportFormat::Raw,
+                    dry_run: true,
+                })
+                .await
+                .expect("dry-run web record export before dropping legacy rows")
+        } else {
+            service
+                .export_conversation_session(ConversationSessionExportParams {
+                    session_id: session_id.clone(),
+                    output_root: export_output_root.clone(),
+                    question_ids: vec![question_id.clone()],
+                    content_filter:
+                        crate::backend::domain::ConversationExportContentFilter::default(),
+                    format: crate::backend::domain::ConversationExportFormat::Raw,
+                    dry_run: true,
+                })
+                .await
+                .expect("dry-run session export before dropping legacy rows")
+        };
+
+        let legacy_tables: [String; 2] = if web_record {
+            [
+                "DELETE FROM web_record_question_turns WHERE tenant_id = ?1".to_string(),
+                "DELETE FROM web_record_questions WHERE tenant_id = ?1".to_string(),
+            ]
+        } else {
+            [
+                "DELETE FROM conversation_question_turns WHERE tenant_id = ?1".to_string(),
+                "DELETE FROM conversation_questions WHERE tenant_id = ?1".to_string(),
+            ]
+        };
+        for statement in legacy_tables {
+            sqlx::query(AssertSqlSafe(statement))
+                .bind(service.tenant_id())
+                .execute(service.db.pool())
+                .await
+                .expect("clear legacy grouping rows");
+        }
+
+        if !web_record {
+            let detail = service
+                .get_conversation_question(ConversationQuestionGetParams {
+                    question_id: question_id.clone(),
+                })
+                .await
+                .expect("load question detail from turn columns");
+            assert_eq!(detail.question.id, question_id);
+            assert_eq!(detail.question.title.as_deref(), Some("Export this"));
+            assert_eq!(detail.turns.len(), 1);
+        }
+
+        let blocks = service
+            .list_conversation_blocks(ConversationBlockListParams {
+                question_id: question_id.clone(),
+            })
+            .await
+            .expect("list block locators from turn columns");
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks
+            .iter()
+            .all(|block| block.question_id == question_id && block.session_id == session_id));
+        assert!(blocks.iter().all(|block| block.record_kind == record_kind));
+
+        let question_block = blocks
+            .iter()
+            .find(|block| block.kind == "question")
+            .expect("question block locator");
+        let question = service
+            .get_conversation_block(ConversationBlockGetParams {
+                block_id: question_block.block_id.clone(),
+            })
+            .await
+            .expect("load question block from turn columns");
+        assert_eq!(question.content, "Export this");
+        assert_eq!(question.locator.question_id, question_id);
+
+        let answer_block = blocks
+            .iter()
+            .find(|block| block.semantic_role.as_deref() == Some("answer"))
+            .expect("answer block locator");
+        let answer = service
+            .get_conversation_block(ConversationBlockGetParams {
+                block_id: answer_block.block_id.clone(),
+            })
+            .await
+            .expect("load answer block from turn columns");
+        assert_eq!(answer.content, "Rust fallback should not appear");
+        assert_eq!(answer.locator.question_id, question_id);
+
+        let export_after = if web_record {
+            service
+                .export_web_record_session(ConversationSessionExportParams {
+                    session_id: session_id.clone(),
+                    output_root: export_output_root,
+                    question_ids: vec![question_id.clone()],
+                    content_filter:
+                        crate::backend::domain::ConversationExportContentFilter::default(),
+                    format: crate::backend::domain::ConversationExportFormat::Raw,
+                    dry_run: true,
+                })
+                .await
+                .expect("dry-run web record export after dropping legacy rows")
+        } else {
+            service
+                .export_conversation_session(ConversationSessionExportParams {
+                    session_id: session_id.clone(),
+                    output_root: export_output_root,
+                    question_ids: vec![question_id.clone()],
+                    content_filter:
+                        crate::backend::domain::ConversationExportContentFilter::default(),
+                    format: crate::backend::domain::ConversationExportFormat::Raw,
+                    dry_run: true,
+                })
+                .await
+                .expect("dry-run session export after dropping legacy rows")
+        };
+        assert_eq!(export_after["bytes"], export_before["bytes"]);
+        assert_eq!(export_after["path"], export_before["path"]);
+        assert_eq!(export_after["question_count"], 1);
+        assert!(
+            export_after["bytes"].as_u64().unwrap_or(0) > 0,
+            "export must keep producing content"
+        );
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn conversation_session_export_uses_adapter_markdown_formatter() {
