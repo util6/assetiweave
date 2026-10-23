@@ -965,6 +965,194 @@ async fn begin_immediate_commits_and_rolls_back_cleanly() {
     cleanup_database(&db_path);
 }
 
+#[tokio::test]
+async fn migrations_backfill_turn_question_columns_from_membership() {
+    let db_path = temp_database_path("conversation-turn-question-columns");
+    migrate_database(&db_path)
+        .await
+        .expect("create current database");
+
+    let conn = Connection::open(&db_path).expect("open current database");
+    conn.execute_batch(
+        r#"
+            PRAGMA foreign_keys = OFF;
+            INSERT INTO conversation_sessions (
+                tenant_id, id, source_id, adapter_id, external_id, title, project_path,
+                started_at, updated_at, source_locator, source_fingerprint, missing,
+                created_at, imported_at
+            ) VALUES (
+                'default', 'question-column-session', 'question-column-source',
+                'question-column-adapter', 'question-column-external', 'Question columns',
+                NULL, NULL, NULL, NULL, NULL, 0,
+                '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
+            );
+            INSERT INTO conversation_turns (
+                tenant_id, id, session_id, external_id, turn_index, user_text,
+                title, started_at, ended_at, fingerprint, missing, imported_at
+            ) VALUES
+                ('default', 'conversation-turn-1111', 'question-column-session',
+                 'ext-1', 0, 'How does segmentation work?', NULL, NULL, NULL,
+                 'fingerprint-1', 0, '2026-10-23T00:00:00Z'),
+                ('default', 'conversation-turn-2222', 'question-column-session',
+                 'ext-2', 1, '继续', NULL, NULL, NULL,
+                 'fingerprint-2', 0, '2026-10-23T00:00:00Z'),
+                ('default', 'conversation-turn-3333', 'question-column-session',
+                 'ext-3', 2, 'Orphan turn', NULL, NULL, NULL,
+                 'fingerprint-3', 0, '2026-10-23T00:00:00Z');
+            INSERT INTO conversation_question_turns (
+                tenant_id, question_id, turn_id, turn_order, assignment_origin,
+                assigned_at, updated_at
+            ) VALUES
+                ('default', 'conversation-question-manual-group',
+                 'conversation-turn-1111', 0, 'manual',
+                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'),
+                ('default', 'conversation-question-auto-group',
+                 'conversation-turn-2222', 1, 'auto_merged',
+                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z');
+
+            INSERT INTO web_record_sessions (
+                tenant_id, id, source_id, adapter_id, external_id, title,
+                started_at, updated_at, source_locator, source_fingerprint, missing,
+                created_at, imported_at
+            ) VALUES (
+                'default', 'question-column-web-session', 'question-column-source',
+                'question-column-adapter', 'question-column-web-external', 'Web columns',
+                NULL, NULL, NULL, NULL, 0,
+                '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
+            );
+            INSERT INTO web_record_turns (
+                tenant_id, id, session_id, external_id, turn_index, user_text,
+                title, started_at, ended_at, fingerprint, missing, imported_at
+            ) VALUES
+                ('default', 'web-record-turn-4444', 'question-column-web-session',
+                 'web-ext-1', 0, 'Web question', NULL, NULL, NULL,
+                 'web-fingerprint-1', 0, '2026-10-23T00:00:00Z'),
+                ('default', 'web-record-turn-5555', 'question-column-web-session',
+                 'web-ext-2', 1, 'Web orphan', NULL, NULL, NULL,
+                 'web-fingerprint-2', 0, '2026-10-23T00:00:00Z');
+            INSERT INTO web_record_question_turns (
+                tenant_id, question_id, turn_id, turn_order, assignment_origin,
+                assigned_at, updated_at
+            ) VALUES (
+                'default', 'web-record-question-imported-group',
+                'web-record-turn-4444', 0, 'imported',
+                '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
+            );
+            "#,
+    )
+    .expect("seed turns and membership rows");
+
+    conn.execute_batch(LEGACY_TURN_QUESTION_ROLLBACK)
+        .expect("restore pre-migration turn shape");
+    drop(conn);
+
+    migrate_database(&db_path)
+        .await
+        .expect("re-apply turn question column migration");
+    let first_pass = load_turn_question_columns(&db_path);
+
+    let conn = Connection::open(&db_path).expect("open migrated database");
+    conn.execute_batch(LEGACY_TURN_QUESTION_ROLLBACK)
+        .expect("restore pre-migration turn shape");
+    drop(conn);
+    migrate_database(&db_path)
+        .await
+        .expect("replay turn question column migration");
+    let second_pass = load_turn_question_columns(&db_path);
+
+    let conn = Connection::open(&db_path).expect("open migrated database");
+    let index_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN (
+                'idx_conversation_turns_tenant_session_question',
+                'idx_conversation_turns_tenant_question',
+                'idx_web_record_turns_tenant_session_question'
+            )",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query question column indexes");
+    drop(conn);
+
+    assert_eq!(first_pass, second_pass);
+    assert_eq!(index_count, 3);
+    assert_eq!(
+        first_pass,
+        vec![
+            (
+                "conversation_turns".to_string(),
+                "conversation-turn-1111".to_string(),
+                "conversation-question-manual-group".to_string(),
+                "manual".to_string(),
+            ),
+            (
+                "conversation_turns".to_string(),
+                "conversation-turn-2222".to_string(),
+                "conversation-question-auto-group".to_string(),
+                "auto_merged".to_string(),
+            ),
+            (
+                "conversation_turns".to_string(),
+                "conversation-turn-3333".to_string(),
+                "conversation-question-3333".to_string(),
+                "imported".to_string(),
+            ),
+            (
+                "web_record_turns".to_string(),
+                "web-record-turn-4444".to_string(),
+                "web-record-question-imported-group".to_string(),
+                "imported".to_string(),
+            ),
+            (
+                "web_record_turns".to_string(),
+                "web-record-turn-5555".to_string(),
+                "web-record-question-5555".to_string(),
+                "imported".to_string(),
+            ),
+        ]
+    );
+
+    cleanup_database(&db_path);
+}
+
+const LEGACY_TURN_QUESTION_ROLLBACK: &str = r#"
+    DROP INDEX IF EXISTS idx_conversation_turns_tenant_session_question;
+    DROP INDEX IF EXISTS idx_conversation_turns_tenant_question;
+    DROP INDEX IF EXISTS idx_web_record_turns_tenant_session_question;
+    ALTER TABLE conversation_turns DROP COLUMN question_id;
+    ALTER TABLE conversation_turns DROP COLUMN question_origin;
+    ALTER TABLE web_record_turns DROP COLUMN question_id;
+    ALTER TABLE web_record_turns DROP COLUMN question_origin;
+    DELETE FROM _sqlx_migrations WHERE version = 202610230004;
+"#;
+
+fn load_turn_question_columns(db_path: &std::path::Path) -> Vec<(String, String, String, String)> {
+    let conn = Connection::open(db_path).expect("open migrated database");
+    let mut rows = Vec::new();
+    for (table, id_prefix) in [
+        ("conversation_turns", "conversation-turn-"),
+        ("web_record_turns", "web-record-turn-"),
+    ] {
+        let sql = format!("SELECT id, question_id, question_origin FROM {table} ORDER BY id");
+        let mut statement = conn.prepare(&sql).expect("prepare question column query");
+        let mut cursor = statement.query([]).expect("query question columns");
+        while let Some(row) = cursor.next().expect("read question column row") {
+            let id: String = row.get(0).expect("read turn id");
+            assert!(
+                id.starts_with(id_prefix),
+                "unexpected turn id {id} in {table}"
+            );
+            rows.push((
+                table.to_string(),
+                id,
+                row.get(1).expect("read question id"),
+                row.get(2).expect("read question origin"),
+            ));
+        }
+    }
+    rows
+}
+
 fn temp_database_path(label: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "assetiweave-sqlx-{label}-{}.sqlite",
