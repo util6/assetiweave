@@ -500,62 +500,69 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
     refreshed_session.source_fingerprint = Some("same-source".to_string());
     refreshed_session.turns[0].parts[0].metadata_json = content_card_metadata("answer");
 
-    let (result, imported_at, metadata_json, fts_row_count) = async {
-
-                super::super::conversation_repo::upsert_conversation_source_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                )
-                .await
-                .map_err(StoreError::external)?;
-                import_web_record_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[old_session],
-                    false,
-                )
-                .await
-                .map_err(StoreError::external)?;
-                let session_id = stable_id("web-record-session", &[&source.id, "web-session-1"]);
-                sqlx::query(
-                    r#"
-                    INSERT INTO conversation_question_fts (
-                        tenant_id, question_id, session_id, question_text, answer_text,
-                        code_text, command_text
-                    ) VALUES (?1, 'web-record-question-stale', ?2, '', 'stale', '', '')
+    let (result, imported_at, metadata_json, indexed_rows) = async {
+        super::super::conversation_repo::upsert_conversation_source_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+        )
+        .await
+        .map_err(StoreError::external)?;
+        import_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[old_session],
+            false,
+        )
+        .await
+        .map_err(StoreError::external)?;
+        let session_id = stable_id("web-record-session", &[&source.id, "web-session-1"]);
+        let turn_id: String = sqlx::query_scalar(
+            "SELECT id FROM web_record_turns WHERE tenant_id = ?1 AND session_id = ?2 LIMIT 1",
+        )
+        .bind(TEST_TENANT_ID)
+        .bind(&session_id)
+        .fetch_one(database.pool())
+        .await
+        .map_err(StoreError::external)?;
+        sqlx::query(
+            r#"
+                    INSERT INTO conversation_part_fts (
+                        tenant_id, part_id, session_id, turn_id, text
+                    ) VALUES (?1, 'web-record-part-stale', ?2, ?3, 'stale body')
                     "#,
-                )
-                .bind(TEST_TENANT_ID)
-                .bind(&session_id)
-                .execute(database.pool())
-                .await
-                .map_err(StoreError::external)?;
-                sqlx::query(
-                    "UPDATE web_record_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
-                )
-                .bind(&source.id)
-                .execute(database.pool())
-                .await
-                .map_err(StoreError::external)?;
-                let result = import_web_record_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[refreshed_session],
-                    false,
-                )
-                .await?;
-                let imported_at = sqlx::query_scalar::<_, String>(
-                    "SELECT imported_at FROM web_record_sessions WHERE source_id = ?1",
-                )
-                .bind(&source.id)
-                .fetch_one(database.pool())
-                .await
-                .map_err(StoreError::external)?;
-                let metadata_json = sqlx::query_scalar::<_, Option<String>>(
-                    r#"
+        )
+        .bind(TEST_TENANT_ID)
+        .bind(&session_id)
+        .bind(&turn_id)
+        .execute(database.pool())
+        .await
+        .map_err(StoreError::external)?;
+        sqlx::query(
+            "UPDATE web_record_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
+        )
+        .bind(&source.id)
+        .execute(database.pool())
+        .await
+        .map_err(StoreError::external)?;
+        let result = import_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[refreshed_session],
+            false,
+        )
+        .await?;
+        let imported_at = sqlx::query_scalar::<_, String>(
+            "SELECT imported_at FROM web_record_sessions WHERE source_id = ?1",
+        )
+        .bind(&source.id)
+        .fetch_one(database.pool())
+        .await
+        .map_err(StoreError::external)?;
+        let metadata_json = sqlx::query_scalar::<_, Option<String>>(
+            r#"
                     SELECT p.metadata_json
                     FROM web_record_parts p
                     JOIN web_record_turns t ON t.id = p.turn_id
@@ -564,23 +571,36 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
                     ORDER BY p.part_index ASC
                     LIMIT 1
                     "#,
-                )
-                .bind(&source.id)
-                .fetch_one(database.pool())
-                .await
-                .map_err(StoreError::external)?;
-                let fts_row_count = sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM conversation_question_fts WHERE tenant_id = ?1 AND session_id = ?2",
-                )
-                .bind(TEST_TENANT_ID)
-                .bind(&session_id)
-                .fetch_one(database.pool())
-                .await
-                .map_err(StoreError::external)?;
-                StoreResult::Ok((result, imported_at, metadata_json, fts_row_count))
-
-        }.await
-            .expect("refresh normalized web parts through SQLx");
+        )
+        .bind(&source.id)
+        .fetch_one(database.pool())
+        .await
+        .map_err(StoreError::external)?;
+        let fts_row_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM conversation_part_fts WHERE tenant_id = ?1 AND session_id = ?2",
+        )
+        .bind(TEST_TENANT_ID)
+        .bind(&session_id)
+        .fetch_one(database.pool())
+        .await
+        .map_err(StoreError::external)?;
+        let fts_texts = sqlx::query_scalar::<_, String>(
+            "SELECT text FROM conversation_part_fts WHERE tenant_id = ?1 AND session_id = ?2",
+        )
+        .bind(TEST_TENANT_ID)
+        .bind(&session_id)
+        .fetch_all(database.pool())
+        .await
+        .map_err(StoreError::external)?;
+        StoreResult::Ok((
+            result,
+            imported_at,
+            metadata_json,
+            (fts_row_count, fts_texts),
+        ))
+    }
+    .await
+    .expect("refresh normalized web parts through SQLx");
 
     assert_eq!(result.skipped_session_count, 0);
     assert_ne!(imported_at, "preserved");
@@ -588,7 +608,13 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
         .as_deref()
         .unwrap_or("")
         .contains(r#""content_card""#));
-    assert_eq!(fts_row_count, 1);
+    let (fts_row_count, fts_texts) = indexed_rows;
+    assert_eq!(fts_row_count, 1, "轮次级重建不应留下重复或过期索引行");
+    assert_eq!(fts_texts.len(), 1);
+    assert!(
+        !fts_texts[0].contains("stale body"),
+        "重新导入后索引正文必须来自当前零件投影"
+    );
 
     drop(database);
     cleanup_database(&db_path);
@@ -1367,6 +1393,221 @@ fn content_card_metadata(card_type: &str) -> Option<String> {
     Some(format!(
         r#"{{"content_card":{{"type":"{card_type}","format":"markdown"}}}}"#
     ))
+}
+
+#[tokio::test]
+async fn sqlx_web_record_unchanged_session_keeps_part_index_rows() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-web-record-index-skip-sqlx-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let source = fixture_source();
+    let mut session = fixture_session();
+    session.source_fingerprint = Some("same-source".to_string());
+
+    let (skipped_session_count, indexed_texts) = async {
+        super::super::conversation_repo::upsert_conversation_source_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+        )
+        .await
+        .map_err(StoreError::external)?;
+        import_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[session.clone()],
+            false,
+        )
+        .await?;
+        let result = import_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[session],
+            false,
+        )
+        .await?;
+        let indexed_texts = sqlx::query_scalar::<_, String>(
+            "SELECT text FROM conversation_part_fts WHERE tenant_id = ?1 ORDER BY text ASC",
+        )
+        .bind(TEST_TENANT_ID)
+        .fetch_all(database.pool())
+        .await
+        .map_err(StoreError::external)?;
+        StoreResult::Ok((result.skipped_session_count, indexed_texts))
+    }
+    .await
+    .expect("re-import an unchanged web record");
+
+    assert_eq!(skipped_session_count, 1);
+    assert_eq!(
+        indexed_texts,
+        vec!["Web answer".to_string()],
+        "跳过未变化的会话时不得丢失既有索引行"
+    );
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn sqlx_web_record_search_hits_tool_output_bodies() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-web-record-part-search-sqlx-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let source = fixture_source();
+    let mut session = fixture_session();
+    session.turns[0].parts.push(NormalizedConversationPart {
+        role: ConversationPartRole::Tool,
+        kind: ConversationPartKind::Tool,
+        text: Some("web runner crashed with SIGSEGV".to_string()),
+        language: None,
+        command: None,
+        cwd: None,
+        status: None,
+        exit_code: None,
+        command_label: None,
+        source_execution_id: None,
+        content_card: None,
+        metadata_json: content_card_metadata("tool_result"),
+    });
+
+    let (tool_hits, answer_hits, prompt_hits, missing_hits) = async {
+        super::super::conversation_repo::upsert_conversation_source_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+        )
+        .await
+        .map_err(StoreError::external)?;
+        import_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[session],
+            false,
+        )
+        .await?;
+        let mut results = Vec::new();
+        for needle in [
+            "SIGSEGV",
+            "Web answer",
+            "Hello from the web",
+            "nothing-matches-this-needle",
+        ] {
+            results.push(
+                list_web_record_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    None,
+                    Some(&source.id),
+                    Some(needle),
+                    20,
+                    0,
+                )
+                .await?,
+            );
+        }
+        let mut results = results.into_iter();
+        StoreResult::Ok((
+            results.next().unwrap(),
+            results.next().unwrap(),
+            results.next().unwrap(),
+            results.next().unwrap(),
+        ))
+    }
+    .await
+    .expect("search web records by part bodies through SQLx");
+
+    assert_eq!(tool_hits.len(), 1, "web 记录表族同样命中工具输出正文");
+    assert_eq!(answer_hits.len(), 1);
+    assert_eq!(prompt_hits.len(), 1);
+    assert!(missing_hits.is_empty());
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn sqlx_web_record_search_degrades_to_title_while_part_index_rebuilds() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-web-record-part-search-degraded-sqlx-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let source = fixture_source();
+
+    let (ready_body_hits, rebuilding_body_hits, rebuilding_title_hits) = async {
+        super::super::conversation_repo::upsert_conversation_source_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+        )
+        .await
+        .map_err(StoreError::external)?;
+        import_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[fixture_session()],
+            false,
+        )
+        .await?;
+        let ready_body_hits = list_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            None,
+            Some(&source.id),
+            Some("Web answer"),
+            20,
+            0,
+        )
+        .await?;
+        super::super::conversation_repo::set_conversation_part_index_status_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            "building",
+            0,
+            None,
+        )
+        .await
+        .map_err(StoreError::external)?;
+        let rebuilding_body_hits = list_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            None,
+            Some(&source.id),
+            Some("Web answer"),
+            20,
+            0,
+        )
+        .await?;
+        let rebuilding_title_hits = list_web_record_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            None,
+            Some(&source.id),
+            Some("Web session"),
+            20,
+            0,
+        )
+        .await?;
+        StoreResult::Ok((ready_body_hits, rebuilding_body_hits, rebuilding_title_hits))
+    }
+    .await
+    .expect("search web records while the part index rebuilds");
+
+    assert_eq!(ready_body_hits.len(), 1);
+    assert!(rebuilding_body_hits.is_empty());
+    assert_eq!(rebuilding_title_hits.len(), 1);
+
+    drop(database);
+    cleanup_database(&db_path);
 }
 
 fn cleanup_database(db_path: &std::path::Path) {

@@ -63,3 +63,7 @@ save_model_price_entry
 set_model_pricing_exchange_rate
 duplicate_memory_generation_skill
 reset_memory_generation_skill_to_default
+# Part-level search index controls drive the resident Tauri TaskRuntime; the
+# canonical rebuild remains an AppService pipeline entrypoint.
+get_conversation_part_index_status
+start_conversation_part_index_rebuild

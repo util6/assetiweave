@@ -142,120 +142,6 @@ async fn recent_session_cwd_lookup_uses_session_and_turn_indexes() {
     let _ = std::fs::remove_file(db_path);
 }
 
-#[test]
-fn question_aggregate_excludes_tool_result_and_diff_bodies() {
-    let base = |kind: ConversationPartKind, card_kind: &str, text: &str| ConversationPart {
-        id: format!("part-{card_kind}"),
-        turn_id: "turn-1".to_string(),
-        part_index: 0,
-        role: crate::backend::domain::ConversationPartRole::Tool,
-        kind,
-        text: Some(text.to_string()),
-        language: None,
-        command: None,
-        cwd: None,
-        status: None,
-        exit_code: None,
-        command_label: None,
-        source_execution_id: None,
-        content_card: Some(ConversationContentCardDescriptor {
-            schema_version: 1,
-            kind: format!("fixture.{card_kind}"),
-            semantic_role: None,
-            renderer: Some(if card_kind == "diff" { "diff" } else { "plain" }.to_string()),
-        }),
-        metadata_json: None,
-        translated_text: None,
-    };
-    let answer = base(ConversationPartKind::Text, "answer", "answer");
-    let result = base(ConversationPartKind::Tool, "result", "duplicated result");
-    let diff = base(
-        ConversationPartKind::FileChange,
-        "result",
-        "duplicated diff",
-    );
-    let mut answer_text = Vec::new();
-    let mut code_text = Vec::new();
-    let mut command_text = Vec::new();
-
-    append_declared_card_to_question_aggregate(
-        &answer,
-        &mut answer_text,
-        &mut code_text,
-        &mut command_text,
-    );
-    append_declared_card_to_question_aggregate(
-        &result,
-        &mut answer_text,
-        &mut code_text,
-        &mut command_text,
-    );
-    append_declared_card_to_question_aggregate(
-        &diff,
-        &mut answer_text,
-        &mut code_text,
-        &mut command_text,
-    );
-
-    assert_eq!(answer_text, vec!["answer"]);
-    assert!(code_text.is_empty());
-    assert!(command_text.is_empty());
-}
-
-#[test]
-fn question_aggregate_indexes_the_raw_shell_part_for_fts_compatibility() {
-    let part = ConversationPart {
-        id: "conversation-part-shell".to_string(),
-        turn_id: "conversation-turn-shell".to_string(),
-        part_index: 0,
-        role: ConversationPartRole::Tool,
-        kind: ConversationPartKind::Command,
-        text: None,
-        language: None,
-        command: Some("raw shell command".to_string()),
-        cwd: None,
-        status: None,
-        exit_code: None,
-        command_label: None,
-        source_execution_id: Some("execution-shell".to_string()),
-        content_card: Some(ConversationContentCardDescriptor {
-            schema_version: 1,
-            kind: "fixture.command".to_string(),
-            semantic_role: None,
-            renderer: Some("command".to_string()),
-        }),
-        metadata_json: Some(
-            serde_json::json!({
-                "shell_execution_projection": {
-                    "schema_version": 1,
-                    "nodes": [
-                        {"command": "printf first", "command_label": "first"},
-                        {"command": "printf second", "command_label": "second"}
-                    ]
-                }
-            })
-            .to_string(),
-        ),
-        translated_text: None,
-    };
-    let mut answer_text = Vec::new();
-    let mut code_text = Vec::new();
-    let mut command_text = Vec::new();
-    append_projected_cards_to_question_aggregate(
-        &part,
-        "fixture",
-        &[],
-        &mut answer_text,
-        &mut code_text,
-        &mut command_text,
-    )
-    .expect("project raw shell Part into FTS fields");
-
-    assert_eq!(command_text, vec!["raw shell command"]);
-    assert!(answer_text.is_empty());
-    assert!(code_text.is_empty());
-}
-
 #[tokio::test]
 async fn sqlx_conversation_metadata_round_trips_and_disables_sources() {
     let db_path = std::env::temp_dir().join(format!(
@@ -3431,48 +3317,6 @@ pub async fn import_incremental_conversation_sessions_sqlx(
     .await
 }
 
-pub(super) fn append_declared_card_to_question_aggregate(
-    part: &ConversationPart,
-    answer_text: &mut Vec<String>,
-    code_text: &mut Vec<String>,
-    command_text: &mut Vec<String>,
-) {
-    let Some(card) = resolved_content_card_for_part(part) else {
-        return;
-    };
-    let semantic_role = card
-        .semantic_role
-        .as_deref()
-        .or_else(|| card.kind.rsplit_once('.').map(|(_, value)| value))
-        .unwrap_or(card.kind.as_str());
-    match semantic_role {
-        "answer" => answer_text.push(card.body),
-        "code" => code_text.push(card.body),
-        "command" => command_text.push(card.body),
-        // Tool, result, file changes and adapter-specific cards are kept on their
-        // original Part/Card only; question aggregates must not duplicate them.
-        _ => {}
-    }
-}
-
-fn resolved_content_card_for_part(
-    part: &ConversationPart,
-) -> Option<crate::backend::domain::conversations::projection::ResolvedConversationContentCard> {
-    crate::backend::domain::conversations::projection::resolve_historical_content_card(
-        crate::backend::domain::conversations::projection::ConversationCardProjectionSource {
-            content_card: part.content_card.as_ref(),
-            metadata_json: part.metadata_json.as_deref(),
-            text: part.text.as_deref(),
-            language: part.language.as_deref(),
-            command: part.command.as_deref(),
-            cwd: part.cwd.as_deref(),
-            status: part.status.as_deref(),
-            exit_code: part.exit_code,
-        },
-    )
-    .ok()?
-}
-
 #[tokio::test]
 async fn subagent_session_hidden_from_main_list_but_readable_by_id() {
     let db_path =
@@ -4042,4 +3886,183 @@ async fn sqlx_question_fragment_and_any_id_resolve_through_turn_columns() {
 
     drop(database);
     cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn sqlx_session_search_hits_tool_output_file_change_and_prompt_bodies() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-part-search-sqlx-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "part-search-external",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let mut session = fixture_session("v1");
+    session.turns[0].parts.push(normalized_search_part(
+        ConversationPartRole::Tool,
+        ConversationPartKind::Tool,
+        "tool_result",
+        "fatal: unable to access remote repository",
+    ));
+    session.turns[1].parts.push(normalized_search_part(
+        ConversationPartRole::Assistant,
+        ConversationPartKind::FileChange,
+        "file_change",
+        "modified src/lib.rs and added a retry loop",
+    ));
+    session.turns[2].parts.push(normalized_search_part(
+        ConversationPartRole::Tool,
+        ConversationPartKind::Tool,
+        "execution_result",
+        "exit status 128 from the test runner",
+    ));
+
+    let (tool_hits, file_hits, execution_hits, answer_hits, prompt_hits, missing_hits) = async {
+        upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+        upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+        import_conversation_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[session],
+            false,
+        )
+        .await?;
+        let mut results = Vec::new();
+        for needle in [
+            "unable to access remote",
+            "retry loop",
+            "exit status 128",
+            "answer for t1",
+            "How does sync work?",
+            "nothing-matches-this-needle",
+        ] {
+            results.push(
+                list_conversation_sessions_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    None,
+                    Some(&source.id),
+                    Some(needle),
+                    20,
+                    0,
+                )
+                .await?,
+            );
+        }
+        let mut results = results.into_iter();
+        StoreResult::Ok((
+            results.next().unwrap(),
+            results.next().unwrap(),
+            results.next().unwrap(),
+            results.next().unwrap(),
+            results.next().unwrap(),
+            results.next().unwrap(),
+        ))
+    }
+    .await
+    .expect("search sessions by part bodies through SQLx");
+
+    assert_eq!(tool_hits.len(), 1, "工具输出正文必须可搜");
+    assert_eq!(file_hits.len(), 1, "文件变更正文必须可搜");
+    assert_eq!(execution_hits.len(), 1, "执行结果正文必须可搜");
+    assert_eq!(answer_hits.len(), 1, "改造前可搜的答复正文必须仍可搜");
+    assert_eq!(prompt_hits.len(), 1, "改造前可搜的提问正文必须仍可搜");
+    assert!(missing_hits.is_empty());
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn sqlx_session_search_degrades_to_title_while_part_index_rebuilds() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-part-search-degraded-sqlx-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "part-search-degraded-external",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+
+    let (ready_body_hits, rebuilding_body_hits, rebuilding_title_hits) = async {
+        upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+        upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+        import_conversation_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[fixture_session("v1")],
+            false,
+        )
+        .await?;
+        let search = |needle: &'static str| {
+            list_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                None,
+                Some(&source.id),
+                Some(needle),
+                20,
+                0,
+            )
+        };
+        let ready_body_hits = search("answer for t1").await?;
+        crate::backend::store::set_conversation_part_index_status_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            "building",
+            0,
+            None,
+        )
+        .await?;
+        let rebuilding_body_hits = search("answer for t1").await?;
+        let rebuilding_title_hits = search("Fixture").await?;
+        StoreResult::Ok((ready_body_hits, rebuilding_body_hits, rebuilding_title_hits))
+    }
+    .await
+    .expect("search sessions while the part index rebuilds");
+
+    assert_eq!(ready_body_hits.len(), 1);
+    assert!(
+        rebuilding_body_hits.is_empty(),
+        "重建期间正文匹配应降级，避免给出误导性的空结果"
+    );
+    assert_eq!(
+        rebuilding_title_hits.len(),
+        1,
+        "重建期间标题匹配必须仍然可用"
+    );
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+fn normalized_search_part(
+    role: ConversationPartRole,
+    kind: ConversationPartKind,
+    card_type: &str,
+    text: &str,
+) -> NormalizedConversationPart {
+    NormalizedConversationPart {
+        role,
+        kind,
+        text: Some(text.to_string()),
+        language: None,
+        command: None,
+        cwd: None,
+        status: None,
+        exit_code: None,
+        command_label: None,
+        source_execution_id: None,
+        content_card: None,
+        metadata_json: content_card_metadata(card_type),
+    }
 }

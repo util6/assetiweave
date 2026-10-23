@@ -247,34 +247,6 @@ pub(super) struct ConversationSearchEntry {
     pub(super) semantic_role: Option<String>,
 }
 
-pub fn append_projected_cards_to_question_aggregate(
-    part: &ConversationPart,
-    adapter_id: &str,
-    card_kinds: &[ConversationCardKindDefinition],
-    answer_text: &mut Vec<String>,
-    code_text: &mut Vec<String>,
-    command_text: &mut Vec<String>,
-) -> StoreResult<()> {
-    let cards =
-        crate::backend::domain::conversations::projection::project_conversation_content_cards(
-            part, adapter_id, card_kinds,
-        )?;
-    for card in cards {
-        let semantic_role = card
-            .semantic_role
-            .as_deref()
-            .or_else(|| card.kind.rsplit_once('.').map(|(_, value)| value))
-            .unwrap_or(card.kind.as_str());
-        match semantic_role {
-            "answer" => answer_text.push(card.body),
-            "code" => code_text.push(card.body),
-            "command" => command_text.push(card.body),
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn content_card_type_value(value: &str) -> Option<ConversationSearchCardType> {
     crate::backend::domain::conversations::projection::is_valid_card_kind(value)
         .then(|| ConversationSearchCardType::new(value))

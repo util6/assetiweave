@@ -433,5 +433,8 @@ pub(super) async fn replace_conversation_parts_sqlx_tx(
             .await
             .map_err(StoreError::external)?;
     }
+    // 索引随零件写入增量维护：只重建这个轮次的索引行，不触碰其它轮次。
+    replace_turn_part_index_sqlx_tx(tx, tenant_id, turn_id, ConversationRecordKind::Session)
+        .await?;
     Ok(())
 }

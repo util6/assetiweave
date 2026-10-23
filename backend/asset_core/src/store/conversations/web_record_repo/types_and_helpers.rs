@@ -21,9 +21,6 @@ pub struct WebRecordSessionListItemRow {
 
 pub struct QuestionAggregate {
     pub question_text: String,
-    pub answer_text: String,
-    pub code_text: String,
-    pub command_text: String,
 }
 
 #[derive(Debug, FromRow)]
