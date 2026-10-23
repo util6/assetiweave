@@ -49,6 +49,8 @@ pub async fn insert_web_record_parts_sqlx_tx(
         .await
         .map_err(StoreError::external)?;
     }
+    // 索引随零件写入增量维护：只重建这个轮次的索引行，不触碰其它轮次。
+    replace_turn_part_index_sqlx_tx(tx, tenant_id, turn_id, ConversationRecordKind::Web).await?;
     Ok(())
 }
 
@@ -184,8 +186,7 @@ pub async fn insert_web_record_questions_sqlx_tx(
             .await
             .map_err(StoreError::external)?;
         }
-        let aggregate =
-            build_question_aggregate_sqlx_tx(tx, tenant_id, session_id, &turn_ids).await?;
+        let aggregate = build_question_aggregate_sqlx_tx(tx, tenant_id, &turn_ids).await?;
         sqlx::query(
             r#"
             INSERT INTO web_record_questions (
@@ -205,32 +206,6 @@ pub async fn insert_web_record_questions_sqlx_tx(
         .execute(&mut **tx)
         .await
         .map_err(StoreError::external)?;
-        sqlx::query(
-            "DELETE FROM conversation_question_fts WHERE tenant_id = ?1 AND question_id = ?2",
-        )
-        .bind(tenant_id)
-        .bind(&question_id)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-        sqlx::query(
-            r#"
-            INSERT INTO conversation_question_fts (
-                tenant_id, question_id, session_id, question_text, answer_text, code_text, command_text
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(&question_id)
-        .bind(session_id)
-        .bind(&aggregate.question_text)
-        .bind(&aggregate.answer_text)
-        .bind(&aggregate.code_text)
-        .bind(&aggregate.command_text)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
     }
     Ok(())
 }
@@ -238,31 +213,9 @@ pub async fn insert_web_record_questions_sqlx_tx(
 pub async fn build_question_aggregate_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
-    session_id: &str,
     turn_ids: &[String],
 ) -> StoreResult<QuestionAggregate> {
     let mut question_text = Vec::new();
-    let mut answer_text = Vec::new();
-    let mut code_text = Vec::new();
-    let mut command_text = Vec::new();
-    let adapter_id = sqlx::query_scalar::<_, String>(
-        "SELECT adapter_id FROM web_record_sessions WHERE tenant_id = ?1 AND id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    let card_kinds_json = sqlx::query_scalar::<_, String>(
-        "SELECT card_kinds_json FROM conversation_adapters WHERE tenant_id = ?1 AND id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(&adapter_id)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(StoreError::external)?
-    .unwrap_or_else(|| "[]".to_string());
-    let card_kinds: Vec<ConversationCardKindDefinition> = decode_json_app(card_kinds_json)?;
     for turn_id in turn_ids {
         let user_text: String = sqlx::query_scalar::<_, String>(
             "SELECT user_text FROM web_record_turns WHERE tenant_id = ?1 AND id = ?2",
@@ -273,22 +226,9 @@ pub async fn build_question_aggregate_sqlx_tx(
         .await
         .map_err(StoreError::external)?;
         question_text.push(user_text);
-        for part in load_web_record_parts_sqlx_tx(tx, tenant_id, turn_id).await? {
-            append_projected_cards_to_question_aggregate(
-                &part,
-                &adapter_id,
-                &card_kinds,
-                &mut answer_text,
-                &mut code_text,
-                &mut command_text,
-            )?;
-        }
     }
     Ok(QuestionAggregate {
         question_text: question_text.join("\n\n"),
-        answer_text: answer_text.join("\n\n"),
-        code_text: code_text.join("\n\n"),
-        command_text: command_text.join("\n\n"),
     })
 }
 

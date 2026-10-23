@@ -26,6 +26,8 @@ pub async fn list_conversation_sessions_filtered_sqlx(
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .map(str::to_ascii_lowercase);
+    // 正文索引重建期间正文匹配不可用，列表搜索降级为标题级，避免给出误导性的空结果。
+    let body_search_ready = conversation_part_index_ready_sqlx(pool, tenant_id).await?;
 
     let rows = sqlx::query_as::<_, ConversationSessionListItemRow>(
         r#"
@@ -110,16 +112,20 @@ pub async fn list_conversation_sessions_filtered_sqlx(
               OR instr(lower(COALESCE(s.project_path, '')), ?4) > 0
               OR instr(lower(s.external_id), ?4) > 0
               OR (?5 IS NOT NULL AND instr(lower(s.id), ?5) > 0)
-              OR EXISTS (
+              OR (?11 = 1 AND ?4 IS NOT NULL AND EXISTS (
                 SELECT 1
-                  FROM conversation_question_fts f
+                  FROM conversation_part_fts f
                   WHERE f.tenant_id = s.tenant_id
                     AND f.session_id = s.id
-                    AND instr(lower(
-                        f.question_text || char(10) || f.answer_text || char(10) ||
-                        f.code_text || char(10) || f.command_text
-                    ), ?4) > 0
-              )
+                    AND instr(lower(f.text), ?4) > 0
+              ))
+              OR (?11 = 1 AND ?4 IS NOT NULL AND EXISTS (
+                SELECT 1
+                  FROM conversation_turns t
+                  WHERE t.tenant_id = s.tenant_id
+                    AND t.session_id = s.id
+                    AND instr(lower(t.user_text), ?4) > 0
+              ))
           )
           AND (
               ?10 IS NULL
@@ -159,6 +165,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
     .bind(filter.since)
     .bind(filter.until)
     .bind(project_needle.as_deref())
+    .bind(i64::from(body_search_ready))
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;

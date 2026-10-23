@@ -1160,6 +1160,141 @@ fn temp_database_path(label: &str) -> std::path::PathBuf {
     ))
 }
 
+#[tokio::test]
+async fn migrations_replace_question_level_fts_with_part_level_index() {
+    let db_path = temp_database_path("conversation-part-index");
+    migrate_database(&db_path)
+        .await
+        .expect("create current database");
+
+    let conn = Connection::open(&db_path).expect("open current database");
+    conn.execute_batch(
+        r#"
+            PRAGMA foreign_keys = OFF;
+            INSERT INTO conversation_sessions (
+                tenant_id, id, source_id, adapter_id, external_id, title, project_path,
+                started_at, updated_at, source_locator, source_fingerprint, missing,
+                created_at, imported_at
+            ) VALUES (
+                'default', 'part-index-session', 'part-index-source', 'part-index-adapter',
+                'part-index-external', 'Part index session', NULL, NULL, NULL, NULL, NULL, 0,
+                '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
+            );
+            INSERT INTO conversation_turns (
+                tenant_id, id, session_id, external_id, turn_index, user_text, title,
+                started_at, ended_at, fingerprint, missing, imported_at
+            ) VALUES (
+                'default', 'part-index-turn', 'part-index-session', 'part-index-turn-external',
+                0, 'Part index question', NULL, NULL, NULL, 'part-index-fingerprint', 0,
+                '2026-10-23T00:00:00Z'
+            );
+            INSERT INTO conversation_parts (
+                tenant_id, id, turn_id, part_index, role, kind, text
+            ) VALUES
+                ('default', 'conversation-part-answer', 'part-index-turn', 0,
+                 'assistant', 'text', 'answer body that used to be indexed'),
+                ('default', 'conversation-part-tool', 'part-index-turn', 1,
+                 'tool', 'tool', 'fatal: unable to access remote repository');
+
+            INSERT INTO web_record_sessions (
+                tenant_id, id, source_id, adapter_id, external_id, title,
+                started_at, updated_at, source_locator, source_fingerprint, missing,
+                created_at, imported_at
+            ) VALUES (
+                'default', 'part-index-web-session', 'part-index-source', 'part-index-adapter',
+                'part-index-web-external', 'Part index web session', NULL, NULL, NULL, NULL, 0,
+                '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
+            );
+            INSERT INTO web_record_turns (
+                tenant_id, id, session_id, external_id, turn_index, user_text, title,
+                started_at, ended_at, fingerprint, missing, imported_at
+            ) VALUES (
+                'default', 'part-index-web-turn', 'part-index-web-session',
+                'part-index-web-turn-external', 0, 'Part index web question', NULL, NULL, NULL,
+                'part-index-web-fingerprint', 0, '2026-10-23T00:00:00Z'
+            );
+            INSERT INTO web_record_parts (
+                tenant_id, id, turn_id, part_index, role, kind, text
+            ) VALUES (
+                'default', 'web-record-part-tool', 'part-index-web-turn', 0,
+                'tool', 'tool', 'web runner crashed with SIGSEGV'
+            );
+
+            DROP TABLE conversation_part_fts;
+            DROP TABLE conversation_part_index_state;
+            CREATE VIRTUAL TABLE conversation_question_fts USING fts5(
+                tenant_id UNINDEXED,
+                question_id UNINDEXED,
+                session_id UNINDEXED,
+                question_text,
+                answer_text,
+                code_text,
+                command_text
+            );
+            DELETE FROM _sqlx_migrations WHERE version = 202610230006;
+            "#,
+    )
+    .expect("seed pre-migration question-level index");
+    drop(conn);
+
+    migrate_database(&db_path)
+        .await
+        .expect("apply part index migration");
+
+    let conn = Connection::open(&db_path).expect("open migrated database");
+    let legacy_table_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversation_question_fts'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query legacy question index");
+    let part_column_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('conversation_part_fts')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query part index columns");
+    let indexed_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM conversation_part_fts", [], |row| {
+            row.get(0)
+        })
+        .expect("query indexed part rows");
+    let tool_output_indexed: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_part_fts WHERE text LIKE '%unable to access remote%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query tool output row");
+    let web_output_indexed: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_part_fts WHERE text LIKE '%SIGSEGV%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query web tool output row");
+    let (status, part_count): (String, i64) = conn
+        .query_row(
+            "SELECT status, part_count FROM conversation_part_index_state WHERE tenant_id = 'default'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("query part index state");
+    drop(conn);
+
+    assert_eq!(legacy_table_count, 0, "旧问题级索引必须退役");
+    assert_eq!(part_column_count, 5, "零件索引只有一条正文列");
+    assert_eq!(indexed_rows, 3, "两个表族的零件都必须回填");
+    assert_eq!(tool_output_indexed, 1);
+    assert_eq!(web_output_indexed, 1);
+    assert_eq!(status, "ready");
+    assert_eq!(part_count, 3);
+
+    cleanup_database(&db_path);
+}
+
 fn cleanup_database(db_path: &std::path::Path) {
     let _ = std::fs::remove_file(db_path);
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));

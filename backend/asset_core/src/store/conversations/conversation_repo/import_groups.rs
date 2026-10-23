@@ -382,18 +382,6 @@ pub(super) async fn prune_orphan_questions_for_session_sqlx_tx(
     for orphan_id in &orphan_ids {
         sqlx::query(
             r#"
-            DELETE FROM conversation_question_fts
-            WHERE tenant_id = ?1 AND question_id = ?2
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(orphan_id)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-
-        sqlx::query(
-            r#"
             DELETE FROM conversation_questions
             WHERE tenant_id = ?1 AND id = ?2
             "#,

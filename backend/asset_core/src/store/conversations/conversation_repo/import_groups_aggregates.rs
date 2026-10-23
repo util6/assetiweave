@@ -19,56 +19,14 @@ pub(super) async fn rebuild_question_aggregate_sqlx_tx(
     question_id: &str,
     now: &str,
 ) -> StoreResult<()> {
-    // FTS remains an independently rebuildable projection. Question Detail reads
-    // only membership and Turn-Part source facts.
+    // 问题只剩标题这类派生信息。正文检索由零件级索引独立维护，既不再按分组聚合，
+    // 也就不需要在写入端判断正文属于答复、代码还是命令。
     let turns = load_question_turns_sqlx_tx(tx, tenant_id, question_id).await?;
-    let mut question_text = Vec::new();
-    let mut answer_text = Vec::new();
-    let mut code_text = Vec::new();
-    let mut command_text = Vec::new();
-    let adapter_id = sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT s.adapter_id
-        FROM conversation_questions q
-        JOIN conversation_sessions s
-          ON s.tenant_id = q.tenant_id AND s.id = q.session_id
-        WHERE q.tenant_id = ?1 AND q.id = ?2
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(question_id)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    let card_kinds_json = sqlx::query_scalar::<_, String>(
-        "SELECT card_kinds_json FROM conversation_adapters WHERE tenant_id = ?1 AND id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(&adapter_id)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(StoreError::external)?
-    .unwrap_or_else(|| "[]".to_string());
-    let card_kinds: Vec<ConversationCardKindDefinition> = decode_json(card_kinds_json)?;
-
-    for turn in &turns {
-        question_text.push(turn.user_text.clone());
-        for part in load_turn_parts_sqlx_tx(tx, tenant_id, &turn.id).await? {
-            append_projected_cards_to_question_aggregate(
-                &part,
-                &adapter_id,
-                &card_kinds,
-                &mut answer_text,
-                &mut code_text,
-                &mut command_text,
-            )?;
-        }
-    }
-
-    let question_text = question_text.join("\n\n");
-    let answer_text = answer_text.join("\n\n");
-    let code_text = code_text.join("\n\n");
-    let command_text = command_text.join("\n\n");
+    let question_text = turns
+        .iter()
+        .map(|turn| turn.user_text.clone())
+        .collect::<Vec<_>>()
+        .join("\n\n");
     let title = first_line(&question_text);
 
     sqlx::query(
@@ -78,38 +36,6 @@ pub(super) async fn rebuild_question_aggregate_sqlx_tx(
     .bind(now)
     .bind(tenant_id)
     .bind(question_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    let session_id: String = sqlx::query_scalar::<_, String>(
-        "SELECT session_id FROM conversation_questions WHERE tenant_id = ?1 AND id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(question_id)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    sqlx::query("DELETE FROM conversation_question_fts WHERE tenant_id = ?1 AND question_id = ?2")
-        .bind(tenant_id)
-        .bind(question_id)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_question_fts (
-            tenant_id, question_id, session_id, question_text, answer_text, code_text, command_text
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(question_id)
-    .bind(&session_id)
-    .bind(&question_text)
-    .bind(&answer_text)
-    .bind(&code_text)
-    .bind(&command_text)
     .execute(&mut **tx)
     .await
     .map_err(StoreError::external)?;
@@ -176,28 +102,6 @@ pub async fn insert_conversation_sync_delta_sqlx_tx(
     Ok(())
 }
 
-pub(super) async fn load_session_turns_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-) -> StoreResult<Vec<ConversationTurn>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT id, session_id, external_id, turn_index, user_text, title,
-               started_at, ended_at, fingerprint, missing, imported_at, model
-        FROM conversation_turns
-        WHERE tenant_id = ?1 AND session_id = ?2
-        ORDER BY turn_index ASC, id ASC, imported_at ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    rows.iter().map(map_sqlx_conversation_turn).collect()
-}
-
 pub(super) async fn load_question_turns_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
@@ -219,29 +123,6 @@ pub(super) async fn load_question_turns_sqlx_tx(
     .await
     .map_err(StoreError::external)?;
     rows.iter().map(map_sqlx_conversation_turn).collect()
-}
-
-pub(super) async fn load_turn_parts_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    turn_id: &str,
-) -> StoreResult<Vec<ConversationPart>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT id, turn_id, part_index, role, kind, text, language, command,
-               cwd, status, exit_code, metadata_json, content_card_json, translated_text,
-               source_execution_id, command_label
-        FROM conversation_parts
-        WHERE tenant_id = ?1 AND turn_id = ?2
-        ORDER BY part_index ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(turn_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    rows.iter().map(map_sqlx_conversation_part).collect()
 }
 
 pub(super) async fn max_question_turn_order_sqlx_tx(

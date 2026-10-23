@@ -11,6 +11,8 @@ pub async fn list_web_record_sessions_sqlx(
 ) -> StoreResult<Vec<ConversationSessionListItem>> {
     let needle = normalize_query(query);
     let id_needle = query.and_then(crate::backend::domain::conversation_id_search_term);
+    // 正文索引重建期间正文匹配不可用，列表搜索降级为标题级，避免给出误导性的空结果。
+    let body_search_ready = conversation_part_index_ready_sqlx(pool, tenant_id).await?;
     let rows = sqlx::query_as::<_, WebRecordSessionListItemRow>(
         r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, NULL AS project_path,
@@ -35,18 +37,20 @@ pub async fn list_web_record_sessions_sqlx(
               OR instr(lower(s.title), ?4) > 0
               OR instr(lower(s.external_id), ?4) > 0
               OR (?5 IS NOT NULL AND instr(lower(s.id), ?5) > 0)
-              OR EXISTS (
+              OR (?8 = 1 AND ?4 IS NOT NULL AND EXISTS (
                   SELECT 1
-                  FROM conversation_question_fts f
+                  FROM conversation_part_fts f
                   WHERE f.tenant_id = s.tenant_id
                     AND f.session_id = s.id
-                    AND (
-                        instr(lower(f.question_text), ?4) > 0
-                        OR instr(lower(f.answer_text), ?4) > 0
-                        OR instr(lower(f.code_text), ?4) > 0
-                        OR instr(lower(f.command_text), ?4) > 0
-                    )
-              )
+                    AND instr(lower(f.text), ?4) > 0
+              ))
+              OR (?8 = 1 AND ?4 IS NOT NULL AND EXISTS (
+                  SELECT 1
+                  FROM web_record_turns t
+                  WHERE t.tenant_id = s.tenant_id
+                    AND t.session_id = s.id
+                    AND instr(lower(t.user_text), ?4) > 0
+              ))
           )
         ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
         LIMIT ?6 OFFSET ?7
@@ -67,6 +71,7 @@ pub async fn list_web_record_sessions_sqlx(
             .map_err(|_| format!("invalid web record offset: {offset}"))
             .map_err(StoreError::external)?,
     )
+    .bind(i64::from(body_search_ready))
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;

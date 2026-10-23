@@ -122,6 +122,7 @@ pub(super) async fn prune_conversation_turns_sqlx_tx(
             .execute(&mut **tx)
             .await
             .map_err(StoreError::external)?;
+        delete_turn_part_index_sqlx_tx(tx, tenant_id, turn_id).await?;
         sqlx::query(
             "DELETE FROM conversation_question_turns WHERE tenant_id = ?1 AND turn_id = ?2",
         )

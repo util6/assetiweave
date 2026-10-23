@@ -158,14 +158,6 @@ pub async fn merge_conversation_questions_sqlx(
             .execute(&mut *tx)
             .await
             .map_err(StoreError::external)?;
-        sqlx::query(
-            "DELETE FROM conversation_question_fts WHERE tenant_id = ?1 AND question_id = ?2",
-        )
-        .bind(tenant_id)
-        .bind(question_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(StoreError::external)?;
     }
     renumber_questions_for_session_sqlx_tx(&mut tx, tenant_id, &session_id).await?;
     sync_conversation_turn_question_columns_from_membership_sqlx_tx(
