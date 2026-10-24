@@ -6,17 +6,19 @@ pub async fn update_conversation_part_translation_sqlx(
     part_id: &str,
     translated_text: &str,
 ) -> StoreResult<()> {
+    let id_key = crate::backend::domain::derive_part_id_key(part_id)
+        .ok_or_else(|| StoreError::NotFound(format!("invalid conversation part id: {part_id}")))?;
     let mut tx = pool.begin().await.map_err(StoreError::external)?;
     let result = sqlx::query(
         r#"
         UPDATE conversation_parts
         SET translated_text = ?1
-        WHERE tenant_id = ?2 AND id = ?3
+        WHERE tenant_id = ?2 AND id_key = ?3
         "#,
     )
     .bind(translated_text)
     .bind(tenant_id)
-    .bind(part_id)
+    .bind(id_key.as_slice())
     .execute(&mut *tx)
     .await
     .map_err(StoreError::external)?;
@@ -192,9 +194,8 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
 
     let part_rows = sqlx::query(
         r#"
-        SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
+        SELECT p.turn_id, p.part_index, p.role, p.kind, p.card_kind,
+               p.content, p.attrs_json, p.metadata_json, p.translated_text
         FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session
         JOIN conversation_parts p
           ON p.tenant_id = t.tenant_id AND p.turn_id = t.id

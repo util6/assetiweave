@@ -377,13 +377,15 @@ async fn test_conversation_session_get_roles_filter_and_short_id_block_get() {
     assert_eq!(q_cmd.parts[0].kind, ConversationPartKind::Command);
 
     // 3. Test short-ID block detail retrieval
-    let part_full_id: String = sqlx::query_scalar(
-        "SELECT id FROM conversation_parts WHERE tenant_id = ?1 AND command = 'calc 2+2'",
+    let (turn_id, part_index): (String, i64) = sqlx::query_as(
+        "SELECT turn_id, part_index FROM conversation_parts WHERE tenant_id = ?1 AND content = 'calc 2+2'",
     )
     .bind(tenant_id)
     .fetch_one(service.db.pool())
     .await
     .expect("load part id");
+
+    let part_full_id = crate::backend::domain::derive_conversation_part_id(&turn_id, part_index);
 
     let short_part_id = crate::backend::domain::conversation_id_fragment(&part_full_id);
 

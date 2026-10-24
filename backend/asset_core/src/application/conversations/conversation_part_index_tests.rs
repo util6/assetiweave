@@ -36,19 +36,20 @@ async fn seed_indexed_session(service: &AppService, session_id: &str, body: &str
     .execute(service.pool())
     .await
     .expect("seed turn");
+    let part_id = crate::backend::domain::derive_conversation_part_id(&turn_id, 0);
+    let id_key = crate::backend::domain::derive_part_id_key(&part_id).unwrap_or([0u8; 8]);
     sqlx::query(
         r#"
         INSERT INTO conversation_parts (
-            tenant_id, id, turn_id, part_index, role, kind, text, language, command,
-            cwd, status, exit_code, metadata_json, content_card_json, translated_text,
-            source_execution_id, command_label
-        ) VALUES (?1, ?2, ?3, 0, 'tool', 'text', ?4, NULL, NULL, NULL, NULL, NULL,
-                  '{"content_card":{"type":"tool_result"}}', NULL, NULL, NULL, NULL)
+            tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content,
+            attrs_json, metadata_json, translated_text
+        ) VALUES (?1, ?2, 0, ?3, 'tool', 'text', 'tool_result', ?4, NULL,
+                  '{"content_card":{"type":"tool_result"}}', NULL)
         "#,
     )
     .bind(tenant_id)
-    .bind(&part_id)
     .bind(&turn_id)
+    .bind(id_key.to_vec())
     .bind(body)
     .execute(service.pool())
     .await

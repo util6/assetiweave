@@ -1,9 +1,10 @@
 use super::*;
 use crate::backend::domain::{
-    ConversationAdapterPackageOrigin, ConversationAdapterPackageRecordKind,
-    ConversationAdapterRuntimeGateStatus, ConversationCardKindDefinition,
-    ConversationContentCardDescriptor, ConversationPackageUpdatePolicy, ConversationPartKind,
-    ConversationPartRole, NormalizedConversationPart, NormalizedConversationTurn,
+    derive_conversation_part_id, ConversationAdapterPackageOrigin,
+    ConversationAdapterPackageRecordKind, ConversationAdapterRuntimeGateStatus,
+    ConversationCardKindDefinition, ConversationContentCardDescriptor,
+    ConversationPackageUpdatePolicy, ConversationPartKind, ConversationPartRole,
+    NormalizedConversationPart, NormalizedConversationTurn,
 };
 use crate::backend::store::Database;
 use uuid::Uuid;
@@ -1315,9 +1316,9 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
             false,
         )
         .await?;
-        let part_ids_before = sqlx::query_as::<_, (String, i64)>(
+        let part_ids_before: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(
             r#"
-                    SELECT p.id, p.part_index
+                    SELECT p.turn_id, p.part_index
                     FROM conversation_parts p
                     JOIN conversation_turns t ON t.id = p.turn_id
                     JOIN conversation_sessions s ON s.id = t.session_id
@@ -1328,7 +1329,15 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
         .bind(&source.id)
         .fetch_all(database.pool())
         .await
-        .map_err(StoreError::external)?;
+        .map_err(StoreError::external)?
+        .into_iter()
+        .map(|(turn_id, part_index)| {
+            (
+                derive_conversation_part_id(&turn_id, part_index),
+                part_index,
+            )
+        })
+        .collect();
         sqlx::query(
             "UPDATE conversation_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
         )
@@ -1366,9 +1375,9 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
         .fetch_one(database.pool())
         .await
         .map_err(StoreError::external)?;
-        let part_ids_after = sqlx::query_as::<_, (String, i64)>(
+        let part_ids_after: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(
             r#"
-                    SELECT p.id, p.part_index
+                    SELECT p.turn_id, p.part_index
                     FROM conversation_parts p
                     JOIN conversation_turns t ON t.id = p.turn_id
                     JOIN conversation_sessions s ON s.id = t.session_id
@@ -1379,7 +1388,15 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
         .bind(&source.id)
         .fetch_all(database.pool())
         .await
-        .map_err(StoreError::external)?;
+        .map_err(StoreError::external)?
+        .into_iter()
+        .map(|(turn_id, part_index)| {
+            (
+                derive_conversation_part_id(&turn_id, part_index),
+                part_index,
+            )
+        })
+        .collect();
         Ok::<_, StoreError>((
             result,
             imported_at,
@@ -3417,9 +3434,8 @@ async fn test_explain_query_plan_for_session_parts_uses_efficient_indexes() {
     let explain_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(
         r#"
             EXPLAIN QUERY PLAN
-            SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-                   p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-                   p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
+            SELECT p.turn_id, p.part_index, p.role, p.kind, p.card_kind, p.content,
+                   p.attrs_json, p.metadata_json, p.translated_text
             FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session
             JOIN conversation_parts p
               ON p.tenant_id = t.tenant_id AND p.turn_id = t.id

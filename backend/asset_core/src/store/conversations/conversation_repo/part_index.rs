@@ -92,20 +92,18 @@ async fn load_session_adapter_card_kinds_sqlx_tx(
     Ok((adapter_id, card_kinds))
 }
 
-const PART_COLUMNS: &str = "p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language, \
-     p.command, p.cwd, p.status, p.exit_code, p.metadata_json, p.content_card_json, \
-     p.translated_text, p.source_execution_id, p.command_label";
-
 async fn load_turn_parts_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     turn_id: &str,
     record_kind: ConversationRecordKind,
 ) -> StoreResult<Vec<ConversationPart>> {
+    let tables = record_kind.tables();
     let query = format!(
-        "SELECT {PART_COLUMNS} FROM {parts} p \
+        "SELECT {part_columns} FROM {parts} p \
          WHERE p.tenant_id = ?1 AND p.turn_id = ?2 ORDER BY p.part_index ASC",
-        parts = record_kind.tables().parts,
+        part_columns = tables.part_columns,
+        parts = tables.parts,
     );
     let rows = sqlx::query(AssertSqlSafe(query))
         .bind(tenant_id)
@@ -124,10 +122,11 @@ async fn load_session_parts_sqlx_tx(
 ) -> StoreResult<Vec<ConversationPart>> {
     let tables = record_kind.tables();
     let query = format!(
-        "SELECT {PART_COLUMNS} FROM {parts} p \
+        "SELECT {part_columns} FROM {parts} p \
          JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
          WHERE p.tenant_id = ?1 AND t.session_id = ?2 \
          ORDER BY p.turn_id ASC, p.part_index ASC",
+        part_columns = tables.part_columns,
         parts = tables.parts,
         turns = tables.turns,
     );

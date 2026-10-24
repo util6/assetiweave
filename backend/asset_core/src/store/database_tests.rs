@@ -1341,12 +1341,36 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 0, 'Part index question', NULL, NULL, NULL, 'part-index-fingerprint', 0,
                 '2026-10-23T00:00:00Z'
             );
+            CREATE TABLE conversation_parts_old (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                part_index INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                text TEXT,
+                language TEXT,
+                command TEXT,
+                cwd TEXT,
+                status TEXT,
+                exit_code INTEGER,
+                metadata_json TEXT,
+                content_card_json TEXT,
+                translated_text TEXT,
+                source_execution_id TEXT,
+                command_label TEXT,
+                PRIMARY KEY (tenant_id, id)
+            );
+            DROP TABLE conversation_parts;
+            ALTER TABLE conversation_parts_old RENAME TO conversation_parts;
+            ALTER TABLE conversation_sessions DROP COLUMN last_cwd;
+
             INSERT INTO conversation_parts (
                 tenant_id, id, turn_id, part_index, role, kind, text
             ) VALUES
-                ('default', 'conversation-part-answer', 'part-index-turn', 0,
+                ('default', 'part-1', 'part-index-turn', 0,
                  'assistant', 'text', 'answer body that used to be indexed'),
-                ('default', 'conversation-part-tool', 'part-index-turn', 1,
+                ('default', 'part-2', 'part-index-turn', 1,
                  'tool', 'tool', 'fatal: unable to access remote repository');
 
             INSERT INTO web_record_sessions (
@@ -1384,7 +1408,7 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 code_text,
                 command_text
             );
-            DELETE FROM _sqlx_migrations WHERE version = 202610230006;
+            DELETE FROM _sqlx_migrations WHERE CAST(version AS TEXT) >= '202610230006';
             "#,
     )
     .expect("seed pre-migration question-level index");
@@ -1772,20 +1796,20 @@ async fn acceptance_spec_104_search_recalls_extended_part_categories() {
     // 2. 执行结果
     // 3. 既有答复文本
     conn.execute(
-        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text) 
-         VALUES (?1, 'part-tool-output', ?2, 0, 'tool', 'tool_output', 'SocketTimeoutException: Connection timed out while reading upstream payload')",
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, content) 
+         VALUES (?1, ?2, 0, x'0000000000000000', 'tool', 'tool_output', 'SocketTimeoutException: Connection timed out while reading upstream payload')",
         [tenant_id, turn_id],
     ).expect("insert tool part");
 
     conn.execute(
-        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text) 
-         VALUES (?1, 'part-exec-result', ?2, 1, 'system', 'execution_result', 'Pipeline stage COMPLETED with exit_status=0 in 432ms')",
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, content) 
+         VALUES (?1, ?2, 1, x'0000000000000001', 'system', 'execution_result', 'Pipeline stage COMPLETED with exit_status=0 in 432ms')",
         [tenant_id, turn_id],
     ).expect("insert exec part");
 
     conn.execute(
-        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text) 
-         VALUES (?1, 'part-assistant-answer', ?2, 2, 'assistant', 'text', 'Here is the comprehensive migration report for the project')",
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, content) 
+         VALUES (?1, ?2, 2, x'0000000000000002', 'assistant', 'text', 'Here is the comprehensive migration report for the project')",
         [tenant_id, turn_id],
     ).expect("insert assistant part");
 
@@ -1883,11 +1907,10 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
             ).expect("insert turn");
 
             for p in 0..parts_per_turn {
-                let part_id = format!("bench-part-{s:03}-{t:02}-{p}");
                 conn.execute(
-                    "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text) 
-                     VALUES (?1, ?2, ?3, ?4, 'assistant', 'text', 'Benchmark text content for performance baseline verification')",
-                    rusqlite::params![tenant_id, &part_id, &turn_id, p as i64],
+                    "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, content) 
+                     VALUES (?1, ?2, ?3, x'0000000000000000', 'assistant', 'text', 'Benchmark text content for performance baseline verification')",
+                    rusqlite::params![tenant_id, &turn_id, p as i64],
                 ).expect("insert part");
             }
         }
@@ -1902,7 +1925,7 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
     for _ in 0..query_iterations {
         let mut stmt = conn
             .prepare(
-                "SELECT t.id, t.turn_index, t.question_id, p.id, p.part_index, p.text
+                "SELECT t.id, t.turn_index, t.question_id, p.part_index, p.content
                  FROM conversation_turns t
                  JOIN conversation_parts p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
                  WHERE t.tenant_id = ?1 AND t.session_id = ?2
@@ -1915,9 +1938,8 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
                     r.get::<_, String>(0)?,
                     r.get::<_, i64>(1)?,
                     r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, i64>(4)?,
-                    r.get::<_, String>(5)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, String>(4)?,
                 ))
             })
             .expect("query map")
@@ -1989,6 +2011,35 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         [],
     ).expect("insert util6 turn");
 
+    conn.execute_batch(
+        r#"
+        CREATE TABLE conversation_parts_old (
+            tenant_id TEXT NOT NULL DEFAULT 'default',
+            id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            part_index INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            text TEXT,
+            language TEXT,
+            command TEXT,
+            cwd TEXT,
+            status TEXT,
+            exit_code INTEGER,
+            metadata_json TEXT,
+            content_card_json TEXT,
+            translated_text TEXT,
+            source_execution_id TEXT,
+            command_label TEXT,
+            PRIMARY KEY (tenant_id, id)
+        );
+        DROP TABLE conversation_parts;
+        ALTER TABLE conversation_parts_old RENAME TO conversation_parts;
+        ALTER TABLE conversation_sessions DROP COLUMN last_cwd;
+        "#,
+    )
+    .expect("recreate old parts table");
+
     // 插入非标 part-<16hex> 零件，分别在 default 和 util6 下
     let default_old_part_id = "part-3db7391334d54cac";
     let util6_old_part_id = "part-7cf12c209dd94ed1";
@@ -2026,9 +2077,9 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         [],
     ).expect("insert util6 observation");
 
-    // 3. 回退 202610240001 迁移记录，模拟从旧版本升级触发迁移
+    // 3. 回退 202610240001 及后续迁移记录，模拟从旧版本升级触发迁移
     conn.execute(
-        "DELETE FROM _sqlx_migrations WHERE version = 202610240001",
+        "DELETE FROM _sqlx_migrations WHERE CAST(version AS TEXT) >= '202610240001'",
         [],
     )
     .expect("rollback migration version");
@@ -2085,33 +2136,18 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         .expect("count default sessions");
     assert_eq!(default_sessions_count, 1, "default 会话必须完整保留");
 
-    // C. 非标 ID 已被归一化为 standard conversation-part-<sha256>
-    let non_standard_count: i64 = conn
+    // C. conversation_parts 已升级为 11 列新表，且无 id 列
+    let id_column_exists: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM conversation_parts WHERE id NOT LIKE 'conversation-part-%'",
+            "SELECT COUNT(*) FROM pragma_table_info('conversation_parts') WHERE name = 'id'",
             [],
             |r| r.get(0),
         )
-        .expect("count non standard parts");
-    assert_eq!(
-        non_standard_count, 0,
-        "全库不得存在非 conversation-part- 前缀的零件 ID"
-    );
-
-    let expected_new_id = derive_standard_part_id("conversation-part", "turn-default-1", 0);
-    let actual_new_id: String = conn
-        .query_row(
-            "SELECT id FROM conversation_parts WHERE tenant_id = 'default' AND turn_id = 'turn-default-1' AND part_index = 0",
-            [],
-            |r| r.get(0),
-        )
-        .expect("query migrated part id");
-    assert_eq!(
-        actual_new_id, expected_new_id,
-        "零件 ID 必须严格等于派生标准 ID"
-    );
+        .expect("check id column dropped");
+    assert_eq!(id_column_exists, 0, "conversation_parts 必须无 id 列");
 
     // D. 全文索引 part_id 同步对齐
+    let expected_new_id = derive_standard_part_id("conversation-part", "turn-default-1", 0);
     let fts_part_id: String = conn
         .query_row(
             "SELECT part_id FROM conversation_part_fts WHERE tenant_id = 'default'",
@@ -2167,6 +2203,25 @@ async fn acceptance_spec_119_last_cwd_materialization_and_redundant_index_remova
     );
 
     // 3. 插入一个会话、两个轮次、若干零件（带有不同工作目录 cwd）
+    conn.execute_batch(
+        r#"
+        CREATE TABLE conversation_parts_old (
+            tenant_id TEXT NOT NULL DEFAULT 'default',
+            id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            part_index INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            text TEXT,
+            cwd TEXT,
+            PRIMARY KEY (tenant_id, id)
+        );
+        DROP TABLE conversation_parts;
+        ALTER TABLE conversation_parts_old RENAME TO conversation_parts;
+        "#,
+    )
+    .expect("recreate parts with cwd");
+
     conn.execute(
         "INSERT OR IGNORE INTO tenants (id, name, created_at, updated_at) VALUES ('default', 'default', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
         [],

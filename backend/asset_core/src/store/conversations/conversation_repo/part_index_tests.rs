@@ -1,4 +1,5 @@
 use super::*;
+use crate::backend::domain::{derive_part_id, derive_part_id_key};
 use std::path::PathBuf;
 
 const TENANT_ID: &str = "default";
@@ -125,40 +126,63 @@ async fn seed_part(
     index: i64,
     part: SeedPart<'_>,
 ) -> String {
-    let parts_table = match record_kind {
-        ConversationRecordKind::Session => "conversation_parts",
-        ConversationRecordKind::Web => "web_record_parts",
-    };
     let part_prefix = match record_kind {
         ConversationRecordKind::Session => "conversation-part",
         ConversationRecordKind::Web => "web-record-part",
     };
-    let part_id = format!("{part_prefix}-fixture-{turn_id}-{index}");
+    let part_id = derive_part_id(part_prefix, turn_id, index);
     let metadata_json = format!(r#"{{"content_card":{{"type":"{}"}}}}"#, part.card_kind);
-    let part_sql = format!(
-        r#"
-        INSERT INTO {parts_table} (
-            tenant_id, id, turn_id, part_index, role, kind, text, language, command,
-            cwd, status, exit_code, metadata_json, content_card_json, translated_text,
-            source_execution_id, command_label
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, NULL, NULL, NULL, ?9, ?10, NULL,
-                  NULL, NULL)
-        "#
-    );
-    sqlx::query(AssertSqlSafe(part_sql))
-        .bind(TENANT_ID)
-        .bind(&part_id)
-        .bind(turn_id)
-        .bind(index)
-        .bind(part.role)
-        .bind(part.kind)
-        .bind(part.text)
-        .bind(part.command)
-        .bind(metadata_json)
-        .bind(part.content_card_json)
-        .execute(pool)
-        .await
-        .expect("seed part");
+    match record_kind {
+        ConversationRecordKind::Session => {
+            let id_key = derive_part_id_key(&part_id).expect("derive id_key");
+            let content = part.text.or(part.command);
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_parts (
+                    tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content,
+                    attrs_json, metadata_json, translated_text
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, NULL)
+                "#,
+            )
+            .bind(TENANT_ID)
+            .bind(turn_id)
+            .bind(index)
+            .bind(id_key.as_slice())
+            .bind(part.role)
+            .bind(part.kind)
+            .bind(part.card_kind)
+            .bind(content)
+            .bind(metadata_json)
+            .execute(pool)
+            .await
+            .expect("seed part");
+        }
+        ConversationRecordKind::Web => {
+            sqlx::query(
+                r#"
+                INSERT INTO web_record_parts (
+                    tenant_id, id, turn_id, part_index, role, kind, text, language, command,
+                    cwd, status, exit_code, metadata_json, content_card_json, translated_text,
+                    source_execution_id, command_label
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, NULL, NULL, NULL, ?9, ?10, NULL,
+                          NULL, NULL)
+                "#,
+            )
+            .bind(TENANT_ID)
+            .bind(&part_id)
+            .bind(turn_id)
+            .bind(index)
+            .bind(part.role)
+            .bind(part.kind)
+            .bind(part.text)
+            .bind(part.command)
+            .bind(metadata_json)
+            .bind(part.content_card_json)
+            .execute(pool)
+            .await
+            .expect("seed part");
+        }
+    }
     part_id
 }
 
@@ -332,11 +356,12 @@ async fn reindexing_one_turn_leaves_other_turns_and_drops_stale_rows() {
     }
 
     // 只改第一轮并重建该轮索引：第二轮索引行必须原样保留，第一轮不得留重复行。
+    let first_part_key = derive_part_id_key(&first_part_id).expect("derive id_key");
     sqlx::query(
-        "UPDATE conversation_parts SET text = 'first turn rewritten' WHERE tenant_id = ?1 AND id = ?2",
+        "UPDATE conversation_parts SET content = 'first turn rewritten' WHERE tenant_id = ?1 AND id_key = ?2",
     )
     .bind(TENANT_ID)
-    .bind(&first_part_id)
+    .bind(first_part_key.as_slice())
     .execute(&fixture.pool)
     .await
     .expect("rewrite part body");

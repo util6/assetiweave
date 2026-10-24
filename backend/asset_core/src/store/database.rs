@@ -129,8 +129,8 @@ pub async fn open_migrated_pool(db_path: &Path) -> StoreResult<SqlitePool> {
     }
     repair_known_modified_catalog_release_migration(&pool).await?;
     repair_known_modified_conversation_question_contract_migration(&pool).await?;
-    MIGRATOR.run(&pool).await.map_err(StoreError::external)?;
     normalize_legacy_part_ids(&pool).await?;
+    MIGRATOR.run(&pool).await.map_err(StoreError::external)?;
     Ok(pool)
 }
 

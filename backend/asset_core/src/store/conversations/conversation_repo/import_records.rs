@@ -1,4 +1,8 @@
 use super::*;
+use crate::domain::conversations::{
+    derive_conversation_part_id, derive_part_id_key, ConversationPartKind,
+    NormalizedConversationPart,
+};
 
 #[derive(Debug, FromRow)]
 pub(super) struct ConversationSessionListItemRow {
@@ -357,82 +361,142 @@ pub(super) async fn replace_conversation_parts_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     turn_id: &str,
-    parts: &[crate::backend::domain::NormalizedConversationPart],
+    parts: &[NormalizedConversationPart],
 ) -> StoreResult<()> {
-    let existing_ids = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM conversation_parts WHERE tenant_id = ?1 AND turn_id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(turn_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    let mut incoming_ids = BTreeSet::new();
     for (index, part) in parts.iter().enumerate() {
-        let part_id = stable_id("conversation-part", &[turn_id, &index.to_string()]);
-        incoming_ids.insert(part_id.clone());
-        let content_card_json = part.content_card.as_ref().map(encode_json).transpose()?;
+        let part_index = index as i64;
+        let part_id = derive_conversation_part_id(turn_id, part_index);
+        let id_key = derive_part_id_key(&part_id).unwrap_or([0u8; 8]);
+        let card_kind = part.content_card.as_ref().map(|c| c.kind.clone());
+
+        let (content, summary) =
+            if part.kind == ConversationPartKind::Command && part.command.is_some() {
+                (part.command.clone(), part.text.clone())
+            } else {
+                (part.text.clone(), None)
+            };
+
+        let mut attrs_map = serde_json::Map::new();
+        if let Some(ref val) = part.language {
+            if !val.is_empty() {
+                attrs_map.insert(
+                    "language".to_string(),
+                    serde_json::Value::String(val.clone()),
+                );
+            }
+        }
+        if let Some(ref val) = part.cwd {
+            if !val.is_empty() {
+                attrs_map.insert("cwd".to_string(), serde_json::Value::String(val.clone()));
+            }
+        }
+        if let Some(ref val) = part.status {
+            if !val.is_empty() {
+                attrs_map.insert("status".to_string(), serde_json::Value::String(val.clone()));
+            }
+        }
+        if let Some(val) = part.exit_code {
+            attrs_map.insert(
+                "exit_code".to_string(),
+                serde_json::Value::Number(val.into()),
+            );
+        }
+        if let Some(ref val) = part.command_label {
+            if !val.is_empty() {
+                attrs_map.insert(
+                    "command_label".to_string(),
+                    serde_json::Value::String(val.clone()),
+                );
+            }
+        }
+        if let Some(ref val) = part.source_execution_id {
+            if !val.is_empty() {
+                attrs_map.insert(
+                    "exec_id".to_string(),
+                    serde_json::Value::String(val.clone()),
+                );
+            }
+        }
+        if let Some(ref val) = summary {
+            if !val.trim().is_empty() {
+                attrs_map.insert(
+                    "summary".to_string(),
+                    serde_json::Value::String(val.clone()),
+                );
+            }
+        }
+        if let Some(ref card) = part.content_card {
+            if let Some(ref renderer) = card.renderer {
+                attrs_map.insert(
+                    "renderer".to_string(),
+                    serde_json::Value::String(renderer.clone()),
+                );
+            }
+            if let Some(ref semantic_role) = card.semantic_role {
+                attrs_map.insert(
+                    "semantic_role".to_string(),
+                    serde_json::Value::String(semantic_role.clone()),
+                );
+            }
+        }
+
+        let attrs_json = if attrs_map.is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::to_string(&serde_json::Value::Object(attrs_map))
+                    .map_err(StoreError::external)?,
+            )
+        };
+
         sqlx::query(
             r#"
             INSERT INTO conversation_parts (
-                tenant_id, id, turn_id, part_index, role, kind, text, language, command,
-                cwd, status, exit_code, command_label, metadata_json, content_card_json, source_execution_id
+                tenant_id, turn_id, part_index, id_key, role, kind, card_kind,
+                content, attrs_json, metadata_json
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
-            ON CONFLICT(tenant_id, id) DO UPDATE SET
-                turn_id = excluded.turn_id,
-                part_index = excluded.part_index,
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ON CONFLICT(tenant_id, turn_id, part_index) DO UPDATE SET
+                id_key = excluded.id_key,
                 role = excluded.role,
                 kind = excluded.kind,
-                text = excluded.text,
-                language = excluded.language,
-                command = excluded.command,
-                cwd = excluded.cwd,
-                status = excluded.status,
-                exit_code = excluded.exit_code,
-                command_label = excluded.command_label,
+                card_kind = excluded.card_kind,
+                content = excluded.content,
+                attrs_json = excluded.attrs_json,
                 metadata_json = excluded.metadata_json,
-                content_card_json = excluded.content_card_json,
-                source_execution_id = excluded.source_execution_id,
                 translated_text = CASE
-                    WHEN COALESCE(conversation_parts.text, '') = COALESCE(excluded.text, '')
-                     AND COALESCE(conversation_parts.command, '') = COALESCE(excluded.command, '')
+                    WHEN COALESCE(conversation_parts.content, '') = COALESCE(excluded.content, '')
                     THEN conversation_parts.translated_text
                     ELSE NULL
                 END
             "#,
         )
         .bind(tenant_id)
-        .bind(part_id)
         .bind(turn_id)
-        .bind(index as i64)
+        .bind(part_index)
+        .bind(id_key.as_slice())
         .bind(encode_enum(part.role)?)
         .bind(encode_enum(part.kind)?)
-        .bind(&part.text)
-        .bind(&part.language)
-        .bind(&part.command)
-        .bind(&part.cwd)
-        .bind(&part.status)
-        .bind(part.exit_code)
-        .bind(&part.command_label)
+        .bind(card_kind)
+        .bind(content)
+        .bind(attrs_json)
         .bind(&part.metadata_json)
-        .bind(content_card_json)
-        .bind(&part.source_execution_id)
         .execute(&mut **tx)
         .await
         .map_err(StoreError::external)?;
     }
-    for stale_id in existing_ids
-        .into_iter()
-        .filter(|id| !incoming_ids.contains(id))
-    {
-        sqlx::query("DELETE FROM conversation_parts WHERE tenant_id = ?1 AND id = ?2")
-            .bind(tenant_id)
-            .bind(stale_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(StoreError::external)?;
-    }
+
+    // 清理尾部多余零件
+    sqlx::query(
+        "DELETE FROM conversation_parts WHERE tenant_id = ?1 AND turn_id = ?2 AND part_index >= ?3",
+    )
+    .bind(tenant_id)
+    .bind(turn_id)
+    .bind(parts.len() as i64)
+    .execute(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+
     // 索引随零件写入增量维护：只重建这个轮次的索引行，不触碰其它轮次。
     replace_turn_part_index_sqlx_tx(tx, tenant_id, turn_id, ConversationRecordKind::Session)
         .await?;

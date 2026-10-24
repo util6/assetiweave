@@ -205,18 +205,33 @@ pub async fn load_recall_parts_for_questions_sqlx(
         return Ok(Vec::new());
     }
     let question_ids_json = serde_json::to_string(question_ids).map_err(StoreError::external)?;
-    let parts_table = match record_kind {
-        MemoryRecordKind::Session => "conversation_parts",
-        MemoryRecordKind::Web => "web_record_parts",
+    let sql = match record_kind {
+        MemoryRecordKind::Session => {
+            r#"
+            SELECT t.question_id, p.kind,
+                   (CASE WHEN p.kind = 'command' THEN json_extract(p.attrs_json, '$.summary') ELSE p.content END) AS text,
+                   (CASE WHEN p.kind = 'command' THEN p.content ELSE NULL END) AS command,
+                   json_extract(p.attrs_json, '$.cwd') AS cwd,
+                   json_extract(p.attrs_json, '$.command_label') AS command_label,
+                   p.metadata_json,
+                   json_extract(p.attrs_json, '$.status') AS status,
+                   CAST(json_extract(p.attrs_json, '$.exit_code') AS INTEGER) AS exit_code
+            FROM conversation_parts p
+            JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
+            WHERE p.tenant_id = ?1
+              AND t.question_id IN (SELECT value FROM json_each(?2))
+            "#
+        }
+        MemoryRecordKind::Web => {
+            r#"
+            SELECT t.question_id, p.kind, p.text, p.command, p.cwd, p.command_label, p.metadata_json, p.status, p.exit_code
+            FROM web_record_parts p
+            JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
+            WHERE p.tenant_id = ?1
+              AND t.question_id IN (SELECT value FROM json_each(?2))
+            "#
+        }
     };
-    let sql = format!(
-        r#"
-        SELECT p.question_id, p.kind, p.text, p.command, p.cwd, p.command_label, p.metadata_json, p.status, p.exit_code
-        FROM {parts_table} p
-        WHERE p.tenant_id = ?1
-          AND p.question_id IN (SELECT value FROM json_each(?2))
-        "#
-    );
     let rows: Vec<RecallPartFacts> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(tenant_id)
         .bind(question_ids_json)

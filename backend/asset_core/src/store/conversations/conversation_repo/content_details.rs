@@ -80,9 +80,8 @@ pub async fn load_conversation_question_detail_sqlx(
 
     let part_rows = sqlx::query(
         r#"
-        SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
+        SELECT p.turn_id, p.part_index, p.role, p.kind, p.card_kind,
+               p.content, p.attrs_json, p.metadata_json, p.translated_text
         FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session_question
         JOIN conversation_parts p
           ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
@@ -154,9 +153,7 @@ pub async fn list_conversation_block_locators_sqlx(
 
     let part_rows = sqlx::query(AssertSqlSafe(format!(
         r#"
-        SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
+        SELECT {part_columns}
         FROM {turns} t
         JOIN {parts} p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
         WHERE t.tenant_id = ?1 AND t.session_id = ?2 AND t.question_id = ?3
@@ -164,6 +161,7 @@ pub async fn list_conversation_block_locators_sqlx(
         "#,
         turns = tables.turns,
         parts = tables.parts,
+        part_columns = tables.part_columns,
     )))
     .bind(tenant_id)
     .bind(&session_id)
@@ -260,47 +258,36 @@ impl ConversationTurnWithQuestionRow {
 
 #[derive(Debug, FromRow)]
 pub(super) struct ConversationPartDetailRow {
-    id: String,
     turn_id: String,
     part_index: i64,
     role: String,
     kind: String,
-    text: Option<String>,
-    language: Option<String>,
-    command: Option<String>,
-    cwd: Option<String>,
-    status: Option<String>,
-    exit_code: Option<i64>,
+    card_kind: Option<String>,
+    content: Option<String>,
+    attrs_json: Option<String>,
     metadata_json: Option<String>,
-    content_card_json: Option<String>,
     translated_text: Option<String>,
-    source_execution_id: Option<String>,
-    command_label: Option<String>,
     question_id: String,
     session_id: String,
 }
 
 impl ConversationPartDetailRow {
     fn into_part(self) -> StoreResult<(ConversationPart, String, String)> {
-        let part = ConversationPart {
-            id: self.id,
+        let question_id = self.question_id;
+        let session_id = self.session_id;
+        let part_row = ConversationPartRow {
             turn_id: self.turn_id,
             part_index: self.part_index,
-            role: decode_enum(self.role)?,
-            kind: decode_enum(self.kind)?,
-            text: self.text,
-            language: self.language,
-            command: self.command,
-            cwd: self.cwd,
-            status: self.status,
-            exit_code: self.exit_code.map(|v| v as i32),
-            command_label: self.command_label,
-            source_execution_id: self.source_execution_id,
-            content_card: self.content_card_json.map(decode_json).transpose()?,
+            role: self.role,
+            kind: self.kind,
+            card_kind: self.card_kind,
+            content: self.content,
+            attrs_json: self.attrs_json,
             metadata_json: self.metadata_json,
             translated_text: self.translated_text,
         };
-        Ok((part, self.question_id, self.session_id))
+        let part = part_row.into_domain()?;
+        Ok((part, question_id, session_id))
     }
 }
 
@@ -349,27 +336,43 @@ pub async fn load_conversation_block_detail_sqlx(
     let resolved_part_id = resolve_conversation_part_id_prefix_sqlx(pool, tenant_id, raw_part_id)
         .await
         .unwrap_or_else(|_| raw_part_id.to_string());
-    let row = sqlx::query_as::<_, ConversationPartDetailRow>(AssertSqlSafe(format!(
+
+    let (where_clause, bind_key, bind_id) = if record_kind == ConversationRecordKind::Session {
+        let key = crate::backend::domain::derive_part_id_key(&resolved_part_id).unwrap_or([0u8; 8]);
+        ("p.tenant_id = ?1 AND p.id_key = ?2", Some(key), None)
+    } else {
+        (
+            "p.tenant_id = ?1 AND p.id = ?2",
+            None,
+            Some(resolved_part_id.clone()),
+        )
+    };
+
+    let query = format!(
         r#"
-        SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label,
-               t.question_id, t.session_id
+        SELECT {part_columns}, t.question_id, t.session_id
         FROM {parts} p
         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
-        WHERE p.tenant_id = ?1 AND p.id = ?2
+        WHERE {where_clause}
         "#,
         parts = tables.parts,
         turns = tables.turns,
-    )))
-    .bind(tenant_id)
-    .bind(&resolved_part_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(StoreError::external)?
-    .ok_or_else(|| {
-        StoreError::external(format!("conversation content block not found: {block_id}"))
-    })?;
+        part_columns = tables.part_columns,
+    );
+    let mut q =
+        sqlx::query_as::<_, ConversationPartDetailRow>(AssertSqlSafe(query)).bind(tenant_id);
+    if let Some(key) = bind_key {
+        q = q.bind(key.to_vec());
+    } else if let Some(ref id) = bind_id {
+        q = q.bind(id);
+    }
+    let row = q
+        .fetch_optional(pool)
+        .await
+        .map_err(StoreError::external)?
+        .ok_or_else(|| {
+            StoreError::external(format!("conversation content block not found: {block_id}"))
+        })?;
     let (part, question_id, session_id) = row.into_part()?;
     let (adapter_id, card_kinds) = load_conversation_card_projection_context_for_record_sqlx(
         pool,

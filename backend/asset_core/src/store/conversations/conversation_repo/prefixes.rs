@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::conversations::{derive_conversation_part_id, parse_id_key_prefix, IdKeyLookup};
 
 pub(super) fn conversation_id_fragment_range(prefix: &str, fragment: &str) -> (String, String) {
     let lower = format!("{prefix}{}", fragment.trim().to_ascii_lowercase());
@@ -220,6 +221,49 @@ pub async fn resolve_conversation_turn_id_prefix_sqlx(
     Ok(rows[0].clone())
 }
 
+async fn query_parts_by_id_key(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    lookup: &IdKeyLookup,
+) -> StoreResult<Vec<(String, String, i64)>> {
+    match lookup {
+        IdKeyLookup::Exact(key) => sqlx::query_as(
+            "SELECT t.session_id, p.turn_id, p.part_index FROM conversation_parts p \
+                 JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+                 WHERE p.tenant_id = ?1 AND p.id_key = ?2 LIMIT 11",
+        )
+        .bind(tenant_id)
+        .bind(key.to_vec())
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::external),
+        IdKeyLookup::Range {
+            low,
+            high: Some(high),
+        } => sqlx::query_as(
+            "SELECT t.session_id, p.turn_id, p.part_index FROM conversation_parts p \
+                 JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+                 WHERE p.tenant_id = ?1 AND p.id_key >= ?2 AND p.id_key < ?3 LIMIT 11",
+        )
+        .bind(tenant_id)
+        .bind(low.to_vec())
+        .bind(high.to_vec())
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::external),
+        IdKeyLookup::Range { low, high: None } => sqlx::query_as(
+            "SELECT t.session_id, p.turn_id, p.part_index FROM conversation_parts p \
+                 JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+                 WHERE p.tenant_id = ?1 AND p.id_key >= ?2 LIMIT 11",
+        )
+        .bind(tenant_id)
+        .bind(low.to_vec())
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::external),
+    }
+}
+
 pub async fn resolve_conversation_part_id_prefix_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -238,31 +282,47 @@ pub async fn resolve_conversation_part_id_prefix_sqlx(
         .unwrap_or(trimmed);
 
     let verbatim_like = format!("{trimmed}%");
-    let domain_like = format!("conversation-part-{clean_hash}%");
     let web_like = format!("web-record-part-{clean_hash}%");
     let hash_like = format!("%-{clean_hash}%");
 
-    let query = r#"
-        WITH candidates AS (
-            SELECT id FROM conversation_parts
-            WHERE tenant_id = ?1 AND (id = ?2 OR id LIKE ?3 OR id LIKE ?4 OR id LIKE ?5)
-            UNION
-            SELECT id FROM web_record_parts
-            WHERE tenant_id = ?1 AND (id = ?2 OR id LIKE ?3 OR id LIKE ?6 OR id LIKE ?5)
-        )
-        SELECT id FROM candidates LIMIT 11
-    "#;
+    let mut rows: Vec<String> = Vec::new();
 
-    let rows: Vec<String> = sqlx::query_scalar(query)
-        .bind(tenant_id)
-        .bind(trimmed)
-        .bind(&verbatim_like)
-        .bind(&domain_like)
-        .bind(&hash_like)
-        .bind(&web_like)
-        .fetch_all(pool)
-        .await
-        .map_err(StoreError::external)?;
+    if let Some(parsed) = parse_id_key_prefix(clean_hash) {
+        let part_rows = query_parts_by_id_key(pool, tenant_id, &parsed.lookup).await?;
+        for (_, turn_id, part_index) in part_rows {
+            let full_id = derive_conversation_part_id(&turn_id, part_index);
+            let hash_part = full_id
+                .strip_prefix("conversation-part-")
+                .unwrap_or(&full_id);
+            if hash_part.starts_with(&parsed.normalized_hex)
+                || full_id.starts_with(trimmed)
+                || full_id == trimmed
+            {
+                if !rows.contains(&full_id) {
+                    rows.push(full_id);
+                }
+            }
+        }
+    }
+
+    let web_rows: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM web_record_parts \
+         WHERE tenant_id = ?1 AND (id = ?2 OR id LIKE ?3 OR id LIKE ?4 OR id LIKE ?5) LIMIT 11",
+    )
+    .bind(tenant_id)
+    .bind(trimmed)
+    .bind(&verbatim_like)
+    .bind(&web_like)
+    .bind(&hash_like)
+    .fetch_all(pool)
+    .await
+    .map_err(StoreError::external)?;
+
+    for id in web_rows {
+        if !rows.contains(&id) {
+            rows.push(id);
+        }
+    }
 
     if rows.is_empty() {
         return Err(StoreError::NotFound(format!(
@@ -330,11 +390,6 @@ pub async fn resolve_any_id_to_session_id_sqlx(
             FROM conversation_turns t
             WHERE t.tenant_id = ?1 AND (t.id = ?2 OR t.id LIKE ?3 OR t.id LIKE ?4)
             UNION
-            SELECT t.session_id, 'session' AS kind
-            FROM conversation_parts p
-            JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
-            WHERE p.tenant_id = ?1 AND (p.id = ?2 OR p.id LIKE ?3 OR p.id LIKE ?4)
-            UNION
             SELECT s.id AS session_id, 'web' AS kind
             FROM web_record_sessions s
             WHERE s.tenant_id = ?1 AND (s.id = ?2 OR s.id LIKE ?3 OR s.id LIKE ?4)
@@ -356,7 +411,7 @@ pub async fn resolve_any_id_to_session_id_sqlx(
         SELECT session_id, kind FROM candidates LIMIT 11
     "#;
 
-    let rows: Vec<(String, String)> = sqlx::query_as(query)
+    let mut rows: Vec<(String, String)> = sqlx::query_as(query)
         .bind(tenant_id)
         .bind(trimmed)
         .bind(&verbatim_like)
@@ -364,6 +419,16 @@ pub async fn resolve_any_id_to_session_id_sqlx(
         .fetch_all(pool)
         .await
         .map_err(StoreError::external)?;
+
+    if let Some(parsed) = parse_id_key_prefix(clean_hash) {
+        let part_rows = query_parts_by_id_key(pool, tenant_id, &parsed.lookup).await?;
+        for (session_id, _, _) in part_rows {
+            let item = (session_id, "session".to_string());
+            if !rows.contains(&item) {
+                rows.push(item);
+            }
+        }
+    }
 
     if rows.is_empty() {
         return Err(StoreError::NotFound(format!(

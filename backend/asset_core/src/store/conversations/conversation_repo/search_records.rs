@@ -12,6 +12,25 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
         conversation_id_fragment_range(tables.question_id_prefix, fragment);
     let (turn_lower, turn_upper) = conversation_id_fragment_range(tables.turn_id_prefix, fragment);
     let (part_lower, part_upper) = conversation_id_fragment_range(tables.part_id_prefix, fragment);
+    let (part_clause, part_low_bytes, part_high_bytes) = if tables.parts == "conversation_parts" {
+        if let Some(parsed) = crate::backend::domain::parse_id_key_prefix(fragment) {
+            let (low, high) = match parsed.lookup {
+                crate::backend::domain::IdKeyLookup::Exact(exact) => (exact, exact),
+                crate::backend::domain::IdKeyLookup::Range { low, high } => {
+                    (low, high.unwrap_or([0xFF; 8]))
+                }
+            };
+            (
+                "p.id_key >= ?8 AND p.id_key <= ?9",
+                Some(low.to_vec()),
+                Some(high.to_vec()),
+            )
+        } else {
+            ("0 = 1", None, None)
+        }
+    } else {
+        ("p.id >= ?8 AND p.id < ?9", None, None)
+    };
     let query = format!(
         r#"
         SELECT session_id FROM (
@@ -33,23 +52,28 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
             FROM {parts} p
             JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
             JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
-            WHERE p.tenant_id = ?1 AND s.missing = 0 AND p.id >= ?8 AND p.id < ?9
+            WHERE p.tenant_id = ?1 AND s.missing = 0 AND {part_clause}
         )
         "#,
         sessions = tables.sessions,
         turns = tables.turns,
         parts = tables.parts,
+        part_clause = part_clause,
     );
-    let rows = sqlx::query_scalar::<_, String>(AssertSqlSafe(query))
+    let mut builder = sqlx::query_scalar::<_, String>(AssertSqlSafe(query))
         .bind(tenant_id)
         .bind(session_lower)
         .bind(session_upper)
         .bind(question_lower)
         .bind(question_upper)
         .bind(turn_lower)
-        .bind(turn_upper)
-        .bind(part_lower)
-        .bind(part_upper)
+        .bind(turn_upper);
+    if let (Some(low), Some(high)) = (part_low_bytes, part_high_bytes) {
+        builder = builder.bind(low).bind(high);
+    } else {
+        builder = builder.bind(part_lower).bind(part_upper);
+    }
+    let rows = builder
         .fetch_all(pool)
         .await
         .map_err(StoreError::external)?;
@@ -230,9 +254,7 @@ pub(super) async fn load_search_parts_sqlx(
 ) -> StoreResult<BTreeMap<String, Vec<ConversationPart>>> {
     let query = format!(
         r#"
-        SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
+        SELECT {part_columns}
         FROM {parts} p
         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
@@ -243,6 +265,7 @@ pub(super) async fn load_search_parts_sqlx(
         ORDER BY p.turn_id ASC, p.part_index ASC
         "#,
         parts = tables.parts,
+        part_columns = tables.part_columns,
         turns = tables.turns,
         sessions = tables.sessions,
     );

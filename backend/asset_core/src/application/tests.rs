@@ -689,12 +689,9 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         sqlx::query(
             r#"
             INSERT INTO conversation_parts (
-                tenant_id, id, turn_id, part_index, role, kind, text, language,
-                command, cwd, status, exit_code, metadata_json, content_card_json,
-                translated_text, source_execution_id, command_label
-            ) VALUES ('default', 'maintenance-orphan-part', 'maintenance-missing-turn', 0,
-                'assistant', 'text', 'orphan', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                NULL, NULL, NULL)
+                tenant_id, turn_id, part_index, id_key, role, kind, content
+            ) VALUES ('default', 'maintenance-missing-turn', 0, x'0000000000000000',
+                'assistant', 'text', 'orphan')
             "#,
         )
         .execute(&mut *connection)
@@ -753,7 +750,7 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         .expect("dry-run conversation repair");
     assert_eq!(dry_run["dry_run"], true);
     let orphan_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM conversation_parts WHERE id = 'maintenance-orphan-part'",
+        "SELECT COUNT(*) FROM conversation_parts WHERE turn_id = 'maintenance-missing-turn'",
     )
     .fetch_one(service.db.pool())
     .await
@@ -772,7 +769,7 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         .await;
     assert!(resync_error.is_err());
     let orphan_count_after_failed_resync: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM conversation_parts WHERE id = 'maintenance-orphan-part'",
+        "SELECT COUNT(*) FROM conversation_parts WHERE turn_id = 'maintenance-missing-turn'",
     )
     .fetch_one(service.db.pool())
     .await
@@ -862,12 +859,9 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         sqlx::query(
             r#"
             INSERT INTO conversation_parts (
-                tenant_id, id, turn_id, part_index, role, kind, text, language,
-                command, cwd, status, exit_code, metadata_json, content_card_json,
-                translated_text, source_execution_id, command_label
-            ) VALUES ('default', 'maintenance-recurrent-orphan-part',
-                'maintenance-recurrent-missing-turn', 0, 'assistant', 'text', 'orphan',
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+                tenant_id, turn_id, part_index, id_key, role, kind, content
+            ) VALUES ('default', 'maintenance-recurrent-missing-turn', 0, x'0000000000000000',
+                'assistant', 'text', 'orphan')
             "#,
         )
         .execute(&mut *connection)
@@ -2767,7 +2761,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
     .map_err(AppError::external)
     .expect("update adapter card contract");
     sqlx::query(
-        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text, language, command, cwd, status, exit_code, metadata_json, translated_text, content_card_json) SELECT tenant_id, 'fixture-json-part', turn_id, 1, role, 'text', '{\"step\":\"inspect\"}', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{\"schema_version\":1,\"kind\":\"fixture-export.trace\",\"renderer\":\"json\"}' FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text) SELECT tenant_id, turn_id, 1, x'0000000000000001', role, 'text', 'fixture-export.trace', '{\"step\":\"inspect\"}', '{\"renderer\":\"json\"}', NULL, NULL FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
     )
     .bind(&tenant_id)
     .execute(&pool)
@@ -2775,7 +2769,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
     .map_err(AppError::external)
     .expect("insert fixture json part");
     sqlx::query(
-        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text, language, command, cwd, status, exit_code, metadata_json, translated_text, content_card_json) SELECT tenant_id, 'fixture-history-part', turn_id, 2, role, 'text', 'Future history remains visible', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{\"schema_version\":1,\"kind\":\"future.history-note\",\"renderer\":\"plain\"}' FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text) SELECT tenant_id, turn_id, 2, x'0000000000000002', role, 'text', 'future.history-note', 'Future history remains visible', '{\"renderer\":\"plain\"}', NULL, NULL FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
     )
     .bind(&tenant_id)
     .execute(&pool)
@@ -2783,7 +2777,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
     .map_err(AppError::external)
     .expect("insert fixture history part");
     sqlx::query(
-        "UPDATE conversation_parts SET text = 'Compare both paths', metadata_json = '{\"source_type\":\"thinking\"}', content_card_json = '{\"schema_version\":1,\"kind\":\"fixture-export.reasoning\",\"renderer\":\"markdown\"}' WHERE tenant_id = ?1 AND id NOT IN ('fixture-json-part', 'fixture-history-part')",
+        "UPDATE conversation_parts SET content = 'Compare both paths', card_kind = 'fixture-export.reasoning', attrs_json = '{\"renderer\":\"markdown\"}', metadata_json = '{\"source_type\":\"thinking\"}' WHERE tenant_id = ?1 AND part_index NOT IN (1, 2)",
     )
     .bind(tenant_id)
     .execute(&pool)
@@ -5326,20 +5320,25 @@ async fn conversation_question_detail_projects_canonical_nodes_through_app_servi
     let turn_id = initial[0].turns[0].id.clone();
     let pool = service.db.pool().clone();
     let tenant_id = service.tenant_id().to_string();
+    let second_part_id = crate::backend::domain::derive_conversation_part_id(&turn_id, 1);
+    let second_id_key =
+        crate::backend::domain::derive_part_id_key(&second_part_id).unwrap_or([0u8; 8]);
+    let third_part_id = crate::backend::domain::derive_conversation_part_id(&turn_id, 2);
+    let third_id_key =
+        crate::backend::domain::derive_part_id_key(&third_part_id).unwrap_or([0u8; 8]);
     sqlx::query(
         r#"
         INSERT INTO conversation_parts (
-            tenant_id, id, turn_id, part_index, role, kind, text, language,
-            command, cwd, status, exit_code, metadata_json, translated_text,
-            content_card_json, source_execution_id, command_label
+            tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content,
+            attrs_json, metadata_json, translated_text
         )
-        VALUES (?1, 'app-service-second-part', ?2, 1, 'assistant', 'text',
-            'Second projected Part', NULL, NULL, NULL, NULL, NULL, ?3, NULL,
-            NULL, 'execution-second', 'second')
+        VALUES (?1, ?2, 1, ?3, 'assistant', 'text', 'answer',
+            'Second projected Part', '{"command_label":"second","exec_id":"execution-second"}', ?4, NULL)
         "#,
     )
     .bind(&tenant_id)
     .bind(&turn_id)
+    .bind(second_id_key.to_vec())
     .bind(r#"{"content_card":{"type":"answer","format":"markdown"}}"#)
     .execute(&pool)
     .await
@@ -5348,16 +5347,15 @@ async fn conversation_question_detail_projects_canonical_nodes_through_app_servi
     sqlx::query(
         r#"
         INSERT INTO conversation_parts (
-            tenant_id, id, turn_id, part_index, role, kind, text, language,
-            command, cwd, status, exit_code, metadata_json, translated_text,
-            content_card_json, source_execution_id, command_label
+            tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content,
+            attrs_json, metadata_json, translated_text
         )
-        VALUES (?1, 'app-service-empty-part', ?2, 2, 'assistant', 'text',
-            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+        VALUES (?1, ?2, 2, ?3, 'assistant', 'text', NULL, NULL, NULL, NULL, NULL)
         "#,
     )
     .bind(&tenant_id)
     .bind(&turn_id)
+    .bind(third_id_key.to_vec())
     .execute(&pool)
     .await
     .map_err(AppError::external)
@@ -5375,7 +5373,7 @@ async fn conversation_question_detail_projects_canonical_nodes_through_app_servi
             .iter()
             .map(|node| node.part_id.as_str())
             .collect::<Vec<_>>(),
-        vec![first_part_id.as_str(), "app-service-second-part"]
+        vec![first_part_id.as_str(), second_part_id.as_str()]
     );
     assert!(expanded
         .projected_content_nodes
@@ -5425,42 +5423,47 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         }
     })
     .to_string();
+    let cmd_part_id = crate::backend::domain::derive_conversation_part_id(&turn_id, 1);
+    let cmd_id_key = crate::backend::domain::derive_part_id_key(&cmd_part_id).unwrap_or([0u8; 8]);
+    let result_part_id = crate::backend::domain::derive_conversation_part_id(&turn_id, 2);
+    let result_id_key =
+        crate::backend::domain::derive_part_id_key(&result_part_id).unwrap_or([0u8; 8]);
+
     sqlx::query(
         r#"
         INSERT INTO conversation_parts (
-            tenant_id, id, turn_id, part_index, role, kind, text, language,
-            command, cwd, status, exit_code, command_label, metadata_json,
-            content_card_json, source_execution_id
+            tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content,
+            attrs_json, metadata_json, translated_text
         )
-        VALUES (?1, 'conversation-part-codex-shell-command', ?2, 1, 'tool', 'command', NULL, NULL,
-            ?3, '/tmp/project', 'failed', 1, 'exec', ?4,
-            '{"schema_version":1,"kind":"codex.command","renderer":"command"}',
-            'codex-shell-execution')
+        VALUES (?1, ?2, 1, ?3, 'tool', 'command', 'codex.command', ?4,
+            '{"command_label":"exec","cwd":"/tmp/project","status":"failed","exit_code":1,"exec_id":"codex-shell-execution","renderer":"command"}',
+            ?5, NULL)
         "#,
     )
     .bind(&tenant_id)
     .bind(&turn_id)
+    .bind(cmd_id_key.to_vec())
     .bind(raw_command)
     .bind(projection_metadata)
     .execute(&pool)
     .await
     .map_err(AppError::external)
     .expect("insert codex shell command part");
+
     sqlx::query(
         r#"
         INSERT INTO conversation_parts (
-            tenant_id, id, turn_id, part_index, role, kind, text, language,
-            command, cwd, status, exit_code, command_label, metadata_json,
-            content_card_json, source_execution_id
+            tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content,
+            attrs_json, metadata_json, translated_text
         )
-        VALUES (?1, 'conversation-part-codex-shell-result', ?2, 2, 'tool', 'tool', 'Error: failed', NULL,
-            NULL, '/tmp/project', 'failed', 1, NULL, NULL,
-            '{"schema_version":1,"kind":"codex.result","renderer":"terminal_output"}',
-            'codex-shell-execution')
+        VALUES (?1, ?2, 2, ?3, 'tool', 'tool', 'codex.result', 'Error: failed',
+            '{"cwd":"/tmp/project","status":"failed","exit_code":1,"exec_id":"codex-shell-execution","renderer":"terminal_output"}',
+            NULL, NULL)
         "#,
     )
     .bind(&tenant_id)
     .bind(&turn_id)
+    .bind(result_id_key.to_vec())
     .execute(&pool)
     .await
     .map_err(AppError::external)
@@ -5475,14 +5478,14 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         detail
             .parts
             .iter()
-            .filter(|part| part.id == "conversation-part-codex-shell-command")
+            .filter(|part| part.id == cmd_part_id)
             .count(),
         1
     );
     let command_nodes = detail
         .projected_content_nodes
         .iter()
-        .filter(|node| node.part_id == "conversation-part-codex-shell-command")
+        .filter(|node| node.part_id == cmd_part_id)
         .collect::<Vec<_>>();
     assert_eq!(command_nodes.len(), 1);
     assert_eq!(
@@ -5506,7 +5509,7 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         detail
             .projected_content_nodes
             .iter()
-            .filter(|node| node.part_id == "conversation-part-codex-shell-result")
+            .filter(|node| node.part_id == result_part_id)
             .count(),
         1
     );
@@ -5514,40 +5517,43 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         detail
             .projected_content_nodes
             .iter()
-            .filter(|node| node.part_id == "conversation-part-codex-shell-command")
+            .filter(|node| node.part_id == cmd_part_id)
             .count(),
         1
     );
 
-    execute_test_sql(
-        &service,
-        &format!(
-            r#"
-            INSERT INTO conversation_parts (
-                tenant_id, id, turn_id, part_index, role, kind, text, language,
-                command, cwd, status, exit_code, metadata_json, translated_text,
-                content_card_json, source_execution_id, command_label
-            ) VALUES (
-                'default', 'conversation-part-legacy-split-a', '{0}', 3, 'tool', 'command',
-                NULL, NULL, 'printf legacy split first', NULL, NULL, NULL, NULL, NULL,
-                '{{"schema_version":1,"kind":"codex.command","renderer":"command"}}',
-                'legacy-split-execution', NULL
-            );
-            INSERT INTO conversation_parts (
-                tenant_id, id, turn_id, part_index, role, kind, text, language,
-                command, cwd, status, exit_code, metadata_json, translated_text,
-                content_card_json, source_execution_id, command_label
-            ) VALUES (
-                'default', 'conversation-part-legacy-split-b', '{0}', 4, 'tool', 'command',
-                NULL, NULL, 'printf legacy split second', NULL, NULL, NULL, NULL, NULL,
-                '{{"schema_version":1,"kind":"codex.command","renderer":"command"}}',
-                'legacy-split-execution', NULL
-            )
-            "#,
-            detail.turns[0].id
-        ),
+    let part_3_id = crate::backend::domain::derive_conversation_part_id(&detail.turns[0].id, 3);
+    let part_3_key = crate::backend::domain::derive_part_id_key(&part_3_id).unwrap_or([0u8; 8]);
+    let part_4_id = crate::backend::domain::derive_conversation_part_id(&detail.turns[0].id, 4);
+    let part_4_key = crate::backend::domain::derive_part_id_key(&part_4_id).unwrap_or([0u8; 8]);
+    let turn_0_id = &detail.turns[0].id;
+
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_parts (
+            tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content,
+            attrs_json, metadata_json, translated_text
+        ) VALUES (
+            'default', ?1, 3, ?2, 'tool', 'command', 'codex.command',
+            'printf legacy split first',
+            '{"renderer":"command","exec_id":"legacy-split-execution"}', NULL, NULL
+        );
+        INSERT INTO conversation_parts (
+            tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content,
+            attrs_json, metadata_json, translated_text
+        ) VALUES (
+            'default', ?1, 4, ?3, 'tool', 'command', 'codex.command',
+            'printf legacy split second',
+            '{"renderer":"command","exec_id":"legacy-split-execution"}', NULL, NULL
+        );
+        "#,
     )
+    .bind(turn_0_id)
+    .bind(part_3_key.to_vec())
+    .bind(part_4_key.to_vec())
+    .execute(service.db.pool())
     .await
+    .map_err(AppError::external)
     .expect("seed historical split command parts");
     let historical_split_search = service
         .search_conversation_records(ConversationSearchParams {
@@ -5572,14 +5578,12 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         })
         .await
         .expect("search historical split command Part");
+    let expected_part_4_id = crate::backend::domain::derive_conversation_part_id(turn_0_id, 4);
     assert_eq!(historical_split_search.total_count, 1);
-    assert_eq!(
-        historical_split_search.hits[0].block_id,
-        "conversation-part-legacy-split-b"
-    );
+    assert_eq!(historical_split_search.hits[0].block_id, expected_part_4_id);
     assert_eq!(
         historical_split_search.hits[0].part_id.as_deref(),
-        Some("conversation-part-legacy-split-b")
+        Some(expected_part_4_id.as_str())
     );
 
     let command_search = service
@@ -5606,13 +5610,10 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         .await
         .expect("search raw shell command Part");
     assert_eq!(command_search.total_count, 1);
-    assert_eq!(
-        command_search.hits[0].block_id,
-        "conversation-part-codex-shell-command"
-    );
+    assert_eq!(command_search.hits[0].block_id, cmd_part_id);
     assert_eq!(
         command_search.hits[0].part_id.as_deref(),
-        Some("conversation-part-codex-shell-command")
+        Some(cmd_part_id.as_str())
     );
     assert!(command_search.hits[0]
         .snippet
@@ -5626,7 +5627,7 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         .expect("list raw shell command locators");
     let command_blocks = blocks
         .iter()
-        .filter(|block| block.part_id.as_deref() == Some("conversation-part-codex-shell-command"))
+        .filter(|block| block.part_id.as_deref() == Some(cmd_part_id.as_str()))
         .collect::<Vec<_>>();
     assert_eq!(command_blocks.len(), 1);
     assert_eq!(
@@ -5634,11 +5635,11 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
             .iter()
             .map(|block| block.block_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["conversation-part-codex-shell-command"]
+        vec![cmd_part_id.as_str()]
     );
     let status_block = service
         .get_conversation_block(ConversationBlockGetParams {
-            block_id: "conversation-part-codex-shell-command".to_string(),
+            block_id: cmd_part_id.clone(),
         })
         .await
         .expect("load raw shell command Part");
@@ -5674,10 +5675,7 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         .expect("search raw shell command Part in Tantivy");
     assert_eq!(indexed_command_search.backend, "tantivy");
     assert_eq!(indexed_command_search.total_count, 1);
-    assert_eq!(
-        indexed_command_search.hits[0].block_id,
-        "conversation-part-codex-shell-command"
-    );
+    assert_eq!(indexed_command_search.hits[0].block_id, cmd_part_id);
     let _ = fs::remove_dir_all(root);
 }
 

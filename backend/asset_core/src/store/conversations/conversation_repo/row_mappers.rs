@@ -1,4 +1,8 @@
 use super::*;
+use crate::domain::conversations::{
+    derive_part_id, ConversationContentCardDescriptor, ConversationPartKind, ConversationPartRole,
+};
+use serde::Deserialize;
 
 #[derive(Debug, FromRow)]
 pub(super) struct ConversationAdapterRow {
@@ -277,43 +281,77 @@ pub fn map_sqlx_conversation_turn(row: &SqliteRow) -> StoreResult<ConversationTu
         .into_domain())
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct ConversationPartAttrs {
+    pub(super) language: Option<String>,
+    pub(super) cwd: Option<String>,
+    pub(super) status: Option<String>,
+    pub(super) exit_code: Option<i32>,
+    pub(super) command_label: Option<String>,
+    pub(super) exec_id: Option<String>,
+    pub(super) summary: Option<String>,
+    pub(super) renderer: Option<String>,
+    pub(super) semantic_role: Option<String>,
+}
+
 #[derive(Debug, FromRow)]
 pub(super) struct ConversationPartRow {
-    id: String,
-    turn_id: String,
-    part_index: i64,
-    role: String,
-    kind: String,
-    text: Option<String>,
-    language: Option<String>,
-    command: Option<String>,
-    cwd: Option<String>,
-    status: Option<String>,
-    exit_code: Option<i64>,
-    metadata_json: Option<String>,
-    command_label: Option<String>,
-    source_execution_id: Option<String>,
-    content_card_json: Option<String>,
-    translated_text: Option<String>,
+    pub(super) turn_id: String,
+    pub(super) part_index: i64,
+    pub(super) role: String,
+    pub(super) kind: String,
+    pub(super) card_kind: Option<String>,
+    pub(super) content: Option<String>,
+    pub(super) attrs_json: Option<String>,
+    pub(super) metadata_json: Option<String>,
+    pub(super) translated_text: Option<String>,
 }
 
 impl ConversationPartRow {
-    fn into_domain(self) -> StoreResult<ConversationPart> {
+    pub(super) fn into_domain(self) -> StoreResult<ConversationPart> {
+        let role: ConversationPartRole = decode_enum(self.role)?;
+        let kind: ConversationPartKind = decode_enum(self.kind)?;
+        let attrs: ConversationPartAttrs = self
+            .attrs_json
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+
+        let (text, command) = if kind == ConversationPartKind::Command {
+            (attrs.summary, self.content)
+        } else {
+            (self.content, None)
+        };
+
+        let content_card = self.card_kind.map(|ck| ConversationContentCardDescriptor {
+            schema_version: 1,
+            kind: ck,
+            semantic_role: attrs.semantic_role,
+            renderer: attrs.renderer,
+        });
+
+        let prefix = if self.turn_id.starts_with("web-record-") {
+            "web-record-part"
+        } else {
+            "conversation-part"
+        };
+        let id = derive_part_id(prefix, &self.turn_id, self.part_index);
+
         Ok(ConversationPart {
-            id: self.id,
+            id,
             turn_id: self.turn_id,
             part_index: self.part_index,
-            role: decode_enum(self.role)?,
-            kind: decode_enum(self.kind)?,
-            text: self.text,
-            language: self.language,
-            command: self.command,
-            cwd: self.cwd,
-            status: self.status,
-            exit_code: self.exit_code.map(|v| v as i32),
-            command_label: self.command_label,
-            source_execution_id: self.source_execution_id,
-            content_card: self.content_card_json.map(decode_json).transpose()?,
+            role,
+            kind,
+            text,
+            language: attrs.language,
+            command,
+            cwd: attrs.cwd,
+            status: attrs.status,
+            exit_code: attrs.exit_code,
+            command_label: attrs.command_label,
+            source_execution_id: attrs.exec_id,
+            content_card,
             metadata_json: self.metadata_json,
             translated_text: self.translated_text,
         })

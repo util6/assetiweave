@@ -69,11 +69,6 @@ pub async fn resolve_outline_target_sqlx(
             FROM conversation_turns t
             WHERE t.tenant_id = ?1 AND (t.id = ?2 OR t.id LIKE ?3 OR t.id LIKE ?4)
             UNION
-            SELECT p.id AS entity_id, t.session_id, p.turn_id, 'card' AS level, 'session' AS kind
-            FROM conversation_parts p
-            JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
-            WHERE p.tenant_id = ?1 AND (p.id = ?2 OR p.id LIKE ?3 OR p.id LIKE ?4 OR p.id = ?5 OR p.id LIKE ?6 OR p.id LIKE ?7)
-            UNION
             SELECT s.id AS entity_id, s.id AS session_id, '' AS turn_id, 'session' AS level, 'web' AS kind
             FROM web_record_sessions s
             WHERE s.tenant_id = ?1 AND (s.id = ?2 OR s.id LIKE ?3 OR s.id LIKE ?4)
@@ -90,7 +85,7 @@ pub async fn resolve_outline_target_sqlx(
         SELECT entity_id, session_id, turn_id, level, kind FROM candidates LIMIT 11
     "#;
 
-    let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(query)
+    let mut rows: Vec<(String, String, String, String, String)> = sqlx::query_as(query)
         .bind(tenant_id)
         .bind(trimmed)
         .bind(&verbatim_like)
@@ -101,6 +96,71 @@ pub async fn resolve_outline_target_sqlx(
         .fetch_all(pool)
         .await
         .map_err(StoreError::external)?;
+
+    if let Some(parsed) = crate::backend::domain::parse_id_key_prefix(trimmed) {
+        let parts_query = match parsed.lookup {
+            crate::backend::domain::IdKeyLookup::Exact(key) => {
+                sqlx::query_as::<_, (String, String, i64)>(
+                    "SELECT t.session_id, p.turn_id, p.part_index \
+                     FROM conversation_parts p \
+                     JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+                     WHERE p.tenant_id = ?1 AND p.id_key = ?2 LIMIT 11",
+                )
+                .bind(tenant_id)
+                .bind(key.to_vec())
+            }
+            crate::backend::domain::IdKeyLookup::Range {
+                low,
+                high: Some(high),
+            } => sqlx::query_as::<_, (String, String, i64)>(
+                "SELECT t.session_id, p.turn_id, p.part_index \
+                     FROM conversation_parts p \
+                     JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+                     WHERE p.tenant_id = ?1 AND p.id_key >= ?2 AND p.id_key < ?3 LIMIT 11",
+            )
+            .bind(tenant_id)
+            .bind(low.to_vec())
+            .bind(high.to_vec()),
+            crate::backend::domain::IdKeyLookup::Range { low, high: None } => {
+                sqlx::query_as::<_, (String, String, i64)>(
+                    "SELECT t.session_id, p.turn_id, p.part_index \
+                     FROM conversation_parts p \
+                     JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+                     WHERE p.tenant_id = ?1 AND p.id_key >= ?2 LIMIT 11",
+                )
+                .bind(tenant_id)
+                .bind(low.to_vec())
+            }
+        };
+
+        let part_matches = parts_query
+            .fetch_all(pool)
+            .await
+            .map_err(StoreError::external)?;
+        for (session_id, turn_id, part_index) in part_matches {
+            let full_id = crate::backend::domain::derive_conversation_part_id(&turn_id, part_index);
+            let hash_part = full_id
+                .strip_prefix("conversation-part-")
+                .unwrap_or(&full_id);
+            if hash_part.starts_with(&parsed.normalized_hex)
+                || full_id.starts_with(trimmed)
+                || full_id == raw_part_id
+            {
+                let candidate_id = if let Some(order) = parsed.node_order {
+                    format!("{full_id}-node-{order}")
+                } else {
+                    full_id
+                };
+                rows.push((
+                    candidate_id,
+                    session_id,
+                    turn_id,
+                    "card".to_string(),
+                    "session".to_string(),
+                ));
+            }
+        }
+    }
 
     if rows.is_empty() {
         return Err(StoreError::NotFound(format!(

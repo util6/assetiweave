@@ -154,12 +154,24 @@ pub async fn load_web_record_parts_sqlx_tx(
 ) -> StoreResult<Vec<ConversationPart>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, turn_id, part_index, role, kind, text, language, command,
-               cwd, status, exit_code, metadata_json, content_card_json, translated_text,
-               source_execution_id, command_label
-        FROM web_record_parts
-        WHERE tenant_id = ?1 AND turn_id = ?2
-        ORDER BY part_index ASC
+        SELECT p.turn_id, p.part_index, p.role, p.kind,
+               json_extract(p.content_card_json, '$.kind') AS card_kind,
+               COALESCE(p.command, p.text) AS content,
+               NULLIF(json_patch('{}', json_object(
+                   'language', p.language,
+                   'cwd', p.cwd,
+                   'status', p.status,
+                   'exit_code', p.exit_code,
+                   'command_label', p.command_label,
+                   'exec_id', p.source_execution_id,
+                   'summary', (CASE WHEN p.kind = 'command' THEN p.text ELSE NULL END),
+                   'renderer', json_extract(p.content_card_json, '$.renderer'),
+                   'semantic_role', json_extract(p.content_card_json, '$.semantic_role')
+               )), '{}') AS attrs_json,
+               p.metadata_json, p.translated_text
+        FROM web_record_parts p
+        WHERE p.tenant_id = ?1 AND p.turn_id = ?2
+        ORDER BY p.part_index ASC
         "#,
     )
     .bind(tenant_id)

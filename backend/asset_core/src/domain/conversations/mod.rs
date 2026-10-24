@@ -5,6 +5,7 @@ mod adapter_path;
 pub mod events;
 pub mod fingerprint;
 pub mod grouping;
+pub mod id;
 pub mod links;
 pub mod outline;
 pub mod pricing;
@@ -20,6 +21,7 @@ pub use adapter_path::{
 pub use events::*;
 pub use fingerprint::*;
 pub use grouping::*;
+pub use id::*;
 pub use links::*;
 pub use outline::*;
 pub use projection::*;

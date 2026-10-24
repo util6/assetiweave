@@ -245,9 +245,21 @@ pub async fn load_web_record_session_detail_sqlx(
 
     let part_rows = sqlx::query(
         r#"
-        SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
+        SELECT p.turn_id, p.part_index, p.role, p.kind,
+               json_extract(p.content_card_json, '$.kind') AS card_kind,
+               COALESCE(p.command, p.text) AS content,
+               NULLIF(json_patch('{}', json_object(
+                   'language', p.language,
+                   'cwd', p.cwd,
+                   'status', p.status,
+                   'exit_code', p.exit_code,
+                   'command_label', p.command_label,
+                   'exec_id', p.source_execution_id,
+                   'summary', (CASE WHEN p.kind = 'command' THEN p.text ELSE NULL END),
+                   'renderer', json_extract(p.content_card_json, '$.renderer'),
+                   'semantic_role', json_extract(p.content_card_json, '$.semantic_role')
+               )), '{}') AS attrs_json,
+               p.metadata_json, p.translated_text
         FROM web_record_parts p
         JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         WHERE t.tenant_id = ?1 AND t.session_id = ?2

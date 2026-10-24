@@ -36,27 +36,33 @@ struct SearchIndexPartDocumentRow {
     session_id: String,
     question_id: String,
     turn_id: String,
-    part_id: String,
+    part_index: i64,
     question_title: Option<String>,
     user_text: String,
-    part_index: i64,
     role: String,
     kind: String,
-    text: Option<String>,
-    language: Option<String>,
-    command: Option<String>,
-    cwd: Option<String>,
-    status: Option<String>,
-    exit_code: Option<i64>,
+    card_kind: Option<String>,
+    content: Option<String>,
+    attrs_json: Option<String>,
     metadata_json: Option<String>,
-    content_card_json: Option<String>,
     translated_text: Option<String>,
-    source_execution_id: Option<String>,
-    command_label: Option<String>,
     adapter_id: String,
     source_id: String,
     project_path: Option<String>,
     card_kinds_json: String,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+struct SearchPartAttrs {
+    language: Option<String>,
+    cwd: Option<String>,
+    status: Option<String>,
+    exit_code: Option<i32>,
+    command_label: Option<String>,
+    exec_id: Option<String>,
+    summary: Option<String>,
+    renderer: Option<String>,
+    semantic_role: Option<String>,
 }
 
 pub async fn load_conversation_search_index_documents_sqlx(
@@ -108,24 +114,23 @@ pub async fn load_conversation_search_index_documents_sqlx(
 
         let part_sql = format!(
             r#"
-            SELECT s.id AS session_id, t.question_id AS question_id, t.id AS turn_id, p.id AS part_id,
-                   {group_title} AS question_title, t.user_text AS user_text,
-                   p.part_index AS part_index, p.role AS role, p.kind AS kind, p.text AS text, p.language AS language,
-                   p.command AS command, p.cwd AS cwd, p.status AS status, p.exit_code AS exit_code,
-                   p.metadata_json AS metadata_json, p.content_card_json AS content_card_json,
-                   p.translated_text AS translated_text, p.source_execution_id AS source_execution_id,
-                   p.command_label AS command_label, s.adapter_id AS adapter_id, s.source_id AS source_id,
+            SELECT s.id AS session_id, t.question_id AS question_id, t.id AS turn_id,
+                   p.part_index AS part_index, {group_title} AS question_title, t.user_text AS user_text,
+                   p.role AS role, p.kind AS kind,
+                   {part_projection},
+                   s.adapter_id AS adapter_id, s.source_id AS source_id,
                    {project_path} AS project_path, COALESCE(a.card_kinds_json, '[]') AS card_kinds_json
             FROM {sessions} s
             JOIN {turns} t ON t.tenant_id = s.tenant_id AND t.session_id = s.id
             JOIN {parts} p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
             LEFT JOIN conversation_adapters a ON a.tenant_id = s.tenant_id AND a.id = s.adapter_id
             WHERE s.tenant_id = ?1 AND s.missing = 0 AND t.missing = 0
-            ORDER BY s.id, t.turn_index, p.part_index, p.id
+            ORDER BY s.id, t.turn_index, p.part_index
             "#,
             sessions = tables.sessions,
             turns = tables.turns,
             parts = tables.parts,
+            part_projection = tables.part_projection,
             project_path = tables.project_path,
             group_title = group_title_expr(tables.turns),
         );
@@ -180,26 +185,53 @@ pub async fn load_conversation_search_index_documents_sqlx(
 }
 
 fn map_search_part(row: &SearchIndexPartDocumentRow) -> StoreResult<ConversationPart> {
+    let role = crate::backend::store::codec::decode_enum(row.role.clone())?;
+    let kind: crate::domain::conversations::ConversationPartKind =
+        crate::backend::store::codec::decode_enum(row.kind.clone())?;
+    let attrs: SearchPartAttrs = row
+        .attrs_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default();
+
+    let (text, command) = if kind == crate::domain::conversations::ConversationPartKind::Command {
+        (attrs.summary, row.content.clone())
+    } else {
+        (row.content.clone(), None)
+    };
+
+    let content_card = row.card_kind.clone().map(|ck| {
+        crate::domain::conversations::ConversationContentCardDescriptor {
+            schema_version: 1,
+            kind: ck,
+            semantic_role: attrs.semantic_role,
+            renderer: attrs.renderer,
+        }
+    });
+
+    let prefix = if row.turn_id.starts_with("web-record-") {
+        "web-record-part"
+    } else {
+        "conversation-part"
+    };
+    let id = crate::domain::conversations::derive_part_id(prefix, &row.turn_id, row.part_index);
+
     Ok(ConversationPart {
-        id: row.part_id.clone(),
+        id,
         turn_id: row.turn_id.clone(),
         part_index: row.part_index,
-        role: crate::backend::store::codec::decode_enum(row.role.clone())?,
-        kind: crate::backend::store::codec::decode_enum(row.kind.clone())?,
-        text: row.text.clone(),
-        language: row.language.clone(),
-        command: row.command.clone(),
-        cwd: row.cwd.clone(),
-        status: row.status.clone(),
-        exit_code: row.exit_code.map(|v| v as i32),
+        role,
+        kind,
+        text,
+        language: attrs.language,
+        command,
+        cwd: attrs.cwd,
+        status: attrs.status,
+        exit_code: attrs.exit_code,
         metadata_json: row.metadata_json.clone(),
-        command_label: row.command_label.clone(),
-        source_execution_id: row.source_execution_id.clone(),
-        content_card: row
-            .content_card_json
-            .clone()
-            .map(crate::backend::store::codec::decode_json)
-            .transpose()?,
+        command_label: attrs.command_label,
+        source_execution_id: attrs.exec_id,
+        content_card,
         translated_text: row.translated_text.clone(),
     })
 }
@@ -210,6 +242,7 @@ struct SearchDocumentTables {
     turns: &'static str,
     parts: &'static str,
     project_path: &'static str,
+    part_projection: &'static str,
 }
 
 impl SearchDocumentTables {
@@ -220,6 +253,8 @@ impl SearchDocumentTables {
             turns: "conversation_turns",
             parts: "conversation_parts",
             project_path: "COALESCE(s.project_path, '')",
+            part_projection:
+                "p.card_kind, p.content, p.attrs_json, p.metadata_json, p.translated_text",
         }
     }
 
@@ -230,6 +265,23 @@ impl SearchDocumentTables {
             turns: "web_record_turns",
             parts: "web_record_parts",
             project_path: "''",
+            part_projection: r#"
+                (CASE WHEN p.content_card_json IS NOT NULL THEN json_extract(p.content_card_json, '$.kind') ELSE NULL END) AS card_kind,
+                COALESCE(p.command, p.text) AS content,
+                NULLIF(json_patch('{}', json_object(
+                    'language', p.language,
+                    'cwd', p.cwd,
+                    'status', p.status,
+                    'exit_code', p.exit_code,
+                    'command_label', p.command_label,
+                    'exec_id', p.source_execution_id,
+                    'summary', (CASE WHEN p.kind = 'command' THEN p.text ELSE NULL END),
+                    'renderer', (CASE WHEN p.content_card_json IS NOT NULL THEN json_extract(p.content_card_json, '$.renderer') ELSE NULL END),
+                    'semantic_role', (CASE WHEN p.content_card_json IS NOT NULL THEN json_extract(p.content_card_json, '$.semantic_role') ELSE NULL END)
+                )), '{}') AS attrs_json,
+                p.metadata_json,
+                p.translated_text
+            "#,
         }
     }
 }
