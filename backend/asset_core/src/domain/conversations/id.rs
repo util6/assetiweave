@@ -79,12 +79,23 @@ pub enum IdKeyLookup {
     Range { low: [u8; 8], high: Option<[u8; 8]> },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdPrefixEntityKind {
+    Part,
+    WebPart,
+    Turn,
+    WebTurn,
+    Session,
+    WebSession,
+}
+
 /// Result of parsing a user-supplied identifier or prefix for part indexing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedIdPrefix {
     pub lookup: IdKeyLookup,
     pub normalized_hex: String,
     pub node_order: Option<usize>,
+    pub entity_kind: Option<IdPrefixEntityKind>,
 }
 
 /// Parses a short ID, full ID, or prefix into an `IdKeyLookup` for index querying.
@@ -106,18 +117,29 @@ pub fn parse_id_key_prefix(input: &str) -> Option<ParsedIdPrefix> {
         (trimmed, None)
     };
 
-    // 2. Strip standard entity prefixes
-    let clean = without_node
-        .strip_prefix("conversation-part-")
-        .or_else(|| without_node.strip_prefix("web-record-part-"))
-        .or_else(|| without_node.strip_prefix("conversation-turn-"))
-        .or_else(|| without_node.strip_prefix("web-record-turn-"))
-        .or_else(|| without_node.strip_prefix("conversation-session-"))
-        .or_else(|| without_node.strip_prefix("web-record-session-"))
-        .or_else(|| without_node.strip_prefix("part-"))
-        .or_else(|| without_node.strip_prefix("turn-"))
-        .or_else(|| without_node.strip_prefix("session-"))
-        .unwrap_or(without_node);
+    // 2. Strip standard entity prefixes and preserve the explicit entity kind
+    let (clean, entity_kind) =
+        if let Some(stripped) = without_node.strip_prefix("conversation-part-") {
+            (stripped, Some(IdPrefixEntityKind::Part))
+        } else if let Some(stripped) = without_node.strip_prefix("web-record-part-") {
+            (stripped, Some(IdPrefixEntityKind::WebPart))
+        } else if let Some(stripped) = without_node.strip_prefix("conversation-turn-") {
+            (stripped, Some(IdPrefixEntityKind::Turn))
+        } else if let Some(stripped) = without_node.strip_prefix("web-record-turn-") {
+            (stripped, Some(IdPrefixEntityKind::WebTurn))
+        } else if let Some(stripped) = without_node.strip_prefix("conversation-session-") {
+            (stripped, Some(IdPrefixEntityKind::Session))
+        } else if let Some(stripped) = without_node.strip_prefix("web-record-session-") {
+            (stripped, Some(IdPrefixEntityKind::WebSession))
+        } else if let Some(stripped) = without_node.strip_prefix("part-") {
+            (stripped, Some(IdPrefixEntityKind::Part))
+        } else if let Some(stripped) = without_node.strip_prefix("turn-") {
+            (stripped, Some(IdPrefixEntityKind::Turn))
+        } else if let Some(stripped) = without_node.strip_prefix("session-") {
+            (stripped, Some(IdPrefixEntityKind::Session))
+        } else {
+            (without_node, None)
+        };
 
     // 3. Ensure clean is valid hex and non-empty
     if clean.is_empty() || !clean.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -134,6 +156,7 @@ pub fn parse_id_key_prefix(input: &str) -> Option<ParsedIdPrefix> {
             lookup: IdKeyLookup::Exact(exact),
             normalized_hex,
             node_order,
+            entity_kind,
         });
     }
 
@@ -167,6 +190,7 @@ pub fn parse_id_key_prefix(input: &str) -> Option<ParsedIdPrefix> {
             },
             normalized_hex,
             node_order,
+            entity_kind,
         })
     } else {
         // Odd number of hex chars (nibble at the end)
@@ -204,6 +228,7 @@ pub fn parse_id_key_prefix(input: &str) -> Option<ParsedIdPrefix> {
             },
             normalized_hex,
             node_order,
+            entity_kind,
         })
     }
 }

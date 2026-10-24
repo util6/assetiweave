@@ -65,7 +65,6 @@ impl AppService {
         }
     }
 
-    #[cfg(test)]
     pub async fn open_with_db_path(db_path: PathBuf) -> AppResult<Self> {
         let runtime = AppService::bootstrap_runtime(
             db_path,

@@ -221,13 +221,13 @@ pub async fn resolve_conversation_turn_id_prefix_sqlx(
     Ok(rows[0].clone())
 }
 
-async fn query_parts_by_id_key(
+pub(super) async fn query_parts_by_id_key(
     pool: &SqlitePool,
     tenant_id: &str,
     lookup: &IdKeyLookup,
     parts_table: &str,
     turns_table: &str,
-) -> StoreResult<Vec<(String, String, i64)>> {
+) -> StoreResult<Vec<(String, String, i64, Vec<u8>)>> {
     let (clause, low_vec, high_vec) = match lookup {
         IdKeyLookup::Exact(key) => ("p.id_key = ?2", key.to_vec(), None),
         IdKeyLookup::Range {
@@ -241,7 +241,7 @@ async fn query_parts_by_id_key(
         IdKeyLookup::Range { low, high: None } => ("p.id_key >= ?2", low.to_vec(), None),
     };
     let sql = format!(
-        "SELECT t.session_id, p.turn_id, p.part_index FROM {parts_table} p \
+        "SELECT t.session_id, p.turn_id, p.part_index, p.id_key FROM {parts_table} p \
          JOIN {turns_table} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
          WHERE p.tenant_id = ?1 AND {clause} LIMIT 11"
     );
@@ -266,57 +266,96 @@ pub async fn resolve_conversation_part_id_prefix_sqlx(
         ));
     }
 
-    let clean_hash = trimmed
-        .strip_prefix("conversation-part-")
-        .or_else(|| trimmed.strip_prefix("web-record-part-"))
-        .unwrap_or(trimmed);
+    use crate::backend::domain::IdPrefixEntityKind;
+    let (clean_hash, explicit_entity_kind) =
+        if let Some(stripped) = trimmed.strip_prefix("conversation-part-") {
+            (stripped, Some(IdPrefixEntityKind::Part))
+        } else if let Some(stripped) = trimmed.strip_prefix("web-record-part-") {
+            (stripped, Some(IdPrefixEntityKind::WebPart))
+        } else if let Some(stripped) = trimmed.strip_prefix("part-") {
+            (stripped, Some(IdPrefixEntityKind::Part))
+        } else if trimmed.starts_with("conversation-session-")
+            || trimmed.starts_with("web-record-session-")
+            || trimmed.starts_with("session-")
+            || trimmed.starts_with("conversation-turn-")
+            || trimmed.starts_with("web-record-turn-")
+            || trimmed.starts_with("turn-")
+        {
+            return Err(StoreError::NotFound(format!(
+                "no part matches prefix {:?}",
+                prefix_or_id
+            )));
+        } else {
+            (trimmed, None)
+        };
 
     let mut rows: Vec<String> = Vec::new();
 
     if let Some(parsed) = parse_id_key_prefix(clean_hash) {
-        let part_rows = query_parts_by_id_key(
-            pool,
-            tenant_id,
-            &parsed.lookup,
-            "conversation_parts",
-            "conversation_turns",
-        )
-        .await?;
-        for (_, turn_id, part_index) in part_rows {
-            let full_id = derive_conversation_part_id(&turn_id, part_index);
-            let hash_part = full_id
-                .strip_prefix("conversation-part-")
-                .unwrap_or(&full_id);
-            if hash_part.starts_with(&parsed.normalized_hex)
-                || full_id.starts_with(trimmed)
-                || full_id == trimmed
-            {
-                if !rows.contains(&full_id) {
-                    rows.push(full_id);
+        let allow_conversation = explicit_entity_kind.is_none()
+            || explicit_entity_kind == Some(IdPrefixEntityKind::Part);
+        let allow_web = explicit_entity_kind.is_none()
+            || explicit_entity_kind == Some(IdPrefixEntityKind::WebPart);
+
+        if allow_conversation {
+            let part_rows = query_parts_by_id_key(
+                pool,
+                tenant_id,
+                &parsed.lookup,
+                "conversation_parts",
+                "conversation_turns",
+            )
+            .await?;
+            for (_, turn_id, part_index, id_key) in part_rows {
+                let full_id = derive_conversation_part_id(&turn_id, part_index);
+                let hash_part = full_id
+                    .strip_prefix("conversation-part-")
+                    .unwrap_or(&full_id);
+                let id_key_hex = id_key
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>();
+                if hash_part.starts_with(&parsed.normalized_hex)
+                    || (parsed.normalized_hex.len() <= 16
+                        && id_key_hex.starts_with(&parsed.normalized_hex))
+                    || full_id.starts_with(trimmed)
+                    || full_id == trimmed
+                {
+                    if !rows.contains(&full_id) {
+                        rows.push(full_id);
+                    }
                 }
             }
         }
-        let web_rows = query_parts_by_id_key(
-            pool,
-            tenant_id,
-            &parsed.lookup,
-            "web_record_parts",
-            "web_record_turns",
-        )
-        .await?;
-        for (_, turn_id, part_index) in web_rows {
-            let full_id = crate::backend::domain::derive_standard_part_id(
-                "web-record-part",
-                &turn_id,
-                part_index,
-            );
-            let hash_part = full_id.strip_prefix("web-record-part-").unwrap_or(&full_id);
-            if hash_part.starts_with(&parsed.normalized_hex)
-                || full_id.starts_with(trimmed)
-                || full_id == trimmed
-            {
-                if !rows.contains(&full_id) {
-                    rows.push(full_id);
+        if allow_web {
+            let web_rows = query_parts_by_id_key(
+                pool,
+                tenant_id,
+                &parsed.lookup,
+                "web_record_parts",
+                "web_record_turns",
+            )
+            .await?;
+            for (_, turn_id, part_index, id_key) in web_rows {
+                let full_id = crate::backend::domain::derive_standard_part_id(
+                    "web-record-part",
+                    &turn_id,
+                    part_index,
+                );
+                let hash_part = full_id.strip_prefix("web-record-part-").unwrap_or(&full_id);
+                let id_key_hex = id_key
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>();
+                if hash_part.starts_with(&parsed.normalized_hex)
+                    || (parsed.normalized_hex.len() <= 16
+                        && id_key_hex.starts_with(&parsed.normalized_hex))
+                    || full_id.starts_with(trimmed)
+                    || full_id == trimmed
+                {
+                    if !rows.contains(&full_id) {
+                        rows.push(full_id);
+                    }
                 }
             }
         }
@@ -347,137 +386,4 @@ pub async fn resolve_conversation_part_id_prefix_sqlx(
     Ok(rows[0].clone())
 }
 
-pub async fn resolve_any_id_to_session_id_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    any_id: &str,
-) -> StoreResult<(ConversationRecordKind, String)> {
-    let trimmed = any_id.trim();
-    if trimmed.is_empty() {
-        return Err(StoreError::Validation(
-            "identifier cannot be empty".to_string(),
-        ));
-    }
-
-    let clean_hash = trimmed
-        .strip_prefix("conversation-session-")
-        .or_else(|| trimmed.strip_prefix("conversation-question-"))
-        .or_else(|| trimmed.strip_prefix("conversation-turn-"))
-        .or_else(|| trimmed.strip_prefix("conversation-part-"))
-        .or_else(|| trimmed.strip_prefix("web-record-session-"))
-        .or_else(|| trimmed.strip_prefix("web-record-question-"))
-        .or_else(|| trimmed.strip_prefix("web-record-turn-"))
-        .or_else(|| trimmed.strip_prefix("web-record-part-"))
-        .unwrap_or(trimmed);
-
-    let verbatim_like = format!("{trimmed}%");
-    let hash_like = format!("%-{clean_hash}%");
-
-    let query = r#"
-        WITH candidates AS (
-            SELECT s.id AS session_id, 'session' AS kind
-            FROM conversation_sessions s
-            WHERE s.tenant_id = ?1 AND (s.id = ?2 OR s.id LIKE ?3 OR s.id LIKE ?4)
-            UNION
-            SELECT t.session_id, 'session' AS kind
-            FROM conversation_turns t
-            WHERE t.tenant_id = ?1
-              AND (t.question_id = ?2 OR t.question_id LIKE ?3 OR t.question_id LIKE ?4)
-            UNION
-            SELECT t.session_id, 'session' AS kind
-            FROM conversation_turns t
-            WHERE t.tenant_id = ?1 AND (t.id = ?2 OR t.id LIKE ?3 OR t.id LIKE ?4)
-            UNION
-            SELECT s.id AS session_id, 'web' AS kind
-            FROM web_record_sessions s
-            WHERE s.tenant_id = ?1 AND (s.id = ?2 OR s.id LIKE ?3 OR s.id LIKE ?4)
-            UNION
-            SELECT t.session_id, 'web' AS kind
-            FROM web_record_turns t
-            WHERE t.tenant_id = ?1
-              AND (t.question_id = ?2 OR t.question_id LIKE ?3 OR t.question_id LIKE ?4)
-            UNION
-            SELECT t.session_id, 'web' AS kind
-            FROM web_record_turns t
-            WHERE t.tenant_id = ?1 AND (t.id = ?2 OR t.id LIKE ?3 OR t.id LIKE ?4)
-        )
-        SELECT session_id, kind FROM candidates LIMIT 11
-    "#;
-
-    let mut rows: Vec<(String, String)> = sqlx::query_as(query)
-        .bind(tenant_id)
-        .bind(trimmed)
-        .bind(&verbatim_like)
-        .bind(&hash_like)
-        .fetch_all(pool)
-        .await
-        .map_err(StoreError::external)?;
-
-    if let Some(parsed) = parse_id_key_prefix(clean_hash) {
-        let part_rows = query_parts_by_id_key(
-            pool,
-            tenant_id,
-            &parsed.lookup,
-            "conversation_parts",
-            "conversation_turns",
-        )
-        .await?;
-        for (session_id, _, _) in part_rows {
-            let item = (session_id, "session".to_string());
-            if !rows.contains(&item) {
-                rows.push(item);
-            }
-        }
-        let web_part_rows = query_parts_by_id_key(
-            pool,
-            tenant_id,
-            &parsed.lookup,
-            "web_record_parts",
-            "web_record_turns",
-        )
-        .await?;
-        for (session_id, _, _) in web_part_rows {
-            let item = (session_id, "web".to_string());
-            if !rows.contains(&item) {
-                rows.push(item);
-            }
-        }
-    }
-
-    if rows.is_empty() {
-        return Err(StoreError::NotFound(format!(
-            "no session or card found matching identifier {:?}",
-            any_id
-        )));
-    }
-
-    if rows.len() > 1 {
-        let max_display = std::cmp::min(rows.len(), 5);
-        let examples = rows[..max_display]
-            .iter()
-            .map(|(id, _)| id.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let indicator = if rows.len() > 5 { "..." } else { "" };
-        return Err(StoreError::Conflict(format!(
-            "ambiguous identifier {:?}: {} sessions match (e.g. {}{})",
-            any_id,
-            if rows.len() > 10 {
-                "10+".to_string()
-            } else {
-                rows.len().to_string()
-            },
-            examples,
-            indicator
-        )));
-    }
-
-    let (session_id, kind_str) = &rows[0];
-    let kind = if kind_str == "web" {
-        ConversationRecordKind::Web
-    } else {
-        ConversationRecordKind::Session
-    };
-
-    Ok((kind, session_id.clone()))
-}
+pub use super::prefixes_any::resolve_any_id_to_session_id_sqlx;

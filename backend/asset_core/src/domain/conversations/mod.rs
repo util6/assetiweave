@@ -349,6 +349,8 @@ pub struct ConversationSession {
     pub execution_purpose: Option<String>,
     #[serde(default = "default_user_visible")]
     pub user_visible: bool,
+    #[serde(default)]
+    pub last_cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -402,6 +404,9 @@ pub struct ConversationPart {
     pub content_card: Option<ConversationContentCardDescriptor>,
     pub metadata_json: Option<String>,
     pub translated_text: Option<String>,
+    pub signal: Option<String>,
+    pub tool_name: Option<String>,
+    pub file_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

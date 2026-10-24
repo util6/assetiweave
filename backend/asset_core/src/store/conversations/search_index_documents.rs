@@ -232,6 +232,9 @@ fn map_search_part(row: &SearchIndexPartDocumentRow) -> StoreResult<Conversation
         source_execution_id: attrs.exec_id,
         content_card,
         translated_text: row.translated_text.clone(),
+        signal: None,
+        tool_name: None,
+        file_path: None,
     })
 }
 

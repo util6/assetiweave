@@ -82,6 +82,9 @@ impl AppService {
                 .await
                 {
                     Ok((kind, _)) => kind,
+                    Err(crate::backend::store::StoreError::Conflict(e)) => {
+                        return Err(crate::backend::application::AppError::Conflict(e));
+                    }
                     Err(_) => {
                         crate::backend::domain::conversations::ConversationRecordKind::Session
                     }

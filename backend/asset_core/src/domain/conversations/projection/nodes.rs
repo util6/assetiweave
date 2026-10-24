@@ -39,6 +39,9 @@ pub struct ConversationContentNode {
     pub command_label: Option<String>,
     pub translated_content: Option<String>,
     pub legacy_anchor_ids: Vec<String>,
+    pub signal: Option<String>,
+    pub tool_name: Option<String>,
+    pub file_path: Option<String>,
 }
 
 /// A renderer-owned candidate that can be emitted as one or more nodes for a source Part.
@@ -57,6 +60,9 @@ pub struct ConversationContentNodeCandidate {
     pub command_label: Option<String>,
     pub translated_content: Option<String>,
     pub legacy_anchor_ids: Vec<String>,
+    pub signal: Option<String>,
+    pub tool_name: Option<String>,
+    pub file_path: Option<String>,
 }
 
 impl From<ConversationCard> for ConversationContentNodeCandidate {
@@ -75,6 +81,9 @@ impl From<ConversationCard> for ConversationContentNodeCandidate {
             command_label: card.command_label,
             translated_content: card.translated_body,
             legacy_anchor_ids: card.legacy_anchor_ids,
+            signal: None,
+            tool_name: None,
+            file_path: None,
         }
     }
 }
@@ -129,6 +138,15 @@ pub fn project_content_nodes_for_part(
                 command_label: candidate.command_label.clone(),
                 translated_content: candidate.translated_content.clone(),
                 legacy_anchor_ids,
+                signal: candidate.signal.clone().or_else(|| part.signal.clone()),
+                tool_name: candidate
+                    .tool_name
+                    .clone()
+                    .or_else(|| part.tool_name.clone()),
+                file_path: candidate
+                    .file_path
+                    .clone()
+                    .or_else(|| part.file_path.clone()),
             }
         })
         .collect()

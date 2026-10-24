@@ -404,6 +404,7 @@ export interface ConversationSession {
   execution_origin?: string;
   execution_purpose?: string | null;
   user_visible?: boolean;
+  last_cwd?: string | null;
 }
 
 export interface ConversationSessionListItem extends ConversationSession {
@@ -495,6 +496,9 @@ export interface ConversationContentNode {
   command_label?: string | null;
   translated_content?: string | null;
   legacy_anchor_ids: string[];
+  signal?: string | null;
+  tool_name?: string | null;
+  file_path?: string | null;
 }
 
 export interface ConversationQuestion {

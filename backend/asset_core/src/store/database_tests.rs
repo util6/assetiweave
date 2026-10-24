@@ -2193,7 +2193,8 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
     assert_eq!(id_column_exists, 0, "conversation_parts 必须无 id 列");
 
     // D. 全文索引 part_id 同步对齐
-    let expected_new_id = derive_standard_part_id("conversation-part", "turn-default-1", 0);
+    let expected_new_id =
+        crate::backend::domain::derive_standard_part_id("conversation-part", "turn-default-1", 0);
     let fts_part_id: String = conn
         .query_row(
             "SELECT part_id FROM conversation_part_fts WHERE tenant_id = 'default'",

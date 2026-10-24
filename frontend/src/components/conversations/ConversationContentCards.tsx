@@ -255,9 +255,12 @@ function conversationContentNodeToBlock(
     translatedText: node.translated_content,
     format: node.renderer === "markdown" ? "markdown" : "plain",
     signal:
-      node.renderer === "compact_action" || node.semantic_role === "ambient"
+      node.signal ??
+      (node.renderer === "compact_action" || node.semantic_role === "ambient"
         ? "ambient"
-        : undefined,
+        : undefined),
+    filePath: node.file_path,
+    toolName: node.tool_name,
   };
 }
 

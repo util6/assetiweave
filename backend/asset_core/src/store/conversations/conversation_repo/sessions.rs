@@ -34,7 +34,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
-               s.execution_origin, s.execution_purpose, s.user_visible,
+               s.execution_origin, s.execution_purpose, s.user_visible, s.last_cwd,
                (
                    SELECT COUNT(DISTINCT t.question_id)
                    FROM conversation_turns t
@@ -205,7 +205,7 @@ pub(super) const LIST_RECENT_CONVERSATION_SESSIONS_SQL: &str = r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
-               s.execution_origin, s.execution_purpose, s.user_visible,
+               s.execution_origin, s.execution_purpose, s.user_visible, s.last_cwd,
                (
                    SELECT COUNT(DISTINCT t.question_id)
                    FROM conversation_turns t

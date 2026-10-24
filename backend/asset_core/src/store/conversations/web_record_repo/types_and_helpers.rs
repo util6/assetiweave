@@ -19,10 +19,6 @@ pub struct WebRecordSessionListItemRow {
     pub turn_count: i64,
 }
 
-pub struct QuestionAggregate {
-    pub question_text: String,
-}
-
 #[derive(Debug, FromRow)]
 pub struct ExistingWebRecordSessionRow {
     pub title: String,
@@ -38,14 +34,6 @@ pub struct ExistingWebRecordTurnRow {
     pub external_id: String,
     pub fingerprint: String,
     pub missing: i64,
-}
-
-#[derive(Debug, FromRow)]
-pub struct WebRecordPartTranslationRow {
-    pub id: String,
-    pub text: Option<String>,
-    pub command: Option<String>,
-    pub translated_text: Option<String>,
 }
 
 pub fn web_record_session_from_normalized(
@@ -76,6 +64,7 @@ pub fn web_record_session_from_normalized(
         execution_origin: "user".to_string(),
         execution_purpose: None,
         user_visible: true,
+        last_cwd: None,
     }
 }
 

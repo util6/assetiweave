@@ -132,6 +132,7 @@ pub(super) fn conversation_session_from_normalized(
         execution_origin,
         execution_purpose,
         user_visible,
+        last_cwd: derive_session_last_cwd(&normalized.turns),
     }
 }
 
@@ -166,7 +167,6 @@ pub(super) struct ConversationRecordTables {
     pub(super) session_id_prefix: &'static str,
     pub(super) question_id_prefix: &'static str,
     pub(super) turn_id_prefix: &'static str,
-    pub(super) part_id_prefix: &'static str,
 }
 
 impl ConversationRecordKind {
@@ -181,7 +181,6 @@ impl ConversationRecordKind {
                 session_id_prefix: "conversation-session-",
                 question_id_prefix: "conversation-question-",
                 turn_id_prefix: "conversation-turn-",
-                part_id_prefix: "conversation-part-",
             },
             ConversationRecordKind::Web => ConversationRecordTables {
                 sessions: "web_record_sessions",
@@ -192,7 +191,6 @@ impl ConversationRecordKind {
                 session_id_prefix: "web-record-session-",
                 question_id_prefix: "web-record-question-",
                 turn_id_prefix: "web-record-turn-",
-                part_id_prefix: "web-record-part-",
             },
         }
     }

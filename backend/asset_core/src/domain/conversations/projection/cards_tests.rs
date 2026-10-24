@@ -408,6 +408,9 @@ fn part_with_metadata(metadata: &str) -> ConversationPart {
         content_card: None,
         metadata_json: Some(metadata.to_string()),
         translated_text: None,
+        signal: None,
+        tool_name: None,
+        file_path: None,
     }
 }
 

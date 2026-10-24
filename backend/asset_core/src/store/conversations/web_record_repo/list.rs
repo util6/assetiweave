@@ -102,6 +102,7 @@ pub async fn list_web_record_sessions_sqlx(
                     execution_origin: "user".to_string(),
                     execution_purpose: None,
                     user_visible: true,
+                    last_cwd: None,
                 },
                 question_count,
                 turn_count,

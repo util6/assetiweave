@@ -171,33 +171,3 @@ pub async fn insert_web_record_questions_sqlx_tx(
     }
     Ok(())
 }
-
-pub async fn load_web_record_parts_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    turn_id: &str,
-) -> StoreResult<Vec<ConversationPart>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT p.turn_id, p.part_index,
-               CASE WHEN p.kind = 'answer' THEN 'assistant' ELSE 'tool' END AS role,
-               CASE WHEN p.kind = 'answer' THEN 'text' ELSE 'tool' END AS kind,
-               CASE WHEN p.kind = 'answer' THEN s.adapter_id || '.answer' ELSE s.adapter_id || '.result' END AS card_kind,
-               p.content,
-               NULL AS attrs_json,
-               NULL AS metadata_json,
-               p.translated_text
-        FROM web_record_parts p
-        JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
-        JOIN web_record_sessions s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
-        WHERE p.tenant_id = ?1 AND p.turn_id = ?2
-        ORDER BY p.part_index ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(turn_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    rows.iter().map(map_sqlx_conversation_part).collect()
-}

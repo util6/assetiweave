@@ -209,6 +209,8 @@ pub(super) struct ConversationSessionRow {
     execution_purpose: Option<String>,
     #[sqlx(default)]
     user_visible: Option<i64>,
+    #[sqlx(default)]
+    last_cwd: Option<String>,
 }
 
 impl ConversationSessionRow {
@@ -230,6 +232,7 @@ impl ConversationSessionRow {
             execution_origin: self.execution_origin.unwrap_or_else(|| "user".to_string()),
             execution_purpose: self.execution_purpose,
             user_visible: self.user_visible.map(|v| v != 0).unwrap_or(true),
+            last_cwd: self.last_cwd,
         }
     }
 }
@@ -292,6 +295,10 @@ pub(super) struct ConversationPartAttrs {
     pub(super) summary: Option<String>,
     pub(super) renderer: Option<String>,
     pub(super) semantic_role: Option<String>,
+    pub(super) signal: Option<String>,
+    pub(super) file_path: Option<String>,
+    pub(super) tool_name: Option<String>,
+    pub(super) has_command: Option<bool>,
 }
 
 #[derive(Debug, FromRow)]
@@ -318,7 +325,11 @@ impl ConversationPartRow {
             .unwrap_or_default();
 
         let (text, command) = if kind == ConversationPartKind::Command {
-            (attrs.summary, self.content)
+            if attrs.has_command == Some(false) {
+                (self.content, None)
+            } else {
+                (attrs.summary, self.content)
+            }
         } else {
             (self.content, None)
         };
@@ -354,6 +365,9 @@ impl ConversationPartRow {
             content_card,
             metadata_json: self.metadata_json,
             translated_text: self.translated_text,
+            signal: attrs.signal,
+            tool_name: attrs.tool_name,
+            file_path: attrs.file_path,
         })
     }
 }

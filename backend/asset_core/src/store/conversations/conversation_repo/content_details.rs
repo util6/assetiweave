@@ -335,9 +335,12 @@ pub async fn load_conversation_block_detail_sqlx(
     }
 
     let raw_part_id = conversation_part_id_for_block_id(block_id);
-    let resolved_part_id = resolve_conversation_part_id_prefix_sqlx(pool, tenant_id, raw_part_id)
-        .await
-        .unwrap_or_else(|_| raw_part_id.to_string());
+    let resolved_part_id =
+        match resolve_conversation_part_id_prefix_sqlx(pool, tenant_id, raw_part_id).await {
+            Ok(id) => id,
+            Err(StoreError::Conflict(e)) => return Err(StoreError::Conflict(e)),
+            Err(_) => raw_part_id.to_string(),
+        };
 
     let key = crate::backend::domain::derive_part_id_key(&resolved_part_id).unwrap_or([0u8; 8]);
     let query = format!(

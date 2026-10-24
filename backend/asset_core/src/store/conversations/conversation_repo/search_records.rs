@@ -13,17 +13,17 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
     let (turn_lower, turn_upper) = conversation_id_fragment_range(tables.turn_id_prefix, fragment);
     let (part_clause, part_low_bytes, part_high_bytes) =
         if let Some(parsed) = crate::backend::domain::parse_id_key_prefix(fragment) {
-            let (low, high) = match parsed.lookup {
-                crate::backend::domain::IdKeyLookup::Exact(exact) => (exact, exact),
-                crate::backend::domain::IdKeyLookup::Range { low, high } => {
-                    (low, high.unwrap_or([0xFF; 8]))
+            let (clause, low, high) = match parsed.lookup {
+                crate::backend::domain::IdKeyLookup::Exact(exact) => {
+                    ("p.id_key >= ?8 AND p.id_key <= ?9", exact, exact)
                 }
+                crate::backend::domain::IdKeyLookup::Range { low, high } => (
+                    "p.id_key >= ?8 AND p.id_key < ?9",
+                    low,
+                    high.unwrap_or([0xFF; 8]),
+                ),
             };
-            (
-                "p.id_key >= ?8 AND p.id_key <= ?9",
-                low.to_vec(),
-                high.to_vec(),
-            )
+            (clause, low.to_vec(), high.to_vec())
         } else {
             ("0 = 1", Vec::new(), Vec::new())
         };
