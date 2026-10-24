@@ -1887,9 +1887,9 @@ function createBlock(
     (status != null || exitCode != null || renderer === "diff");
   if (!text && !statusOnlyResult) return [];
 
-  const signal = overrides.signal;
-  const filePath = overrides.filePath;
-  const toolName = overrides.toolName;
+  const signal = overrides.signal ?? part.signal ?? null;
+  const filePath = overrides.filePath ?? part.file_path ?? null;
+  const toolName = overrides.toolName ?? part.tool_name ?? null;
   const commandLabel = part.command_label ?? null;
 
   return [
@@ -1935,7 +1935,12 @@ function createDeclaredContentBlock(
 ): ConversationContentBlock[] {
   if (!part.content_card) return [];
 
-  const renderer = part.content_card.renderer ?? "plain";
+  const renderer =
+    part.content_card.renderer ??
+    (part.content_card.kind.endsWith(".answer") ||
+    part.content_card.semantic_role === "answer"
+      ? "markdown"
+      : "plain");
   const declaredType = contentTypeValue(part.content_card.kind);
   if (!declaredType) return [];
   const type = conversationCardPresentationKind(declaredType);

@@ -39,21 +39,13 @@ pub fn derive_conversation_part_id(turn_id: &str, part_index: i64) -> String {
     derive_part_id("conversation-part", turn_id, part_index)
 }
 
-/// Derives the canonical web-record-part ID from turn_id and part_index.
-pub fn derive_web_record_part_id(turn_id: &str, part_index: i64) -> String {
-    derive_part_id("web-record-part", turn_id, part_index)
-}
-
 /// Derives a part ID with a specific prefix.
 pub fn derive_part_id(prefix: &str, turn_id: &str, part_index: i64) -> String {
     let index_str = part_index.to_string();
     stable_id(prefix, &[turn_id, &index_str])
 }
 
-/// Derives a canonical standard part ID with a specific prefix.
-pub fn derive_standard_part_id(prefix: &str, turn_id: &str, part_index: i64) -> String {
-    derive_part_id(prefix, turn_id, part_index)
-}
+pub use derive_part_id as derive_standard_part_id;
 
 /// Extracts the first 16 hex characters (8 bytes) of the SHA-256 digest from a part ID.
 pub fn derive_part_id_key(part_id: &str) -> Option<[u8; 8]> {

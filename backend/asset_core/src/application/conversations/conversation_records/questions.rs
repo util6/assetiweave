@@ -181,8 +181,7 @@ impl AppService {
                     tenant_id,
                     &params.part_id,
                 )
-                .await
-                .map_err(AppError::external)?;
+                .await?;
                 Ok(
                     crate::backend::store::update_conversation_part_translation_sqlx(
                         pool,

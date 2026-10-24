@@ -86,3 +86,6 @@ pub use sql_constants::*;
 #[cfg(test)]
 #[path = "../conversation_repo_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod adversarial_tests;

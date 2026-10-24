@@ -125,7 +125,7 @@ pub async fn resolve_web_record_session_id_prefix_sqlx(
     tenant_id: &str,
     input: &str,
 ) -> StoreResult<String> {
-    if input.len() >= 36 {
+    if input.len() >= 83 && input.starts_with("web-record-session-") {
         return Ok(input.to_string());
     }
     let clean_prefix = input.strip_prefix("web-record-session-").unwrap_or(input);
@@ -166,7 +166,7 @@ pub async fn resolve_web_record_part_id_prefix_sqlx(
     tenant_id: &str,
     input: &str,
 ) -> StoreResult<String> {
-    if input.len() >= 36 && input.starts_with("web-record-part-") {
+    if input.len() >= 80 && input.starts_with("web-record-part-") {
         return Ok(input.to_string());
     }
     let clean_prefix = input.strip_prefix("web-record-part-").unwrap_or(input);

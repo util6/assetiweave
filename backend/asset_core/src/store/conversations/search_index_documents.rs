@@ -63,6 +63,10 @@ struct SearchPartAttrs {
     summary: Option<String>,
     renderer: Option<String>,
     semantic_role: Option<String>,
+    has_command: Option<bool>,
+    signal: Option<String>,
+    tool_name: Option<String>,
+    file_path: Option<String>,
 }
 
 pub async fn load_conversation_search_index_documents_sqlx(
@@ -194,7 +198,11 @@ fn map_search_part(row: &SearchIndexPartDocumentRow) -> StoreResult<Conversation
         .unwrap_or_default();
 
     let (text, command) = if kind == crate::domain::conversations::ConversationPartKind::Command {
-        (attrs.summary, row.content.clone())
+        if attrs.has_command == Some(false) {
+            (attrs.summary.or_else(|| row.content.clone()), None)
+        } else {
+            (attrs.summary, row.content.clone())
+        }
     } else {
         (row.content.clone(), None)
     };
@@ -232,9 +240,9 @@ fn map_search_part(row: &SearchIndexPartDocumentRow) -> StoreResult<Conversation
         source_execution_id: attrs.exec_id,
         content_card,
         translated_text: row.translated_text.clone(),
-        signal: None,
-        tool_name: None,
-        file_path: None,
+        signal: attrs.signal,
+        tool_name: attrs.tool_name,
+        file_path: attrs.file_path,
     })
 }
 

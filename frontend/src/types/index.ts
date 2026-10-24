@@ -445,6 +445,9 @@ export interface ConversationPart {
   metadata_json?: string | null;
   translated_text?: string | null;
   source_execution_id?: string | null;
+  signal?: string | null;
+  tool_name?: string | null;
+  file_path?: string | null;
 }
 
 export interface ConversationContentCardDescriptor {

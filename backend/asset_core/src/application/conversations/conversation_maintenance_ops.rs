@@ -48,7 +48,7 @@ where
                 "SELECT COUNT(*) FROM (SELECT p.turn_id, json_extract(p.attrs_json, '$.exec_id') AS exec_id FROM {parts} p JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id WHERE p.tenant_id = ?1 AND json_extract(p.attrs_json, '$.exec_id') IS NOT NULL AND (?2 IS NULL OR s.source_id = ?2) GROUP BY p.turn_id, exec_id HAVING COUNT(*) > 1)"
             )
         } else {
-            "SELECT 0 WHERE ?1 IS NOT NULL AND ?2 IS NULL".to_string()
+            "SELECT 0 WHERE 1 = 1 OR (?1 IS NULL AND ?2 IS NULL)".to_string()
         };
         let checks = [
             (

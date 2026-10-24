@@ -1,8 +1,4 @@
 use super::*;
-use crate::domain::conversations::{
-    derive_conversation_part_id, derive_part_id_key, ConversationPartKind,
-    NormalizedConversationPart,
-};
 
 #[derive(Debug, FromRow)]
 pub(super) struct ConversationSessionListItemRow {

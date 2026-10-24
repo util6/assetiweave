@@ -5,7 +5,7 @@ fn test_derive_part_id_consistency() {
     let turn_id = "turn-12345";
     let part_id_0 = derive_conversation_part_id(turn_id, 0);
     let part_id_1 = derive_conversation_part_id(turn_id, 1);
-    let web_id_0 = derive_web_record_part_id(turn_id, 0);
+    let web_id_0 = derive_part_id("web-record-part", turn_id, 0);
 
     assert!(part_id_0.starts_with("conversation-part-"));
     assert!(part_id_1.starts_with("conversation-part-"));

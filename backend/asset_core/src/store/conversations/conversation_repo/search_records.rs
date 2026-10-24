@@ -13,19 +13,32 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
     let (turn_lower, turn_upper) = conversation_id_fragment_range(tables.turn_id_prefix, fragment);
     let (part_clause, part_low_bytes, part_high_bytes) =
         if let Some(parsed) = crate::backend::domain::parse_id_key_prefix(fragment) {
-            let (clause, low, high) = match parsed.lookup {
-                crate::backend::domain::IdKeyLookup::Exact(exact) => {
-                    ("p.id_key >= ?8 AND p.id_key <= ?9", exact, exact)
-                }
-                crate::backend::domain::IdKeyLookup::Range { low, high } => (
-                    "p.id_key >= ?8 AND p.id_key < ?9",
-                    low,
-                    high.unwrap_or([0xFF; 8]),
+            match parsed.lookup {
+                crate::backend::domain::IdKeyLookup::Exact(exact) => (
+                    "p.id_key = ?8 AND (?9 IS NULL OR 1 = 1)",
+                    Some(exact.to_vec()),
+                    None,
                 ),
-            };
-            (clause, low.to_vec(), high.to_vec())
+                crate::backend::domain::IdKeyLookup::Range {
+                    low,
+                    high: Some(high),
+                } => (
+                    "p.id_key >= ?8 AND p.id_key < ?9",
+                    Some(low.to_vec()),
+                    Some(high.to_vec()),
+                ),
+                crate::backend::domain::IdKeyLookup::Range { low, high: None } => (
+                    "p.id_key >= ?8 AND (?9 IS NULL OR 1 = 1)",
+                    Some(low.to_vec()),
+                    None,
+                ),
+            }
         } else {
-            ("0 = 1", Vec::new(), Vec::new())
+            (
+                "0 = 1 AND (?8 IS NULL OR 1 = 1) AND (?9 IS NULL OR 1 = 1)",
+                None,
+                None,
+            )
         };
     let query = format!(
         r#"
@@ -86,6 +99,7 @@ pub(super) async fn load_search_sessions_sqlx(
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, {project_path_expr} AS project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
+               {session_metadata_expr}
                (
                    SELECT COUNT(DISTINCT t.question_id)
                    FROM {turns} t
@@ -105,6 +119,7 @@ pub(super) async fn load_search_sessions_sqlx(
         "#,
         sessions = tables.sessions,
         project_path_expr = tables.session_project_path_expr,
+        session_metadata_expr = tables.session_metadata_expr,
         turns = tables.turns,
     );
     let rows = sqlx::query_as::<_, ConversationSessionListItemRow>(AssertSqlSafe(query))

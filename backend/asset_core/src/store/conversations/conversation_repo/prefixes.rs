@@ -52,7 +52,7 @@ pub async fn resolve_conversation_session_id_prefix_sqlx(
     tenant_id: &str,
     prefix_or_id: &str,
 ) -> StoreResult<String> {
-    if prefix_or_id.len() >= 36 {
+    if prefix_or_id.len() >= 85 && prefix_or_id.starts_with("conversation-session-") {
         return Ok(prefix_or_id.to_string());
     }
     let clean_prefix = prefix_or_id
@@ -103,7 +103,7 @@ pub async fn resolve_conversation_question_id_prefix_sqlx(
     tenant_id: &str,
     prefix_or_id: &str,
 ) -> StoreResult<String> {
-    if prefix_or_id.len() >= 36 {
+    if prefix_or_id.len() >= 86 && prefix_or_id.starts_with("conversation-question-") {
         return resolve_conversation_question_redirect_pool_sqlx(pool, tenant_id, prefix_or_id)
             .await;
     }
@@ -177,7 +177,7 @@ pub async fn resolve_conversation_turn_id_prefix_sqlx(
     tenant_id: &str,
     prefix_or_id: &str,
 ) -> StoreResult<String> {
-    if prefix_or_id.len() >= 36 {
+    if prefix_or_id.len() >= 82 && prefix_or_id.starts_with("conversation-turn-") {
         return Ok(prefix_or_id.to_string());
     }
     let clean_prefix = prefix_or_id

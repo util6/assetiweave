@@ -58,18 +58,6 @@ pub struct ConversationCardProjectionSource<'a> {
     pub exit_code: Option<i32>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PersistedConversationCardProjectionSource<'a> {
-    pub content_card_json: Option<&'a str>,
-    pub metadata_json: Option<&'a str>,
-    pub text: Option<&'a str>,
-    pub language: Option<&'a str>,
-    pub command: Option<&'a str>,
-    pub cwd: Option<&'a str>,
-    pub status: Option<&'a str>,
-    pub exit_code: Option<i32>,
-}
-
 pub fn project_conversation_content_card(
     part: &ConversationPart,
     adapter_id: &str,
@@ -135,34 +123,6 @@ pub fn project_conversation_content_cards(
         project_conversation_content_card(part, adapter_id, card_kinds)?
             .into_iter()
             .collect(),
-    )
-}
-
-pub fn project_persisted_content_card(
-    source: PersistedConversationCardProjectionSource<'_>,
-    card_kinds: &[ConversationCardKindDefinition],
-) -> Result<Option<ResolvedConversationContentCard>, ProjectionError> {
-    let descriptor = source
-        .content_card_json
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| {
-            serde_json::from_str::<ConversationContentCardDescriptor>(value)
-                .map_err(ProjectionError::InvalidPersistedCardJson)
-        })
-        .transpose()?;
-    project_resolved_content_card(
-        ConversationCardProjectionSource {
-            content_card: descriptor.as_ref(),
-            metadata_json: source.metadata_json,
-            text: source.text,
-            language: source.language,
-            command: source.command,
-            cwd: source.cwd,
-            status: source.status,
-            exit_code: source.exit_code,
-        },
-        card_kinds,
     )
 }
 

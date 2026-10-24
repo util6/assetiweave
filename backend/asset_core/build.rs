@@ -4,6 +4,15 @@ fn main() {
     println!("cargo:rerun-if-changed=migrations");
 
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
+    let migrations_dir = manifest_dir.join("migrations");
+    if let Ok(entries) = fs::read_dir(&migrations_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|extension| extension == "sql") {
+                println!("cargo:rerun-if-changed={}", path.display());
+            }
+        }
+    }
     let target_dir = manifest_dir.join("../../builtin-assets/targets");
     println!("cargo:rerun-if-changed={}", target_dir.display());
 

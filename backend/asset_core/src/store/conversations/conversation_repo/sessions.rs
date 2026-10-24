@@ -205,7 +205,7 @@ pub(super) const LIST_RECENT_CONVERSATION_SESSIONS_SQL: &str = r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
-               s.execution_origin, s.execution_purpose, s.user_visible, s.last_cwd,
+               s.execution_origin, s.execution_purpose, s.user_visible,
                (
                    SELECT COUNT(DISTINCT t.question_id)
                    FROM conversation_turns t
@@ -310,7 +310,7 @@ pub async fn load_conversation_session_detail_sqlx(
         SELECT id, source_id, adapter_id, external_id, title, project_path,
                started_at, updated_at, source_locator, source_fingerprint,
                missing, created_at, imported_at,
-               execution_origin, execution_purpose, user_visible
+               execution_origin, execution_purpose, user_visible, last_cwd
         FROM conversation_sessions
         WHERE tenant_id = ?1 AND id = ?2
         "#,

@@ -161,6 +161,7 @@ pub(super) fn conversation_turn_from_normalized(
 pub(super) struct ConversationRecordTables {
     pub(super) sessions: &'static str,
     pub(super) session_project_path_expr: &'static str,
+    pub(super) session_metadata_expr: &'static str,
     pub(super) turns: &'static str,
     pub(super) parts: &'static str,
     pub(super) part_columns: &'static str,
@@ -175,6 +176,7 @@ impl ConversationRecordKind {
             ConversationRecordKind::Session => ConversationRecordTables {
                 sessions: "conversation_sessions",
                 session_project_path_expr: "s.project_path",
+                session_metadata_expr: "s.execution_origin, s.execution_purpose, s.user_visible, s.last_cwd,",
                 turns: "conversation_turns",
                 parts: "conversation_parts",
                 part_columns: "p.turn_id, p.part_index, p.role, p.kind, p.card_kind, p.content, p.attrs_json, p.metadata_json, p.translated_text",
@@ -185,6 +187,7 @@ impl ConversationRecordKind {
             ConversationRecordKind::Web => ConversationRecordTables {
                 sessions: "web_record_sessions",
                 session_project_path_expr: "NULL",
+                session_metadata_expr: "NULL AS execution_origin, NULL AS execution_purpose, 1 AS user_visible, NULL AS last_cwd,",
                 turns: "web_record_turns",
                 parts: "web_record_parts",
                 part_columns: "p.turn_id, p.part_index, CASE WHEN p.kind = 'answer' THEN 'assistant' ELSE 'tool' END AS role, CASE WHEN p.kind = 'answer' THEN 'text' ELSE 'tool' END AS kind, CASE WHEN p.kind = 'answer' THEN s.adapter_id || '.answer' ELSE s.adapter_id || '.result' END AS card_kind, p.content, NULL AS attrs_json, NULL AS metadata_json, p.translated_text",
@@ -287,12 +290,28 @@ pub(super) fn derive_session_last_cwd(
 ) -> Option<String> {
     let mut candidates = Vec::new();
     for turn in turns {
+        if turn.user_text.trim().is_empty() {
+            continue;
+        }
         let ts = turn.ended_at.as_deref().or(turn.started_at.as_deref());
         for (part_idx, part) in turn.parts.iter().enumerate() {
             if let Some(ref cwd) = part.cwd {
                 let trimmed = cwd.trim();
                 if !trimmed.is_empty() {
                     candidates.push((ts, turn.turn_index, part_idx, trimmed.to_string()));
+                }
+            }
+        }
+    }
+    if candidates.is_empty() {
+        for turn in turns {
+            let ts = turn.ended_at.as_deref().or(turn.started_at.as_deref());
+            for (part_idx, part) in turn.parts.iter().enumerate() {
+                if let Some(ref cwd) = part.cwd {
+                    let trimmed = cwd.trim();
+                    if !trimmed.is_empty() {
+                        candidates.push((ts, turn.turn_index, part_idx, trimmed.to_string()));
+                    }
                 }
             }
         }

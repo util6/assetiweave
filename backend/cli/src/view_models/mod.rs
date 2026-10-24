@@ -53,10 +53,12 @@ impl ConversationSessionViewModel {
                 .or(Some(&item.session.created_at)),
             now,
         );
-        let project_name = item
+        let effective_path = item
             .session
             .project_path
             .as_deref()
+            .or(item.session.last_cwd.as_deref());
+        let project_name = effective_path
             .map(|p| {
                 std::path::Path::new(p)
                     .file_name()
@@ -80,7 +82,11 @@ impl ConversationSessionViewModel {
             window_end_turn_index: item.window_end_turn_index,
             window_end_user_prompt: item.window_end_user_prompt.clone(),
             project_name,
-            project_path: item.session.project_path.clone(),
+            project_path: item
+                .session
+                .project_path
+                .clone()
+                .or_else(|| item.session.last_cwd.clone()),
             adapter_id: item.session.adapter_id.clone(),
         }
     }
