@@ -5,7 +5,6 @@
 DELETE FROM tenants WHERE id = 'util6' AND id NOT IN (SELECT active_tenant_id FROM tenant_state);
 DELETE FROM session_memories WHERE tenant_id = 'util6' AND tenant_id NOT IN (SELECT active_tenant_id FROM tenant_state);
 DELETE FROM session_memory_jobs WHERE tenant_id = 'util6' AND tenant_id NOT IN (SELECT active_tenant_id FROM tenant_state);
-DELETE FROM session_memory_jobs_v2 WHERE tenant_id = 'util6' AND tenant_id NOT IN (SELECT active_tenant_id FROM tenant_state);
 DELETE FROM project_memories WHERE tenant_id = 'util6' AND tenant_id NOT IN (SELECT active_tenant_id FROM tenant_state);
 DELETE FROM project_memory_jobs WHERE tenant_id = 'util6' AND tenant_id NOT IN (SELECT active_tenant_id FROM tenant_state);
 DELETE FROM project_memory_state WHERE tenant_id = 'util6' AND tenant_id NOT IN (SELECT active_tenant_id FROM tenant_state);

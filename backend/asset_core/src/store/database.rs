@@ -129,6 +129,7 @@ pub async fn open_migrated_pool(db_path: &Path) -> StoreResult<SqlitePool> {
     }
     repair_known_modified_catalog_release_migration(&pool).await?;
     repair_known_modified_conversation_question_contract_migration(&pool).await?;
+    normalize_legacy_part_ids(&pool).await?;
     MIGRATOR.run(&pool).await.map_err(StoreError::external)?;
     Ok(pool)
 }
@@ -327,6 +328,91 @@ const LEGACY_COLUMN_MIGRATIONS: &[(&str, &str, &str)] = &[
         "ALTER TABLE asset_groups ADD COLUMN icon_svg TEXT",
     ),
 ];
+
+async fn normalize_legacy_part_ids(pool: &SqlitePool) -> StoreResult<()> {
+    if !table_exists(pool, "conversation_parts").await? {
+        return Ok(());
+    }
+    if !column_exists(pool, "conversation_parts", "id").await? {
+        return Ok(());
+    }
+
+    let legacy_parts: Vec<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT tenant_id, id, turn_id, part_index FROM conversation_parts WHERE id NOT LIKE 'conversation-part-%'",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(StoreError::external)?;
+
+    if !legacy_parts.is_empty() {
+        let mut tx = pool.begin().await.map_err(StoreError::external)?;
+        for (tenant_id, old_id, turn_id, part_index) in legacy_parts {
+            let new_id =
+                crate::backend::domain::derive_part_id("conversation-part", &turn_id, part_index);
+            sqlx::query("UPDATE conversation_parts SET id = ?1 WHERE tenant_id = ?2 AND id = ?3")
+                .bind(&new_id)
+                .bind(&tenant_id)
+                .bind(&old_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(StoreError::external)?;
+
+            if table_exists(pool, "conversation_part_fts").await? {
+                sqlx::query(
+                    "UPDATE conversation_part_fts SET part_id = ?1 WHERE tenant_id = ?2 AND part_id = ?3",
+                )
+                .bind(&new_id)
+                .bind(&tenant_id)
+                .bind(&old_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(StoreError::external)?;
+            }
+        }
+        tx.commit().await.map_err(StoreError::external)?;
+    }
+
+    if table_exists(pool, "web_record_parts").await?
+        && column_exists(pool, "web_record_parts", "id").await?
+    {
+        let legacy_web_parts: Vec<(String, String, String, i64)> = sqlx::query_as(
+            "SELECT tenant_id, id, turn_id, part_index FROM web_record_parts WHERE id NOT LIKE 'web-record-part-%'",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::external)?;
+
+        if !legacy_web_parts.is_empty() {
+            let mut tx = pool.begin().await.map_err(StoreError::external)?;
+            for (tenant_id, old_id, turn_id, part_index) in legacy_web_parts {
+                let new_id =
+                    crate::backend::domain::derive_part_id("web-record-part", &turn_id, part_index);
+                sqlx::query("UPDATE web_record_parts SET id = ?1 WHERE tenant_id = ?2 AND id = ?3")
+                    .bind(&new_id)
+                    .bind(&tenant_id)
+                    .bind(&old_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(StoreError::external)?;
+
+                if table_exists(pool, "conversation_part_fts").await? {
+                    sqlx::query(
+                        "UPDATE conversation_part_fts SET part_id = ?1 WHERE tenant_id = ?2 AND part_id = ?3",
+                    )
+                    .bind(&new_id)
+                    .bind(&tenant_id)
+                    .bind(&old_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(StoreError::external)?;
+                }
+            }
+            tx.commit().await.map_err(StoreError::external)?;
+        }
+    }
+
+    Ok(())
+}
 
 #[cfg(test)]
 #[path = "database_tests.rs"]

@@ -1049,7 +1049,7 @@ async fn sqlx_web_records_round_trip_structured_cards_and_preserve_translation()
     );
     assert_eq!(
         detail.questions[0].projected_content_nodes[0].renderer,
-        crate::backend::domain::conversations::projection::ConversationCardRenderer::Plain
+        crate::backend::domain::conversations::projection::ConversationCardRenderer::Markdown
     );
 
     drop(database);
