@@ -13,6 +13,7 @@ pub mod projection;
 pub mod read_models;
 mod search;
 mod serde_utils;
+pub mod triad;
 pub mod usage;
 
 pub use adapter_path::{
@@ -28,6 +29,7 @@ pub use projection::*;
 pub use read_models::*;
 pub use search::*;
 use serde_utils::deserialize_optional_metadata_json;
+pub use triad::*;
 pub use usage::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
