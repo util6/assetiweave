@@ -66,7 +66,11 @@ const question: ConversationQuestionDetail = {
       role: "assistant",
       kind: "text",
       text: "First answer",
-      metadata_json: JSON.stringify({ content_card: { type: "answer" } }),
+      content_card: {
+        schema_version: 1,
+        kind: "answer",
+        renderer: "markdown",
+      },
     },
     {
       id: "part-2",
@@ -75,7 +79,11 @@ const question: ConversationQuestionDetail = {
       role: "tool",
       kind: "tool",
       text: "legacy tool output",
-      metadata_json: JSON.stringify({ content_card: { type: "tool" } }),
+      content_card: {
+        schema_version: 1,
+        kind: "tool",
+        renderer: "plain",
+      },
     },
   ],
   question_turns: [

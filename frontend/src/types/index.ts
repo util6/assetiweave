@@ -440,6 +440,7 @@ export interface ConversationPart {
   exit_code?: number | null;
   command_label?: string | null;
   content_card?: ConversationContentCardDescriptor | null;
+  /** Raw event archive only. Not used for UI presentation or card rendering. */
   metadata_json?: string | null;
   translated_text?: string | null;
   source_execution_id?: string | null;

@@ -2645,9 +2645,11 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           role: "assistant",
           kind: "text",
           text: "AssetIWeave imports source sessions into normalized turns, then groups adjacent turns into question records.",
-          metadata_json: JSON.stringify({
-            content_card: { type: "answer", format: "markdown" },
-          }),
+          content_card: {
+            schema_version: 1,
+            kind: "answer",
+            renderer: "markdown",
+          },
         },
         {
           id: "preview-part-2",
@@ -2656,9 +2658,11 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           role: "tool",
           kind: "command",
           command: "assetiweave-cli conversation sync --source codex-live",
-          metadata_json: JSON.stringify({
-            content_card: { type: "command" },
-          }),
+          content_card: {
+            schema_version: 1,
+            kind: "command",
+            renderer: "command",
+          },
         },
       ],
       projected_content_nodes: [
@@ -2725,9 +2729,11 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           role: "assistant",
           kind: "text",
           text: "Use session export to write one Markdown file per session.",
-          metadata_json: JSON.stringify({
-            content_card: { type: "answer", format: "markdown" },
-          }),
+          content_card: {
+            schema_version: 1,
+            kind: "answer",
+            renderer: "markdown",
+          },
         },
       ],
       projected_content_nodes: [
