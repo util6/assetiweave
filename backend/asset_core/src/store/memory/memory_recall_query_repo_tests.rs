@@ -49,7 +49,7 @@ fn turn_fixture(
         None => "NULL".to_string(),
     };
     format!(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, started_at, fingerprint, missing, imported_at, question_id) \
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, started_at, fingerprint, missing, imported_at, question_id) \
          VALUES ('{TENANT}', '{turn_id}', '{session_id}', 'ext-{turn_id}', {turn_index}, 'prompt {turn_id}', {started_at}, 'fp-{turn_id}', 0, '{imported_at}', '{question_id}')"
     )
 }
@@ -67,7 +67,7 @@ fn web_turn_fixture(
         None => "NULL".to_string(),
     };
     format!(
-        "INSERT INTO web_record_turns (tenant_id, id, session_id, external_id, turn_index, user_text, started_at, fingerprint, missing, imported_at, question_id) \
+        "INSERT INTO web_record_turns (tenant_id, id, session_id, external_id, turn_index, prompt, started_at, fingerprint, missing, imported_at, question_id) \
          VALUES ('{TENANT}', '{turn_id}', '{session_id}', 'ext-{turn_id}', {turn_index}, 'prompt {turn_id}', {started_at}, 'fp-{turn_id}', 0, '{imported_at}', '{question_id}')"
     )
 }

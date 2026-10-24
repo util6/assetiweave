@@ -359,6 +359,20 @@ pub async fn resolve_conversation_part_id_prefix_sqlx(
                 }
             }
         }
+
+        let triad_candidates = triad_locator::query_triad_parts_by_prefix(
+            pool,
+            tenant_id,
+            &parsed.normalized_hex,
+            allow_conversation,
+            allow_web,
+        )
+        .await?;
+        for candidate in triad_candidates {
+            if !rows.contains(&candidate.full_id) {
+                rows.push(candidate.full_id);
+            }
+        }
     }
 
     if rows.is_empty() {

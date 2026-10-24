@@ -23,7 +23,7 @@ async fn seed_indexed_session(service: &AppService, session_id: &str, body: &str
     sqlx::query(
         r#"
         INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, user_text, title,
+            tenant_id, id, session_id, external_id, turn_index, prompt, title,
             started_at, ended_at, fingerprint, missing, imported_at
         ) VALUES (?1, ?2, ?3, ?2, 0, 'index rebuild probe', NULL, NULL, NULL,
                   'fixture-fingerprint', 0, '2026-10-23T00:00:00Z')
@@ -40,10 +40,9 @@ async fn seed_indexed_session(service: &AppService, session_id: &str, body: &str
     sqlx::query(
         r#"
         INSERT INTO conversation_parts (
-            tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content,
-            attrs_json, metadata_json, translated_text
-        ) VALUES (?1, ?2, 0, ?3, 'tool', 'text', 'tool_result', ?4, NULL,
-                  '{"content_card":{"type":"tool_result"}}', NULL)
+            tenant_id, turn_id, part_index, id_key, kind, content,
+            attrs_json, translated_text
+        ) VALUES (?1, ?2, 0, ?3, 'tool_result', ?4, NULL, NULL)
         "#,
     )
     .bind(tenant_id)

@@ -96,7 +96,7 @@ pub fn export_question_title(
             question
                 .turns
                 .iter()
-                .map(|turn| turn.user_text.trim())
+                .map(|turn| turn.prompt.trim())
                 .find(|text| !text.is_empty())
                 .map(|text| text.chars().take(96).collect())
         })

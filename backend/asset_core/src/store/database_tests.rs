@@ -276,6 +276,8 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
                 PRIMARY KEY (tenant_id, id),
                 UNIQUE (tenant_id, session_id, question_index)
             );
+            ALTER TABLE conversation_turns ADD COLUMN user_text TEXT DEFAULT '';
+            ALTER TABLE web_record_turns ADD COLUMN user_text TEXT DEFAULT '';
             INSERT INTO conversation_questions (
                 tenant_id, id, session_id, question_index, title, question_text,
                 answer_text, code_text, command_text, grouping_origin, created_at, updated_at
@@ -294,11 +296,11 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
                 '2026-08-25T00:00:00Z'
             );
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text,
+                tenant_id, id, session_id, external_id, turn_index, prompt, user_text,
                 title, started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 'default', 'legacy-turn', 'legacy-session', 'legacy-turn-external', 0,
-                'Legacy question snapshot', NULL, NULL, NULL, 'legacy-turn-fingerprint', 0,
+                'Legacy question snapshot', 'Legacy question snapshot', NULL, NULL, NULL, 'legacy-turn-fingerprint', 0,
                 '2026-08-25T00:00:00Z'
             );
             INSERT INTO conversation_question_turns (
@@ -309,11 +311,11 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
                 '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
             );
             INSERT INTO web_record_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text,
+                tenant_id, id, session_id, external_id, turn_index, prompt, user_text,
                 title, started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 'default', 'legacy-web-turn', 'legacy-web-session',
-                'legacy-web-turn-external', 0, 'Legacy web question snapshot', NULL,
+                'legacy-web-turn-external', 0, 'Legacy web question snapshot', 'Legacy web question snapshot', NULL,
                 NULL, NULL, 'legacy-web-turn-fingerprint', 0,
                 '2026-08-25T00:00:00Z'
             );
@@ -551,6 +553,8 @@ async fn migrations_repair_the_known_modified_question_contract_checksum() {
             r#"
             DROP INDEX IF EXISTS idx_memory_recall_questions_created;
             DROP INDEX IF EXISTS idx_memory_recall_web_questions_created;
+            ALTER TABLE conversation_turns ADD COLUMN user_text TEXT DEFAULT '';
+            ALTER TABLE web_record_turns ADD COLUMN user_text TEXT DEFAULT '';
             CREATE TABLE IF NOT EXISTS conversation_questions (
                 tenant_id TEXT NOT NULL DEFAULT 'default',
                 id TEXT NOT NULL PRIMARY KEY,
@@ -1080,7 +1084,7 @@ async fn migrations_backfill_turn_question_columns_from_membership() {
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text,
+                tenant_id, id, session_id, external_id, turn_index, prompt,
                 title, started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES
                 ('default', 'conversation-turn-1111', 'question-column-session',
@@ -1114,7 +1118,7 @@ async fn migrations_backfill_turn_question_columns_from_membership() {
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO web_record_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text,
+                tenant_id, id, session_id, external_id, turn_index, prompt,
                 title, started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES
                 ('default', 'web-record-turn-4444', 'question-column-web-session',
@@ -1252,6 +1256,7 @@ const LEGACY_TURN_QUESTION_ROLLBACK: &str = r#"
     DROP INDEX IF EXISTS idx_conversation_turns_tenant_session_question;
     DROP INDEX IF EXISTS idx_conversation_turns_tenant_question;
     DROP INDEX IF EXISTS idx_web_record_turns_tenant_session_question;
+    DROP INDEX IF EXISTS idx_web_record_turns_tenant_question;
     ALTER TABLE conversation_turns DROP COLUMN question_id;
     ALTER TABLE conversation_turns DROP COLUMN question_origin;
     ALTER TABLE web_record_turns DROP COLUMN question_id;
@@ -1334,7 +1339,7 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text, title,
+                tenant_id, id, session_id, external_id, turn_index, prompt, title,
                 started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 'default', 'part-index-turn', 'part-index-session', 'part-index-turn-external',
@@ -1364,6 +1369,10 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
             DROP TABLE conversation_parts;
             ALTER TABLE conversation_parts_old RENAME TO conversation_parts;
             ALTER TABLE conversation_sessions DROP COLUMN last_cwd;
+            ALTER TABLE conversation_turns ADD COLUMN user_text TEXT DEFAULT '';
+            ALTER TABLE web_record_turns ADD COLUMN user_text TEXT DEFAULT '';
+            UPDATE conversation_turns SET user_text = prompt;
+            UPDATE web_record_turns SET user_text = prompt;
 
             CREATE TABLE web_record_parts_old (
                 tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -1406,7 +1415,7 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO web_record_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text, title,
+                tenant_id, id, session_id, external_id, turn_index, prompt, title,
                 started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 'default', 'part-index-web-turn', 'part-index-web-session',
@@ -1544,7 +1553,7 @@ const LEGACY_QUESTION_TABLES_ROLLBACK: &str = r#"
         PRIMARY KEY (tenant_id, question_id, turn_id)
     );
     INSERT INTO conversation_questions (tenant_id, id, session_id, title, created_at, updated_at)
-    SELECT tenant_id, question_id, session_id, user_text, imported_at, imported_at
+    SELECT tenant_id, question_id, session_id, prompt, imported_at, imported_at
     FROM conversation_turns
     WHERE question_id <> ''
     GROUP BY tenant_id, session_id, question_id;
@@ -1555,7 +1564,7 @@ const LEGACY_QUESTION_TABLES_ROLLBACK: &str = r#"
     WHERE question_id <> '';
 
     INSERT INTO web_record_questions (tenant_id, id, session_id, title, created_at, updated_at)
-    SELECT tenant_id, question_id, session_id, user_text, imported_at, imported_at
+    SELECT tenant_id, question_id, session_id, prompt, imported_at, imported_at
     FROM web_record_turns
     WHERE question_id <> ''
     GROUP BY tenant_id, session_id, question_id;
@@ -1600,7 +1609,7 @@ async fn migrations_drop_and_rollback_conversation_question_tables() {
             tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at
         ) VALUES ('default', 's-rb-1', 'src-1', 'adp-1', 'ext-rb-1', 'Session RB', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z');
         INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, imported_at, question_id, question_origin
+            tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin
         ) VALUES
             ('default', 't-rb-1', 's-rb-1', 'ext-t-1', 0, 'First prompt', 'fp-1', 0, '2026-10-23T00:00:00Z', 'q-rb-1', 'imported'),
             ('default', 't-rb-2', 's-rb-1', 'ext-t-2', 1, 'Second prompt', 'fp-2', 0, '2026-10-23T00:00:00Z', 'q-rb-1', 'auto_merged');
@@ -1809,7 +1818,7 @@ async fn acceptance_spec_104_search_recalls_extended_part_categories() {
     ).expect("insert session");
 
     conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, imported_at, question_id, question_origin) 
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) 
          VALUES (?1, ?2, ?3, 'ext-t-1', 0, 'first prompt', 'fp-1', 0, '2026-10-24T00:00:00Z', 'q-1', 'imported')",
         [tenant_id, turn_id, session_id],
     ).expect("insert turn");
@@ -1819,20 +1828,20 @@ async fn acceptance_spec_104_search_recalls_extended_part_categories() {
     // 2. 执行结果
     // 3. 既有答复文本
     conn.execute(
-        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, content) 
-         VALUES (?1, ?2, 0, x'0000000000000000', 'tool', 'tool_output', 'SocketTimeoutException: Connection timed out while reading upstream payload')",
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content) 
+         VALUES (?1, ?2, 0, x'0000000000000000', 'tool_output', 'SocketTimeoutException: Connection timed out while reading upstream payload')",
         [tenant_id, turn_id],
     ).expect("insert tool part");
 
     conn.execute(
-        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, content) 
-         VALUES (?1, ?2, 1, x'0000000000000001', 'system', 'execution_result', 'Pipeline stage COMPLETED with exit_status=0 in 432ms')",
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content) 
+         VALUES (?1, ?2, 1, x'0000000000000001', 'execution_result', 'Pipeline stage COMPLETED with exit_status=0 in 432ms')",
         [tenant_id, turn_id],
     ).expect("insert exec part");
 
     conn.execute(
-        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, content) 
-         VALUES (?1, ?2, 2, x'0000000000000002', 'assistant', 'text', 'Here is the comprehensive migration report for the project')",
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content) 
+         VALUES (?1, ?2, 2, x'0000000000000002', 'text', 'Here is the comprehensive migration report for the project')",
         [tenant_id, turn_id],
     ).expect("insert assistant part");
 
@@ -1924,15 +1933,15 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
             let turn_id = format!("bench-turn-{s:03}-{t:02}");
             let q_id = format!("bench-q-{s:03}-{}", t / 2);
             conn.execute(
-                "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, imported_at, question_id, question_origin) 
+                "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) 
                  VALUES (?1, ?2, ?3, ?4, ?5, 'user prompt', 'fp', 0, '2026-10-24T00:00:00Z', ?6, 'imported')",
                 rusqlite::params![tenant_id, &turn_id, &session_id, &turn_id, t as i64, &q_id],
             ).expect("insert turn");
 
             for p in 0..parts_per_turn {
                 conn.execute(
-                    "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, content) 
-                     VALUES (?1, ?2, ?3, x'0000000000000000', 'assistant', 'text', 'Benchmark text content for performance baseline verification')",
+                    "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content) 
+                     VALUES (?1, ?2, ?3, x'0000000000000000', 'text', 'Benchmark text content for performance baseline verification')",
                     rusqlite::params![tenant_id, &turn_id, p as i64],
                 ).expect("insert part");
             }
@@ -2023,13 +2032,13 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
     ).expect("insert util6 session");
 
     conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, imported_at)
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at)
          VALUES ('default', 'turn-default-1', 'sess-default-1', 'ext-t1', 0, 'prompt', 'fp', 0, '2026-10-24T00:00:00Z')",
         [],
     ).expect("insert default turn");
 
     conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, imported_at)
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at)
          VALUES ('util6', 'turn-util6-1', 'sess-util6-1', 'ext-t2', 0, 'prompt', 'fp', 0, '2026-10-24T00:00:00Z')",
         [],
     ).expect("insert util6 turn");
@@ -2059,6 +2068,10 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         DROP TABLE conversation_parts;
         ALTER TABLE conversation_parts_old RENAME TO conversation_parts;
         ALTER TABLE conversation_sessions DROP COLUMN last_cwd;
+        ALTER TABLE conversation_turns ADD COLUMN user_text TEXT DEFAULT '';
+        ALTER TABLE web_record_turns ADD COLUMN user_text TEXT DEFAULT '';
+        UPDATE conversation_turns SET user_text = prompt;
+        UPDATE web_record_turns SET user_text = prompt;
 
         CREATE TABLE web_record_parts_old (
             tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -2282,7 +2295,7 @@ async fn acceptance_spec_119_last_cwd_materialization_and_redundant_index_remova
 
     // 早期轮次：cwd 为 /path/old
     conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, started_at, ended_at, imported_at)
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, started_at, ended_at, imported_at)
          VALUES ('default', 'turn-119-1', 'sess-119', 'ext-t1', 0, 'first question', 'fp1', 0, '2026-10-24T00:00:00Z', '2026-10-24T00:01:00Z', '2026-10-24T00:00:00Z')",
         [],
     ).expect("insert turn 1");
@@ -2295,7 +2308,7 @@ async fn acceptance_spec_119_last_cwd_materialization_and_redundant_index_remova
 
     // 最新轮次：包含两个零件，最后一个有效 cwd 为 /path/latest
     conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, started_at, ended_at, imported_at)
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, started_at, ended_at, imported_at)
          VALUES ('default', 'turn-119-2', 'sess-119', 'ext-t2', 1, 'second question', 'fp2', 0, '2026-10-24T00:02:00Z', '2026-10-24T00:03:00Z', '2026-10-24T00:02:00Z')",
         [],
     ).expect("insert turn 2");

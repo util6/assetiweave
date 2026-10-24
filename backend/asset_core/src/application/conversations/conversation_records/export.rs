@@ -241,7 +241,7 @@ pub fn export_conversation_rendered_markdown(
         let prompt = question
             .turns
             .iter()
-            .map(|turn| turn.user_text.trim())
+            .map(|turn| turn.prompt.trim())
             .filter(|text| !text.is_empty())
             .collect::<Vec<_>>()
             .join("\n\n");

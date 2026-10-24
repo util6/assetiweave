@@ -260,6 +260,30 @@ pub async fn resolve_outline_target_sqlx(
                 }
             }
         }
+
+        let triad_candidates = triad_locator::query_triad_parts_by_prefix(
+            pool,
+            tenant_id,
+            &parsed.normalized_hex,
+            allow_session_parts,
+            allow_web_parts,
+        )
+        .await?;
+        for candidate in triad_candidates {
+            let candidate_id = if let Some(order) = parsed.node_order {
+                format!("{}-node-{order}", candidate.full_id)
+            } else {
+                candidate.full_id
+            };
+            let kind_str = if candidate.is_web { "web" } else { "session" };
+            rows.push((
+                candidate_id,
+                candidate.session_id,
+                candidate.turn_id,
+                "card".to_string(),
+                kind_str.to_string(),
+            ));
+        }
     }
 
     if rows.is_empty() {

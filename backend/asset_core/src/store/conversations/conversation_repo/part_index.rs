@@ -99,23 +99,83 @@ async fn load_turn_parts_sqlx_tx(
     record_kind: ConversationRecordKind,
 ) -> StoreResult<Vec<ConversationPart>> {
     let tables = record_kind.tables();
-    let query = format!(
-        "SELECT {part_columns} FROM {parts} p \
-         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
-         JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id \
-         WHERE p.tenant_id = ?1 AND p.turn_id = ?2 ORDER BY p.part_index ASC",
-        part_columns = tables.part_columns,
-        parts = tables.parts,
-        turns = tables.turns,
-        sessions = tables.sessions,
-    );
-    let rows = sqlx::query(AssertSqlSafe(query))
+    let turn_row = sqlx::query_as::<_, (String, Option<String>, Option<String>, String)>(
+        AssertSqlSafe(format!(
+            "SELECT t.prompt, t.process, t.response, s.adapter_id \
+             FROM {turns} t \
+             JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id \
+             WHERE t.tenant_id = ?1 AND t.id = ?2",
+            turns = tables.turns,
+            sessions = tables.sessions,
+        )),
+    )
+    .bind(tenant_id)
+    .bind(turn_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+
+    let Some((prompt, process_json, response, adapter_id)) = turn_row else {
+        return Ok(Vec::new());
+    };
+
+    let part_columns = match record_kind {
+        ConversationRecordKind::Session => {
+            "p.part_index, p.kind, p.content, p.attrs_json, p.translated_text"
+        }
+        ConversationRecordKind::Web => {
+            "p.part_index, p.kind, p.content, NULL AS attrs_json, p.translated_text"
+        }
+    };
+
+    let part_rows: Vec<(i64, String, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as(AssertSqlSafe(format!(
+            "SELECT {part_columns} \
+             FROM {parts} p \
+             WHERE p.tenant_id = ?1 AND p.turn_id = ?2 \
+             ORDER BY p.part_index ASC",
+            parts = tables.parts,
+            part_columns = part_columns,
+        )))
         .bind(tenant_id)
         .bind(turn_id)
         .fetch_all(&mut **tx)
         .await
         .map_err(StoreError::external)?;
-    rows.iter().map(map_sqlx_conversation_part).collect()
+
+    let triad_parts: Vec<crate::backend::domain::conversations::triad::TriadPart> = part_rows
+        .into_iter()
+        .map(|(part_index, kind, content, attrs_json, translated_text)| {
+            crate::backend::domain::conversations::triad::TriadPart {
+                part_index,
+                kind,
+                content,
+                attrs_json,
+                translated_text,
+            }
+        })
+        .collect();
+
+    let process: Option<crate::backend::domain::conversations::triad::TurnProcess> = process_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok());
+
+    let prefix = match record_kind {
+        ConversationRecordKind::Session => "conversation-part",
+        ConversationRecordKind::Web => "web-record-part",
+    };
+
+    Ok(
+        crate::backend::domain::conversations::triad::merge_turn_triad(
+            &adapter_id,
+            prefix,
+            turn_id,
+            &prompt,
+            process.as_ref(),
+            response.as_deref(),
+            &triad_parts,
+        ),
+    )
 }
 
 async fn load_session_parts_sqlx_tx(
@@ -125,24 +185,86 @@ async fn load_session_parts_sqlx_tx(
     record_kind: ConversationRecordKind,
 ) -> StoreResult<Vec<ConversationPart>> {
     let tables = record_kind.tables();
-    let query = format!(
-        "SELECT {part_columns} FROM {parts} p \
-         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
-         JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id \
-         WHERE p.tenant_id = ?1 AND t.session_id = ?2 \
-         ORDER BY p.turn_id ASC, p.part_index ASC",
-        part_columns = tables.part_columns,
-        parts = tables.parts,
-        turns = tables.turns,
-        sessions = tables.sessions,
-    );
-    let rows = sqlx::query(AssertSqlSafe(query))
+    let turn_rows: Vec<(String, String, Option<String>, Option<String>, String)> =
+        sqlx::query_as(AssertSqlSafe(format!(
+            "SELECT t.id, t.prompt, t.process, t.response, s.adapter_id \
+             FROM {turns} t \
+             JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id \
+             WHERE t.tenant_id = ?1 AND t.session_id = ?2 \
+             ORDER BY t.turn_index ASC, t.id ASC",
+            turns = tables.turns,
+            sessions = tables.sessions,
+        )))
         .bind(tenant_id)
         .bind(session_id)
         .fetch_all(&mut **tx)
         .await
         .map_err(StoreError::external)?;
-    rows.iter().map(map_sqlx_conversation_part).collect()
+
+    let part_rows: Vec<(
+        String,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT {part_columns} \
+             FROM {parts} p \
+             JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+             WHERE p.tenant_id = ?1 AND t.session_id = ?2 \
+             ORDER BY p.turn_id ASC, p.part_index ASC",
+        parts = tables.parts,
+        turns = tables.turns,
+        part_columns = tables.part_columns,
+    )))
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+
+    let mut triad_parts_by_turn: BTreeMap<
+        String,
+        Vec<crate::backend::domain::conversations::triad::TriadPart>,
+    > = BTreeMap::new();
+    for (turn_id, part_index, kind, content, attrs_json, translated_text) in part_rows {
+        triad_parts_by_turn.entry(turn_id).or_default().push(
+            crate::backend::domain::conversations::triad::TriadPart {
+                part_index,
+                kind,
+                content,
+                attrs_json,
+                translated_text,
+            },
+        );
+    }
+
+    let prefix = match record_kind {
+        ConversationRecordKind::Session => "conversation-part",
+        ConversationRecordKind::Web => "web-record-part",
+    };
+
+    let mut all_parts = Vec::new();
+    for (turn_id, prompt, process_json, response, adapter_id) in turn_rows {
+        let empty = Vec::new();
+        let turn_parts = triad_parts_by_turn.get(&turn_id).unwrap_or(&empty);
+        let process: Option<crate::backend::domain::conversations::triad::TurnProcess> =
+            process_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok());
+        let restored = crate::backend::domain::conversations::triad::merge_turn_triad(
+            &adapter_id,
+            prefix,
+            &turn_id,
+            &prompt,
+            process.as_ref(),
+            response.as_deref(),
+            turn_parts,
+        );
+        all_parts.extend(restored);
+    }
+    Ok(all_parts)
 }
 
 async fn insert_part_index_row_sqlx_tx(

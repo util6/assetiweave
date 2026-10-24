@@ -261,6 +261,15 @@ LEFT JOIN temp_turn_process tp ON t.tenant_id = tp.tenant_id AND t.id = tp.turn_
 DROP TABLE conversation_turns;
 ALTER TABLE conversation_turns_new RENAME TO conversation_turns;
 
+CREATE INDEX idx_conversation_turns_tenant_session
+ON conversation_turns (tenant_id, session_id);
+
+CREATE INDEX idx_conversation_turns_tenant_session_question
+ON conversation_turns (tenant_id, session_id, question_id, turn_index);
+
+CREATE INDEX idx_conversation_turns_tenant_question
+ON conversation_turns (tenant_id, question_id);
+
 --------------------------------------------------------------------------------
 -- 9. 升级 conversation_parts 为 8 列终态结构，净化 attrs_json 并回填 cmd_seq
 --------------------------------------------------------------------------------
@@ -427,6 +436,15 @@ LEFT JOIN temp_web_final_responses r ON t.tenant_id = r.tenant_id AND t.id = r.t
 
 DROP TABLE web_record_turns;
 ALTER TABLE web_record_turns_new RENAME TO web_record_turns;
+
+CREATE INDEX idx_web_record_turns_tenant_session
+ON web_record_turns (tenant_id, session_id);
+
+CREATE INDEX idx_web_record_turns_tenant_session_question
+ON web_record_turns (tenant_id, session_id, question_id, turn_index);
+
+CREATE INDEX idx_web_record_turns_tenant_question
+ON web_record_turns (tenant_id, question_id);
 
 -- 从 web_record_parts 中移除已迁入 turn.response 的行
 DELETE FROM web_record_parts

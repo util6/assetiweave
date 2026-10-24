@@ -224,13 +224,13 @@ pub(super) fn recall_evidence_parts(
 ) -> Vec<RecallPart> {
     let mut result = Vec::new();
     for turn in &detail.turns {
-        if !turn.user_text.trim().is_empty() {
+        if !turn.prompt.trim().is_empty() {
             result.push(RecallPart {
                 turn_id: Some(turn.id.clone()),
                 part_id: None,
                 block_id: format!("{}-question", turn.id),
                 card_type: "question".to_string(),
-                content: turn.user_text.clone(),
+                content: turn.prompt.clone(),
             });
         }
     }

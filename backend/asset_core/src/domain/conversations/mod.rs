@@ -7,6 +7,7 @@ pub mod fingerprint;
 pub mod grouping;
 pub mod id;
 pub mod links;
+mod normalized;
 pub mod outline;
 pub mod pricing;
 pub mod projection;
@@ -24,6 +25,7 @@ pub use fingerprint::*;
 pub use grouping::*;
 pub use id::*;
 pub use links::*;
+pub use normalized::*;
 pub use outline::*;
 pub use projection::*;
 pub use read_models::*;
@@ -377,7 +379,8 @@ pub struct ConversationTurn {
     pub session_id: String,
     pub external_id: String,
     pub turn_index: i64,
-    pub user_text: String,
+    #[serde(alias = "user_text")]
+    pub prompt: String,
     pub title: Option<String>,
     pub started_at: Option<String>,
     pub ended_at: Option<String>,
@@ -386,6 +389,16 @@ pub struct ConversationTurn {
     pub imported_at: String,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub process: Option<String>,
+    #[serde(default)]
+    pub response: Option<String>,
+}
+
+impl ConversationTurn {
+    pub fn user_text(&self) -> &str {
+        &self.prompt
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -442,57 +455,6 @@ pub struct ConversationSyncRun {
     pub turn_count: i64,
     pub warning_count: i64,
     pub error_message: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
-pub struct NormalizedConversationSession {
-    pub external_id: String,
-    pub title: Option<String>,
-    pub project_path: Option<String>,
-    pub started_at: Option<String>,
-    pub updated_at: Option<String>,
-    pub source_locator: Option<String>,
-    pub source_fingerprint: Option<String>,
-    pub turns: Vec<NormalizedConversationTurn>,
-    #[serde(default)]
-    pub execution_origin: Option<String>,
-    #[serde(default)]
-    pub execution_purpose: Option<String>,
-    #[serde(default)]
-    pub user_visible: Option<bool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct NormalizedConversationTurn {
-    pub external_id: String,
-    pub turn_index: i64,
-    pub user_text: String,
-    pub title: Option<String>,
-    pub started_at: Option<String>,
-    pub ended_at: Option<String>,
-    #[serde(default)]
-    pub model: Option<String>,
-    pub parts: Vec<NormalizedConversationPart>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct NormalizedConversationPart {
-    pub role: ConversationPartRole,
-    pub kind: ConversationPartKind,
-    pub text: Option<String>,
-    pub language: Option<String>,
-    pub command: Option<String>,
-    pub cwd: Option<String>,
-    pub status: Option<String>,
-    pub exit_code: Option<i32>,
-    #[serde(default)]
-    pub command_label: Option<String>,
-    #[serde(default)]
-    pub source_execution_id: Option<String>,
-    #[serde(default, alias = "contentCard")]
-    pub content_card: Option<ConversationContentCardDescriptor>,
-    #[serde(default, deserialize_with = "deserialize_optional_metadata_json")]
-    pub metadata_json: Option<String>,
 }
 
 #[cfg(test)]

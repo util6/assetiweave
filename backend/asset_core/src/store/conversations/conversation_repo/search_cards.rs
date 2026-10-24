@@ -205,7 +205,7 @@ pub async fn search_conversation_cards_sqlx(
                         None,
                         question_block_id.clone(),
                         ConversationSearchCardType::question(),
-                        &turn.user_text,
+                        &turn.prompt,
                         id_fragment.as_deref(),
                         &[&session.id, &question.id, &turn.id, &question_block_id],
                     );
@@ -214,7 +214,9 @@ pub async fn search_conversation_cards_sqlx(
                 if !include_cards {
                     continue;
                 }
-                for part in parts_by_turn.remove(&turn.id).unwrap_or_default() {
+                let restored_parts = parts_by_turn.remove(&turn.id).unwrap_or_default();
+
+                for part in restored_parts {
                     for entry in search_entries_for_part(
                         &part,
                         &session.adapter_id,
@@ -382,7 +384,7 @@ pub async fn hydrate_conversation_search_matches_sqlx(
                     "conversation search index hydration missed a turn".to_string(),
                 )
             })?;
-            (None, turn.user_text.clone())
+            (None, turn.prompt.clone())
         } else {
             let part = parts.get(&matched.part_id).ok_or_else(|| {
                 StoreError::external(

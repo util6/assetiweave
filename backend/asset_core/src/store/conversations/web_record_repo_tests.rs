@@ -79,7 +79,7 @@ async fn sqlx_web_records_use_independent_tables_and_remove_legacy_session_rows(
     assert_eq!(sessions[0].question_count, 1);
     assert_eq!(sessions[0].turn_count, 1);
     assert_eq!(detail.questions.len(), 1);
-    assert_eq!(detail.questions[0].turns[0].user_text, "Hello from the web");
+    assert_eq!(detail.questions[0].turns[0].prompt, "Hello from the web");
     assert!(detail.questions[0]
         .projected_content_nodes
         .iter()
@@ -176,15 +176,24 @@ async fn sqlx_web_record_details_derive_execution_pairs_from_parts() {
     .await
     .expect("derive web execution pairs from parts");
 
-    let process_nodes = detail.questions[0]
+    let execution_nodes = detail.questions[0]
         .projected_content_nodes
         .iter()
-        .filter(|node| node.semantic_role.as_deref() == Some("result"))
+        .filter(|node| {
+            node.semantic_role.as_deref() == Some("command")
+                || node.semantic_role.as_deref() == Some("result")
+        })
         .collect::<Vec<_>>();
-    assert_eq!(process_nodes.len(), 2);
-    assert_eq!(process_nodes[0].content, "cat README.md");
-    assert_eq!(process_nodes[1].content, "# AssetIWeave");
-    assert!(process_nodes[0].part_order < process_nodes[1].part_order);
+    assert_eq!(execution_nodes.len(), 2);
+    assert_eq!(execution_nodes[0].content, "cat README.md");
+    assert_eq!(execution_nodes[0].semantic_role.as_deref(), Some("command"));
+    assert_eq!(execution_nodes[1].content, "# AssetIWeave");
+    assert_eq!(execution_nodes[1].semantic_role.as_deref(), Some("result"));
+    assert_eq!(
+        execution_nodes[0].source_execution_id,
+        execution_nodes[1].source_execution_id
+    );
+    assert!(execution_nodes[0].part_order < execution_nodes[1].part_order);
 
     drop(database);
     cleanup_database(&db_path);
@@ -559,12 +568,11 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
         .map_err(StoreError::external)?;
         let refreshed_content = sqlx::query_scalar::<_, String>(
             r#"
-                    SELECT p.content
-                    FROM web_record_parts p
-                    JOIN web_record_turns t ON t.id = p.turn_id
+                    SELECT t.response
+                    FROM web_record_turns t
                     JOIN web_record_sessions s ON s.id = t.session_id
                     WHERE s.source_id = ?1
-                    ORDER BY p.part_index ASC
+                    ORDER BY t.turn_index ASC
                     LIMIT 1
                     "#,
         )

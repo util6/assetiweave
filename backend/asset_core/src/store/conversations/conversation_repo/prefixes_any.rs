@@ -142,6 +142,28 @@ pub async fn resolve_any_id_to_session_id_sqlx(
                     }
                 }
             }
+
+            let triad_candidates = super::triad_locator::query_triad_parts_by_prefix(
+                pool,
+                tenant_id,
+                clean_hash,
+                allow_session_parts,
+                allow_web_parts,
+            )
+            .await?;
+            for candidate in triad_candidates {
+                let item = (
+                    candidate.session_id,
+                    if candidate.is_web {
+                        "web".to_string()
+                    } else {
+                        "session".to_string()
+                    },
+                );
+                if !rows.contains(&item) {
+                    rows.push(item);
+                }
+            }
         }
     }
 

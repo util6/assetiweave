@@ -124,7 +124,7 @@ pub(super) async fn ensure_question_groups_for_session_sqlx_tx(
 #[derive(Debug, FromRow)]
 struct TurnQuestionInputRow {
     id: String,
-    user_text: String,
+    prompt: String,
     question_id: String,
     question_origin: String,
 }
@@ -136,7 +136,7 @@ async fn load_session_turn_question_inputs_sqlx_tx(
 ) -> StoreResult<Vec<TurnQuestionInput>> {
     let rows = sqlx::query_as::<_, TurnQuestionInputRow>(
         r#"
-        SELECT id, user_text, question_id, question_origin
+        SELECT id, prompt, question_id, question_origin
         FROM conversation_turns
         WHERE tenant_id = ?1 AND session_id = ?2
         ORDER BY turn_index ASC, id ASC
@@ -149,9 +149,7 @@ async fn load_session_turn_question_inputs_sqlx_tx(
     .map_err(StoreError::external)?;
     Ok(rows
         .into_iter()
-        .map(|row| {
-            turn_question_input(row.id, row.user_text, row.question_id, &row.question_origin)
-        })
+        .map(|row| turn_question_input(row.id, row.prompt, row.question_id, &row.question_origin))
         .collect())
 }
 

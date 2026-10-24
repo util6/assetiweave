@@ -322,13 +322,15 @@ pub(super) async fn upsert_conversation_turn_sqlx_tx(
     sqlx::query(
         r#"
         INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, user_text, title, started_at,
-            ended_at, fingerprint, missing, imported_at, model
+            tenant_id, id, session_id, external_id, turn_index, prompt, process, response,
+            title, started_at, ended_at, fingerprint, missing, imported_at, model
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
         ON CONFLICT(tenant_id, session_id, external_id) DO UPDATE SET
             turn_index = excluded.turn_index,
-            user_text = excluded.user_text,
+            prompt = excluded.prompt,
+            process = excluded.process,
+            response = excluded.response,
             title = excluded.title,
             started_at = excluded.started_at,
             ended_at = excluded.ended_at,
@@ -343,7 +345,9 @@ pub(super) async fn upsert_conversation_turn_sqlx_tx(
     .bind(&turn.session_id)
     .bind(&turn.external_id)
     .bind(turn.turn_index)
-    .bind(&turn.user_text)
+    .bind(&turn.prompt)
+    .bind(&turn.process)
+    .bind(&turn.response)
     .bind(&turn.title)
     .bind(&turn.started_at)
     .bind(&turn.ended_at)

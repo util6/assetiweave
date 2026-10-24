@@ -72,13 +72,21 @@ pub async fn import_web_record_sessions_sqlx(
                     warning_count += 1;
                     continue;
                 }
-                let stored_turn = web_record_turn_from_normalized(&session.id, turn, &now);
+                let (stored_turn, triad_parts) = prepare_web_record_turn_for_import_sqlx_tx(
+                    &mut tx,
+                    tenant_id,
+                    &session.id,
+                    turn,
+                    &now,
+                    &translation_state,
+                )
+                .await?;
                 insert_web_record_turn_sqlx_tx(&mut tx, tenant_id, &stored_turn).await?;
                 insert_web_record_parts_sqlx_tx(
                     &mut tx,
                     tenant_id,
                     &stored_turn.id,
-                    &turn.parts,
+                    &triad_parts,
                     &translation_state,
                 )
                 .await?;
@@ -285,10 +293,10 @@ pub async fn insert_web_record_turn_sqlx_tx(
     sqlx::query(
         r#"
         INSERT INTO web_record_turns (
-            tenant_id, id, session_id, external_id, turn_index, user_text, title, started_at,
-            ended_at, fingerprint, missing, imported_at, model
+            tenant_id, id, session_id, external_id, turn_index, prompt, process, response,
+            title, started_at, ended_at, fingerprint, missing, imported_at, model
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
         "#,
     )
     .bind(tenant_id)
@@ -296,7 +304,9 @@ pub async fn insert_web_record_turn_sqlx_tx(
     .bind(&turn.session_id)
     .bind(&turn.external_id)
     .bind(turn.turn_index)
-    .bind(&turn.user_text)
+    .bind(&turn.prompt)
+    .bind(&turn.process)
+    .bind(&turn.response)
     .bind(&turn.title)
     .bind(&turn.started_at)
     .bind(&turn.ended_at)

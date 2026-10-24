@@ -357,7 +357,7 @@ async fn test_conversation_session_get_roles_filter_and_short_id_block_get() {
         .expect("get session with role filter");
 
     let q = &filtered_session.questions[0];
-    assert_eq!(q.turns[0].user_text, "What is 2 + 2?");
+    assert_eq!(q.turns[0].prompt, "What is 2 + 2?");
     assert_eq!(q.parts.len(), 1);
     assert_eq!(q.parts[0].role, ConversationPartRole::Assistant);
     assert_eq!(q.parts[0].kind, ConversationPartKind::Text);
@@ -372,21 +372,12 @@ async fn test_conversation_session_get_roles_filter_and_short_id_block_get() {
         .expect("get session with command role filter");
 
     let q_cmd = &cmd_session.questions[0];
-    assert!(q_cmd.turns[0].user_text.is_empty());
+    assert!(q_cmd.turns[0].prompt.is_empty());
     assert_eq!(q_cmd.parts.len(), 1);
     assert_eq!(q_cmd.parts[0].kind, ConversationPartKind::Command);
 
-    // 3. Test short-ID block detail retrieval
-    let (turn_id, part_index): (String, i64) = sqlx::query_as(
-        "SELECT turn_id, part_index FROM conversation_parts WHERE tenant_id = ?1 AND content = 'calc 2+2'",
-    )
-    .bind(tenant_id)
-    .fetch_one(service.db.pool())
-    .await
-    .expect("load part id");
-
-    let part_full_id = crate::backend::domain::derive_conversation_part_id(&turn_id, part_index);
-
+    // 3. Test short-ID block detail retrieval from triad process
+    let part_full_id = q_cmd.parts[0].id.clone();
     let short_part_id = crate::backend::domain::conversation_id_fragment(&part_full_id);
 
     let block_detail = service

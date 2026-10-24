@@ -100,7 +100,7 @@ impl AppService {
                 for q in &mut detail.questions {
                     if !keep_questions {
                         for turn in &mut q.turns {
-                            turn.user_text.clear();
+                            turn.prompt.clear();
                         }
                     }
 

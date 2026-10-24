@@ -46,7 +46,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
                    WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                ) AS turn_count,
                (
-                   SELECT t.user_text
+                   SELECT t.prompt
                    FROM conversation_turns t
                    WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                    ORDER BY t.turn_index DESC
@@ -71,7 +71,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
                    LIMIT 1
                ) ELSE NULL END AS window_start_turn_index,
                CASE WHEN ?8 IS NOT NULL OR ?9 IS NOT NULL THEN (
-                   SELECT t.user_text
+                   SELECT t.prompt
                    FROM conversation_turns t
                    WHERE t.tenant_id = s.tenant_id
                      AND t.session_id = s.id
@@ -91,7 +91,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
                    LIMIT 1
                ) ELSE NULL END AS window_end_turn_index,
                CASE WHEN ?8 IS NOT NULL OR ?9 IS NOT NULL THEN (
-                   SELECT t.user_text
+                   SELECT t.prompt
                    FROM conversation_turns t
                    WHERE t.tenant_id = s.tenant_id
                      AND t.session_id = s.id
@@ -124,7 +124,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
                   FROM conversation_turns t
                   WHERE t.tenant_id = s.tenant_id
                     AND t.session_id = s.id
-                    AND instr(lower(t.user_text), ?4) > 0
+                    AND instr(lower(t.prompt), ?4) > 0
               ))
           )
           AND (

@@ -54,6 +54,8 @@ pub mod search_snippets;
 pub mod sessions;
 pub mod sources;
 pub mod sql_constants;
+pub mod triad_locator;
+pub mod triad_update;
 
 pub use adapters::*;
 pub use common::*;
@@ -82,6 +84,7 @@ pub use search_snippets::*;
 pub use sessions::*;
 pub use sources::*;
 pub use sql_constants::*;
+pub use triad_locator::*;
 
 #[cfg(test)]
 #[path = "../conversation_repo_tests.rs"]

@@ -227,7 +227,7 @@ pub async fn load_recall_parts_for_questions_sqlx(
                     ELSE NULL END) AS command,
                    json_extract(p.attrs_json, '$.cwd') AS cwd,
                    json_extract(p.attrs_json, '$.command_label') AS command_label,
-                   p.metadata_json,
+                   NULL AS metadata_json,
                    json_extract(p.attrs_json, '$.status') AS status,
                    CAST(json_extract(p.attrs_json, '$.exit_code') AS INTEGER) AS exit_code,
                    json_extract(p.attrs_json, '$.signal') AS signal,

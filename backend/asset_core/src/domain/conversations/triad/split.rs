@@ -1,113 +1,11 @@
 use std::collections::HashMap;
 
 use super::super::{ConversationPartKind, ConversationPartRole, NormalizedConversationPart};
-use super::types::{SplitTurnTriad, TriadPart, TriadRawPart, TurnProcess, TurnProcessItem};
-
-fn is_user_part(part: &TriadRawPart<'_>) -> bool {
-    if part.role == ConversationPartRole::User {
-        return true;
-    }
-    if let Some(kind) = part.custom_kind {
-        if kind == "user" || kind.ends_with(".user") {
-            return true;
-        }
-    }
-    false
-}
-
-fn is_command_part(part: &TriadRawPart<'_>) -> bool {
-    if part.kind == ConversationPartKind::Command {
-        return true;
-    }
-    if let Some(kind) = part.custom_kind {
-        if kind == "command" || kind.ends_with(".command") {
-            return true;
-        }
-    }
-    part.role == ConversationPartRole::Tool && part.command.is_some()
-}
-
-fn is_result_part(part: &TriadRawPart<'_>) -> bool {
-    if let Some(kind) = part.custom_kind {
-        if kind == "result" || kind.ends_with(".result") {
-            return true;
-        }
-    }
-    part.role == ConversationPartRole::Tool
-        && part.command.is_none()
-        && part.source_execution_id.is_some()
-}
-
-fn is_answer_candidate(part: &TriadRawPart<'_>) -> bool {
-    if is_user_part(part) || is_command_part(part) || is_result_part(part) {
-        return false;
-    }
-    if let Some(kind) = part.custom_kind {
-        if kind == "answer" || kind.ends_with(".answer") {
-            return true;
-        }
-        if kind == "reasoning" || kind.ends_with(".reasoning") {
-            return false;
-        }
-    }
-    if part.role == ConversationPartRole::Assistant
-        && (part.kind == ConversationPartKind::Text || part.kind == ConversationPartKind::CodeBlock)
-    {
-        if let Some(text) = part.text {
-            let trimmed = text.trim();
-            // Web 端中间检索指令 JSON 不是回答
-            if trimmed.starts_with(r#"{"queries":"#) || trimmed.starts_with(r#"{"query":"#) {
-                return false;
-            }
-        }
-        return true;
-    }
-    false
-}
-
-fn is_successful_status(status: &str) -> bool {
-    let lower = status.trim().to_ascii_lowercase();
-    matches!(lower.as_str(), "completed" | "success" | "ok" | "done")
-}
-
-fn extract_auxiliary_from_metadata<'a>(
-    metadata_json: Option<&'a str>,
-    existing_signal: Option<&'a str>,
-    existing_tool: Option<&'a str>,
-    existing_file: Option<&'a str>,
-) -> (Option<String>, Option<String>, Option<String>) {
-    let mut signal = existing_signal.map(|s| s.to_string());
-    let mut tool = existing_tool.map(|s| s.to_string());
-    let mut file = existing_file.map(|s| s.to_string());
-
-    if let Some(meta) = metadata_json {
-        if let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(meta)
-        {
-            if signal.is_none() {
-                if let Some(serde_json::Value::String(s)) = map.get("signal") {
-                    if !s.is_empty() {
-                        signal = Some(s.clone());
-                    }
-                }
-            }
-            if tool.is_none() {
-                if let Some(serde_json::Value::String(s)) = map.get("tool_name") {
-                    if !s.is_empty() {
-                        tool = Some(s.clone());
-                    }
-                }
-            }
-            if file.is_none() {
-                if let Some(serde_json::Value::String(s)) = map.get("file_path") {
-                    if !s.is_empty() {
-                        file = Some(s.clone());
-                    }
-                }
-            }
-        }
-    }
-    (signal, tool, file)
-}
+use super::types::{
+    extract_auxiliary_from_metadata, format_code_block, is_answer_candidate, is_command_part,
+    is_result_part, is_successful_status, is_user_part, SplitTurnTriad, TriadPart, TriadRawPart,
+    TurnProcess, TurnProcessItem,
+};
 
 /// Splits a raw list of parts for a turn into the 3-part triad (prompt, process, response)
 /// and intermediate parts for database storage.
@@ -134,7 +32,7 @@ pub fn split_turn_triad(
     // 3. 确定最终响应（response）：位于所有命令/工具执行之后（或末尾）的最后一条 answer 候选
     let mut final_response_idx: Option<usize> = None;
     for (idx, part) in indexed_parts.iter().rev() {
-        if is_answer_candidate(part) {
+        if is_answer_candidate(adapter_id, part) {
             if let Some(last_tool) = last_command_or_tool_idx {
                 if *idx > last_tool {
                     final_response_idx = Some(*idx);
@@ -146,6 +44,8 @@ pub fn split_turn_triad(
             }
         }
     }
+
+    let response_card = None;
 
     // 4. 第一遍扫描：收集命令，建立 source_execution_id -> cmd_seq 映射
     let mut command_items = Vec::new();
@@ -164,7 +64,7 @@ pub fn split_turn_triad(
                 }
             }
 
-            let kind = part.custom_kind.unwrap_or("").trim();
+            let kind = part.custom_kind.as_deref().unwrap_or("").trim();
             let final_kind = if kind.is_empty() {
                 format!("{adapter_id}.command")
             } else {
@@ -191,12 +91,13 @@ pub fn split_turn_triad(
                 }
             });
 
-            let content = part.command.or(part.text).map(|s| s.to_string());
-
-            let summary = if part.command.is_some() {
-                part.text.map(|s| s.to_string())
+            let (content, summary) = if part.command.is_some() {
+                (
+                    part.command.map(|s| s.to_string()),
+                    part.text.map(|s| s.to_string()),
+                )
             } else {
-                None
+                (None, part.text.map(|s| s.to_string()))
             };
 
             command_items.push(TurnProcessItem {
@@ -209,6 +110,7 @@ pub fn split_turn_triad(
                 exit_code,
                 summary,
                 status,
+                translated_text: part.translated_text.map(|s| s.to_string()),
             });
         }
     }
@@ -219,15 +121,30 @@ pub fn split_turn_triad(
     let mut response_text: Option<String> = None;
     let mut response_seq: Option<i64> = None;
     let mut response_translated_text: Option<String> = None;
+    let mut response_card_kind: Option<String> = None;
+    let mut response_signal: Option<String> = None;
 
     for (orig_idx, part) in &indexed_parts {
         let seq = *orig_idx as i64;
 
         if Some(*orig_idx) == final_response_idx {
             // 提取为最终回答
-            response_text = part.text.or(part.command).map(|s| s.to_string());
+            let is_web = adapter_id == "web" || adapter_id.ends_with("-web");
+            response_text = if is_web && part.kind == ConversationPartKind::CodeBlock {
+                Some(format_code_block(part.text, part.language))
+            } else {
+                part.text.or(part.command).map(|s| s.to_string())
+            };
             response_seq = Some(seq);
             response_translated_text = part.translated_text.map(|s| s.to_string());
+            response_card_kind = part.custom_kind.as_deref().map(|s| s.to_string());
+            let (sig, _, _) = extract_auxiliary_from_metadata(
+                part.metadata_json,
+                part.signal,
+                part.tool_name,
+                part.file_path,
+            );
+            response_signal = sig;
             continue;
         }
 
@@ -275,8 +192,10 @@ pub fn split_turn_triad(
                 Some(serde_json::to_string(&attrs_map).unwrap_or_default())
             };
 
-            let kind = part.custom_kind.unwrap_or("").trim();
-            let final_kind = if kind.is_empty() {
+            let kind = part.custom_kind.as_deref().unwrap_or("").trim();
+            let final_kind = if adapter_id == "web" {
+                "process".to_string()
+            } else if kind.is_empty() {
                 format!("{adapter_id}.result")
             } else {
                 kind.to_string()
@@ -315,6 +234,17 @@ pub fn split_turn_triad(
         if let Some(f) = file_path {
             attrs_map.insert("file_path".to_string(), serde_json::json!(f));
         }
+        if let Some(lbl) = part.command_label {
+            if !lbl.trim().is_empty() {
+                attrs_map.insert("command_label".to_string(), serde_json::json!(lbl));
+            }
+        }
+        if let Some(ref r) = part.semantic_role {
+            attrs_map.insert("semantic_role".to_string(), serde_json::json!(r));
+        }
+        if let Some(ref r) = part.renderer {
+            attrs_map.insert("renderer".to_string(), serde_json::json!(r));
+        }
 
         let attrs_json = if attrs_map.is_empty() {
             None
@@ -323,28 +253,40 @@ pub fn split_turn_triad(
         };
 
         // 中途伪 answer 纠偏
-        let kind = part.custom_kind.unwrap_or("").trim();
-        let final_kind =
-            if kind == "answer" || kind.ends_with(".answer") || is_answer_candidate(part) {
-                if adapter_id == "web" {
-                    "process".to_string()
-                } else {
-                    format!("{adapter_id}.reasoning")
-                }
-            } else if !kind.is_empty() {
-                kind.to_string()
+        let is_web = adapter_id == "web" || adapter_id.ends_with("-web");
+        let kind = part.custom_kind.as_deref().unwrap_or("").trim();
+        let final_kind = if is_web {
+            if kind == "answer"
+                || kind.ends_with(".answer")
+                || part.kind == ConversationPartKind::CodeBlock
+            {
+                "answer".to_string()
             } else {
-                match part.kind {
-                    ConversationPartKind::Text => format!("{adapter_id}.reasoning"),
-                    ConversationPartKind::CodeBlock => format!("{adapter_id}.code"),
-                    ConversationPartKind::FileChange => format!("{adapter_id}.file-change"),
-                    ConversationPartKind::Subagent => format!("{adapter_id}.subagent"),
-                    ConversationPartKind::Metadata => format!("{adapter_id}.skill"),
-                    _ => format!("{adapter_id}.tool"),
-                }
-            };
+                "process".to_string()
+            }
+        } else if kind == "answer"
+            || kind.ends_with(".answer")
+            || is_answer_candidate(adapter_id, part)
+        {
+            format!("{adapter_id}.reasoning")
+        } else if !kind.is_empty() {
+            kind.to_string()
+        } else {
+            match part.kind {
+                ConversationPartKind::Text => format!("{adapter_id}.reasoning"),
+                ConversationPartKind::CodeBlock => format!("{adapter_id}.code"),
+                ConversationPartKind::FileChange => format!("{adapter_id}.file-change"),
+                ConversationPartKind::Subagent => format!("{adapter_id}.subagent"),
+                ConversationPartKind::Metadata => format!("{adapter_id}.skill"),
+                _ => format!("{adapter_id}.tool"),
+            }
+        };
 
-        let content = part.text.or(part.command).map(|s| s.to_string());
+        let content = if is_web && part.kind == ConversationPartKind::CodeBlock {
+            Some(format_code_block(part.text, part.language))
+        } else {
+            part.text.or(part.command).map(|s| s.to_string())
+        };
 
         retained_parts.push(TriadPart {
             part_index: seq,
@@ -400,6 +342,9 @@ pub fn split_turn_triad(
         && common_cwd.is_none()
         && response_seq.is_none()
         && response_translated_text.is_none()
+        && response_card.is_none()
+        && response_card_kind.is_none()
+        && response_signal.is_none()
     {
         None
     } else {
@@ -407,6 +352,9 @@ pub fn split_turn_triad(
             cwd: common_cwd,
             response_seq,
             response_translated_text,
+            response_card,
+            response_card_kind,
+            response_signal,
             items: command_items,
         })
     };

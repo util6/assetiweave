@@ -24,9 +24,19 @@ pub async fn update_conversation_part_translation_sqlx(
     .map_err(StoreError::external)?;
 
     if result.rows_affected() == 0 {
-        return Err(StoreError::NotFound(format!(
-            "conversation part not found: {part_id}"
-        )));
+        let updated = triad_locator::update_triad_part_translation_tx(
+            &mut tx,
+            tenant_id,
+            ConversationRecordKind::Session,
+            part_id,
+            translated_text,
+        )
+        .await?;
+        if !updated {
+            return Err(StoreError::NotFound(format!(
+                "conversation part not found: {part_id}"
+            )));
+        }
     }
 
     super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
@@ -41,7 +51,9 @@ pub(crate) struct ConversationTurnQuestionRow {
     session_id: String,
     external_id: String,
     turn_index: i64,
-    user_text: String,
+    prompt: String,
+    process: Option<String>,
+    response: Option<String>,
     title: Option<String>,
     started_at: Option<String>,
     ended_at: Option<String>,
@@ -64,7 +76,7 @@ impl ConversationTurnQuestionRow {
             session_id: self.session_id,
             external_id: self.external_id,
             turn_index: self.turn_index,
-            user_text: self.user_text,
+            prompt: self.prompt,
             title: self.title,
             started_at: self.started_at,
             ended_at: self.ended_at,
@@ -72,6 +84,8 @@ impl ConversationTurnQuestionRow {
             missing: self.missing == 1,
             imported_at: self.imported_at,
             model: self.model,
+            process: self.process,
+            response: self.response,
         };
         (question_id, origin, turn)
     }
@@ -174,7 +188,7 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
 
     let turn_rows = sqlx::query_as::<_, ConversationTurnQuestionRow>(
         r#"
-        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
+        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.prompt, t.process, t.response, t.title,
                t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
                t.question_id, t.question_origin
         FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session
@@ -192,10 +206,19 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
         .map(ConversationTurnQuestionRow::into_grouped_turn)
         .collect::<Vec<_>>();
 
-    let part_rows = sqlx::query(
+    let part_rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            i64,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
         r#"
-        SELECT p.turn_id, p.part_index, p.role, p.kind, p.card_kind,
-               p.content, p.attrs_json, p.metadata_json, p.translated_text
+        SELECT p.turn_id, p.part_index, p.kind, p.content, p.attrs_json, p.translated_text
         FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session
         JOIN conversation_parts p
           ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
@@ -208,13 +231,41 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
+
+    let mut triad_parts_by_turn: BTreeMap<
+        String,
+        Vec<crate::backend::domain::conversations::triad::TriadPart>,
+    > = BTreeMap::new();
+    for (turn_id, part_index, kind, content, attrs_json, translated_text) in part_rows {
+        triad_parts_by_turn.entry(turn_id).or_default().push(
+            crate::backend::domain::conversations::triad::TriadPart {
+                part_index,
+                kind,
+                content,
+                attrs_json,
+                translated_text,
+            },
+        );
+    }
+
     let mut parts_by_turn = BTreeMap::<String, Vec<ConversationPart>>::new();
-    for row in &part_rows {
-        let part = map_sqlx_conversation_part(row)?;
-        parts_by_turn
-            .entry(part.turn_id.clone())
-            .or_default()
-            .push(part);
+    for (_, _, turn) in &turns {
+        let empty_vec = Vec::new();
+        let turn_parts = triad_parts_by_turn.get(&turn.id).unwrap_or(&empty_vec);
+        let process: Option<crate::backend::domain::conversations::triad::TurnProcess> = turn
+            .process
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok());
+        let restored = crate::backend::domain::conversations::triad::merge_turn_triad(
+            &adapter_id,
+            "conversation-part",
+            &turn.id,
+            &turn.prompt,
+            process.as_ref(),
+            turn.response.as_deref(),
+            turn_parts,
+        );
+        parts_by_turn.insert(turn.id.clone(), restored);
     }
 
     build_question_details_from_turn_columns(turns, parts_by_turn, &adapter_id, &card_kinds)
@@ -229,8 +280,8 @@ pub fn project_question_title(
         .as_deref()
         .is_none_or(|title| title.trim().is_empty())
     {
-        if let Some(turn) = turns.iter().find(|turn| !turn.user_text.trim().is_empty()) {
-            question.title = Some(first_line(&turn.user_text));
+        if let Some(turn) = turns.iter().find(|turn| !turn.prompt.trim().is_empty()) {
+            question.title = Some(first_line(&turn.prompt));
         }
     }
     question
@@ -296,7 +347,7 @@ pub(super) fn conversation_question_block_locator(
         semantic_role: None,
         renderer: ConversationCardRenderer::Plain,
         role: crate::backend::domain::ConversationPartRole::User,
-        content_length: turn.user_text.chars().count(),
+        content_length: turn.prompt.chars().count(),
         language: None,
         cwd: None,
         status: None,

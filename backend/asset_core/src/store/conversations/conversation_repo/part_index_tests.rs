@@ -68,7 +68,7 @@ async fn seed_turn(
     let turn_sql = format!(
         r#"
         INSERT INTO {turns} (
-            tenant_id, id, session_id, external_id, turn_index, user_text,
+            tenant_id, id, session_id, external_id, turn_index, prompt,
             title, started_at, ended_at, fingerprint, missing, imported_at
         ) VALUES (?1, ?2, ?3, ?2, ?4, 'how does indexing work', NULL, NULL, NULL,
                   'fixture-fingerprint', 0, '2026-10-23T00:00:00Z')
@@ -126,28 +126,25 @@ async fn seed_part(
         ConversationRecordKind::Web => "web-record-part",
     };
     let part_id = derive_part_id(part_prefix, turn_id, index);
-    let metadata_json = format!(r#"{{"content_card":{{"type":"{}"}}}}"#, part.card_kind);
     match record_kind {
         ConversationRecordKind::Session => {
             let id_key = derive_part_id_key(&part_id).expect("derive id_key");
             let content = part.text.or(part.command);
+            let kind = part.card_kind;
             sqlx::query(
                 r#"
                 INSERT INTO conversation_parts (
-                    tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content,
-                    attrs_json, metadata_json, translated_text
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, NULL)
+                    tenant_id, turn_id, part_index, id_key, kind, content,
+                    attrs_json, translated_text
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL)
                 "#,
             )
             .bind(TENANT_ID)
             .bind(turn_id)
             .bind(index)
             .bind(id_key.as_slice())
-            .bind(part.role)
-            .bind(part.kind)
-            .bind(part.card_kind)
+            .bind(kind)
             .bind(content)
-            .bind(metadata_json)
             .execute(pool)
             .await
             .expect("seed part");

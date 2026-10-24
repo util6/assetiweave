@@ -453,9 +453,17 @@ async fn import_single_session_sqlx_tx(
         if turn.user_text.trim().is_empty() {
             continue;
         }
-        let stored_turn = conversation_turn_from_normalized(&session.id, turn, now);
+        let (stored_turn, triad_parts) = prepare_turn_for_import_sqlx_tx(
+            &mut *tx,
+            tenant_id,
+            &session.id,
+            &session.adapter_id,
+            turn,
+            now,
+        )
+        .await?;
         upsert_conversation_turn_sqlx_tx(&mut *tx, tenant_id, &stored_turn).await?;
-        replace_conversation_parts_sqlx_tx(&mut *tx, tenant_id, &stored_turn.id, &turn.parts)
+        replace_conversation_parts_sqlx_tx(&mut *tx, tenant_id, &stored_turn.id, &triad_parts)
             .await?;
     }
     let last_cwd = derive_session_last_cwd(&normalized.turns);

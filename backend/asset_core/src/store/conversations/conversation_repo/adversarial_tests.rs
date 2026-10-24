@@ -288,7 +288,7 @@ async fn bug3_id_fragment_search_off_by_one_upper_bound() {
     sqlx::query(
         r#"
         INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, user_text,
+            tenant_id, id, session_id, external_id, turn_index, prompt,
             fingerprint, missing, imported_at, question_id, question_origin
         ) VALUES ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000001', 'conversation-session-0000000000000000000000000000000000000000000000000000000000000001', 't-1', 0, 'hi', 'fp', 0, '2026-10-24T00:00:00Z', 'conversation-question-0000000000000000000000000000000000000000000000000000000000000001', 'imported')
         "#,
@@ -299,13 +299,12 @@ async fn bug3_id_fragment_search_off_by_one_upper_bound() {
     sqlx::query(
         r#"
         INSERT INTO conversation_parts (
-            tenant_id, turn_id, part_index, id_key, role, kind, content
+            tenant_id, turn_id, part_index, id_key, kind, content
         ) VALUES (
             'default',
             'conversation-turn-0000000000000000000000000000000000000000000000000000000000000001',
             0,
             x'1234567900000000',
-            'assistant',
             'text',
             'adjacent bucket'
         )
@@ -548,7 +547,7 @@ async fn bug7_ambiguous_short_id_swallowed_into_not_found_in_block_detail() {
     sqlx::query(
         r#"
         INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, user_text,
+            tenant_id, id, session_id, external_id, turn_index, prompt,
             fingerprint, missing, imported_at, question_id, question_origin
         ) VALUES
         ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000010', 'conversation-session-0000000000000000000000000000000000000000000000000000000000000002', 't-1', 0, 'q1', 'fp1', 0, '2026-10-24T00:00:00Z', 'conversation-question-0000000000000000000000000000000000000000000000000000000000000010', 'imported'),
@@ -560,10 +559,10 @@ async fn bug7_ambiguous_short_id_swallowed_into_not_found_in_block_detail() {
     .unwrap();
     sqlx::query(
         r#"
-        INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, content)
+        INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content)
         VALUES
-        ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000010', 0, x'deadbeef11111111', 'assistant', 'text', 'part A'),
-        ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000011', 0, x'deadbeef22222222', 'assistant', 'text', 'part B')
+        ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000010', 0, x'deadbeef11111111', 'text', 'part A'),
+        ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000011', 0, x'deadbeef22222222', 'text', 'part B')
         "#,
     )
     .execute(&pool)
@@ -641,11 +640,6 @@ async fn r2_bug1_migration_0005_poisons_normal_command_parts() {
         .await
         .unwrap();
 
-    // Simulate a database upgraded up to 202610240004 that now applies 202610240005
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 202610240005")
-        .execute(&pool)
-        .await
-        .unwrap();
     pool.close().await;
 
     let pool2 = open_migrated_pool(&dir.db_path()).await.unwrap();

@@ -249,7 +249,9 @@ pub(super) struct ConversationTurnRow {
     session_id: String,
     external_id: String,
     turn_index: i64,
-    user_text: String,
+    prompt: String,
+    process: Option<String>,
+    response: Option<String>,
     title: Option<String>,
     started_at: Option<String>,
     ended_at: Option<String>,
@@ -266,7 +268,7 @@ impl ConversationTurnRow {
             session_id: self.session_id,
             external_id: self.external_id,
             turn_index: self.turn_index,
-            user_text: self.user_text,
+            prompt: self.prompt,
             title: self.title,
             started_at: self.started_at,
             ended_at: self.ended_at,
@@ -274,6 +276,8 @@ impl ConversationTurnRow {
             missing: self.missing == 1,
             imported_at: self.imported_at,
             model: self.model,
+            process: self.process,
+            response: self.response,
         }
     }
 }
@@ -284,91 +288,43 @@ pub fn map_sqlx_conversation_turn(row: &SqliteRow) -> StoreResult<ConversationTu
         .into_domain())
 }
 
-#[derive(Debug, Deserialize, Default)]
-pub(super) struct ConversationPartAttrs {
-    pub(super) language: Option<String>,
-    pub(super) cwd: Option<String>,
-    pub(super) status: Option<String>,
-    pub(super) exit_code: Option<i32>,
-    pub(super) command_label: Option<String>,
-    pub(super) exec_id: Option<String>,
-    pub(super) summary: Option<String>,
-    pub(super) renderer: Option<String>,
-    pub(super) semantic_role: Option<String>,
-    pub(super) signal: Option<String>,
-    pub(super) file_path: Option<String>,
-    pub(super) tool_name: Option<String>,
-    pub(super) has_command: Option<bool>,
-}
-
 #[derive(Debug, FromRow)]
 pub(super) struct ConversationPartRow {
     pub(super) turn_id: String,
     pub(super) part_index: i64,
-    pub(super) role: String,
     pub(super) kind: String,
-    pub(super) card_kind: Option<String>,
     pub(super) content: Option<String>,
     pub(super) attrs_json: Option<String>,
-    pub(super) metadata_json: Option<String>,
     pub(super) translated_text: Option<String>,
 }
 
 impl ConversationPartRow {
     pub(super) fn into_domain(self) -> StoreResult<ConversationPart> {
-        let role: ConversationPartRole = decode_enum(self.role)?;
-        let kind: ConversationPartKind = decode_enum(self.kind)?;
-        let attrs: ConversationPartAttrs = self
-            .attrs_json
-            .as_deref()
-            .and_then(|json| serde_json::from_str(json).ok())
-            .unwrap_or_default();
-
-        let (text, command) = if kind == ConversationPartKind::Command {
-            if attrs.has_command == Some(false) {
-                (self.content, None)
-            } else {
-                (attrs.summary, self.content)
-            }
-        } else {
-            (self.content, None)
+        let triad_part = crate::backend::domain::conversations::triad::TriadPart {
+            part_index: self.part_index,
+            kind: self.kind,
+            content: self.content,
+            attrs_json: self.attrs_json,
+            translated_text: self.translated_text,
         };
-
-        let content_card = self.card_kind.map(|ck| ConversationContentCardDescriptor {
-            schema_version: 1,
-            kind: ck,
-            semantic_role: attrs.semantic_role,
-            renderer: attrs.renderer,
-        });
-
         let prefix = if self.turn_id.starts_with("web-record-") {
             "web-record-part"
         } else {
             "conversation-part"
         };
-        let id = derive_part_id(prefix, &self.turn_id, self.part_index);
-
-        Ok(ConversationPart {
-            id,
-            turn_id: self.turn_id,
-            part_index: self.part_index,
-            role,
-            kind,
-            text,
-            language: attrs.language,
-            command,
-            cwd: attrs.cwd,
-            status: attrs.status,
-            exit_code: attrs.exit_code,
-            command_label: attrs.command_label,
-            source_execution_id: attrs.exec_id,
-            content_card,
-            metadata_json: self.metadata_json,
-            translated_text: self.translated_text,
-            signal: attrs.signal,
-            tool_name: attrs.tool_name,
-            file_path: attrs.file_path,
-        })
+        let restored = crate::backend::domain::conversations::triad::merge_turn_triad(
+            "codex",
+            prefix,
+            &self.turn_id,
+            "",
+            None,
+            None,
+            &[triad_part],
+        );
+        restored
+            .into_iter()
+            .next()
+            .ok_or_else(|| StoreError::external("failed to restore conversation part from row"))
     }
 }
 
