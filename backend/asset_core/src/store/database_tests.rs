@@ -1946,6 +1946,193 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
     cleanup_database(&db_path);
 }
 
+#[tokio::test]
+async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
+    let db_path = temp_database_path("spec-118-cleanup-normalize");
+    migrate_database(&db_path).await.expect("initial migration");
+
+    let conn = Connection::open(&db_path).expect("open database");
+
+    // 1. 设置活跃租户为 default，并插入遗留租户 util6
+    conn.execute(
+        "INSERT OR REPLACE INTO tenant_state (principal_id, active_tenant_id, updated_at) VALUES ('local', 'default', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert tenant state");
+
+    conn.execute(
+        "INSERT OR IGNORE INTO tenants (id, name, created_at, updated_at) VALUES ('util6', 'util6', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert util6 tenant");
+
+    // 2. 插入 default 与 util6 的会话、轮次、零件
+    conn.execute(
+        "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at)
+         VALUES ('default', 'sess-default-1', 'src-1', 'adp-1', 'ext-1', 'Default Session', 0, '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert default session");
+
+    conn.execute(
+        "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at)
+         VALUES ('util6', 'sess-util6-1', 'src-1', 'adp-1', 'ext-2', 'Util6 Duplicate Session', 0, '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert util6 session");
+
+    conn.execute(
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, imported_at)
+         VALUES ('default', 'turn-default-1', 'sess-default-1', 'ext-t1', 0, 'prompt', 'fp', 0, '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert default turn");
+
+    conn.execute(
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, imported_at)
+         VALUES ('util6', 'turn-util6-1', 'sess-util6-1', 'ext-t2', 0, 'prompt', 'fp', 0, '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert util6 turn");
+
+    // 插入非标 part-<16hex> 零件，分别在 default 和 util6 下
+    let default_old_part_id = "part-3db7391334d54cac";
+    let util6_old_part_id = "part-7cf12c209dd94ed1";
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text)
+         VALUES ('default', ?1, 'turn-default-1', 0, 'assistant', 'text', 'Default content needing normalize')",
+        [default_old_part_id],
+    ).expect("insert default part with legacy id");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text)
+         VALUES ('util6', ?1, 'turn-util6-1', 0, 'assistant', 'text', 'Util6 content to be deleted')",
+        [util6_old_part_id],
+    ).expect("insert util6 part with legacy id");
+
+    // 插入对应全文索引
+    conn.execute(
+        "INSERT INTO conversation_part_fts (tenant_id, part_id, session_id, turn_id, text)
+         VALUES ('default', ?1, 'sess-default-1', 'turn-default-1', 'Default content needing normalize')",
+        [default_old_part_id],
+    ).expect("insert default fts");
+
+    conn.execute(
+        "INSERT INTO conversation_part_fts (tenant_id, part_id, session_id, turn_id, text)
+         VALUES ('util6', ?1, 'sess-util6-1', 'turn-util6-1', 'Util6 content to be deleted')",
+        [util6_old_part_id],
+    )
+    .expect("insert util6 fts");
+
+    // 插入 util6 的衍生记录（如 session_memory_jobs、conversation_session_observations 等）
+    conn.execute(
+        "INSERT INTO conversation_session_observations (tenant_id, source_id, record_kind, external_id, observed_version, last_seen_at)
+         VALUES ('util6', 'src-1', 'session', 'ext-2', '1', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert util6 observation");
+
+    // 3. 回退 202610240001 迁移记录，模拟从旧版本升级触发迁移
+    conn.execute(
+        "DELETE FROM _sqlx_migrations WHERE version = 202610240001",
+        [],
+    )
+    .expect("rollback migration version");
+    drop(conn);
+
+    // 4. 运行迁移升级
+    migrate_database(&db_path).await.expect("run migration");
+
+    // 5. 校验断言
+    let conn = Connection::open(&db_path).expect("reopen migrated db");
+
+    // A. util6 租户及其数据被干净清理
+    let util6_tenant_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM tenants WHERE id = 'util6'", [], |r| {
+            r.get(0)
+        })
+        .expect("count util6 tenant");
+    assert_eq!(util6_tenant_count, 0, "util6 租户记录必须已被删除");
+
+    let util6_sessions_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_sessions WHERE tenant_id = 'util6'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count util6 sessions");
+    assert_eq!(util6_sessions_count, 0, "util6 会话必须已被删除");
+
+    let util6_parts_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_parts WHERE tenant_id = 'util6'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count util6 parts");
+    assert_eq!(util6_parts_count, 0, "util6 零件必须已被删除");
+
+    let util6_fts_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_part_fts WHERE tenant_id = 'util6'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count util6 fts");
+    assert_eq!(util6_fts_count, 0, "util6 全文索引项必须已被删除");
+
+    // B. default 租户数据完整保留
+    let default_sessions_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_sessions WHERE tenant_id = 'default'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count default sessions");
+    assert_eq!(default_sessions_count, 1, "default 会话必须完整保留");
+
+    // C. 非标 ID 已被归一化为 standard conversation-part-<sha256>
+    let non_standard_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_parts WHERE id NOT LIKE 'conversation-part-%'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count non standard parts");
+    assert_eq!(
+        non_standard_count, 0,
+        "全库不得存在非 conversation-part- 前缀的零件 ID"
+    );
+
+    let expected_new_id = derive_standard_part_id("conversation-part", "turn-default-1", 0);
+    let actual_new_id: String = conn
+        .query_row(
+            "SELECT id FROM conversation_parts WHERE tenant_id = 'default' AND turn_id = 'turn-default-1' AND part_index = 0",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query migrated part id");
+    assert_eq!(
+        actual_new_id, expected_new_id,
+        "零件 ID 必须严格等于派生标准 ID"
+    );
+
+    // D. 全文索引 part_id 同步对齐
+    let fts_part_id: String = conn
+        .query_row(
+            "SELECT part_id FROM conversation_part_fts WHERE tenant_id = 'default'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query fts part id");
+    assert_eq!(
+        fts_part_id, expected_new_id,
+        "conversation_part_fts.part_id 必须同步对齐"
+    );
+
+    // E. 幂等性断言：再次运行 migrate_database 零副作用
+    drop(conn);
+    migrate_database(&db_path)
+        .await
+        .expect("idempotent migration");
+
+    cleanup_database(&db_path);
+}
+
 fn cleanup_database(db_path: &std::path::Path) {
     let _ = std::fs::remove_file(db_path);
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
