@@ -2492,7 +2492,7 @@ async fn sqlx_searches_session_and_web_conversation_cards() {
     assert_eq!(web_page.hits[0].session.session.source_id, web_source.id);
     assert_eq!(
         web_page.hits[0].card_type,
-        ConversationSearchCardType::answer()
+        ConversationSearchCardType::new("search-web-external.answer")
     );
     assert!(fragment_page.total_count > 0);
     assert_eq!(fragment_session_ids.len(), 1);

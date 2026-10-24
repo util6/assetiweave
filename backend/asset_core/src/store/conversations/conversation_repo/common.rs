@@ -188,7 +188,7 @@ impl ConversationRecordKind {
                 session_project_path_expr: "NULL",
                 turns: "web_record_turns",
                 parts: "web_record_parts",
-                part_columns: "p.turn_id, p.part_index, p.role, p.kind, json_extract(p.content_card_json, '$.kind') AS card_kind, p.text AS content, NULL AS attrs_json, p.metadata_json, p.translated_text",
+                part_columns: "p.turn_id, p.part_index, CASE WHEN p.kind = 'answer' THEN 'assistant' ELSE 'tool' END AS role, CASE WHEN p.kind = 'answer' THEN 'text' ELSE 'tool' END AS kind, CASE WHEN p.kind = 'answer' THEN s.adapter_id || '.answer' ELSE s.adapter_id || '.result' END AS card_kind, p.content, NULL AS attrs_json, NULL AS metadata_json, p.translated_text",
                 session_id_prefix: "web-record-session-",
                 question_id_prefix: "web-record-question-",
                 turn_id_prefix: "web-record-turn-",

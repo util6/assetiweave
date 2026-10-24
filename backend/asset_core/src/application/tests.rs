@@ -1740,7 +1740,11 @@ async fn conversation_blocks_list_locators_and_get_selected_content_for_each_rec
             .await
             .expect("load only the answer block");
         assert_eq!(answer.content, "Rust fallback should not appear");
-        assert_eq!(answer.locator.kind, "answer");
+        if web_record {
+            assert!(answer.locator.kind.ends_with(".answer"));
+        } else {
+            assert_eq!(answer.locator.kind, "answer");
+        }
         let _ = fs::remove_dir_all(root);
     }
 }
@@ -2862,7 +2866,7 @@ async fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
     .map_err(AppError::external)
     .expect("update conversation adapters card contract");
     sqlx::query(
-        "UPDATE web_record_parts SET text = 'Web reasoning survives', metadata_json = NULL, content_card_json = '{\"schema_version\":1,\"kind\":\"fixture-export.reasoning\",\"renderer\":\"markdown\"}' WHERE tenant_id = ?1",
+        "UPDATE web_record_parts SET content = 'Web reasoning survives', kind = 'process' WHERE tenant_id = ?1",
     )
     .bind(tenant_id)
     .execute(&pool)

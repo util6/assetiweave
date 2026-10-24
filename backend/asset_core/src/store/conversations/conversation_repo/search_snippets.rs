@@ -17,7 +17,15 @@ pub(super) fn push_search_hit_if_matching(
     id_fragment: Option<&str>,
     related_ids: &[&str],
 ) {
-    if !allowed_types.is_empty() && !allowed_types.contains(&card_type) {
+    if !allowed_types.is_empty()
+        && !allowed_types.contains(&card_type)
+        && !allowed_types.iter().any(|allowed| {
+            card_type
+                .as_str()
+                .ends_with(&format!(".{}", allowed.as_str()))
+                || card_type.as_str() == allowed.as_str()
+        })
+    {
         return;
     }
     let matched_by_id = id_fragment.is_some_and(|fragment| {

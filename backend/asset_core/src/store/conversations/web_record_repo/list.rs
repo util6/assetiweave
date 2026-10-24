@@ -165,26 +165,67 @@ pub async fn resolve_web_record_part_id_prefix_sqlx(
     tenant_id: &str,
     input: &str,
 ) -> StoreResult<String> {
-    if input.len() >= 36 {
+    if input.len() >= 36 && input.starts_with("web-record-part-") {
         return Ok(input.to_string());
     }
     let clean_prefix = input.strip_prefix("web-record-part-").unwrap_or(input);
-    let like_pattern_verbatim = format!("{}%", input);
-    let like_pattern_domain = format!("web-record-part-{}%", clean_prefix);
 
-    let rows: Vec<String> = sqlx::query_scalar(
-        r#"
-        SELECT id FROM web_record_parts
-        WHERE tenant_id = ?1 AND (id LIKE ?2 OR id LIKE ?3)
-        LIMIT 11
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(&like_pattern_verbatim)
-    .bind(&like_pattern_domain)
-    .fetch_all(pool)
-    .await
-    .map_err(StoreError::external)?;
+    let mut rows: Vec<String> = Vec::new();
+    if let Some(parsed) = crate::backend::domain::parse_id_key_prefix(clean_prefix) {
+        let part_rows: Vec<(String, i64)> = match parsed.lookup {
+            crate::backend::domain::IdKeyLookup::Exact(key) => {
+                sqlx::query_as(
+                    "SELECT turn_id, part_index FROM web_record_parts WHERE tenant_id = ?1 AND id_key = ?2 LIMIT 11",
+                )
+                .bind(tenant_id)
+                .bind(key.to_vec())
+                .fetch_all(pool)
+                .await
+                .map_err(StoreError::external)?
+            }
+            crate::backend::domain::IdKeyLookup::Range {
+                low,
+                high: Some(high),
+            } => {
+                sqlx::query_as(
+                    "SELECT turn_id, part_index FROM web_record_parts WHERE tenant_id = ?1 AND id_key >= ?2 AND id_key < ?3 LIMIT 11",
+                )
+                .bind(tenant_id)
+                .bind(low.to_vec())
+                .bind(high.to_vec())
+                .fetch_all(pool)
+                .await
+                .map_err(StoreError::external)?
+            }
+            crate::backend::domain::IdKeyLookup::Range { low, high: None } => {
+                sqlx::query_as(
+                    "SELECT turn_id, part_index FROM web_record_parts WHERE tenant_id = ?1 AND id_key >= ?2 LIMIT 11",
+                )
+                .bind(tenant_id)
+                .bind(low.to_vec())
+                .fetch_all(pool)
+                .await
+                .map_err(StoreError::external)?
+            }
+        };
+
+        for (turn_id, part_index) in part_rows {
+            let full_id = crate::backend::domain::derive_standard_part_id(
+                "web-record-part",
+                &turn_id,
+                part_index,
+            );
+            let hash_part = full_id.strip_prefix("web-record-part-").unwrap_or(&full_id);
+            if hash_part.starts_with(&parsed.normalized_hex)
+                || full_id.starts_with(input)
+                || full_id == input
+            {
+                if !rows.contains(&full_id) {
+                    rows.push(full_id);
+                }
+            }
+        }
+    }
 
     match rows.len() {
         0 => Err(StoreError::NotFound(format!(
@@ -245,23 +286,17 @@ pub async fn load_web_record_session_detail_sqlx(
 
     let part_rows = sqlx::query(
         r#"
-        SELECT p.turn_id, p.part_index, p.role, p.kind,
-               json_extract(p.content_card_json, '$.kind') AS card_kind,
-               COALESCE(p.command, p.text) AS content,
-               NULLIF(json_patch('{}', json_object(
-                   'language', p.language,
-                   'cwd', p.cwd,
-                   'status', p.status,
-                   'exit_code', p.exit_code,
-                   'command_label', p.command_label,
-                   'exec_id', p.source_execution_id,
-                   'summary', (CASE WHEN p.kind = 'command' THEN p.text ELSE NULL END),
-                   'renderer', json_extract(p.content_card_json, '$.renderer'),
-                   'semantic_role', json_extract(p.content_card_json, '$.semantic_role')
-               )), '{}') AS attrs_json,
-               p.metadata_json, p.translated_text
+        SELECT p.turn_id, p.part_index,
+               CASE WHEN p.kind = 'answer' THEN 'assistant' ELSE 'tool' END AS role,
+               CASE WHEN p.kind = 'answer' THEN 'text' ELSE 'tool' END AS kind,
+               CASE WHEN p.kind = 'answer' THEN s.adapter_id || '.answer' ELSE s.adapter_id || '.result' END AS card_kind,
+               p.content,
+               NULL AS attrs_json,
+               NULL AS metadata_json,
+               p.translated_text
         FROM web_record_parts p
         JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
+        JOIN web_record_sessions s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
         ORDER BY t.turn_index ASC, p.part_index ASC
         "#,
@@ -309,16 +344,18 @@ pub async fn update_web_record_part_translation_sqlx(
     part_id: &str,
     translated_text: &str,
 ) -> StoreResult<()> {
+    let id_key = crate::backend::domain::derive_part_id_key(part_id)
+        .ok_or_else(|| StoreError::NotFound(format!("invalid web record part id: {part_id}")))?;
     let result = sqlx::query(
         r#"
         UPDATE web_record_parts
         SET translated_text = ?1
-        WHERE tenant_id = ?2 AND id = ?3
+        WHERE tenant_id = ?2 AND id_key = ?3
         "#,
     )
     .bind(translated_text)
     .bind(tenant_id)
-    .bind(part_id)
+    .bind(id_key.to_vec())
     .execute(pool)
     .await
     .map_err(StoreError::external)?;

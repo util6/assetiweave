@@ -224,7 +224,15 @@ pub async fn load_recall_parts_for_questions_sqlx(
         }
         MemoryRecordKind::Web => {
             r#"
-            SELECT t.question_id, p.kind, p.text, p.command, p.cwd, p.command_label, p.metadata_json, p.status, p.exit_code
+            SELECT t.question_id,
+                   (CASE WHEN p.kind = 'answer' THEN 'text' ELSE 'tool' END) AS kind,
+                   p.content AS text,
+                   NULL AS command,
+                   NULL AS cwd,
+                   NULL AS command_label,
+                   NULL AS metadata_json,
+                   NULL AS status,
+                   NULL AS exit_code
             FROM web_record_parts p
             JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
             WHERE p.tenant_id = ?1

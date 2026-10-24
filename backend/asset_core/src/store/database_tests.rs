@@ -1365,6 +1365,29 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
             ALTER TABLE conversation_parts_old RENAME TO conversation_parts;
             ALTER TABLE conversation_sessions DROP COLUMN last_cwd;
 
+            CREATE TABLE web_record_parts_old (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                part_index INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                text TEXT,
+                language TEXT,
+                command TEXT,
+                cwd TEXT,
+                status TEXT,
+                exit_code INTEGER,
+                metadata_json TEXT,
+                content_card_json TEXT,
+                translated_text TEXT,
+                source_execution_id TEXT,
+                command_label TEXT,
+                PRIMARY KEY (tenant_id, id)
+            );
+            DROP TABLE web_record_parts;
+            ALTER TABLE web_record_parts_old RENAME TO web_record_parts;
+
             INSERT INTO conversation_parts (
                 tenant_id, id, turn_id, part_index, role, kind, text
             ) VALUES
@@ -2036,6 +2059,29 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         DROP TABLE conversation_parts;
         ALTER TABLE conversation_parts_old RENAME TO conversation_parts;
         ALTER TABLE conversation_sessions DROP COLUMN last_cwd;
+
+        CREATE TABLE web_record_parts_old (
+            tenant_id TEXT NOT NULL DEFAULT 'default',
+            id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            part_index INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            text TEXT,
+            language TEXT,
+            command TEXT,
+            cwd TEXT,
+            status TEXT,
+            exit_code INTEGER,
+            metadata_json TEXT,
+            content_card_json TEXT,
+            translated_text TEXT,
+            source_execution_id TEXT,
+            command_label TEXT,
+            PRIMARY KEY (tenant_id, id)
+        );
+        DROP TABLE web_record_parts;
+        ALTER TABLE web_record_parts_old RENAME TO web_record_parts;
         "#,
     )
     .expect("recreate old parts table");

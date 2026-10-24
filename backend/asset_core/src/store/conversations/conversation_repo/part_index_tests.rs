@@ -90,7 +90,6 @@ struct SeedPart<'a> {
     command: Option<&'a str>,
     role: &'a str,
     kind: &'a str,
-    content_card_json: Option<&'a str>,
 }
 
 impl<'a> SeedPart<'a> {
@@ -101,7 +100,6 @@ impl<'a> SeedPart<'a> {
             command: None,
             role: "tool",
             kind: "text",
-            content_card_json: None,
         }
     }
 
@@ -112,9 +110,6 @@ impl<'a> SeedPart<'a> {
             command: Some(command),
             role: "tool",
             kind: "command",
-            content_card_json: Some(
-                r#"{"schema_version":1,"kind":"fixture.command","renderer":"command"}"#,
-            ),
         }
     }
 }
@@ -158,26 +153,24 @@ async fn seed_part(
             .expect("seed part");
         }
         ConversationRecordKind::Web => {
+            let id_key = derive_part_id_key(&part_id).unwrap_or([0u8; 8]);
+            let is_answer =
+                part.kind == "text" || part.kind == "code_block" || part.role == "assistant";
+            let kind = if is_answer { "answer" } else { "process" };
+            let content = part.text.or(part.command).unwrap_or_default();
             sqlx::query(
                 r#"
                 INSERT INTO web_record_parts (
-                    tenant_id, id, turn_id, part_index, role, kind, text, language, command,
-                    cwd, status, exit_code, metadata_json, content_card_json, translated_text,
-                    source_execution_id, command_label
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, NULL, NULL, NULL, ?9, ?10, NULL,
-                          NULL, NULL)
+                    tenant_id, turn_id, part_index, id_key, kind, content, translated_text
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)
                 "#,
             )
             .bind(TENANT_ID)
-            .bind(&part_id)
             .bind(turn_id)
             .bind(index)
-            .bind(part.role)
-            .bind(part.kind)
-            .bind(part.text)
-            .bind(part.command)
-            .bind(metadata_json)
-            .bind(part.content_card_json)
+            .bind(id_key.to_vec())
+            .bind(kind)
+            .bind(content)
             .execute(pool)
             .await
             .expect("seed part");

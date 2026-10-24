@@ -50,6 +50,11 @@ pub fn derive_part_id(prefix: &str, turn_id: &str, part_index: i64) -> String {
     stable_id(prefix, &[turn_id, &index_str])
 }
 
+/// Derives a canonical standard part ID with a specific prefix.
+pub fn derive_standard_part_id(prefix: &str, turn_id: &str, part_index: i64) -> String {
+    derive_part_id(prefix, turn_id, part_index)
+}
+
 /// Extracts the first 16 hex characters (8 bytes) of the SHA-256 digest from a part ID.
 pub fn derive_part_id_key(part_id: &str) -> Option<[u8; 8]> {
     let hex_str = if let Some(idx) = part_id.rfind('-') {

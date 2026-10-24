@@ -4,7 +4,6 @@ use crate::backend::infrastructure::tasks::{stages, StageStatus, TaskState};
 async fn seed_indexed_session(service: &AppService, session_id: &str, body: &str) {
     let tenant_id = service.tenant_id();
     let turn_id = format!("{session_id}-turn");
-    let part_id = format!("{session_id}-part");
     sqlx::query(
         r#"
         INSERT INTO conversation_sessions (

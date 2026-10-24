@@ -225,43 +225,33 @@ async fn query_parts_by_id_key(
     pool: &SqlitePool,
     tenant_id: &str,
     lookup: &IdKeyLookup,
+    parts_table: &str,
+    turns_table: &str,
 ) -> StoreResult<Vec<(String, String, i64)>> {
-    match lookup {
-        IdKeyLookup::Exact(key) => sqlx::query_as(
-            "SELECT t.session_id, p.turn_id, p.part_index FROM conversation_parts p \
-                 JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
-                 WHERE p.tenant_id = ?1 AND p.id_key = ?2 LIMIT 11",
-        )
-        .bind(tenant_id)
-        .bind(key.to_vec())
-        .fetch_all(pool)
-        .await
-        .map_err(StoreError::external),
+    let (clause, low_vec, high_vec) = match lookup {
+        IdKeyLookup::Exact(key) => ("p.id_key = ?2", key.to_vec(), None),
         IdKeyLookup::Range {
             low,
             high: Some(high),
-        } => sqlx::query_as(
-            "SELECT t.session_id, p.turn_id, p.part_index FROM conversation_parts p \
-                 JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
-                 WHERE p.tenant_id = ?1 AND p.id_key >= ?2 AND p.id_key < ?3 LIMIT 11",
-        )
+        } => (
+            "p.id_key >= ?2 AND p.id_key < ?3",
+            low.to_vec(),
+            Some(high.to_vec()),
+        ),
+        IdKeyLookup::Range { low, high: None } => ("p.id_key >= ?2", low.to_vec(), None),
+    };
+    let sql = format!(
+        "SELECT t.session_id, p.turn_id, p.part_index FROM {parts_table} p \
+         JOIN {turns_table} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+         WHERE p.tenant_id = ?1 AND {clause} LIMIT 11"
+    );
+    let mut q = sqlx::query_as(AssertSqlSafe(sql))
         .bind(tenant_id)
-        .bind(low.to_vec())
-        .bind(high.to_vec())
-        .fetch_all(pool)
-        .await
-        .map_err(StoreError::external),
-        IdKeyLookup::Range { low, high: None } => sqlx::query_as(
-            "SELECT t.session_id, p.turn_id, p.part_index FROM conversation_parts p \
-                 JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
-                 WHERE p.tenant_id = ?1 AND p.id_key >= ?2 LIMIT 11",
-        )
-        .bind(tenant_id)
-        .bind(low.to_vec())
-        .fetch_all(pool)
-        .await
-        .map_err(StoreError::external),
+        .bind(low_vec);
+    if let Some(high) = high_vec {
+        q = q.bind(high);
     }
+    q.fetch_all(pool).await.map_err(StoreError::external)
 }
 
 pub async fn resolve_conversation_part_id_prefix_sqlx(
@@ -281,14 +271,17 @@ pub async fn resolve_conversation_part_id_prefix_sqlx(
         .or_else(|| trimmed.strip_prefix("web-record-part-"))
         .unwrap_or(trimmed);
 
-    let verbatim_like = format!("{trimmed}%");
-    let web_like = format!("web-record-part-{clean_hash}%");
-    let hash_like = format!("%-{clean_hash}%");
-
     let mut rows: Vec<String> = Vec::new();
 
     if let Some(parsed) = parse_id_key_prefix(clean_hash) {
-        let part_rows = query_parts_by_id_key(pool, tenant_id, &parsed.lookup).await?;
+        let part_rows = query_parts_by_id_key(
+            pool,
+            tenant_id,
+            &parsed.lookup,
+            "conversation_parts",
+            "conversation_turns",
+        )
+        .await?;
         for (_, turn_id, part_index) in part_rows {
             let full_id = derive_conversation_part_id(&turn_id, part_index);
             let hash_part = full_id
@@ -303,24 +296,29 @@ pub async fn resolve_conversation_part_id_prefix_sqlx(
                 }
             }
         }
-    }
-
-    let web_rows: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM web_record_parts \
-         WHERE tenant_id = ?1 AND (id = ?2 OR id LIKE ?3 OR id LIKE ?4 OR id LIKE ?5) LIMIT 11",
-    )
-    .bind(tenant_id)
-    .bind(trimmed)
-    .bind(&verbatim_like)
-    .bind(&web_like)
-    .bind(&hash_like)
-    .fetch_all(pool)
-    .await
-    .map_err(StoreError::external)?;
-
-    for id in web_rows {
-        if !rows.contains(&id) {
-            rows.push(id);
+        let web_rows = query_parts_by_id_key(
+            pool,
+            tenant_id,
+            &parsed.lookup,
+            "web_record_parts",
+            "web_record_turns",
+        )
+        .await?;
+        for (_, turn_id, part_index) in web_rows {
+            let full_id = crate::backend::domain::derive_standard_part_id(
+                "web-record-part",
+                &turn_id,
+                part_index,
+            );
+            let hash_part = full_id.strip_prefix("web-record-part-").unwrap_or(&full_id);
+            if hash_part.starts_with(&parsed.normalized_hex)
+                || full_id.starts_with(trimmed)
+                || full_id == trimmed
+            {
+                if !rows.contains(&full_id) {
+                    rows.push(full_id);
+                }
+            }
         }
     }
 
@@ -402,11 +400,6 @@ pub async fn resolve_any_id_to_session_id_sqlx(
             SELECT t.session_id, 'web' AS kind
             FROM web_record_turns t
             WHERE t.tenant_id = ?1 AND (t.id = ?2 OR t.id LIKE ?3 OR t.id LIKE ?4)
-            UNION
-            SELECT t.session_id, 'web' AS kind
-            FROM web_record_parts p
-            JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
-            WHERE p.tenant_id = ?1 AND (p.id = ?2 OR p.id LIKE ?3 OR p.id LIKE ?4)
         )
         SELECT session_id, kind FROM candidates LIMIT 11
     "#;
@@ -421,9 +414,30 @@ pub async fn resolve_any_id_to_session_id_sqlx(
         .map_err(StoreError::external)?;
 
     if let Some(parsed) = parse_id_key_prefix(clean_hash) {
-        let part_rows = query_parts_by_id_key(pool, tenant_id, &parsed.lookup).await?;
+        let part_rows = query_parts_by_id_key(
+            pool,
+            tenant_id,
+            &parsed.lookup,
+            "conversation_parts",
+            "conversation_turns",
+        )
+        .await?;
         for (session_id, _, _) in part_rows {
             let item = (session_id, "session".to_string());
+            if !rows.contains(&item) {
+                rows.push(item);
+            }
+        }
+        let web_part_rows = query_parts_by_id_key(
+            pool,
+            tenant_id,
+            &parsed.lookup,
+            "web_record_parts",
+            "web_record_turns",
+        )
+        .await?;
+        for (session_id, _, _) in web_part_rows {
+            let item = (session_id, "web".to_string());
             if !rows.contains(&item) {
                 rows.push(item);
             }

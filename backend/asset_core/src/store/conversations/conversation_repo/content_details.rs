@@ -156,11 +156,13 @@ pub async fn list_conversation_block_locators_sqlx(
         SELECT {part_columns}
         FROM {turns} t
         JOIN {parts} p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
+        JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
         WHERE t.tenant_id = ?1 AND t.session_id = ?2 AND t.question_id = ?3
         ORDER BY t.turn_index ASC, p.part_index ASC
         "#,
         turns = tables.turns,
         parts = tables.parts,
+        sessions = tables.sessions,
         part_columns = tables.part_columns,
     )))
     .bind(tenant_id)
@@ -337,36 +339,23 @@ pub async fn load_conversation_block_detail_sqlx(
         .await
         .unwrap_or_else(|_| raw_part_id.to_string());
 
-    let (where_clause, bind_key, bind_id) = if record_kind == ConversationRecordKind::Session {
-        let key = crate::backend::domain::derive_part_id_key(&resolved_part_id).unwrap_or([0u8; 8]);
-        ("p.tenant_id = ?1 AND p.id_key = ?2", Some(key), None)
-    } else {
-        (
-            "p.tenant_id = ?1 AND p.id = ?2",
-            None,
-            Some(resolved_part_id.clone()),
-        )
-    };
-
+    let key = crate::backend::domain::derive_part_id_key(&resolved_part_id).unwrap_or([0u8; 8]);
     let query = format!(
         r#"
         SELECT {part_columns}, t.question_id, t.session_id
         FROM {parts} p
         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
-        WHERE {where_clause}
+        JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
+        WHERE p.tenant_id = ?1 AND p.id_key = ?2
         "#,
         parts = tables.parts,
         turns = tables.turns,
+        sessions = tables.sessions,
         part_columns = tables.part_columns,
     );
-    let mut q =
-        sqlx::query_as::<_, ConversationPartDetailRow>(AssertSqlSafe(query)).bind(tenant_id);
-    if let Some(key) = bind_key {
-        q = q.bind(key.to_vec());
-    } else if let Some(ref id) = bind_id {
-        q = q.bind(id);
-    }
-    let row = q
+    let row = sqlx::query_as::<_, ConversationPartDetailRow>(AssertSqlSafe(query))
+        .bind(tenant_id)
+        .bind(key.to_vec())
         .fetch_optional(pool)
         .await
         .map_err(StoreError::external)?
@@ -395,7 +384,7 @@ pub async fn load_conversation_block_detail_sqlx(
             .unwrap_or_default();
         let locator = ConversationBlockLocator {
             record_kind: conversation_record_kind_label(record_kind).to_string(),
-            session_id: session_id.clone(),
+            session_id: session_id.to_string(),
             question_id: question_id.clone(),
             turn_id: part.turn_id.clone(),
             block_id: block_id.to_string(),

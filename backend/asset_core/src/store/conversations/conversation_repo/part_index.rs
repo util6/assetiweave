@@ -101,9 +101,13 @@ async fn load_turn_parts_sqlx_tx(
     let tables = record_kind.tables();
     let query = format!(
         "SELECT {part_columns} FROM {parts} p \
+         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+         JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id \
          WHERE p.tenant_id = ?1 AND p.turn_id = ?2 ORDER BY p.part_index ASC",
         part_columns = tables.part_columns,
         parts = tables.parts,
+        turns = tables.turns,
+        sessions = tables.sessions,
     );
     let rows = sqlx::query(AssertSqlSafe(query))
         .bind(tenant_id)
@@ -124,11 +128,13 @@ async fn load_session_parts_sqlx_tx(
     let query = format!(
         "SELECT {part_columns} FROM {parts} p \
          JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+         JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id \
          WHERE p.tenant_id = ?1 AND t.session_id = ?2 \
          ORDER BY p.turn_id ASC, p.part_index ASC",
         part_columns = tables.part_columns,
         parts = tables.parts,
         turns = tables.turns,
+        sessions = tables.sessions,
     );
     let rows = sqlx::query(AssertSqlSafe(query))
         .bind(tenant_id)

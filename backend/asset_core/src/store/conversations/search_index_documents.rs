@@ -116,7 +116,6 @@ pub async fn load_conversation_search_index_documents_sqlx(
             r#"
             SELECT s.id AS session_id, t.question_id AS question_id, t.id AS turn_id,
                    p.part_index AS part_index, {group_title} AS question_title, t.user_text AS user_text,
-                   p.role AS role, p.kind AS kind,
                    {part_projection},
                    s.adapter_id AS adapter_id, s.source_id AS source_id,
                    {project_path} AS project_path, COALESCE(a.card_kinds_json, '[]') AS card_kinds_json
@@ -254,7 +253,7 @@ impl SearchDocumentTables {
             parts: "conversation_parts",
             project_path: "COALESCE(s.project_path, '')",
             part_projection:
-                "p.card_kind, p.content, p.attrs_json, p.metadata_json, p.translated_text",
+                "p.role AS role, p.kind AS kind, p.card_kind, p.content, p.attrs_json, p.metadata_json, p.translated_text",
         }
     }
 
@@ -266,20 +265,12 @@ impl SearchDocumentTables {
             parts: "web_record_parts",
             project_path: "''",
             part_projection: r#"
-                (CASE WHEN p.content_card_json IS NOT NULL THEN json_extract(p.content_card_json, '$.kind') ELSE NULL END) AS card_kind,
-                COALESCE(p.command, p.text) AS content,
-                NULLIF(json_patch('{}', json_object(
-                    'language', p.language,
-                    'cwd', p.cwd,
-                    'status', p.status,
-                    'exit_code', p.exit_code,
-                    'command_label', p.command_label,
-                    'exec_id', p.source_execution_id,
-                    'summary', (CASE WHEN p.kind = 'command' THEN p.text ELSE NULL END),
-                    'renderer', (CASE WHEN p.content_card_json IS NOT NULL THEN json_extract(p.content_card_json, '$.renderer') ELSE NULL END),
-                    'semantic_role', (CASE WHEN p.content_card_json IS NOT NULL THEN json_extract(p.content_card_json, '$.semantic_role') ELSE NULL END)
-                )), '{}') AS attrs_json,
-                p.metadata_json,
+                (CASE WHEN p.kind = 'answer' THEN 'assistant' ELSE 'tool' END) AS role,
+                (CASE WHEN p.kind = 'answer' THEN 'text' ELSE 'tool' END) AS kind,
+                (CASE WHEN p.kind = 'answer' THEN s.adapter_id || '.answer' ELSE s.adapter_id || '.result' END) AS card_kind,
+                p.content,
+                NULL AS attrs_json,
+                NULL AS metadata_json,
                 p.translated_text
             "#,
         }

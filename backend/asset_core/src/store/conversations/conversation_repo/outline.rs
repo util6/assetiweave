@@ -43,21 +43,9 @@ pub async fn resolve_outline_target_sqlx(
         .unwrap_or(trimmed);
 
     let raw_part_id = super::projection::conversation_part_id_for_block_id(trimmed);
-    let raw_clean_hash = raw_part_id
-        .strip_prefix("conversation-session-")
-        .or_else(|| raw_part_id.strip_prefix("conversation-question-"))
-        .or_else(|| raw_part_id.strip_prefix("conversation-turn-"))
-        .or_else(|| raw_part_id.strip_prefix("conversation-part-"))
-        .or_else(|| raw_part_id.strip_prefix("web-record-session-"))
-        .or_else(|| raw_part_id.strip_prefix("web-record-question-"))
-        .or_else(|| raw_part_id.strip_prefix("web-record-turn-"))
-        .or_else(|| raw_part_id.strip_prefix("web-record-part-"))
-        .unwrap_or(raw_part_id);
 
     let verbatim_like = format!("{trimmed}%");
     let hash_like = format!("%-{clean_hash}%");
-    let raw_verbatim_like = format!("{raw_part_id}%");
-    let raw_hash_like = format!("%-{raw_clean_hash}%");
 
     let query = r#"
         WITH candidates AS (
@@ -76,11 +64,6 @@ pub async fn resolve_outline_target_sqlx(
             SELECT t.id AS entity_id, t.session_id, t.id AS turn_id, 'turn' AS level, 'web' AS kind
             FROM web_record_turns t
             WHERE t.tenant_id = ?1 AND (t.id = ?2 OR t.id LIKE ?3 OR t.id LIKE ?4)
-            UNION
-            SELECT p.id AS entity_id, t.session_id, p.turn_id, 'card' AS level, 'web' AS kind
-            FROM web_record_parts p
-            JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
-            WHERE p.tenant_id = ?1 AND (p.id = ?2 OR p.id LIKE ?3 OR p.id LIKE ?4 OR p.id = ?5 OR p.id LIKE ?6 OR p.id LIKE ?7)
         )
         SELECT entity_id, session_id, turn_id, level, kind FROM candidates LIMIT 11
     "#;
@@ -90,9 +73,6 @@ pub async fn resolve_outline_target_sqlx(
         .bind(trimmed)
         .bind(&verbatim_like)
         .bind(&hash_like)
-        .bind(raw_part_id)
-        .bind(&raw_verbatim_like)
-        .bind(&raw_hash_like)
         .fetch_all(pool)
         .await
         .map_err(StoreError::external)?;
@@ -157,6 +137,71 @@ pub async fn resolve_outline_target_sqlx(
                     turn_id,
                     "card".to_string(),
                     "session".to_string(),
+                ));
+            }
+        }
+
+        let web_parts_query = match parsed.lookup {
+            crate::backend::domain::IdKeyLookup::Exact(key) => {
+                sqlx::query_as::<_, (String, String, i64)>(
+                    "SELECT t.session_id, p.turn_id, p.part_index \
+                 FROM web_record_parts p \
+                 JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+                 WHERE p.tenant_id = ?1 AND p.id_key = ?2 LIMIT 11",
+                )
+                .bind(tenant_id)
+                .bind(key.to_vec())
+            }
+            crate::backend::domain::IdKeyLookup::Range {
+                low,
+                high: Some(high),
+            } => sqlx::query_as::<_, (String, String, i64)>(
+                "SELECT t.session_id, p.turn_id, p.part_index \
+                 FROM web_record_parts p \
+                 JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+                 WHERE p.tenant_id = ?1 AND p.id_key >= ?2 AND p.id_key < ?3 LIMIT 11",
+            )
+            .bind(tenant_id)
+            .bind(low.to_vec())
+            .bind(high.to_vec()),
+            crate::backend::domain::IdKeyLookup::Range { low, high: None } => {
+                sqlx::query_as::<_, (String, String, i64)>(
+                    "SELECT t.session_id, p.turn_id, p.part_index \
+                     FROM web_record_parts p \
+                     JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+                     WHERE p.tenant_id = ?1 AND p.id_key >= ?2 LIMIT 11",
+                )
+                .bind(tenant_id)
+                .bind(low.to_vec())
+            }
+        };
+
+        let web_part_matches = web_parts_query
+            .fetch_all(pool)
+            .await
+            .map_err(StoreError::external)?;
+        for (session_id, turn_id, part_index) in web_part_matches {
+            let full_id = crate::backend::domain::derive_standard_part_id(
+                "web-record-part",
+                &turn_id,
+                part_index,
+            );
+            let hash_part = full_id.strip_prefix("web-record-part-").unwrap_or(&full_id);
+            if hash_part.starts_with(&parsed.normalized_hex)
+                || full_id.starts_with(trimmed)
+                || full_id == raw_part_id
+            {
+                let candidate_id = if let Some(order) = parsed.node_order {
+                    format!("{full_id}-node-{order}")
+                } else {
+                    full_id
+                };
+                rows.push((
+                    candidate_id,
+                    session_id,
+                    turn_id,
+                    "card".to_string(),
+                    "web".to_string(),
                 ));
             }
         }

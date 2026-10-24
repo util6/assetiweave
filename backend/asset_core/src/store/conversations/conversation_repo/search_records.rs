@@ -11,8 +11,7 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
     let (question_lower, question_upper) =
         conversation_id_fragment_range(tables.question_id_prefix, fragment);
     let (turn_lower, turn_upper) = conversation_id_fragment_range(tables.turn_id_prefix, fragment);
-    let (part_lower, part_upper) = conversation_id_fragment_range(tables.part_id_prefix, fragment);
-    let (part_clause, part_low_bytes, part_high_bytes) = if tables.parts == "conversation_parts" {
+    let (part_clause, part_low_bytes, part_high_bytes) =
         if let Some(parsed) = crate::backend::domain::parse_id_key_prefix(fragment) {
             let (low, high) = match parsed.lookup {
                 crate::backend::domain::IdKeyLookup::Exact(exact) => (exact, exact),
@@ -22,15 +21,12 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
             };
             (
                 "p.id_key >= ?8 AND p.id_key <= ?9",
-                Some(low.to_vec()),
-                Some(high.to_vec()),
+                low.to_vec(),
+                high.to_vec(),
             )
         } else {
-            ("0 = 1", None, None)
-        }
-    } else {
-        ("p.id >= ?8 AND p.id < ?9", None, None)
-    };
+            ("0 = 1", Vec::new(), Vec::new())
+        };
     let query = format!(
         r#"
         SELECT session_id FROM (
@@ -60,7 +56,7 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
         parts = tables.parts,
         part_clause = part_clause,
     );
-    let mut builder = sqlx::query_scalar::<_, String>(AssertSqlSafe(query))
+    let builder = sqlx::query_scalar::<_, String>(AssertSqlSafe(query))
         .bind(tenant_id)
         .bind(session_lower)
         .bind(session_upper)
@@ -68,12 +64,9 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
         .bind(question_upper)
         .bind(turn_lower)
         .bind(turn_upper);
-    if let (Some(low), Some(high)) = (part_low_bytes, part_high_bytes) {
-        builder = builder.bind(low).bind(high);
-    } else {
-        builder = builder.bind(part_lower).bind(part_upper);
-    }
     let rows = builder
+        .bind(part_low_bytes)
+        .bind(part_high_bytes)
         .fetch_all(pool)
         .await
         .map_err(StoreError::external)?;
