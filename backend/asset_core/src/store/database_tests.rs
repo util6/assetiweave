@@ -2372,3 +2372,302 @@ fn cleanup_database(db_path: &std::path::Path) {
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
 }
+
+#[tokio::test]
+async fn acceptance_spec_126_turn_triad_schema_and_parts_slimming() {
+    let db_path = temp_database_path("spec-126-turn-triad");
+    migrate_database(&db_path).await.expect("initial migration");
+
+    let conn = Connection::open(&db_path).expect("open database");
+
+    // 1. 验证 PRAGMA table_info
+    let turn_cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(conversation_turns)")
+            .expect("prepare pragma");
+        let rows = stmt
+            .query_map([], |row| row.get(1))
+            .expect("query map")
+            .collect::<Result<Vec<String>, _>>()
+            .expect("collect cols");
+        rows
+    };
+    assert_eq!(turn_cols.len(), 17, "conversation_turns 必须严格为 17 列");
+    assert!(turn_cols.contains(&"prompt".to_string()));
+    assert!(turn_cols.contains(&"process".to_string()));
+    assert!(turn_cols.contains(&"response".to_string()));
+    assert!(!turn_cols.contains(&"user_text".to_string()));
+
+    let web_turn_cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(web_record_turns)")
+            .expect("prepare pragma");
+        let rows = stmt
+            .query_map([], |row| row.get(1))
+            .expect("query map")
+            .collect::<Result<Vec<String>, _>>()
+            .expect("collect cols");
+        rows
+    };
+    assert_eq!(
+        turn_cols, web_turn_cols,
+        "conversation_turns 与 web_record_turns 列结构必须 100% 同构对齐"
+    );
+
+    let part_cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(conversation_parts)")
+            .expect("prepare pragma");
+        let rows = stmt
+            .query_map([], |row| row.get(1))
+            .expect("query map")
+            .collect::<Result<Vec<String>, _>>()
+            .expect("collect cols");
+        rows
+    };
+    assert_eq!(
+        part_cols,
+        vec![
+            "tenant_id",
+            "turn_id",
+            "part_index",
+            "id_key",
+            "kind",
+            "content",
+            "attrs_json",
+            "translated_text"
+        ],
+        "conversation_parts 必须严格为 8 列且不包含 role, card_kind, metadata_json"
+    );
+
+    // 2. 构造历史脏数据并执行迁移自愈测试
+    conn.execute(
+        "DELETE FROM _sqlx_migrations WHERE CAST(version AS TEXT) >= '202610250001'",
+        [],
+    )
+    .expect("delete migration version");
+
+    conn.execute_batch(
+        r#"
+        DROP TABLE conversation_parts;
+        CREATE TABLE conversation_parts (
+            tenant_id       TEXT NOT NULL DEFAULT 'default',
+            turn_id         TEXT NOT NULL,
+            part_index      INTEGER NOT NULL,
+            id_key          BLOB NOT NULL,
+            role            TEXT NOT NULL,
+            kind            TEXT NOT NULL,
+            card_kind       TEXT,
+            content         TEXT,
+            attrs_json      TEXT,
+            metadata_json   TEXT,
+            translated_text TEXT,
+            UNIQUE (tenant_id, turn_id, part_index)
+        );
+
+        DROP TABLE conversation_turns;
+        CREATE TABLE conversation_turns (
+            tenant_id       TEXT NOT NULL DEFAULT 'default',
+            id              TEXT NOT NULL,
+            session_id      TEXT NOT NULL,
+            external_id     TEXT NOT NULL,
+            turn_index      INTEGER NOT NULL,
+            user_text       TEXT NOT NULL,
+            title           TEXT,
+            started_at      TEXT,
+            ended_at        TEXT,
+            model           TEXT,
+            fingerprint     TEXT NOT NULL,
+            missing         INTEGER NOT NULL DEFAULT 0,
+            imported_at     TEXT NOT NULL,
+            question_id     TEXT NOT NULL DEFAULT '',
+            question_origin TEXT NOT NULL DEFAULT 'imported',
+            PRIMARY KEY (tenant_id, id),
+            UNIQUE (tenant_id, session_id, external_id)
+        );
+
+        DROP TABLE web_record_turns;
+        CREATE TABLE web_record_turns (
+            tenant_id       TEXT NOT NULL DEFAULT 'default',
+            id              TEXT NOT NULL,
+            session_id      TEXT NOT NULL,
+            external_id     TEXT NOT NULL,
+            turn_index      INTEGER NOT NULL,
+            user_text       TEXT NOT NULL,
+            title           TEXT,
+            started_at      TEXT,
+            ended_at        TEXT,
+            model           TEXT,
+            fingerprint     TEXT NOT NULL,
+            missing         INTEGER NOT NULL DEFAULT 0,
+            imported_at     TEXT NOT NULL,
+            question_id     TEXT NOT NULL DEFAULT '',
+            question_origin TEXT NOT NULL DEFAULT 'imported',
+            PRIMARY KEY (tenant_id, id),
+            UNIQUE (tenant_id, session_id, external_id)
+        );
+        "#,
+    )
+    .expect("create pre-migration schema");
+
+    conn.execute(
+        "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at)
+         VALUES ('default', 'sess-126', 'src-1', 'codex', 'ext-126', 'Test Session', 0, '2026-10-25T00:00:00Z', '2026-10-25T00:00:00Z')",
+        [],
+    ).expect("insert session");
+
+    conn.execute(
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, imported_at)
+         VALUES ('default', 'turn-126', 'sess-126', 't-126', 0, '用户历史提问', 'fp-1', '2026-10-25T00:00:00Z')",
+        [],
+    ).expect("insert turn");
+
+    let dummy_id_key = [1u8; 8];
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 0, ?1, 'assistant', 'text', 'codex.answer', '我正在分析环境...', NULL, NULL, NULL)",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p0");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 1, ?1, 'tool', 'command', 'codex.command', 'npm test', '{\"exec_id\":\"exec_cmd1\",\"exit_code\":0,\"cwd\":\"/app\"}', NULL, NULL)",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p1");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 2, ?1, 'tool', 'tool', 'codex.result', NULL, '{\"exec_id\":\"exec_cmd1\",\"exit_code\":1,\"status\":\"failed\"}', NULL, NULL)",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p2");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 3, ?1, 'user', 'text', 'codex.user', '用户历史提问', NULL, NULL, NULL)",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p3");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 4, ?1, 'tool', 'tool', 'codex.result', '3 tests failed', '{\"exec_id\":\"exec_cmd1\",\"renderer\":\"cmd\",\"semantic_role\":\"error\",\"call_id\":\"c1\"}', NULL, NULL)",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p4");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 5, ?1, 'assistant', 'code_block', NULL, 'console.log(1)', NULL, '{\"content_card\":{\"kind\":\"codex.code\"}}', NULL)",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p5");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 6, ?1, 'assistant', 'text', 'codex.answer', '测试已修复。', NULL, NULL, 'Tests fixed.')",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p6");
+
+    drop(conn);
+
+    // 3. 执行迁移
+    migrate_database(&db_path).await.expect("run migration 126");
+
+    let conn = Connection::open(&db_path).expect("reopen database");
+
+    // 4. 断言 conversation_turns
+    let (prompt, process_str, response): (String, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT prompt, process, response FROM conversation_turns WHERE id = 'turn-126'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .expect("query turn");
+
+    assert_eq!(prompt, "用户历史提问");
+    assert_eq!(response.as_deref(), Some("测试已修复。"));
+
+    let process_val: serde_json::Value =
+        serde_json::from_str(&process_str.expect("process must exist")).unwrap();
+    assert_eq!(
+        process_val.get("cwd").and_then(|v| v.as_str()),
+        Some("/app")
+    );
+    assert_eq!(
+        process_val.get("response_seq").and_then(|v| v.as_i64()),
+        Some(6)
+    );
+    assert_eq!(
+        process_val
+            .get("response_translated_text")
+            .and_then(|v| v.as_str()),
+        Some("Tests fixed.")
+    );
+
+    let items = process_val
+        .get("items")
+        .and_then(|v| v.as_array())
+        .expect("items array");
+    assert_eq!(items.len(), 1);
+    let cmd1 = &items[0];
+    assert_eq!(cmd1.get("seq").and_then(|v| v.as_i64()), Some(1));
+    assert_eq!(
+        cmd1.get("content").and_then(|v| v.as_str()),
+        Some("npm test")
+    );
+    // 空壳 .result 的 exit_code 1 与 status failed 回填至命令
+    assert_eq!(cmd1.get("exit_code").and_then(|v| v.as_i64()), Some(1));
+    assert_eq!(cmd1.get("status").and_then(|v| v.as_str()), Some("failed"));
+
+    // 5. 断言 conversation_parts：命令行(1)、空壳行(2)、user行(3)、尾回答(6) 已全部剔除
+    let remaining_indices: Vec<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT part_index FROM conversation_parts WHERE turn_id = 'turn-126' ORDER BY part_index ASC")
+            .expect("prepare stmt");
+        stmt.query_map([], |r| r.get(0))
+            .expect("query map")
+            .collect::<Result<Vec<i64>, _>>()
+            .expect("collect indices")
+    };
+    assert_eq!(remaining_indices, vec![0, 4, 5]);
+
+    // Part 0: 中途 answer 归位为 reasoning
+    let p0_kind: String = conn
+        .query_row(
+            "SELECT kind FROM conversation_parts WHERE turn_id = 'turn-126' AND part_index = 0",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query p0 kind");
+    assert_eq!(p0_kind, "codex.reasoning");
+
+    // Part 4: 非空报错 result 带有 cmd_seq: 1，且无 exec_id, renderer, semantic_role
+    let p4_attrs_str: String = conn
+        .query_row(
+            "SELECT attrs_json FROM conversation_parts WHERE turn_id = 'turn-126' AND part_index = 4",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query p4 attrs");
+    let p4_attrs: serde_json::Value = serde_json::from_str(&p4_attrs_str).unwrap();
+    assert_eq!(p4_attrs.get("cmd_seq").and_then(|v| v.as_i64()), Some(1));
+    assert!(p4_attrs.get("exec_id").is_none());
+    assert!(p4_attrs.get("call_id").is_none());
+    assert!(p4_attrs.get("renderer").is_none());
+    assert!(p4_attrs.get("semantic_role").is_none());
+
+    // Part 5: card_kind IS NULL 自愈为 codex.code
+    let p5_kind: String = conn
+        .query_row(
+            "SELECT kind FROM conversation_parts WHERE turn_id = 'turn-126' AND part_index = 5",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query p5 kind");
+    assert_eq!(p5_kind, "codex.code");
+
+    // 6. 幂等性断言：再次运行 migrate_database 零副作用
+    drop(conn);
+    migrate_database(&db_path)
+        .await
+        .expect("idempotent migration");
+
+    cleanup_database(&db_path);
+}
