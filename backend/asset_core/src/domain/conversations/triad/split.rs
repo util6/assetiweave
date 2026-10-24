@@ -239,12 +239,6 @@ pub fn split_turn_triad(
                 attrs_map.insert("command_label".to_string(), serde_json::json!(lbl));
             }
         }
-        if let Some(ref r) = part.semantic_role {
-            attrs_map.insert("semantic_role".to_string(), serde_json::json!(r));
-        }
-        if let Some(ref r) = part.renderer {
-            attrs_map.insert("renderer".to_string(), serde_json::json!(r));
-        }
 
         let attrs_json = if attrs_map.is_empty() {
             None
@@ -269,6 +263,26 @@ pub fn split_turn_triad(
             || is_answer_candidate(adapter_id, part)
         {
             format!("{adapter_id}.reasoning")
+        } else if part.kind == ConversationPartKind::Subagent
+            || part.semantic_role.as_deref() == Some("subagent")
+        {
+            if kind.ends_with(".subagent") || kind == "subagent" {
+                kind.to_string()
+            } else {
+                format!("{adapter_id}.subagent")
+            }
+        } else if part.kind == ConversationPartKind::FileChange
+            || part.semantic_role.as_deref() == Some("file_change")
+        {
+            if kind.ends_with(".file-change")
+                || kind.ends_with(".file_change")
+                || kind == "file-change"
+                || kind == "file_change"
+            {
+                kind.to_string()
+            } else {
+                format!("{adapter_id}.file-change")
+            }
         } else if !kind.is_empty() {
             kind.to_string()
         } else {
