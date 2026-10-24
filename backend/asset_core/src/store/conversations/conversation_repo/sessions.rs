@@ -217,22 +217,7 @@ pub(super) const LIST_RECENT_CONVERSATION_SESSIONS_SQL: &str = r#"
                    WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                ) AS turn_count,
                s.updated_at AS last_activity_at,
-               (
-                   SELECT p.cwd
-                   FROM conversation_turns t
-                   CROSS JOIN conversation_parts p INDEXED BY idx_conversation_parts_tenant_turn
-                   WHERE t.tenant_id = s.tenant_id
-                     AND t.session_id = s.id
-                     AND p.tenant_id = t.tenant_id
-                     AND p.turn_id = t.id
-                     AND p.cwd IS NOT NULL
-                     AND trim(p.cwd) <> ''
-                   ORDER BY COALESCE(t.ended_at, t.started_at) DESC,
-                            t.turn_index DESC,
-                            p.part_index DESC,
-                            p.id DESC
-                   LIMIT 1
-               ) AS cwd,
+               s.last_cwd AS cwd,
                COALESCE(NULLIF(trim(a.name), ''), s.adapter_id) AS source_agent
         FROM conversation_sessions s
         JOIN conversation_sources source

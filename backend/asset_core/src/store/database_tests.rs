@@ -2133,6 +2133,138 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
     cleanup_database(&db_path);
 }
 
+#[tokio::test]
+async fn acceptance_spec_119_last_cwd_materialization_and_redundant_index_removal() {
+    let db_path = temp_database_path("spec-119-last-cwd");
+    migrate_database(&db_path).await.expect("initial migration");
+
+    let conn = Connection::open(&db_path).expect("open database");
+
+    // 1. 验证 idx_conversation_parts_tenant_turn 已被删除
+    let index_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_conversation_parts_tenant_turn'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("check index dropped");
+    assert_eq!(
+        index_count, 0,
+        "idx_conversation_parts_tenant_turn 必须已被删除"
+    );
+
+    // 2. 验证 conversation_sessions 已包含 last_cwd 列
+    let has_last_cwd: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('conversation_sessions') WHERE name = 'last_cwd'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("check last_cwd column");
+    assert_eq!(
+        has_last_cwd, 1,
+        "conversation_sessions 必须包含 last_cwd 列"
+    );
+
+    // 3. 插入一个会话、两个轮次、若干零件（带有不同工作目录 cwd）
+    conn.execute(
+        "INSERT OR IGNORE INTO tenants (id, name, created_at, updated_at) VALUES ('default', 'default', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert default tenant");
+
+    conn.execute(
+        "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at)
+         VALUES ('default', 'sess-119', 'src-1', 'adp-1', 'ext-119', 'Spec 119 Session', 0, '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert session");
+
+    // 早期轮次：cwd 为 /path/old
+    conn.execute(
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, started_at, ended_at, imported_at)
+         VALUES ('default', 'turn-119-1', 'sess-119', 'ext-t1', 0, 'first question', 'fp1', 0, '2026-10-24T00:00:00Z', '2026-10-24T00:01:00Z', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert turn 1");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, cwd, text)
+         VALUES ('default', 'part-119-1-0', 'turn-119-1', 0, 'tool', 'tool', '/path/old', 'running')",
+        [],
+    ).expect("insert part 1-0");
+
+    // 最新轮次：包含两个零件，最后一个有效 cwd 为 /path/latest
+    conn.execute(
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, started_at, ended_at, imported_at)
+         VALUES ('default', 'turn-119-2', 'sess-119', 'ext-t2', 1, 'second question', 'fp2', 0, '2026-10-24T00:02:00Z', '2026-10-24T00:03:00Z', '2026-10-24T00:02:00Z')",
+        [],
+    ).expect("insert turn 2");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, cwd, text)
+         VALUES ('default', 'part-119-2-0', 'turn-119-2', 0, 'assistant', 'text', NULL, 'thinking')",
+        [],
+    ).expect("insert part 2-0");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, cwd, text)
+         VALUES ('default', 'part-119-2-1', 'turn-119-2', 1, 'tool', 'command', '/path/latest', 'cargo test')",
+        [],
+    ).expect("insert part 2-1");
+
+    // 4. 执行回填逻辑（与迁移 202610240002 一致的 CTE UPDATE FROM）
+    conn.execute_batch(
+        r#"
+        WITH latest_cwds AS (
+            SELECT session_id, tenant_id, cwd
+            FROM (
+                SELECT t.session_id,
+                       t.tenant_id,
+                       p.cwd,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY t.tenant_id, t.session_id
+                           ORDER BY COALESCE(t.ended_at, t.started_at) DESC,
+                                    t.turn_index DESC,
+                                    p.part_index DESC,
+                                    p.id DESC
+                       ) as rn
+                FROM conversation_turns t
+                JOIN conversation_parts p
+                  ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
+                WHERE p.cwd IS NOT NULL AND trim(p.cwd) <> ''
+            )
+            WHERE rn = 1
+        )
+        UPDATE conversation_sessions
+        SET last_cwd = latest_cwds.cwd
+        FROM latest_cwds
+        WHERE conversation_sessions.tenant_id = latest_cwds.tenant_id
+          AND conversation_sessions.id = latest_cwds.session_id;
+        "#,
+    )
+    .expect("execute backfill statement");
+
+    // 5. 校验断言
+    let last_cwd: Option<String> = conn
+        .query_row(
+            "SELECT last_cwd FROM conversation_sessions WHERE tenant_id = 'default' AND id = 'sess-119'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query last_cwd");
+    assert_eq!(
+        last_cwd.as_deref(),
+        Some("/path/latest"),
+        "last_cwd 必须正确回填为最新非空工作目录"
+    );
+
+    // 6. 幂等性断言：再次运行 migrate_database 零副作用
+    drop(conn);
+    migrate_database(&db_path)
+        .await
+        .expect("idempotent migration 119");
+
+    cleanup_database(&db_path);
+}
+
 fn cleanup_database(db_path: &std::path::Path) {
     let _ = std::fs::remove_file(db_path);
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));

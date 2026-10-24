@@ -458,6 +458,14 @@ async fn import_single_session_sqlx_tx(
         replace_conversation_parts_sqlx_tx(&mut *tx, tenant_id, &stored_turn.id, &turn.parts)
             .await?;
     }
+    let last_cwd = derive_session_last_cwd(&normalized.turns);
+    update_conversation_session_last_cwd_sqlx_tx(
+        &mut *tx,
+        tenant_id,
+        &session.id,
+        last_cwd.as_deref(),
+    )
+    .await?;
     prune_conversation_turns_sqlx_tx(&mut *tx, tenant_id, &session.id, normalized).await?;
     ensure_question_groups_for_session_sqlx_tx(&mut *tx, tenant_id, &session.id, now).await?;
     insert_conversation_sync_delta_sqlx_tx(

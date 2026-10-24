@@ -196,7 +196,7 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
                p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
         FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session
-        JOIN conversation_parts p INDEXED BY idx_conversation_parts_tenant_turn
+        JOIN conversation_parts p
           ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
         ORDER BY t.turn_index ASC, p.part_index ASC

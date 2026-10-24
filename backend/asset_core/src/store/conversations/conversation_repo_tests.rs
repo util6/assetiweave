@@ -134,8 +134,8 @@ async fn recent_session_cwd_lookup_uses_session_and_turn_indexes() {
         "{plan}"
     );
     assert!(
-        plan.contains("idx_conversation_parts_tenant_turn"),
-        "{plan}"
+        !plan.contains("conversation_parts"),
+        "recent query must not scan conversation_parts after last_cwd materialization: {plan}"
     );
 
     drop(database);
@@ -3421,7 +3421,7 @@ async fn test_explain_query_plan_for_session_parts_uses_efficient_indexes() {
                    p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
                    p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
             FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session
-            JOIN conversation_parts p INDEXED BY idx_conversation_parts_tenant_turn
+            JOIN conversation_parts p
               ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
             WHERE t.tenant_id = ?1 AND t.session_id = ?2
             ORDER BY t.turn_index ASC, p.part_index ASC
@@ -3443,10 +3443,10 @@ async fn test_explain_query_plan_for_session_parts_uses_efficient_indexes() {
         plan_text
     );
 
-    // 验证 parts 表使用 idx_conversation_parts_tenant_turn 进行 SEARCH
+    // 验证 parts 表使用 UNIQUE 自动索引进行 SEARCH
     assert!(
-        plan_text.contains("idx_conversation_parts_tenant_turn"),
-        "Expected plan to search parts using idx_conversation_parts_tenant_turn, got: {}",
+        plan_text.contains("SEARCH") && plan_text.contains("conversation_parts"),
+        "Expected plan to search parts using unique index, got: {}",
         plan_text
     );
 

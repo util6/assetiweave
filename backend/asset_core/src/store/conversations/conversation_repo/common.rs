@@ -280,3 +280,42 @@ pub(super) fn is_retryable_db_lock_err(err: &StoreError) -> bool {
         || msg.contains("Resource temporarily unavailable")
         || msg.contains("timed out")
 }
+
+pub(super) fn derive_session_last_cwd(
+    turns: &[crate::backend::domain::NormalizedConversationTurn],
+) -> Option<String> {
+    let mut candidates = Vec::new();
+    for turn in turns {
+        let ts = turn.ended_at.as_deref().or(turn.started_at.as_deref());
+        for (part_idx, part) in turn.parts.iter().enumerate() {
+            if let Some(ref cwd) = part.cwd {
+                let trimmed = cwd.trim();
+                if !trimmed.is_empty() {
+                    candidates.push((ts, turn.turn_index, part_idx, trimmed.to_string()));
+                }
+            }
+        }
+    }
+    candidates.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.cmp(&a.1))
+            .then_with(|| b.2.cmp(&a.2))
+    });
+    candidates.into_iter().next().map(|(_, _, _, cwd)| cwd)
+}
+
+pub(super) async fn update_conversation_session_last_cwd_sqlx_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tenant_id: &str,
+    session_id: &str,
+    last_cwd: Option<&str>,
+) -> StoreResult<()> {
+    sqlx::query("UPDATE conversation_sessions SET last_cwd = ?1 WHERE tenant_id = ?2 AND id = ?3")
+        .bind(last_cwd)
+        .bind(tenant_id)
+        .bind(session_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(StoreError::external)?;
+    Ok(())
+}
