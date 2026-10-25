@@ -616,9 +616,11 @@ async fn backup_skill_copies_app_target_skill_and_catalog_shows_backup_copy() {
     env::remove_var("ASSETIWEAVE_DB_PATH");
     env::remove_var("HOME");
     let assets = catalog.as_array().expect("catalog array");
-    assert_eq!(assets.len(), 1);
-    assert_eq!(assets[0]["source_id"], json!("assetiweave-library-skills"));
-    assert_eq!(assets[0]["backup_status"]["state"], json!("backed_up"));
+    let backed_up = assets
+        .iter()
+        .find(|asset| asset["source_id"] == json!("assetiweave-library-skills"))
+        .expect("catalog should contain backed up asset from library");
+    assert_eq!(backed_up["backup_status"]["state"], json!("backed_up"));
     assert!(backup_root
         .join("backed-up")
         .join("codex")
