@@ -1,12 +1,29 @@
 use assert_cmd::Command;
 use serde_json::Value;
 
+thread_local! {
+    // Each Rust test thread gets an isolated app database, while multiple CLI
+    // invocations inside one test still share state when the scenario requires it.
+    static CLI_TEST_HOME: tempfile::TempDir = tempfile::tempdir()
+        .expect("create isolated CLI test home");
+}
+
+fn aiwc_command() -> Command {
+    let mut command = Command::cargo_bin("aiwc").expect("aiwc binary is built");
+    CLI_TEST_HOME.with(|home| {
+        command
+            .env("HOME", home.path())
+            .env("ASSETIWEAVE_DB_PATH", home.path().join("app.db"));
+    });
+    command
+}
+
 #[test]
 fn test_version_command() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     cmd.arg("version").assert().success();
 
-    let mut cmd_json = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_json = aiwc_command();
     let assert = cmd_json
         .args(["version", "--format", "json"])
         .assert()
@@ -19,10 +36,10 @@ fn test_version_command() {
 
 #[test]
 fn test_overview_command() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     cmd.arg("overview").assert().success();
 
-    let mut cmd_json = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_json = aiwc_command();
     let assert = cmd_json
         .args(["overview", "--format", "json"])
         .assert()
@@ -36,21 +53,21 @@ fn test_overview_command() {
 #[test]
 fn test_shortcuts_aliases() {
     // aiwc ov -> overview
-    let mut cmd_ov = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_ov = aiwc_command();
     cmd_ov.arg("ov").assert().success();
 
     // aiwc sk list -> skill list
-    let mut cmd_sk = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_sk = aiwc_command();
     cmd_sk.args(["sk", "list"]).assert().success();
 
     // aiwc c adapter list -> conversation adapter list
-    let mut cmd_c = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_c = aiwc_command();
     cmd_c.args(["c", "adapter", "list"]).assert().success();
 }
 
 #[test]
 fn test_doctor_command() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd.args(["doctor", "--format", "json"]).assert().success();
     let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     let json: Value = serde_json::from_str(&output).unwrap();
@@ -60,7 +77,7 @@ fn test_doctor_command() {
 
 #[test]
 fn test_settings_show() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd
         .args(["settings", "show", "--format", "json"])
         .assert()
@@ -73,7 +90,7 @@ fn test_settings_show() {
 
 #[test]
 fn test_harvester_template_list() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd
         .args(["harvester", "template", "list", "--format", "json"])
         .assert()
@@ -86,7 +103,7 @@ fn test_harvester_template_list() {
 
 #[test]
 fn test_schema_get() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd
         .args(["schema", "overview.get", "--format", "json"])
         .assert()
@@ -99,7 +116,7 @@ fn test_schema_get() {
 
 #[test]
 fn test_conversation_adapter_list() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd
         .args(["conversation", "adapter", "list", "--format", "json"])
         .assert()
@@ -112,10 +129,10 @@ fn test_conversation_adapter_list() {
 
 #[test]
 fn test_skill_list() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     cmd.args(["skill", "list"]).assert().success();
 
-    let mut cmd_json = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_json = aiwc_command();
     let assert = cmd_json
         .args(["skill", "list", "--format", "json"])
         .assert()
@@ -129,14 +146,14 @@ fn test_skill_list() {
 #[test]
 fn test_skill_builtin_list() {
     // 1. Table format
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert_table = cmd.args(["skill", "builtin", "list"]).assert().success();
     let table_out = String::from_utf8(assert_table.get_output().stdout.clone()).unwrap();
     assert!(table_out.contains("assetiweave-memory"));
     assert!(table_out.contains("assetiweave-conversation-organizer"));
 
     // 2. JSON format
-    let mut cmd_json = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_json = aiwc_command();
     let assert_json = cmd_json
         .args(["skill", "builtin", "list", "--format", "json"])
         .assert()
@@ -156,7 +173,7 @@ fn test_skill_builtin_list() {
 
 #[test]
 fn test_skill_builtin_read() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert_read = cmd
         .args(["skill", "builtin", "read", "assetiweave-memory"])
         .assert()
@@ -168,7 +185,7 @@ fn test_skill_builtin_read() {
 
 #[test]
 fn test_skill_read_alias() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert_read = cmd
         .args(["skill", "read", "assetiweave-conversation-organizer"])
         .assert()
@@ -177,7 +194,7 @@ fn test_skill_read_alias() {
     assert!(stdout.contains("name: assetiweave-conversation-organizer"));
     assert!(stdout.contains("AssetIWeave 对话记录整理"));
 
-    let mut cmd_sk = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_sk = aiwc_command();
     let assert_sk = cmd_sk
         .args(["sk", "read", "assetiweave-memory"])
         .assert()
@@ -188,7 +205,7 @@ fn test_skill_read_alias() {
 
 #[test]
 fn test_skill_read_invalid_name() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert_err = cmd
         .args(["skill", "read", "non-existent-skill-xyz"])
         .assert()
@@ -197,7 +214,7 @@ fn test_skill_read_invalid_name() {
     assert!(stderr.contains("Skill not found: non-existent-skill-xyz"));
     assert!(stderr.contains("Hint: run 'aiwc skill builtin list'"));
 
-    let mut cmd_builtin = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_builtin = aiwc_command();
     let assert_builtin_err = cmd_builtin
         .args(["skill", "builtin", "read", "non-existent-skill-xyz"])
         .assert()
@@ -209,10 +226,10 @@ fn test_skill_read_invalid_name() {
 
 #[test]
 fn test_source_list() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     cmd.args(["source", "list"]).assert().success();
 
-    let mut cmd_json = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_json = aiwc_command();
     let assert = cmd_json
         .args(["source", "list", "--format", "json"])
         .assert()
@@ -225,10 +242,10 @@ fn test_source_list() {
 
 #[test]
 fn test_tenant_list() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     cmd.args(["tenant", "list"]).assert().success();
 
-    let mut cmd_json = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_json = aiwc_command();
     let assert = cmd_json
         .args(["tenant", "list", "--format", "json"])
         .assert()
@@ -241,16 +258,16 @@ fn test_tenant_list() {
 
 #[test]
 fn test_profile_list() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     cmd.args(["profile", "list"]).assert().success();
 
-    let mut cmd_alias = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_alias = aiwc_command();
     cmd_alias
         .args(["target-profile", "list"])
         .assert()
         .success();
 
-    let mut cmd_json = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_json = aiwc_command();
     let assert = cmd_json
         .args(["profile", "list", "--format", "json"])
         .assert()
@@ -263,7 +280,7 @@ fn test_profile_list() {
 
 #[test]
 fn test_config_plugins_show() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd
         .args(["config", "plugins", "show", "--format", "json"])
         .assert()
@@ -276,7 +293,7 @@ fn test_config_plugins_show() {
 
 #[test]
 fn test_memory_recent_get() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd
         .args(["memory", "recent", "get", "--format", "json"])
         .assert()
@@ -288,7 +305,7 @@ fn test_memory_recent_get() {
 
 #[test]
 fn test_completion() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd.args(["completion", "bash"]).assert().success();
     let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     assert!(output.contains("_aiwc"));
@@ -296,7 +313,7 @@ fn test_completion() {
 
 #[test]
 fn test_conversation_outline_help() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd
         .args(["conversation", "outline", "--help"])
         .assert()
@@ -307,12 +324,12 @@ fn test_conversation_outline_help() {
 
 #[test]
 fn test_conversation_list_command() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     cmd.args(["conversation", "list", "--limit", "5"])
         .assert()
         .success();
 
-    let mut cmd_json = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_json = aiwc_command();
     let assert = cmd_json
         .args(["conversation", "list", "--limit", "3", "--format", "json"])
         .assert()
@@ -322,13 +339,13 @@ fn test_conversation_list_command() {
     assert_eq!(json["ok"], true);
     assert!(json["data"].is_array());
 
-    let mut cmd_window = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_window = aiwc_command();
     cmd_window
         .args(["conversation", "list", "--window", "24h", "--limit", "5"])
         .assert()
         .success();
 
-    let mut cmd_range = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_range = aiwc_command();
     cmd_range
         .args([
             "conversation",
@@ -341,7 +358,7 @@ fn test_conversation_list_command() {
         .assert()
         .success();
 
-    let mut cmd_since_dt = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_since_dt = aiwc_command();
     cmd_since_dt
         .args([
             "conversation",
@@ -358,14 +375,14 @@ fn test_conversation_list_command() {
 
     // Unified --time flag tests:
     // 1. Single integer (hours)
-    let mut cmd_time_hours = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_time_hours = aiwc_command();
     cmd_time_hours
         .args(["conversation", "list", "--time", "24", "--limit", "5"])
         .assert()
         .success();
 
     // 2. Single datetime (A to now)
-    let mut cmd_time_since = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_time_since = aiwc_command();
     cmd_time_since
         .args([
             "conversation",
@@ -379,7 +396,7 @@ fn test_conversation_list_command() {
         .success();
 
     // 3. Two datetimes (endpoints A and B)
-    let mut cmd_time_two = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_time_two = aiwc_command();
     let assert_time = cmd_time_two
         .args([
             "conversation",
@@ -399,7 +416,7 @@ fn test_conversation_list_command() {
     }
 
     // 4. Verify JSON output contains window turn fields
-    let mut cmd_time_json = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_time_json = aiwc_command();
     let assert_json = cmd_time_json
         .args([
             "conversation",
@@ -427,7 +444,7 @@ fn test_conversation_list_command() {
 
 #[test]
 fn test_conversation_outline_and_card_help() {
-    let mut cmd_outline = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_outline = aiwc_command();
     let assert_outline = cmd_outline
         .args(["conversation", "outline", "--help"])
         .assert()
@@ -435,7 +452,7 @@ fn test_conversation_outline_and_card_help() {
     let out_outline = String::from_utf8(assert_outline.get_output().stdout.clone()).unwrap();
     assert!(out_outline.contains("outline"));
 
-    let mut cmd_card = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_card = aiwc_command();
     let assert_card = cmd_card
         .args(["conversation", "card", "--help"])
         .assert()
@@ -443,7 +460,7 @@ fn test_conversation_outline_and_card_help() {
     let out_card = String::from_utf8(assert_card.get_output().stdout.clone()).unwrap();
     assert!(out_card.contains("get"));
 
-    let mut cmd_card_get = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_card_get = aiwc_command();
     let assert_card_get = cmd_card_get
         .args(["conversation", "card", "get", "--help"])
         .assert()
@@ -454,7 +471,7 @@ fn test_conversation_outline_and_card_help() {
 
 #[test]
 fn test_conversation_outline_and_card_drilldown() {
-    let mut cmd_list = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_list = aiwc_command();
     let assert_list = cmd_list
         .args(["conversation", "list", "--limit", "1", "--format", "json"])
         .assert()
@@ -472,7 +489,7 @@ fn test_conversation_outline_and_card_drilldown() {
     let session_id = first["short_id"].as_str().unwrap();
 
     // 1. Session outline via `conversation outline <id>`
-    let mut cmd_so = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_so = aiwc_command();
     let assert_so = cmd_so
         .args(["conversation", "outline", session_id])
         .assert()
@@ -490,7 +507,7 @@ fn test_conversation_outline_and_card_drilldown() {
         let turn_id = first_row[1].as_str().unwrap();
 
         // 3. Turn outline via `conversation outline <turn_id>`
-        let mut cmd_to = Command::cargo_bin("aiwc").unwrap();
+        let mut cmd_to = aiwc_command();
         let assert_to = cmd_to
             .args(["conversation", "outline", turn_id])
             .assert()
@@ -508,7 +525,7 @@ fn test_conversation_outline_and_card_drilldown() {
             let card_id = first_card_row[1].as_str().unwrap();
 
             // 4. Card outline via `conversation outline <card_id>`
-            let mut cmd_co = Command::cargo_bin("aiwc").unwrap();
+            let mut cmd_co = aiwc_command();
             let assert_co = cmd_co
                 .args(["conversation", "outline", card_id])
                 .assert()
@@ -521,7 +538,7 @@ fn test_conversation_outline_and_card_drilldown() {
             assert!(json_co["data"]["neighborhood"]["rows"].is_array());
 
             // 5. Card get JSON via `conversation card get <card_id>`
-            let mut cmd_cg = Command::cargo_bin("aiwc").unwrap();
+            let mut cmd_cg = aiwc_command();
             let assert_cg = cmd_cg
                 .args(["conversation", "card", "get", card_id])
                 .assert()
@@ -533,7 +550,7 @@ fn test_conversation_outline_and_card_drilldown() {
             let content = json_cg["data"]["content"].as_str().unwrap();
 
             // 6. Card get raw via `conversation card get <card_id> --raw`
-            let mut cmd_cgr = Command::cargo_bin("aiwc").unwrap();
+            let mut cmd_cgr = aiwc_command();
             let assert_cgr = cmd_cgr
                 .args(["conversation", "card", "get", card_id, "--raw"])
                 .assert()
@@ -547,7 +564,7 @@ fn test_conversation_outline_and_card_drilldown() {
 #[test]
 fn test_conversation_affordance_long_help_and_concise_short_help() {
     // 1. Top-level short help `conversation -h` should be concise and contain no affordance
-    let mut cmd_short = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_short = aiwc_command();
     let assert_short = cmd_short.args(["conversation", "-h"]).assert().success();
     let out_short = String::from_utf8(assert_short.get_output().stdout.clone()).unwrap();
     assert!(out_short.contains("Usage: aiwc conversation"));
@@ -556,7 +573,7 @@ fn test_conversation_affordance_long_help_and_concise_short_help() {
     assert!(!out_short.contains("Avoid when"));
 
     // 2. Top-level long help `conversation --help` should contain 5-dimension affordance
-    let mut cmd_long = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_long = aiwc_command();
     let assert_long = cmd_long.args(["conversation", "--help"]).assert().success();
     let out_long = String::from_utf8(assert_long.get_output().stdout.clone()).unwrap();
     assert!(out_long.contains("Affordance:"));
@@ -568,7 +585,7 @@ fn test_conversation_affordance_long_help_and_concise_short_help() {
     assert!(out_long.contains("aiwc skill builtin read assetiweave-conversation-recall"));
 
     // 3. Subcommand short help `conversation search -h` should be concise
-    let mut cmd_search_short = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_search_short = aiwc_command();
     let assert_search_short = cmd_search_short
         .args(["conversation", "search", "-h"])
         .assert()
@@ -580,7 +597,7 @@ fn test_conversation_affordance_long_help_and_concise_short_help() {
     assert!(!out_search_short.contains("Use this when"));
 
     // 4. Subcommand long help `conversation search --help` should contain 5-dimension affordance
-    let mut cmd_search_long = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_search_long = aiwc_command();
     let assert_search_long = cmd_search_long
         .args(["conversation", "search", "--help"])
         .assert()
@@ -599,7 +616,7 @@ fn test_conversation_affordance_long_help_and_concise_short_help() {
     for subcmd in [
         "outline", "card", "sync", "adapter", "source", "data", "list",
     ] {
-        let mut cmd_sub = Command::cargo_bin("aiwc").unwrap();
+        let mut cmd_sub = aiwc_command();
         let assert_sub = cmd_sub
             .args(["conversation", subcmd, "--help"])
             .assert()
@@ -641,7 +658,7 @@ fn test_conversation_affordance_long_help_and_concise_short_help() {
 #[test]
 fn test_conversation_error_actionable_hints_text_mode() {
     // 1. Outline not found
-    let mut cmd_outline = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_outline = aiwc_command();
     let assert_outline = cmd_outline
         .args(["conversation", "outline", "non-existent-outline-id"])
         .assert()
@@ -653,7 +670,7 @@ fn test_conversation_error_actionable_hints_text_mode() {
     assert!(stderr_outline.contains("Hint: run 'aiwc conversation list'"));
 
     // 2. Card not found
-    let mut cmd_card = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_card = aiwc_command();
     let assert_card = cmd_card
         .args(["conversation", "card", "get", "non-existent-card-id"])
         .assert()
@@ -665,7 +682,7 @@ fn test_conversation_error_actionable_hints_text_mode() {
     );
 
     // 3. Adapter not found
-    let mut cmd_adapter = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_adapter = aiwc_command();
     let assert_adapter = cmd_adapter
         .args([
             "conversation",
@@ -682,7 +699,7 @@ fn test_conversation_error_actionable_hints_text_mode() {
     assert!(stderr_adapter.contains("Hint: run 'aiwc conversation adapter list'"));
 
     // 4. Search missing query
-    let mut cmd_search = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_search = aiwc_command();
     let assert_search = cmd_search
         .args(["conversation", "search"])
         .assert()
@@ -697,7 +714,7 @@ fn test_conversation_error_actionable_hints_text_mode() {
 #[test]
 fn test_conversation_error_actionable_hints_json_mode() {
     // 1. Outline not found in JSON
-    let mut cmd_outline = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_outline = aiwc_command();
     let assert_outline = cmd_outline
         .args([
             "conversation",
@@ -722,7 +739,7 @@ fn test_conversation_error_actionable_hints_json_mode() {
     );
 
     // 2. Card not found in JSON
-    let mut cmd_card = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_card = aiwc_command();
     let assert_card = cmd_card
         .args([
             "conversation",
@@ -748,7 +765,7 @@ fn test_conversation_error_actionable_hints_json_mode() {
     );
 
     // 3. Adapter not found in JSON
-    let mut cmd_adapter = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_adapter = aiwc_command();
     let assert_adapter = cmd_adapter
         .args([
             "conversation",
@@ -774,7 +791,7 @@ fn test_conversation_error_actionable_hints_json_mode() {
     );
 
     // 4. Search missing query in JSON
-    let mut cmd_search = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_search = aiwc_command();
     let assert_search = cmd_search
         .args(["conversation", "search", "--format", "json"])
         .assert()
@@ -795,7 +812,7 @@ fn test_conversation_error_actionable_hints_json_mode() {
 
 #[test]
 fn test_conversation_sync_help_options() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd
         .args(["conversation", "sync", "--help"])
         .assert()
@@ -809,7 +826,7 @@ fn test_conversation_sync_help_options() {
 
 #[test]
 fn test_conversation_sync_full_and_incremental_conflict() {
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd
         .args(["conversation", "sync", "--full", "--incremental"])
         .assert()
@@ -821,7 +838,7 @@ fn test_conversation_sync_full_and_incremental_conflict() {
     );
 
     // Also verify alias --force conflicts with --incremental
-    let mut cmd_force = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_force = aiwc_command();
     let assert_force = cmd_force
         .args(["conversation", "sync", "--force", "--incremental"])
         .assert()
@@ -836,7 +853,7 @@ fn test_conversation_sync_full_and_incremental_conflict() {
 #[test]
 fn test_conversation_sync_full_contract() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd
         .env("HOME", temp_dir.path())
         .args([
@@ -861,7 +878,7 @@ fn test_conversation_sync_full_contract() {
 fn test_conversation_sync_dry_run_zero_side_effect() {
     let temp_dir = tempfile::tempdir().unwrap();
 
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd
         .env("HOME", temp_dir.path())
         .args(["conversation", "sync", "--dry-run", "--format", "json"])
@@ -874,7 +891,7 @@ fn test_conversation_sync_dry_run_zero_side_effect() {
     assert_eq!(json["data"]["dry_run"], true);
 
     // Verify zero side effect using blackbox CLI command in the same isolated sandbox
-    let mut list_cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut list_cmd = aiwc_command();
     let list_assert = list_cmd
         .env("HOME", temp_dir.path())
         .args(["conversation", "list", "--format", "json"])
@@ -895,7 +912,7 @@ fn test_conversation_sync_dry_run_zero_side_effect() {
 #[test]
 fn test_conversation_sync_pipeline_clean_in_non_tty() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut cmd = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd = aiwc_command();
     let assert = cmd
         .env("HOME", temp_dir.path())
         .args(["conversation", "sync", "--dry-run", "--format", "json"])
@@ -915,5 +932,168 @@ fn test_conversation_sync_pipeline_clean_in_non_tty() {
     assert!(
         !stderr_str.contains("\x1b["),
         "stderr should not contain ANSI escape codes in non-tty mode: {stderr_str}"
+    );
+}
+
+#[test]
+fn test_conversation_search_command_keyword_vfox() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().join("vfox_test.db");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let pool = asset_core::store::open_migrated_pool(&db_path)
+            .await
+            .expect("open migrated pool");
+        let tenant_id = "default";
+        let now = "2026-10-25T00:00:00Z".to_string();
+
+        let adapter = asset_core::domain::ConversationAdapter {
+            id: "codex".to_string(),
+            name: "Codex Adapter".to_string(),
+            kind: asset_core::domain::ConversationAdapterKind::External,
+            version: "0.1.0".to_string(),
+            enabled: true,
+            manifest_path: None,
+            executable_path: None,
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: asset_core::domain::ConversationAdapterTrustState::Trusted,
+            protocol_version: Some(1),
+            capabilities: vec!["list".to_string()],
+            input_kinds: vec![asset_core::domain::ConversationSourceKind::Directory],
+            card_contract_version: Some(1),
+            card_kinds: Vec::new(),
+            projection_version: Some(1),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        let source = asset_core::domain::ConversationSource {
+            id: "codex-source".to_string(),
+            adapter_id: "codex".to_string(),
+            name: "Codex Source".to_string(),
+            kind: asset_core::domain::ConversationSourceKind::Directory,
+            location: temp_dir.path().to_string_lossy().to_string(),
+            config_json: None,
+            enabled: true,
+            last_synced_at: None,
+            last_sync_status: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+
+        asset_core::store::upsert_conversation_adapter_sqlx(&pool, tenant_id, &adapter)
+            .await
+            .expect("upsert adapter");
+        asset_core::store::upsert_conversation_source_sqlx(&pool, tenant_id, &source)
+            .await
+            .expect("upsert source");
+
+        // 构造会话：prompt 与 response 均不含 'vfox'，仅命令包含 'vfox use nodejs@22'
+        let session = asset_core::domain::NormalizedConversationSession {
+            external_id: "vfox-session-ext".to_string(),
+            title: Some("环境准备测试".to_string()),
+            project_path: None,
+            started_at: None,
+            updated_at: None,
+            source_locator: None,
+            source_fingerprint: None,
+            turns: vec![asset_core::domain::NormalizedConversationTurn {
+                external_id: "turn-vfox".to_string(),
+                turn_index: 0,
+                user_text: "请帮我检查并准备 Node.js 运行环境".to_string(),
+                title: None,
+                started_at: None,
+                ended_at: None,
+                model: None,
+                parts: vec![
+                    asset_core::domain::NormalizedConversationPart {
+                        role: asset_core::domain::ConversationPartRole::Tool,
+                        kind: asset_core::domain::ConversationPartKind::Command,
+                        text: None,
+                        language: None,
+                        command: Some("vfox use nodejs@22".to_string()),
+                        cwd: Some("/workspace/app".to_string()),
+                        status: Some("success".to_string()),
+                        exit_code: Some(0),
+                        command_label: Some("切换 Node.js 版本".to_string()),
+                        source_execution_id: None,
+                        content_card: None,
+                        metadata_json: None,
+                    },
+                    asset_core::domain::NormalizedConversationPart {
+                        role: asset_core::domain::ConversationPartRole::Assistant,
+                        kind: asset_core::domain::ConversationPartKind::Text,
+                        text: Some("已为您成功配置运行环境，可以开始开发调试。".to_string()),
+                        language: None,
+                        command: None,
+                        cwd: None,
+                        status: None,
+                        exit_code: None,
+                        command_label: None,
+                        source_execution_id: None,
+                        content_card: None,
+                        metadata_json: None,
+                    },
+                ],
+            }],
+            ..Default::default()
+        };
+
+        asset_core::store::import_conversation_sessions_sqlx(
+            &pool,
+            tenant_id,
+            &source,
+            &[session],
+            false,
+        )
+        .await
+        .expect("import session");
+    });
+
+    // 1. JSON 格式搜索验证：aiwc conversation search --query vfox --format json
+    let mut cmd_json = aiwc_command();
+    let assert_json = cmd_json
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args([
+            "conversation",
+            "search",
+            "--query",
+            "vfox",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let output_json =
+        String::from_utf8(assert_json.get_output().stdout.clone()).expect("valid utf8");
+    let res_json: Value = serde_json::from_str(&output_json).expect("valid json search result");
+    assert_eq!(res_json["ok"], true);
+    let hits = res_json["data"]["hits"].as_array().expect("hits is array");
+    assert_eq!(
+        hits.len(),
+        1,
+        "应精确命中 1 条包含 vfox 的卡片，实际结果: {output_json}"
+    );
+    let hit = &hits[0];
+    assert!(
+        hit["snippet"].as_str().unwrap().contains("vfox"),
+        "命中卡片的 snippet 必须包含关键字 'vfox'"
+    );
+
+    // 2. 文本格式搜索验证：aiwc conversation search --query vfox
+    let mut cmd_text = aiwc_command();
+    let assert_text = cmd_text
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "search", "--query", "vfox"])
+        .assert()
+        .success();
+
+    let output_text =
+        String::from_utf8(assert_text.get_output().stdout.clone()).expect("valid utf8");
+    assert!(
+        output_text.contains("vfox"),
+        "文本输出必须包含命中命令关键字 'vfox'"
     );
 }
