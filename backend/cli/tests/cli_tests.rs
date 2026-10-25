@@ -1054,7 +1054,7 @@ fn test_conversation_search_command_keyword_vfox() {
     });
 
     // 1. JSON 格式搜索验证：aiwc conversation search --query vfox --format json
-    let mut cmd_json = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_json = aiwc_command();
     let assert_json = cmd_json
         .env("ASSETIWEAVE_DB_PATH", &db_path)
         .args([
@@ -1085,7 +1085,7 @@ fn test_conversation_search_command_keyword_vfox() {
     );
 
     // 2. 文本格式搜索验证：aiwc conversation search --query vfox
-    let mut cmd_text = Command::cargo_bin("aiwc").unwrap();
+    let mut cmd_text = aiwc_command();
     let assert_text = cmd_text
         .env("ASSETIWEAVE_DB_PATH", &db_path)
         .args(["conversation", "search", "--query", "vfox"])
