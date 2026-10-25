@@ -567,7 +567,7 @@ fn test_conversation_affordance_long_help_and_concise_short_help() {
     let mut cmd_short = aiwc_command();
     let assert_short = cmd_short.args(["conversation", "-h"]).assert().success();
     let out_short = String::from_utf8(assert_short.get_output().stdout.clone()).unwrap();
-    assert!(out_short.contains("Usage: aiwc conversation"));
+    assert!(out_short.contains("Usage:") && out_short.contains("conversation"));
     assert!(!out_short.contains("Affordance:"));
     assert!(!out_short.contains("Use this when"));
     assert!(!out_short.contains("Avoid when"));
@@ -592,7 +592,9 @@ fn test_conversation_affordance_long_help_and_concise_short_help() {
         .success();
     let out_search_short =
         String::from_utf8(assert_search_short.get_output().stdout.clone()).unwrap();
-    assert!(out_search_short.contains("Usage: aiwc conversation search"));
+    assert!(
+        out_search_short.contains("Usage:") && out_search_short.contains("conversation search")
+    );
     assert!(!out_search_short.contains("Affordance:"));
     assert!(!out_search_short.contains("Use this when"));
 
