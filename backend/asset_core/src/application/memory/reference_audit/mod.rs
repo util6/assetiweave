@@ -14,7 +14,6 @@ pub const MEMORY_REFERENCE_AUDIT_SCHEMA_VERSION: u32 = 1;
 pub(super) const REMAPPED: &str = "remapped";
 pub(super) const INVALIDATED: &str = "invalidated";
 
-pub(super) const STRATEGY_REDIRECT: &str = "redirect_tombstone";
 pub(super) const STRATEGY_TURN_MEMBERSHIP: &str = "turn_membership";
 pub(super) const STRATEGY_NEAREST_GROUP: &str = "nearest_group";
 pub(super) const STRATEGY_SINGLE_GROUP: &str = "single_session_group";

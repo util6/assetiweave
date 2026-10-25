@@ -128,6 +128,9 @@ pub async fn list_memory_recall_question_refs_sqlx(
 
 fn map_memory_recall_question_ref(row: &SqliteRow) -> StoreResult<MemoryRecallQuestionRef> {
     let kind: String = row.try_get("record_kind")?;
+    let raw_question_id: String = row.try_get("question_id")?;
+    let question_id =
+        crate::backend::domain::conversations::derive_question_id_from_turn(&raw_question_id);
     Ok(MemoryRecallQuestionRef {
         record_kind: if kind == "web" {
             MemoryRecordKind::Web
@@ -138,7 +141,7 @@ fn map_memory_recall_question_ref(row: &SqliteRow) -> StoreResult<MemoryRecallQu
         session_id: row.try_get("session_id")?,
         session_title: row.try_get("session_title")?,
         project_path: row.try_get("project_path")?,
-        question_id: row.try_get("question_id")?,
+        question_id,
         question_index: row.try_get("question_index")?,
     })
 }
@@ -210,7 +213,17 @@ pub async fn load_recall_parts_for_questions_sqlx(
     if question_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let question_ids_json = serde_json::to_string(question_ids).map_err(StoreError::external)?;
+    let mut turn_ids = std::collections::BTreeSet::new();
+    for qid in question_ids {
+        turn_ids.insert(qid.clone());
+        if let Some(turn_id) =
+            crate::backend::domain::conversations::derive_turn_id_from_question_id(qid)
+        {
+            turn_ids.insert(turn_id);
+        }
+    }
+    let turn_ids_vec: Vec<String> = turn_ids.into_iter().collect();
+    let turn_ids_json = serde_json::to_string(&turn_ids_vec).map_err(StoreError::external)?;
     let sql = match record_kind {
         MemoryRecordKind::Session => {
             r#"
@@ -236,11 +249,7 @@ pub async fn load_recall_parts_for_questions_sqlx(
             FROM conversation_parts p
             JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
             WHERE p.tenant_id = ?1
-              AND (
-                  t.id IN (SELECT value FROM json_each(?2))
-                  OR ('conversation-question-' || substr(t.id, 19)) IN (SELECT value FROM json_each(?2))
-                  OR ('web-record-question-' || substr(t.id, 17)) IN (SELECT value FROM json_each(?2))
-              )
+              AND t.id IN (SELECT value FROM json_each(?2))
             "#
         }
         MemoryRecordKind::Web => {
@@ -260,20 +269,20 @@ pub async fn load_recall_parts_for_questions_sqlx(
             FROM web_record_parts p
             JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
             WHERE p.tenant_id = ?1
-              AND (
-                  t.id IN (SELECT value FROM json_each(?2))
-                  OR ('conversation-question-' || substr(t.id, 19)) IN (SELECT value FROM json_each(?2))
-                  OR ('web-record-question-' || substr(t.id, 17)) IN (SELECT value FROM json_each(?2))
-              )
+              AND t.id IN (SELECT value FROM json_each(?2))
             "#
         }
     };
-    let rows: Vec<RecallPartFacts> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+    let mut rows: Vec<RecallPartFacts> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(tenant_id)
-        .bind(question_ids_json)
+        .bind(turn_ids_json)
         .fetch_all(pool)
         .await
         .map_err(StoreError::external)?;
+    for row in &mut rows {
+        row.question_id =
+            crate::backend::domain::conversations::derive_question_id_from_turn(&row.question_id);
+    }
     Ok(rows)
 }
 

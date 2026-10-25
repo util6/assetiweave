@@ -255,6 +255,20 @@ pub fn derive_turn_id_from_question_id(question_id: &str) -> Option<String> {
     }
 }
 
+/// 从轮次标识直接推导分组（问题）标识。
+/// 若以 `web-record-turn-` 开头则派生为 `web-record-question-`；
+/// 若以 `conversation-turn-` 开头则派生为 `conversation-question-`；
+/// 其它自定义/测试标识原样返回。
+pub fn derive_question_id_from_turn(turn_id: &str) -> String {
+    if turn_id.starts_with("web-record-turn-") {
+        derive_question_id_from_turn_id("web-record-question", turn_id)
+    } else if turn_id.starts_with("conversation-turn-") {
+        derive_question_id_from_turn_id("conversation-question", turn_id)
+    } else {
+        turn_id.to_string()
+    }
+}
+
 pub fn group_turns_by_dynamic_projection<T, F, I>(
     prefix: &str,
     turns: Vec<T>,
@@ -285,3 +299,7 @@ where
     }
     groups
 }
+
+#[cfg(test)]
+#[path = "grouping_tests.rs"]
+mod tests;

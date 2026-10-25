@@ -446,3 +446,48 @@ async fn session_without_any_group_is_reported_as_invalidated() {
     drop(service);
     fs::remove_dir_all(root).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repair_remaps_orphans_with_production_turn_ids() {
+    let (service, root) = open_service("prod-turn-ids").await;
+    seed(
+        service.db.pool(),
+        &[
+            "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at) VALUES ('default', 's-prod', 'src-1', 'adp-1', 'ext-prod', 'Session prod', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
+            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 'conversation-turn-019a0001', 's-prod', 'ext-t-1', 0, 'first prompt', 'fp-t-1', 0, '2026-10-23T00:00:00Z')",
+            "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-prod-orphan', 'session', 's-prod', 'q-gone', 'conversation-turn-019a0001', 'block-e-prod', 'hash-e-prod', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
+        ],
+    )
+    .await;
+
+    let audit = service
+        .audit_memory_references()
+        .await
+        .expect("audit production turn references");
+    assert_eq!(audit.counts.orphaned, 1);
+    assert_eq!(audit.planned_repairs.len(), 1);
+    assert_eq!(
+        audit.planned_repairs[0].resolved_question_id,
+        "conversation-question-019a0001"
+    );
+
+    let repaired = service
+        .repair_memory_references(MemoryReferenceRepairParams {
+            dry_run: false,
+            yes: true,
+        })
+        .await
+        .expect("repair production turn references");
+    assert_eq!(repaired.counts.repaired, 1);
+    assert_eq!(
+        repaired.repairs[0].resolved_question_id,
+        "conversation-question-019a0001"
+    );
+    assert_eq!(
+        reference_question(&service, "memory_evidence_snapshots", "e-prod-orphan").await,
+        Some("conversation-question-019a0001".to_string())
+    );
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}

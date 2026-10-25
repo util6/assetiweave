@@ -364,3 +364,69 @@ async fn recall_enumerates_web_records_symmetrically_and_skips_them_for_project_
     assert_eq!(total, 1);
     assert_eq!(refs[0].session_id, "s-1");
 }
+
+#[tokio::test]
+async fn load_recall_parts_derives_matching_question_id_for_both_session_and_web() {
+    let pool = create_test_pool().await;
+    seed(
+        &pool,
+        &[
+            &source_fixture(ADAPTER),
+            &session_fixture("s-parts", "2026-10-23T00:00:00Z"),
+            &turn_fixture(
+                "conversation-turn-part-001",
+                "s-parts",
+                0,
+                "ignored",
+                Some("2026-10-20T09:00:00Z"),
+                "2026-10-23T00:00:00Z",
+            ),
+            "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content, attrs_json) \
+             VALUES ('default', 'conversation-turn-part-001', 0, X'0102030405060708', 'text', 'hello world', '{}')",
+            &web_session_fixture("w-parts", "2026-10-23T00:00:00Z"),
+            &web_turn_fixture(
+                "web-record-turn-part-001",
+                "w-parts",
+                0,
+                "ignored",
+                Some("2026-10-21T09:00:00Z"),
+                "2026-10-23T00:00:00Z",
+            ),
+            "INSERT INTO web_record_parts (tenant_id, turn_id, part_index, id_key, kind, content) \
+             VALUES ('default', 'web-record-turn-part-001', 0, X'0102030405060708', 'answer', 'web response')",
+        ],
+    )
+    .await;
+
+    // 1. Session parts lookup by question id
+    let parts = load_recall_parts_for_questions_sqlx(
+        &pool,
+        TENANT,
+        MemoryRecordKind::Session,
+        &["conversation-question-part-001".to_string()],
+    )
+    .await
+    .expect("load session recall parts");
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0].question_id, "conversation-question-part-001");
+    assert_eq!(parts[0].text.as_deref(), Some("hello world"));
+
+    // 2. Web parts lookup by question id
+    let web_parts = load_recall_parts_for_questions_sqlx(
+        &pool,
+        TENANT,
+        MemoryRecordKind::Web,
+        &["web-record-question-part-001".to_string()],
+    )
+    .await
+    .expect("load web recall parts");
+    assert_eq!(web_parts.len(), 1);
+    assert_eq!(web_parts[0].question_id, "web-record-question-part-001");
+    assert_eq!(web_parts[0].text.as_deref(), Some("web response"));
+
+    // 3. Question ref list derives matching question id
+    let (_, refs) = recall(&pool, &scope(), None, None, 10, 0).await;
+    let question_ids: Vec<_> = refs.iter().map(|r| r.question_id.as_str()).collect();
+    assert!(question_ids.contains(&"conversation-question-part-001"));
+    assert!(question_ids.contains(&"web-record-question-part-001"));
+}

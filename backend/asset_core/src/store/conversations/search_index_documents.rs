@@ -25,6 +25,7 @@ pub struct ConversationSearchIndexDocumentRow {
 struct SearchIndexTurnRow {
     session_id: String,
     turn_id: String,
+    turn_index: i64,
     prompt: String,
     process: Option<String>,
     response: Option<String>,
@@ -42,7 +43,7 @@ pub async fn load_conversation_search_index_documents_sqlx(
     for tables in [SearchDocumentTables::session(), SearchDocumentTables::web()] {
         let turn_sql = format!(
             r#"
-            SELECT s.id AS session_id, t.id AS turn_id, t.prompt AS prompt,
+            SELECT s.id AS session_id, t.id AS turn_id, t.turn_index AS turn_index, t.prompt AS prompt,
                    t.process AS process, t.response AS response,
                    s.adapter_id AS adapter_id, s.source_id AS source_id,
                    {project_path} AS project_path, COALESCE(a.card_kinds_json, '[]') AS card_kinds_json
@@ -50,7 +51,7 @@ pub async fn load_conversation_search_index_documents_sqlx(
             JOIN {turns} t ON t.tenant_id = s.tenant_id AND t.session_id = s.id
             LEFT JOIN conversation_adapters a ON a.tenant_id = s.tenant_id AND a.id = s.adapter_id
             WHERE s.tenant_id = ?1 AND s.missing = 0 AND t.missing = 0
-            ORDER BY s.id, t.turn_index, t.id
+            ORDER BY s.id ASC, t.turn_index ASC, t.id ASC
             "#,
             sessions = tables.sessions,
             turns = tables.turns,
@@ -112,7 +113,12 @@ pub async fn load_conversation_search_index_documents_sqlx(
                 .push(turn);
         }
 
-        for (_, session_turns) in turns_by_session {
+        for (_, mut session_turns) in turns_by_session {
+            session_turns.sort_by(|a, b| {
+                a.turn_index
+                    .cmp(&b.turn_index)
+                    .then_with(|| a.turn_id.cmp(&b.turn_id))
+            });
             let groups = crate::backend::domain::conversations::group_turns_by_dynamic_projection(
                 tables.question_prefix,
                 session_turns,

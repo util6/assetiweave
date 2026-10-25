@@ -3448,6 +3448,83 @@ async fn sqlx_question_short_id_prefix_reports_ambiguity_instead_of_guessing() {
 }
 
 #[tokio::test]
+async fn sqlx_question_short_id_prefix_rejects_turn_prefix_and_resolves_web_records() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-question-prefix-web-and-reject-turn-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+    let pool = database.pool();
+
+    let session_id = "web-record-session-test-0001";
+    let turn_id =
+        "web-record-turn-abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    let expected_question_id =
+        "web-record-question-abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
+    let mut conn = pool.acquire().await.expect("acquire connection");
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await
+        .expect("disable fk");
+    sqlx::query(
+        "INSERT INTO web_record_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at) \
+         VALUES (?1, ?2, 'src-1', 'adp-1', 'ext-s', 'Web Title', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
+    )
+    .bind(TEST_TENANT_ID)
+    .bind(session_id)
+    .execute(&mut *conn)
+    .await
+    .expect("insert web session");
+
+    sqlx::query(
+        "INSERT INTO web_record_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) \
+         VALUES (?1, ?2, ?3, 'ext-t', 0, 'web prompt', 'fp-t', 0, '2026-10-23T00:00:00Z')",
+    )
+    .bind(TEST_TENANT_ID)
+    .bind(turn_id)
+    .bind(session_id)
+    .execute(&mut *conn)
+    .await
+    .expect("insert web turn");
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *conn)
+        .await
+        .expect("enable fk");
+    drop(conn);
+
+    // 1. Turn- prefixed lookups must return NotFound (no inappropriate cross-entity coercion)
+    let err_turn = resolve_question_prefix(pool, "conversation-turn-abcdef01")
+        .await
+        .expect_err("turn- prefix must not resolve as question");
+    assert!(matches!(err_turn, StoreError::NotFound(_)));
+
+    let err_web_turn = resolve_question_prefix(pool, "web-record-turn-abcdef01")
+        .await
+        .expect_err("web-record-turn- prefix must not resolve as question");
+    assert!(matches!(err_web_turn, StoreError::NotFound(_)));
+
+    let err_bare_turn = resolve_question_prefix(pool, "turn-abcdef01")
+        .await
+        .expect_err("bare turn- prefix must not resolve as question");
+    assert!(matches!(err_bare_turn, StoreError::NotFound(_)));
+
+    // 2. Web record questions must resolve from web_record_turns
+    let resolved_bare = resolve_question_prefix(pool, "abcdef01")
+        .await
+        .expect("resolve bare 8-char hex for web question");
+    assert_eq!(resolved_bare, expected_question_id);
+
+    let resolved_web_prefixed = resolve_question_prefix(pool, "web-record-question-abcdef01")
+        .await
+        .expect("resolve web-record-question- prefixed for web question");
+    assert_eq!(resolved_web_prefixed, expected_question_id);
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
 async fn sqlx_question_fragment_and_any_id_resolve_through_turn_columns() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-question-any-id-turn-columns-{}.sqlite",
