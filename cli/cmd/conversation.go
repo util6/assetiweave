@@ -1510,8 +1510,6 @@ func newCmdConversationQuestion(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{Use: "question", Short: "Manage session question groups"}
 	cmd.AddCommand(newCmdConversationQuestionList(f))
 	cmd.AddCommand(newCmdConversationQuestionGet(f))
-	cmd.AddCommand(newCmdConversationQuestionMerge(f))
-	cmd.AddCommand(newCmdConversationQuestionSplit(f))
 	return cmd
 }
 
@@ -1756,46 +1754,6 @@ func newCmdConversationQuestionGet(f *cmdutil.Factory) *cobra.Command {
 			return callAndPrint(cmd, f, schema.MethodConversationQuestionGet, map[string]any{"question_id": args[0]})
 		},
 	}
-}
-
-func newCmdConversationQuestionMerge(f *cmdutil.Factory) *cobra.Command {
-	var dryRun bool
-	cmd := &cobra.Command{
-		Use:   "merge <question-id>...",
-		Short: "Merge adjacent questions into one (accepts short ID prefixes)",
-		Args:  cobra.MinimumNArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ids := make([]string, len(args))
-			copy(ids, args)
-			return callAndPrint(cmd, f, schema.MethodConversationQuestionMerge, map[string]any{
-				"question_ids": ids,
-				"dry_run":      dryRun,
-			})
-		},
-	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without merging")
-	return cmd
-}
-
-func newCmdConversationQuestionSplit(f *cmdutil.Factory) *cobra.Command {
-	var beforeTurn string
-	var dryRun bool
-	cmd := &cobra.Command{
-		Use:   "split <question-id>",
-		Short: "Split a question into two at a specific turn (accepts short ID prefixes for both)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return callAndPrint(cmd, f, schema.MethodConversationQuestionSplit, map[string]any{
-				"question_id":    args[0],
-				"before_turn_id": beforeTurn,
-				"dry_run":        dryRun,
-			})
-		},
-	}
-	cmd.Flags().StringVar(&beforeTurn, "before-turn", "", "turn id that starts the new question")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without splitting")
-	_ = cmd.MarkFlagRequired("before-turn")
-	return cmd
 }
 
 func newCmdConversationPart(f *cmdutil.Factory) *cobra.Command {

@@ -1,4 +1,4 @@
-import { Check, Copy, Scissors } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
@@ -171,7 +171,6 @@ export const ConversationTurn = memo(function ConversationTurn({
   index,
   onCopyError,
   onCommandPartsVisible,
-  onSplit,
   recordKind,
   resultPreviewLineLimit,
   t,
@@ -186,7 +185,6 @@ export const ConversationTurn = memo(function ConversationTurn({
   model: ConversationTurnPresentation;
   onCopyError?: (message: string) => void;
   onCommandPartsVisible?: (partIds: string[]) => void;
-  onSplit?: (turnId: string) => void;
   recordKind: ConversationRecordKind;
   resultPreviewLineLimit?: number;
   t: Translator;
@@ -261,13 +259,6 @@ export const ConversationTurn = memo(function ConversationTurn({
             >
               {conversationIdFragment(model.promptBlockId)}
             </span>
-            {index > 0 && onSplit ? (
-              <ToolbarTextButton
-                icon={<Scissors size={15} />}
-                label={t("conversation.question.splitHere")}
-                onClick={() => onSplit(model.turn.id)}
-              />
-            ) : null}
             <PromptCopyButton
               copied={copied}
               onClick={() => void copyPrompt()}

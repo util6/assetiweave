@@ -44,80 +44,19 @@ pub async fn update_conversation_part_translation_sqlx(
     Ok(())
 }
 
-/// 轮次上的分组两列（`question_id` / `question_origin`），读路径的唯一分组事实源。
-#[derive(Debug, FromRow)]
-pub(crate) struct ConversationTurnQuestionRow {
-    id: String,
-    session_id: String,
-    external_id: String,
-    turn_index: i64,
-    prompt: String,
-    process: Option<String>,
-    response: Option<String>,
-    title: Option<String>,
-    started_at: Option<String>,
-    ended_at: Option<String>,
-    model: Option<String>,
-    fingerprint: String,
-    missing: i64,
-    imported_at: String,
-    question_id: String,
-    question_origin: String,
-}
-
-impl ConversationTurnQuestionRow {
-    pub(crate) fn into_grouped_turn(
-        self,
-    ) -> (String, ConversationGroupingOrigin, ConversationTurn) {
-        let question_id = self.question_id;
-        let origin = decode_turn_question_origin(&self.question_origin);
-        let turn = ConversationTurn {
-            id: self.id,
-            session_id: self.session_id,
-            external_id: self.external_id,
-            turn_index: self.turn_index,
-            prompt: self.prompt,
-            title: self.title,
-            started_at: self.started_at,
-            ended_at: self.ended_at,
-            fingerprint: self.fingerprint,
-            missing: self.missing == 1,
-            imported_at: self.imported_at,
-            model: self.model,
-            process: self.process,
-            response: self.response,
-        };
-        (question_id, origin, turn)
-    }
-}
-
-/// 由轮次列即时派生问题详情：分组顺序取组内首轮位置，成员顺序取轮次顺序。
-///
-/// 返回结构（问题 + 成员 + 轮次 + 零件 + 投影节点）与成员表时代的对外契约逐字段一致，
-/// 成员部分不再持久化，而是按 `turn_order` 从轮次序列重放：`turn_order` 即组内位次，
-/// 成员的时间戳取轮次自身的导入时刻，问题时间取首轮 `COALESCE(started_at, imported_at)`。
-pub(crate) fn build_question_details_from_turn_columns(
-    turns: Vec<(String, ConversationGroupingOrigin, ConversationTurn)>,
+/// 由内存中的动态分组即时派生问题详情：分组顺序取组内首轮位置，成员顺序取轮次顺序。
+pub(crate) fn build_question_details_from_dynamic_groups(
+    groups: Vec<crate::backend::domain::conversations::DynamicGroupedTurn<ConversationTurn>>,
     mut parts_by_turn: BTreeMap<String, Vec<ConversationPart>>,
     adapter_id: &str,
     card_kinds: &[ConversationCardKindDefinition],
 ) -> StoreResult<Vec<ConversationQuestionDetail>> {
-    let mut group_order: Vec<String> = Vec::new();
-    let mut grouped: BTreeMap<String, Vec<(ConversationGroupingOrigin, ConversationTurn)>> =
-        BTreeMap::new();
-    for (question_id, origin, turn) in turns {
-        if !grouped.contains_key(&question_id) {
-            group_order.push(question_id.clone());
-        }
-        grouped.entry(question_id).or_default().push((origin, turn));
-    }
-
-    let mut details = Vec::with_capacity(group_order.len());
-    for question_id in group_order {
-        let members = grouped.remove(&question_id).unwrap_or_default();
-        let mut question_turns = Vec::with_capacity(members.len());
-        let mut group_turns = Vec::with_capacity(members.len());
-        for (turn_order, (origin, turn)) in members.into_iter().enumerate() {
+    let mut details = Vec::with_capacity(groups.len());
+    for group in groups {
+        let question_id = group.question_id;
+        let origin = group.origin;
+        let mut question_turns = Vec::with_capacity(group.turns.len());
+        for (turn_order, turn) in group.turns.iter().enumerate() {
             question_turns.push(ConversationQuestionTurn {
                 question_id: question_id.clone(),
                 turn_id: turn.id.clone(),
@@ -126,20 +65,22 @@ pub(crate) fn build_question_details_from_turn_columns(
                 assigned_at: turn.imported_at.clone(),
                 updated_at: turn.imported_at.clone(),
             });
-            group_turns.push(turn);
         }
 
-        let created_at = group_turns
+        let created_at = group
+            .turns
             .first()
             .map(turn_relation_time)
             .unwrap_or_default();
-        let updated_at = group_turns
+        let updated_at = group
+            .turns
             .last()
             .map(turn_relation_time)
             .unwrap_or_else(|| created_at.clone());
         let question = ConversationQuestion {
             id: question_id.clone(),
-            session_id: group_turns
+            session_id: group
+                .turns
                 .first()
                 .map(|turn| turn.session_id.clone())
                 .unwrap_or_default(),
@@ -149,7 +90,7 @@ pub(crate) fn build_question_details_from_turn_columns(
         };
 
         let mut parts = Vec::new();
-        for turn in &group_turns {
+        for turn in &group.turns {
             parts.extend(parts_by_turn.remove(&turn.id).unwrap_or_default());
         }
         let projected_content_nodes = project_question_content_nodes(
@@ -160,9 +101,9 @@ pub(crate) fn build_question_details_from_turn_columns(
             card_kinds,
         )?;
         details.push(ConversationQuestionDetail {
-            question: project_question_title(question, &group_turns),
+            question: project_question_title(question, &group.turns),
             question_turns,
-            turns: group_turns,
+            turns: group.turns,
             parts,
             projected_content_nodes,
         });
@@ -186,11 +127,10 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
     let (adapter_id, card_kinds) =
         load_conversation_card_projection_context_sqlx(pool, tenant_id, session_id).await?;
 
-    let turn_rows = sqlx::query_as::<_, ConversationTurnQuestionRow>(
+    let turn_rows = sqlx::query_as::<_, ConversationTurnRow>(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.prompt, t.process, t.response, t.title,
-               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
-               t.question_id, t.question_origin
+               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at
         FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
         ORDER BY t.turn_index ASC, t.id ASC
@@ -203,7 +143,7 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
     .map_err(StoreError::external)?;
     let turns = turn_rows
         .into_iter()
-        .map(ConversationTurnQuestionRow::into_grouped_turn)
+        .map(ConversationTurnRow::into_turn)
         .collect::<Vec<_>>();
 
     let part_rows = sqlx::query_as::<
@@ -249,7 +189,7 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
     }
 
     let mut parts_by_turn = BTreeMap::<String, Vec<ConversationPart>>::new();
-    for (_, _, turn) in &turns {
+    for turn in &turns {
         let empty_vec = Vec::new();
         let turn_parts = triad_parts_by_turn.get(&turn.id).unwrap_or(&empty_vec);
         let process: Option<crate::backend::domain::conversations::triad::TurnProcess> = turn
@@ -268,7 +208,13 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
         parts_by_turn.insert(turn.id.clone(), restored);
     }
 
-    build_question_details_from_turn_columns(turns, parts_by_turn, &adapter_id, &card_kinds)
+    let groups = crate::backend::domain::conversations::group_turns_by_dynamic_projection(
+        "conversation-question",
+        turns,
+        |turn| &turn.prompt,
+        |turn| &turn.id,
+    );
+    build_question_details_from_dynamic_groups(groups, parts_by_turn, &adapter_id, &card_kinds)
 }
 
 pub fn project_question_title(

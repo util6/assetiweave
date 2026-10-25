@@ -120,6 +120,53 @@ fn groups_interruption_recovery_and_micro_follow_up_with_previous_question() {
 }
 
 #[test]
+fn dynamic_projection_groups_and_derives_deterministic_question_ids() {
+    struct TestTurn {
+        id: String,
+        prompt: String,
+    }
+    let turns = vec![
+        TestTurn {
+            id: "conversation-turn-0001".to_string(),
+            prompt: "What is Ticket 01?".to_string(),
+        },
+        TestTurn {
+            id: "conversation-turn-0002".to_string(),
+            prompt: "继续".to_string(),
+        },
+        TestTurn {
+            id: "conversation-turn-0003".to_string(),
+            prompt: "Now explain Ticket 02".to_string(),
+        },
+    ];
+
+    let groups =
+        group_turns_by_dynamic_projection("conversation-question", turns, |t| &t.prompt, |t| &t.id);
+
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0].question_id, "conversation-question-0001");
+    assert_eq!(groups[0].origin, ConversationGroupingOrigin::AutoMerged);
+    assert_eq!(groups[0].turns.len(), 2);
+    assert_eq!(groups[0].turns[0].id, "conversation-turn-0001");
+    assert_eq!(groups[0].turns[1].id, "conversation-turn-0002");
+
+    assert_eq!(groups[1].question_id, "conversation-question-0003");
+    assert_eq!(groups[1].origin, ConversationGroupingOrigin::Imported);
+    assert_eq!(groups[1].turns.len(), 1);
+    assert_eq!(groups[1].turns[0].id, "conversation-turn-0003");
+
+    assert_eq!(
+        derive_turn_id_from_question_id("conversation-question-0001"),
+        Some("conversation-turn-0001".to_string())
+    );
+    assert_eq!(
+        derive_turn_id_from_question_id("web-record-question-0001"),
+        Some("web-record-turn-0001".to_string())
+    );
+    assert_eq!(derive_turn_id_from_question_id("invalid-question"), None);
+}
+
+#[test]
 fn sanitize_sync_error_message_masks_unix_user_paths() {
     let raw = "Error reading /Users/bob/project/data.json: timed out";
     let sanitized = sanitize_sync_error_message(raw, &[]);

@@ -86,8 +86,6 @@ const (
 	MethodConversationQuestionGet             = "conversation.question.get"
 	MethodConversationBlockList               = "conversation.block.list"
 	MethodConversationBlockGet                = "conversation.block.get"
-	MethodConversationQuestionMerge           = "conversation.question.merge"
-	MethodConversationQuestionSplit           = "conversation.question.split"
 	MethodConversationPartTranslationUpdate   = "conversation.part.translation.update"
 	MethodMemoryRecentSnapshotGet             = "memory.recent.snapshot.get"
 	MethodMemoryContextResolve                = "memory.context.resolve"

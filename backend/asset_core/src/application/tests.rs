@@ -5167,61 +5167,6 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
         Some(&1)
     );
 
-    let second_turn_id = format!("app-membership-turn-{}", Uuid::new_v4());
-    let second_question_id = format!("app-membership-question-{}", Uuid::new_v4());
-    let now = "2026-08-25T00:00:00Z";
-    let pool = service.db.pool().clone();
-    let tenant_id = service.tenant_id().to_string();
-    let session_id = detail.question.session_id.clone();
-    let question_id = detail.question.id.clone();
-    let second_turn_id_for_db = second_turn_id.clone();
-    let second_question_id_for_db = second_question_id.clone();
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, prompt, title,
-            started_at, ended_at, fingerprint, missing, imported_at,
-            question_id, question_origin
-        )
-        VALUES (?1, ?2, ?3, ?4, 1, ?5, NULL, NULL, NULL, ?6, 0, ?7, ?8, 'imported')
-        "#,
-    )
-    .bind(&tenant_id)
-    .bind(&second_turn_id_for_db)
-    .bind(&session_id)
-    .bind("app-membership-turn-2")
-    .bind("Second prompt")
-    .bind("app-membership-fingerprint")
-    .bind(now)
-    .bind(&second_question_id_for_db)
-    .execute(&pool)
-    .await
-    .map_err(AppError::external)
-    .expect("insert second turn");
-
-    let merged = service
-        .merge_conversation_questions(ConversationQuestionMergeParams {
-            question_ids: vec![question_id.clone(), second_question_id],
-            dry_run: false,
-        })
-        .await
-        .expect("merge question memberships through AppService");
-    assert_eq!(merged.questions.len(), 1);
-    assert_eq!(merged.questions[0].question.id, question_id);
-    assert_eq!(merged.questions[0].question_turns.len(), 2);
-    assert_eq!(
-        merged.questions[0].question_turns[1].turn_id,
-        second_turn_id
-    );
-    assert_eq!(
-        merged.questions[0].question_turns[1].assignment_origin,
-        ConversationGroupingOrigin::Manual
-    );
-    assert_eq!(
-        merged.questions[0].question.title.as_deref(),
-        Some("Export this")
-    );
-
     let session_fragment =
         crate::backend::domain::conversation_id_fragment(&result.hits[0].session.session.id);
     let id_result = service

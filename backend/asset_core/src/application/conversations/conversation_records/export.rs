@@ -235,7 +235,9 @@ pub fn export_conversation_rendered_markdown(
     let selected = question_ids.iter().collect::<BTreeSet<_>>();
     let mut output = format!("# {}\n", detail.session.title.trim());
     for (question_index, question) in detail.questions.iter().enumerate() {
-        if !selected.is_empty() && !selected.contains(&question.question.id) {
+        if !crate::backend::application::conversations::conversation_records::export_raw::question_detail_matches_export_selection(
+            question, &selected,
+        ) {
             continue;
         }
         let prompt = question

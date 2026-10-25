@@ -101,7 +101,7 @@ pub(super) async fn load_search_sessions_sqlx(
                s.missing, s.created_at, s.imported_at,
                {session_metadata_expr}
                (
-                   SELECT COUNT(DISTINCT t.question_id)
+                   SELECT COUNT(*)
                    FROM {turns} t
                    WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                ) AS question_count,
@@ -136,107 +136,33 @@ pub(super) async fn load_search_sessions_sqlx(
 }
 
 /// 会话内的分组由轮次列即时派生：分组身份、组间顺序与问题时间全部来自轮次序列。
-pub(super) async fn load_search_questions_sqlx(
+pub(super) async fn load_search_question_groups_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     tables: ConversationRecordTables,
     adapter_id: Option<&str>,
     source_id: Option<&str>,
     session_ids_json: Option<&str>,
-) -> StoreResult<BTreeMap<String, Vec<ConversationQuestion>>> {
-    let query = format!(
-        r#"
-        SELECT t.session_id AS session_id, t.question_id AS id,
-               MIN(t.turn_index) AS first_turn_index,
-               (
-                   SELECT COALESCE(t_first.started_at, t_first.imported_at)
-                   FROM {turns} t_first
-                   WHERE t_first.tenant_id = t.tenant_id
-                     AND t_first.session_id = t.session_id
-                     AND t_first.question_id = t.question_id
-                   ORDER BY t_first.turn_index ASC, t_first.id ASC
-                   LIMIT 1
-               ) AS created_at,
-               (
-                   SELECT COALESCE(t_last.started_at, t_last.imported_at)
-                   FROM {turns} t_last
-                   WHERE t_last.tenant_id = t.tenant_id
-                     AND t_last.session_id = t.session_id
-                     AND t_last.question_id = t.question_id
-                   ORDER BY t_last.turn_index DESC, t_last.id DESC
-                   LIMIT 1
-               ) AS updated_at
-        FROM {turns} t
-        JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
-        WHERE t.tenant_id = ?1
-          AND (?2 IS NULL OR s.adapter_id = ?2)
-          AND (?3 IS NULL OR s.source_id = ?3)
-          AND (?4 IS NULL OR s.id IN (SELECT value FROM json_each(?4)))
-        GROUP BY t.session_id, t.question_id
-        ORDER BY t.session_id ASC, first_turn_index ASC, t.question_id ASC
-        "#,
-        sessions = tables.sessions,
-        turns = tables.turns,
-    );
-    let rows = sqlx::query_as::<_, DerivedQuestionGroupRow>(AssertSqlSafe(query))
-        .bind(tenant_id)
-        .bind(adapter_id)
-        .bind(source_id)
-        .bind(session_ids_json)
-        .fetch_all(pool)
-        .await
-        .map_err(StoreError::external)?;
-    let mut questions_by_session = BTreeMap::<String, Vec<ConversationQuestion>>::new();
-    for row in rows {
-        questions_by_session
-            .entry(row.session_id.clone())
-            .or_default()
-            .push(ConversationQuestion {
-                id: row.id,
-                session_id: row.session_id,
-                title: None,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-            });
-    }
-    Ok(questions_by_session)
-}
-
-#[derive(Debug, FromRow)]
-struct DerivedQuestionGroupRow {
-    session_id: String,
-    id: String,
-    #[allow(dead_code)]
-    first_turn_index: i64,
-    created_at: String,
-    updated_at: String,
-}
-
-pub(super) async fn load_search_turns_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    tables: ConversationRecordTables,
-    adapter_id: Option<&str>,
-    source_id: Option<&str>,
-    session_ids_json: Option<&str>,
-) -> StoreResult<BTreeMap<String, Vec<ConversationTurn>>> {
+) -> StoreResult<(
+    BTreeMap<String, Vec<ConversationQuestion>>,
+    BTreeMap<String, Vec<ConversationTurn>>,
+)> {
     let query = format!(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.prompt, t.process, t.response, t.title,
-               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
-               t.question_id
+               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at
         FROM {turns} t
         JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
         WHERE t.tenant_id = ?1
           AND (?2 IS NULL OR s.adapter_id = ?2)
           AND (?3 IS NULL OR s.source_id = ?3)
           AND (?4 IS NULL OR s.id IN (SELECT value FROM json_each(?4)))
-        ORDER BY t.question_id ASC, t.turn_index ASC, t.id ASC
+        ORDER BY t.session_id ASC, t.turn_index ASC, t.id ASC
         "#,
         turns = tables.turns,
         sessions = tables.sessions,
     );
-    let rows = sqlx::query_as::<_, ConversationTurnWithQuestionRow>(AssertSqlSafe(query))
+    let rows = sqlx::query_as::<_, ConversationTurnRow>(AssertSqlSafe(query))
         .bind(tenant_id)
         .bind(adapter_id)
         .bind(source_id)
@@ -244,12 +170,59 @@ pub(super) async fn load_search_turns_sqlx(
         .fetch_all(pool)
         .await
         .map_err(StoreError::external)?;
-    let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
+
+    let mut turns_by_session = BTreeMap::<String, Vec<ConversationTurn>>::new();
     for row in rows {
-        let (question_id, turn) = row.into_turn();
-        turns_by_question.entry(question_id).or_default().push(turn);
+        let turn = row.into_turn();
+        turns_by_session
+            .entry(turn.session_id.clone())
+            .or_default()
+            .push(turn);
     }
-    Ok(turns_by_question)
+
+    let is_web = tables.turns == "web_record_turns";
+    let question_prefix = if is_web {
+        "web-record-question"
+    } else {
+        "conversation-question"
+    };
+
+    let mut questions_by_session = BTreeMap::<String, Vec<ConversationQuestion>>::new();
+    let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
+
+    let turn_time = |turn: &ConversationTurn| -> String {
+        turn.started_at
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(&turn.imported_at)
+            .to_string()
+    };
+
+    for (session_id, session_turns) in turns_by_session {
+        let groups = crate::backend::domain::conversations::group_turns_by_dynamic_projection(
+            question_prefix,
+            session_turns,
+            |turn: &ConversationTurn| &turn.prompt,
+            |turn: &ConversationTurn| &turn.id,
+        );
+        for group in groups {
+            let created_at = group.turns.first().map(turn_time).unwrap_or_default();
+            let updated_at = group.turns.last().map(turn_time).unwrap_or_default();
+            questions_by_session
+                .entry(session_id.clone())
+                .or_default()
+                .push(ConversationQuestion {
+                    id: group.question_id.clone(),
+                    session_id: session_id.clone(),
+                    title: None,
+                    created_at,
+                    updated_at,
+                });
+            turns_by_question.insert(group.question_id, group.turns);
+        }
+    }
+
+    Ok((questions_by_session, turns_by_question))
 }
 
 pub(super) async fn load_search_parts_sqlx(

@@ -222,8 +222,6 @@
     "conversation.question.get",
     "conversation.block.list",
     "conversation.block.get",
-    "conversation.question.merge",
-    "conversation.question.split",
     "translate_conversation_card",
     "sync_conversations",
     "audit_conversation_data",
@@ -241,8 +239,6 @@
     "get_conversation_question",
     "list_conversation_blocks",
     "get_conversation_block",
-    "merge_conversation_questions",
-    "split_conversation_question",
     "conversation.search",
     "conversation.search.incremental",
     "conversation.search.index.status",
@@ -10755,91 +10751,6 @@
     },
     {
       "contract_version": 3,
-      "method": "conversation.question.merge",
-      "canonical_method": "conversation.question.merge",
-      "description": "Merge adjacent conversation question groups",
-      "risk": "write",
-      "confirmation_required": false,
-      "exposure": "friendly",
-      "supports_dry_run": true,
-      "params_schema": {
-        "required": [
-          "question_ids"
-        ],
-        "type": "object",
-        "properties": {
-          "question_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Adjacent question identifiers in session order",
-            "aliases": [
-              "questionIds"
-            ]
-          },
-          "dry_run": {
-            "type": "boolean",
-            "default": false,
-            "description": "Preview without merging",
-            "aliases": [
-              "dryRun"
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "cli": "assetiweave-cli conversation question merge <question-id>...",
-      "since": "0.1.0",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "conversation.question.split",
-      "canonical_method": "conversation.question.split",
-      "description": "Split a conversation question group before a turn",
-      "risk": "write",
-      "confirmation_required": false,
-      "exposure": "friendly",
-      "supports_dry_run": true,
-      "params_schema": {
-        "required": [
-          "question_id",
-          "before_turn_id"
-        ],
-        "type": "object",
-        "properties": {
-          "question_id": {
-            "type": "string",
-            "description": "Question identifier",
-            "aliases": [
-              "questionId"
-            ]
-          },
-          "before_turn_id": {
-            "type": "string",
-            "description": "Turn identifier that starts the new question",
-            "aliases": [
-              "beforeTurnId"
-            ]
-          },
-          "dry_run": {
-            "type": "boolean",
-            "default": false,
-            "description": "Preview without splitting",
-            "aliases": [
-              "dryRun"
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "cli": "assetiweave-cli conversation question split <question-id> --before-turn <turn-id>",
-      "since": "0.1.0",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
       "method": "translate_conversation_card",
       "canonical_method": "conversation.card.translation.run",
       "description": "Translate a conversation content card with the configured translation provider",
@@ -11795,91 +11706,6 @@
             "description": "Block identifier",
             "aliases": [
               "blockId"
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "cli": null,
-      "since": "0.1.0",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "merge_conversation_questions",
-      "canonical_method": "conversation.question.merge",
-      "description": "Merge adjacent conversation question groups",
-      "risk": "write",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "required": [
-          "question_ids"
-        ],
-        "type": "object",
-        "properties": {
-          "question_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Adjacent question identifiers in session order",
-            "aliases": [
-              "questionIds"
-            ]
-          },
-          "dry_run": {
-            "type": "boolean",
-            "default": false,
-            "description": "Preview without merging",
-            "aliases": [
-              "dryRun"
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "cli": null,
-      "since": "0.1.0",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "split_conversation_question",
-      "canonical_method": "conversation.question.split",
-      "description": "Split a conversation question group before a turn",
-      "risk": "write",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "required": [
-          "question_id",
-          "before_turn_id"
-        ],
-        "type": "object",
-        "properties": {
-          "question_id": {
-            "type": "string",
-            "description": "Question identifier",
-            "aliases": [
-              "questionId"
-            ]
-          },
-          "before_turn_id": {
-            "type": "string",
-            "description": "Turn identifier that starts the new question",
-            "aliases": [
-              "beforeTurnId"
-            ]
-          },
-          "dry_run": {
-            "type": "boolean",
-            "default": false,
-            "description": "Preview without splitting",
-            "aliases": [
-              "dryRun"
             ]
           }
         },

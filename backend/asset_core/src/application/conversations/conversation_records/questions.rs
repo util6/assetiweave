@@ -101,60 +101,6 @@ impl AppService {
         .map_err(AppError::external)
     }
 
-    pub async fn merge_conversation_questions(
-        &self,
-        params: ConversationQuestionMergeParams,
-    ) -> AppResult<crate::backend::domain::conversations::ConversationMutationResult> {
-        let pool = self.pool();
-        let tenant_id = self.tenant_id();
-        let mut resolved_question_ids = Vec::with_capacity(params.question_ids.len());
-        for q_id in &params.question_ids {
-            resolved_question_ids.push(
-                crate::backend::store::resolve_conversation_question_id_prefix_sqlx(
-                    pool, tenant_id, q_id,
-                )
-                .await?,
-            );
-        }
-        crate::backend::store::merge_conversation_questions_sqlx(
-            pool,
-            tenant_id,
-            &resolved_question_ids,
-            params.dry_run,
-        )
-        .await
-        .map_err(AppError::external)
-    }
-
-    pub async fn split_conversation_question(
-        &self,
-        params: ConversationQuestionSplitParams,
-    ) -> AppResult<crate::backend::domain::conversations::ConversationMutationResult> {
-        let pool = self.pool();
-        let tenant_id = self.tenant_id();
-        let question_id = crate::backend::store::resolve_conversation_question_id_prefix_sqlx(
-            pool,
-            tenant_id,
-            &params.question_id,
-        )
-        .await?;
-        let before_turn_id = crate::backend::store::resolve_conversation_turn_id_prefix_sqlx(
-            pool,
-            tenant_id,
-            &params.before_turn_id,
-        )
-        .await?;
-        crate::backend::store::split_conversation_question_sqlx(
-            pool,
-            tenant_id,
-            &question_id,
-            &before_turn_id,
-            params.dry_run,
-        )
-        .await
-        .map_err(AppError::external)
-    }
-
     pub async fn update_conversation_part_translation(
         &self,
         params: ConversationPartTranslationUpdateParams,

@@ -709,292 +709,44 @@ async fn disabling_builtin_adapter_disables_runtime_and_sources() {
 }
 
 #[tokio::test]
-async fn sqlx_import_preserves_manual_grouping_across_resync() {
+async fn sqlx_import_leaves_turn_question_id_unwritten_and_zero_write_dependency() {
     let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-conversation-import-sqlx-{}.sqlite",
+        "assetiweave-conversation-no-question-write-{}.sqlite",
         Uuid::new_v4()
     ));
     let database = Database::open_async(&db_path).await.expect("open database");
     let adapter = test_conversation_adapter(
-        "import-external",
+        "no-question-write-external",
         ConversationAdapterKind::External,
         ConversationAdapterTrustState::Trusted,
     );
     let source = test_conversation_source(&adapter.id);
+    let pool = database.pool();
 
-    let (initial_question_count, initial_first_question_turn_count, detail) = async {
-        upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-        upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-        import_conversation_sessions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &source,
-            &[fixture_session("v1")],
-            false,
-        )
-        .await?;
-        let sessions = list_conversation_sessions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            None,
-            Some(&source.id),
-            None,
-            20,
-            0,
-        )
-        .await?;
-        let detail = load_conversation_session_detail_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &sessions[0].session.id,
-        )
-        .await?;
-        let initial_question_count = detail.questions.len();
-        let initial_first_question_turn_count = detail.questions[0].turns.len();
-        let question_ids = detail
-            .questions
-            .iter()
-            .map(|question| question.question.id.clone())
-            .collect::<Vec<_>>();
-        merge_conversation_questions_sqlx(database.pool(), TEST_TENANT_ID, &question_ids, false)
-            .await?;
-        import_conversation_sessions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &source,
-            &[fixture_session("v2")],
-            false,
-        )
-        .await?;
-        let detail = load_conversation_session_detail_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &sessions[0].session.id,
-        )
-        .await?;
-        Ok::<_, StoreError>((
-            initial_question_count,
-            initial_first_question_turn_count,
-            detail,
-        ))
+    upsert_conversation_adapter_sqlx(pool, TEST_TENANT_ID, &adapter)
+        .await
+        .expect("upsert adapter");
+    upsert_conversation_source_sqlx(pool, TEST_TENANT_ID, &source)
+        .await
+        .expect("upsert source");
+
+    let session = fixture_session("v1");
+    import_conversation_sessions_sqlx(pool, TEST_TENANT_ID, &source, &[session], false)
+        .await
+        .expect("import session");
+
+    // Check that conversation_turns.question_id is NULL or empty
+    let turn_question_ids: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT question_id FROM conversation_turns WHERE tenant_id = ?1")
+            .bind(TEST_TENANT_ID)
+            .fetch_all(pool)
+            .await
+            .expect("query question_id");
+
+    assert!(!turn_question_ids.is_empty());
+    for qid in turn_question_ids {
+        assert!(qid.is_none() || qid.as_deref() == Some(""));
     }
-    .await
-    .expect("import and merge through SQLx");
-
-    assert_eq!(initial_question_count, 2);
-    assert_eq!(initial_first_question_turn_count, 2);
-    assert_eq!(detail.questions.len(), 1);
-    assert_eq!(detail.questions[0].turns.len(), 3);
-    assert!(detail.questions[0]
-        .question_turns
-        .iter()
-        .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual));
-
-    drop(database);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn sqlx_import_freezes_existing_question_ids_and_merges_only_new_turns() {
-    let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-conversation-question-freeze-sqlx-{}.sqlite",
-        Uuid::new_v4()
-    ));
-    let database = Database::open_async(&db_path).await.expect("open database");
-    let adapter = test_conversation_adapter(
-        "question-freeze-external",
-        ConversationAdapterKind::External,
-        ConversationAdapterTrustState::Trusted,
-    );
-    let source = test_conversation_source(&adapter.id);
-    let (initial, reconciled, appended, detail) = async {
-        upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-        upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-        let mut initial = fixture_session("v1");
-        initial.turns[1].user_text = "Export it".to_string();
-        import_conversation_sessions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &source,
-            &[initial],
-            false,
-        )
-        .await?;
-        let initial = load_turn_question_reads(database.pool()).await?;
-
-        // t2 改成确认语：既有标识已固化，导入不为它重新推导分组。
-        let mut reconciled = fixture_session("v1");
-        reconciled.turns[1].user_text = "继续".to_string();
-        import_conversation_sessions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &source,
-            &[reconciled],
-            false,
-        )
-        .await?;
-        let reconciled = load_turn_question_reads(database.pool()).await?;
-
-        // 新轮次仍按自动归并规则并入上一组，并沿用该组标识。
-        let mut appended = fixture_session("v1");
-        appended.turns.truncate(2);
-        appended.turns[1].user_text = "继续".to_string();
-        appended.turns.push(fixture_turn("t4", 2, "继续"));
-        import_conversation_sessions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &source,
-            &[appended],
-            false,
-        )
-        .await?;
-        let appended = load_turn_question_reads(database.pool()).await?;
-        let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
-        let detail =
-            load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
-                .await?;
-        Ok::<_, StoreError>((initial, reconciled, appended, detail))
-    }
-    .await
-    .expect("freeze existing question ids");
-
-    for reads in [&initial, &reconciled, &appended] {
-        reads.assert_column_view_matches_membership();
-    }
-
-    let question_id_of = |reads: &TurnQuestionReads, external_id: &str| {
-        reads
-            .columns
-            .get(external_id)
-            .unwrap_or_else(|| panic!("turn {external_id} has a question read"))
-            .question_id
-            .clone()
-    };
-    let origin_of = |reads: &TurnQuestionReads, external_id: &str| {
-        reads
-            .columns
-            .get(external_id)
-            .unwrap_or_else(|| panic!("turn {external_id} has a question read"))
-            .origin
-            .clone()
-    };
-    let first_question_id = question_id_of(&initial, "t1");
-    let second_question_id = question_id_of(&initial, "t2");
-    assert_ne!(first_question_id, second_question_id);
-
-    assert_eq!(
-        question_id_of(&reconciled, "t2"),
-        second_question_id,
-        "existing question id must be frozen across re-imports"
-    );
-    assert_eq!(
-        question_id_of(&appended, "t4"),
-        second_question_id,
-        "a new acknowledgement turn joins the previous group"
-    );
-    assert_eq!(origin_of(&appended, "t2"), "auto_merged");
-    assert_eq!(origin_of(&appended, "t4"), "auto_merged");
-    assert_eq!(origin_of(&appended, "t1"), "imported");
-
-    assert_eq!(detail.questions.len(), 2);
-    assert_eq!(
-        detail
-            .questions
-            .iter()
-            .map(|question| question.question.id.clone())
-            .collect::<Vec<_>>(),
-        vec![first_question_id.clone(), second_question_id.clone(),]
-    );
-    assert_eq!(detail.questions[0].turns.len(), 1);
-    assert_eq!(detail.questions[1].turns.len(), 2);
-    assert_eq!(detail.questions[1].turns[0].external_id, "t2");
-    assert_eq!(detail.questions[1].turns[1].external_id, "t4");
-
-    drop(database);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn sqlx_manual_membership_is_a_reconciliation_fence() {
-    let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-conversation-manual-fence-sqlx-{}.sqlite",
-        Uuid::new_v4()
-    ));
-    let database = Database::open_async(&db_path).await.expect("open database");
-    let adapter = test_conversation_adapter(
-        "manual-fence-external",
-        ConversationAdapterKind::External,
-        ConversationAdapterTrustState::Trusted,
-    );
-    let source = test_conversation_source(&adapter.id);
-    let (detail, reads) = async {
-        upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-        upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-        let mut initial = fixture_session("v1");
-        initial.turns.truncate(2);
-        initial.turns[1].user_text = "Export it".to_string();
-        import_conversation_sessions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &source,
-            &[initial],
-            false,
-        )
-        .await?;
-        let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
-        let initial_detail =
-            load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
-                .await?;
-        let question_ids = initial_detail
-            .questions
-            .iter()
-            .map(|question| question.question.id.clone())
-            .collect::<Vec<_>>();
-        merge_conversation_questions_sqlx(database.pool(), TEST_TENANT_ID, &question_ids, false)
-            .await?;
-
-        let mut updated = fixture_session("v1");
-        updated.turns[1].user_text = "Export it".to_string();
-        updated.turns[2].user_text = "继续".to_string();
-        import_conversation_sessions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &source,
-            &[updated],
-            false,
-        )
-        .await?;
-        let detail =
-            load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
-                .await?;
-        let reads = load_turn_question_reads(database.pool()).await?;
-        Ok::<_, StoreError>((detail, reads))
-    }
-    .await
-    .expect("preserve manual fence");
-
-    assert_eq!(detail.questions.len(), 2);
-    assert_eq!(detail.questions[0].turns.len(), 2);
-    assert!(detail.questions[0]
-        .question_turns
-        .iter()
-        .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual));
-    assert_eq!(detail.questions[1].turns.len(), 1);
-    assert_eq!(detail.questions[1].turns[0].external_id, "t3");
-
-    reads.assert_column_view_matches_membership();
-    let manual_question_id = &detail.questions[0].question.id;
-    for external_id in ["t1", "t2"] {
-        let read = reads
-            .columns
-            .get(external_id)
-            .unwrap_or_else(|| panic!("turn {external_id} has a question read"));
-        assert_eq!(&read.question_id, manual_question_id);
-        assert_eq!(read.origin, "manual");
-    }
-    let new_turn = reads.columns.get("t3").expect("t3 has a question read");
-    assert_ne!(&new_turn.question_id, manual_question_id);
-    assert_eq!(new_turn.origin, "imported");
 
     drop(database);
     cleanup_database(&db_path);
@@ -1027,42 +779,21 @@ async fn sqlx_full_repeat_and_equivalent_incremental_imports_converge() {
     let mut partial_session = full_session.clone();
     partial_session.turns.remove(1);
 
-    let snapshot = |detail: &ConversationSessionDetail, reads: &TurnQuestionReads| {
-        reads.assert_column_view_matches_membership();
-        (
-            detail
-                .questions
-                .iter()
-                .map(|question| {
-                    (
-                        question.question.id.clone(),
-                        question
-                            .turns
-                            .iter()
-                            .map(|turn| turn.id.clone())
-                            .collect::<Vec<_>>(),
-                        question
-                            .question_turns
-                            .iter()
-                            .map(|membership| {
-                                (membership.turn_id.clone(), membership.assignment_origin)
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                })
-                .collect::<Vec<_>>(),
-            reads
-                .columns
-                .iter()
-                .map(|(external_id, read)| {
-                    (
-                        external_id.clone(),
-                        read.question_id.clone(),
-                        read.origin.clone(),
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )
+    let snapshot = |detail: &ConversationSessionDetail| {
+        detail
+            .questions
+            .iter()
+            .map(|question| {
+                (
+                    question.question.id.clone(),
+                    question
+                        .turns
+                        .iter()
+                        .map(|turn| turn.id.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
     };
 
     let (full_snapshot, repeated_snapshot) = async {
@@ -1083,8 +814,6 @@ async fn sqlx_full_repeat_and_equivalent_incremental_imports_converge() {
             &session_id,
         )
         .await?;
-        let full_reads = load_turn_question_reads(full_database.pool()).await?;
-        let full_reads = load_turn_question_reads(full_database.pool()).await?;
         import_conversation_sessions_sqlx(
             full_database.pool(),
             TEST_TENANT_ID,
@@ -1099,11 +828,7 @@ async fn sqlx_full_repeat_and_equivalent_incremental_imports_converge() {
             &session_id,
         )
         .await?;
-        let repeated_reads = load_turn_question_reads(full_database.pool()).await?;
-        Ok::<_, StoreError>((
-            snapshot(&full_detail, &full_reads),
-            snapshot(&repeated_detail, &repeated_reads),
-        ))
+        Ok::<_, StoreError>((snapshot(&full_detail), snapshot(&repeated_detail)))
     }
     .await
     .expect("full and repeated imports");
@@ -1138,8 +863,7 @@ async fn sqlx_full_repeat_and_equivalent_incremental_imports_converge() {
             &session_id,
         )
         .await?;
-        let reads = load_turn_question_reads(incremental_database.pool()).await?;
-        Ok::<_, StoreError>(snapshot(&detail, &reads))
+        Ok::<_, StoreError>(snapshot(&detail))
     }
     .await
     .expect("equivalent incremental import");
@@ -1709,7 +1433,7 @@ async fn sqlx_conversation_reads_and_filters_questions() {
     .expect("read conversations through SQLx");
 
     assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].question_count, 2);
+    assert_eq!(sessions[0].question_count, 3);
     assert_eq!(sessions[0].turn_count, 3);
     assert_eq!(detail.questions.len(), 2);
     assert_eq!(filtered_questions.len(), 1);
@@ -1848,512 +1572,81 @@ async fn sqlx_conversation_lists_sessions_by_display_id_fragment() {
 }
 
 #[tokio::test]
-async fn sqlx_merge_and_split_conversation_questions_preserve_grouping() {
+async fn sqlx_dynamic_projection_groups_follow_ups_and_counts_turns_consistently() {
     let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-conversation-mutation-sqlx-{}.sqlite",
+        "assetiweave-conversation-dynamic-proj-{}.sqlite",
         Uuid::new_v4()
     ));
     let database = Database::open_async(&db_path).await.expect("open database");
     let adapter = test_conversation_adapter(
-        "mutation-external",
+        "dynamic-proj-external",
         ConversationAdapterKind::External,
         ConversationAdapterTrustState::Trusted,
     );
     let source = test_conversation_source(&adapter.id);
+    let pool = database.pool();
 
-    let (detail, original_part_ids) = async {
-        upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-        upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-        import_conversation_sessions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &source,
-            &[fixture_session("v1")],
-            false,
-        )
-        .await?;
-        let detail = load_conversation_session_detail_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &stable_id("conversation-session", &[&source.id, "session-1"]),
-        )
-        .await?;
-        let question_ids = detail
-            .questions
-            .iter()
-            .map(|question| question.question.id.clone())
-            .collect::<Vec<_>>();
-        let original_part_ids = detail
-            .questions
-            .iter()
-            .flat_map(|question| question.parts.iter().map(|part| part.id.clone()))
-            .collect::<BTreeSet<_>>();
-        let dry_run =
-            merge_conversation_questions_sqlx(database.pool(), TEST_TENANT_ID, &question_ids, true)
-                .await?;
-        assert!(dry_run.dry_run);
-        assert_eq!(
-            load_conversation_session_detail_sqlx(
-                database.pool(),
-                TEST_TENANT_ID,
-                &detail.session.id,
-            )
-            .await?
-            .questions
-            .len(),
-            2
-        );
-        let merged = merge_conversation_questions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &question_ids,
-            false,
-        )
-        .await?;
-        let repeated_merge = merge_conversation_questions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &question_ids,
-            false,
-        )
-        .await?;
-        assert_eq!(repeated_merge.questions.len(), 1);
-        assert_eq!(repeated_merge.questions[0].turns.len(), 3);
-        let first_turn_error = split_conversation_question_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &merged.questions[0].question.id,
-            &merged.questions[0].turns[0].id,
-            false,
-        )
+    upsert_conversation_adapter_sqlx(pool, TEST_TENANT_ID, &adapter)
         .await
-        .expect_err("split at first turn should fail");
-        assert!(first_turn_error.contains("must not be the first turn"));
-        let split_turn_id = merged.questions[0].turns[2].id.clone();
-        let split = split_conversation_question_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &merged.questions[0].question.id,
-            &split_turn_id,
-            false,
-        )
-        .await?;
-        let repeated_split = split_conversation_question_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &merged.questions[0].question.id,
-            &split_turn_id,
-            false,
-        )
-        .await?;
-        assert_eq!(
-            split.affected_question_ids,
-            repeated_split.affected_question_ids
-        );
-        let final_detail = load_conversation_session_detail_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &detail.session.id,
-        )
-        .await?;
-        Ok::<_, StoreError>((final_detail, original_part_ids))
-    }
-    .await
-    .expect("merge and split through SQLx");
+        .expect("upsert adapter");
+    upsert_conversation_source_sqlx(pool, TEST_TENANT_ID, &source)
+        .await
+        .expect("upsert source");
 
+    let mut session = fixture_session("v1");
+    session.turns[1].user_text = "继续".to_string();
+    session.turns[2].user_text = "请问 Rust 的生命周期怎么理解？".to_string();
+
+    import_conversation_sessions_sqlx(pool, TEST_TENANT_ID, &source, &[session.clone()], false)
+        .await
+        .expect("import session");
+
+    // 1. Session list query returns question_count == turn_count (3 turns)
+    let sessions =
+        list_conversation_sessions_sqlx(pool, TEST_TENANT_ID, None, Some(&source.id), None, 10, 0)
+            .await
+            .expect("list sessions");
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].turn_count, 3);
+    assert_eq!(sessions[0].question_count, 3);
+
+    // 2. Session detail groups dynamically in-memory
+    let detail =
+        load_conversation_session_detail_sqlx(pool, TEST_TENANT_ID, &sessions[0].session.id)
+            .await
+            .expect("load detail");
     assert_eq!(detail.questions.len(), 2);
     assert_eq!(detail.questions[0].turns.len(), 2);
     assert_eq!(detail.questions[1].turns.len(), 1);
-    assert!(detail.questions.iter().all(|question| question
-        .question_turns
-        .iter()
-        .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual)));
-    let final_part_ids = detail
-        .questions
-        .iter()
-        .flat_map(|question| question.parts.iter().map(|part| part.id.clone()))
-        .collect::<BTreeSet<_>>();
-    assert_eq!(final_part_ids, original_part_ids);
-    let final_turn_ids = detail
-        .questions
-        .iter()
-        .flat_map(|question| question.turns.iter().map(|turn| turn.id.clone()))
-        .collect::<BTreeSet<_>>();
-    assert_eq!(final_turn_ids.len(), 3);
-    assert!(detail.questions.iter().all(|question| question
-        .question_turns
-        .iter()
-        .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual)));
-    assert_eq!(
-        detail.questions[0].question.title.as_deref(),
-        Some("How does sync work?")
-    );
-    assert_eq!(
-        detail.questions[1].question.title.as_deref(),
-        Some("Export it")
-    );
 
-    drop(database);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn sqlx_merge_rewrites_grouping_on_turn_columns_only() {
-    let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-conversation-merge-turn-columns-{}.sqlite",
-        Uuid::new_v4()
-    ));
-    let database = Database::open_async(&db_path).await.expect("open database");
-    let adapter = test_conversation_adapter(
-        "merge-turn-columns-external",
-        ConversationAdapterKind::External,
-        ConversationAdapterTrustState::Trusted,
-    );
-    let source = test_conversation_source(&adapter.id);
-    let (session_id, first_question_id, second_question_id) =
-        import_read_path_fixture(database.pool(), &adapter, &source).await;
-    install_grouping_write_audit(database.pool()).await;
-
-    let merged = merge_conversation_questions_sqlx(
-        database.pool(),
-        TEST_TENANT_ID,
-        &[first_question_id.clone(), second_question_id.clone()],
-        false,
-    )
-    .await
-    .expect("merge the two groups");
-    let writes = load_grouping_write_audit(database.pool()).await;
-
+    // 3. Question IDs are derived deterministically from first turn id
+    let q0_id = &detail.questions[0].question.id;
+    let t0_id = &detail.questions[0].turns[0].id;
     assert_eq!(
-        writes
-            .iter()
-            .filter(|write| write.target != "conversation_turns"
-                && write.target != "conversation_question_redirects")
-            .count(),
-        0,
-        "merge must not write the legacy question tables: {writes:?}"
-    );
-    assert_eq!(
-        writes
-            .iter()
-            .filter(|write| write.target == "conversation_turns" && write.operation == "UPDATE")
-            .count(),
-        3,
-        "merge must rewrite the grouping columns of every merged turn: {writes:?}"
-    );
-    assert!(
-        writes
-            .iter()
-            .any(|write| write.target == "conversation_question_redirects"),
-        "merge must leave a tombstone for the merged-away identifier: {writes:?}"
-    );
-
-    let detail =
-        load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
-            .await
-            .expect("load the merged session");
-    assert_eq!(detail.questions.len(), 1);
-    assert_eq!(detail.questions[0].question.id, first_question_id);
-    assert_eq!(
-        detail.questions[0]
-            .turns
-            .iter()
-            .map(|turn| turn.external_id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["t1", "t2", "t3"]
-    );
-    assert!(detail.questions[0]
-        .question_turns
-        .iter()
-        .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual));
-
-    assert_eq!(
-        resolve_conversation_question_id_prefix_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &second_question_id
+        q0_id,
+        &crate::backend::domain::conversations::derive_question_id_from_turn_id(
+            "conversation-question",
+            t0_id
         )
+    );
+
+    // 4. Loading question detail works with derived question_id AND with turn_id
+    let q0_detail_by_qid = load_conversation_question_detail_sqlx(pool, TEST_TENANT_ID, q0_id)
         .await
-        .expect("resolve the merged-away identifier"),
-        first_question_id
-    );
+        .expect("load by question_id");
+    assert_eq!(q0_detail_by_qid.question.id, *q0_id);
+    assert_eq!(q0_detail_by_qid.turns.len(), 2);
 
-    drop(database);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn sqlx_merge_rejects_groups_separated_by_another_group() {
-    let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-conversation-merge-non-adjacent-{}.sqlite",
-        Uuid::new_v4()
-    ));
-    let database = Database::open_async(&db_path).await.expect("open database");
-    let adapter = test_conversation_adapter(
-        "merge-non-adjacent-external",
-        ConversationAdapterKind::External,
-        ConversationAdapterTrustState::Trusted,
-    );
-    let source = test_conversation_source(&adapter.id);
-    let mut session = fixture_session("v1");
-    session.turns = vec![
-        fixture_turn("t1", 0, "Alpha question"),
-        fixture_turn("t2", 1, "Beta question"),
-        fixture_turn("t3", 2, "继续"),
-        fixture_turn("t4", 3, "Gamma question"),
-    ];
-
-    let (error, detail) = async {
-        upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-        upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-        import_conversation_sessions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &source,
-            &[session],
-            false,
-        )
-        .await?;
-        let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
-        let detail =
-            load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
-                .await?;
-        let question_ids = detail
-            .questions
-            .iter()
-            .map(|question| question.question.id.clone())
-            .collect::<Vec<_>>();
-        assert_eq!(question_ids.len(), 3);
-        let error = merge_conversation_questions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &[question_ids[0].clone(), question_ids[2].clone()],
-            false,
-        )
+    let q0_detail_by_t0 = load_conversation_question_detail_sqlx(pool, TEST_TENANT_ID, t0_id)
         .await
-        .expect_err("merging across an unrelated group must be rejected");
-        let detail =
-            load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
-                .await?;
-        Ok::<_, StoreError>((error, detail))
-    }
-    .await
-    .expect("reject the non-adjacent merge");
+        .expect("load by turn_id");
+    assert_eq!(q0_detail_by_t0.question.id, *q0_id);
 
-    assert!(
-        matches!(error, StoreError::Validation(_)),
-        "non-adjacent merge must be a validation error, got {error:?}"
-    );
-    assert!(
-        error.to_string().contains("adjacent"),
-        "the error must explain the adjacency constraint: {error}"
-    );
-    assert_eq!(
-        detail.questions.len(),
-        3,
-        "a rejected merge must not change the grouping"
-    );
-
-    drop(database);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn sqlx_split_rewrites_grouping_on_turn_columns_only() {
-    let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-conversation-split-turn-columns-{}.sqlite",
-        Uuid::new_v4()
-    ));
-    let database = Database::open_async(&db_path).await.expect("open database");
-    let adapter = test_conversation_adapter(
-        "split-turn-columns-external",
-        ConversationAdapterKind::External,
-        ConversationAdapterTrustState::Trusted,
-    );
-    let source = test_conversation_source(&adapter.id);
-    let (session_id, first_question_id, second_question_id) =
-        import_read_path_fixture(database.pool(), &adapter, &source).await;
-
-    let (split, writes, detail) = async {
-        merge_conversation_questions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &[first_question_id.clone(), second_question_id.clone()],
-            false,
-        )
-        .await?;
-        let merged = load_conversation_question_detail_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &first_question_id,
-        )
-        .await?;
-        install_grouping_write_audit(database.pool()).await;
-        let split = split_conversation_question_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &first_question_id,
-            &merged.turns[2].id,
-            false,
-        )
-        .await?;
-        let writes = load_grouping_write_audit(database.pool()).await;
-        let detail =
-            load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
-                .await?;
-        Ok::<_, StoreError>((split, writes, detail))
-    }
-    .await
-    .expect("split the merged group");
-
-    assert_eq!(
-        writes
-            .iter()
-            .filter(|write| write.target != "conversation_turns")
-            .count(),
-        0,
-        "split must not write any other table: {writes:?}"
-    );
-    assert_eq!(
-        writes
-            .iter()
-            .filter(|write| write.target == "conversation_turns" && write.operation == "UPDATE")
-            .count(),
-        3,
-        "split must rewrite the grouping columns of the whole source group: {writes:?}"
-    );
-
-    assert_eq!(detail.questions.len(), 2);
-    assert_eq!(
-        detail.questions[0]
-            .turns
-            .iter()
-            .map(|turn| turn.external_id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["t1", "t2"]
-    );
-    assert_eq!(
-        detail.questions[1]
-            .turns
-            .iter()
-            .map(|turn| turn.external_id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["t3"]
-    );
-    assert!(detail.questions.iter().all(|question| question
-        .question_turns
-        .iter()
-        .all(|membership| membership.assignment_origin == ConversationGroupingOrigin::Manual)));
-    let new_question_id = split.affected_question_ids[1].clone();
-    assert_eq!(detail.questions[1].question.id, new_question_id);
-    assert_eq!(
-        resolve_conversation_question_id_prefix_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &new_question_id[..new_question_id.len().min(24)]
-        )
+    let t1_id = &detail.questions[0].turns[1].id;
+    let q0_detail_by_t1 = load_conversation_question_detail_sqlx(pool, TEST_TENANT_ID, t1_id)
         .await
-        .expect("resolve the split-off identifier by prefix"),
-        new_question_id
-    );
-
-    // 拆分产生的标识可以继续参与合并。
-    let remerged = merge_conversation_questions_sqlx(
-        database.pool(),
-        TEST_TENANT_ID,
-        &[first_question_id.clone(), new_question_id.clone()],
-        false,
-    )
-    .await
-    .expect("merge the split-off group back");
-    assert_eq!(remerged.questions.len(), 1);
-    assert_eq!(remerged.questions[0].turns.len(), 3);
-
-    drop(database);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn sqlx_merge_and_split_dry_run_write_nothing() {
-    let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-conversation-mutation-dry-run-{}.sqlite",
-        Uuid::new_v4()
-    ));
-    let database = Database::open_async(&db_path).await.expect("open database");
-    let adapter = test_conversation_adapter(
-        "mutation-dry-run-external",
-        ConversationAdapterKind::External,
-        ConversationAdapterTrustState::Trusted,
-    );
-    let source = test_conversation_source(&adapter.id);
-    let (session_id, first_question_id, second_question_id) =
-        import_read_path_fixture(database.pool(), &adapter, &source).await;
-    install_grouping_write_audit(database.pool()).await;
-
-    let merge_preview = merge_conversation_questions_sqlx(
-        database.pool(),
-        TEST_TENANT_ID,
-        &[first_question_id.clone(), second_question_id.clone()],
-        true,
-    )
-    .await
-    .expect("preview the merge");
-    assert!(merge_preview.dry_run);
-    assert_eq!(merge_preview.questions.len(), 2);
-    let merge_writes = load_grouping_write_audit(database.pool()).await;
-    assert!(
-        merge_writes.is_empty(),
-        "a merge preview must not write anything: {merge_writes:?}"
-    );
-    let tombstones: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM conversation_question_redirects WHERE tenant_id = ?1",
-    )
-    .bind(TEST_TENANT_ID)
-    .fetch_one(database.pool())
-    .await
-    .expect("count tombstones");
-    assert_eq!(tombstones, 0, "a merge preview must not write tombstones");
-    assert_eq!(
-        load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
-            .await
-            .expect("reload the previewed session")
-            .questions
-            .len(),
-        2
-    );
-
-    let merged = merge_conversation_questions_sqlx(
-        database.pool(),
-        TEST_TENANT_ID,
-        &[first_question_id.clone(), second_question_id.clone()],
-        false,
-    )
-    .await
-    .expect("merge the two groups");
-    clear_grouping_write_audit(database.pool()).await;
-    let split_preview = split_conversation_question_sqlx(
-        database.pool(),
-        TEST_TENANT_ID,
-        &first_question_id,
-        &merged.questions[0].turns[2].id,
-        true,
-    )
-    .await
-    .expect("preview the split");
-    assert!(split_preview.dry_run);
-    let split_writes = load_grouping_write_audit(database.pool()).await;
-    assert!(
-        split_writes.is_empty(),
-        "a split preview must not write anything: {split_writes:?}"
-    );
-    assert_eq!(
-        load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
-            .await
-            .expect("reload the previewed session")
-            .questions
-            .len(),
-        1
-    );
+        .expect("load by turn 1 id");
+    assert_eq!(q0_detail_by_t1.question.id, *q0_id);
 
     drop(database);
     cleanup_database(&db_path);
@@ -3884,10 +3177,11 @@ async fn sqlx_session_list_counts_question_groups_from_turn_columns() {
     .expect("list recent sessions");
 
     assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].question_count, 2);
+    assert_eq!(sessions[0].question_count, 4);
     assert_eq!(sessions[0].turn_count, 4);
     assert_eq!(recent.len(), 1);
-    assert_eq!(recent[0].session.question_count, 2);
+    assert_eq!(recent[0].session.question_count, 4);
+    assert_eq!(recent[0].session.turn_count, 4);
 
     drop(database);
     cleanup_database(&db_path);
@@ -4041,8 +3335,14 @@ async fn import_read_path_fixture(
     let third_turn_id = stable_id("conversation-turn", &[&session_id, "t3"]);
     (
         session_id.clone(),
-        stable_id("conversation-question", &[&session_id, &first_turn_id]),
-        stable_id("conversation-question", &[&session_id, &third_turn_id]),
+        crate::backend::domain::conversations::derive_question_id_from_turn_id(
+            "conversation-question",
+            &first_turn_id,
+        ),
+        crate::backend::domain::conversations::derive_question_id_from_turn_id(
+            "conversation-question",
+            &third_turn_id,
+        ),
     )
 }
 
@@ -4277,70 +3577,6 @@ async fn sqlx_question_short_id_prefix_reports_ambiguity_instead_of_guessing() {
     let message = error.to_string();
     assert!(message.contains("ambiguous prefix"), "{message}");
     assert!(message.contains("2 questions match"), "{message}");
-
-    drop(database);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn sqlx_merged_question_id_still_resolves_to_the_surviving_group() {
-    let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-question-tombstone-{}.sqlite",
-        Uuid::new_v4()
-    ));
-    let database = Database::open_async(&db_path).await.expect("open database");
-    let adapter = test_conversation_adapter(
-        "question-tombstone-external",
-        ConversationAdapterKind::External,
-        ConversationAdapterTrustState::Trusted,
-    );
-    let source = test_conversation_source(&adapter.id);
-    let pool = database.pool();
-    let (_, question_id, merged_question_id) =
-        import_read_path_fixture(pool, &adapter, &source).await;
-    let merged_fragment = crate::backend::domain::conversation_id_fragment(&merged_question_id);
-
-    merge_conversation_questions_sqlx(
-        pool,
-        TEST_TENANT_ID,
-        &[question_id.clone(), merged_question_id.clone()],
-        false,
-    )
-    .await
-    .expect("merge the two groups");
-    drop_legacy_grouping_rows(pool).await;
-
-    assert_eq!(
-        resolve_question_prefix(pool, &merged_question_id)
-            .await
-            .expect("resolve merged-away full identifier"),
-        question_id
-    );
-    assert_eq!(
-        resolve_question_prefix(pool, &merged_fragment)
-            .await
-            .expect("resolve merged-away short identifier"),
-        question_id
-    );
-
-    let detail = load_conversation_question_detail_sqlx(pool, TEST_TENANT_ID, &merged_question_id)
-        .await
-        .expect("load the surviving group through the merged-away identifier");
-    assert_eq!(detail.question.id, question_id);
-    assert_eq!(detail.turns.len(), 3);
-
-    let locators = list_conversation_block_locators_sqlx(
-        pool,
-        TEST_TENANT_ID,
-        ConversationRecordKind::Session,
-        &merged_question_id,
-    )
-    .await
-    .expect("list the surviving group blocks through the merged-away identifier");
-    assert_eq!(locators.len(), 6);
-    assert!(locators
-        .iter()
-        .all(|locator| locator.question_id == question_id));
 
     drop(database);
     cleanup_database(&db_path);

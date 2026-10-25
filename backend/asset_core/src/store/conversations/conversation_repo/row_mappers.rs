@@ -243,8 +243,8 @@ pub fn map_sqlx_conversation_session(row: &SqliteRow) -> StoreResult<Conversatio
         .into_domain())
 }
 
-#[derive(Debug, FromRow)]
-pub(super) struct ConversationTurnRow {
+#[derive(Debug, Clone, FromRow)]
+pub(crate) struct ConversationTurnRow {
     id: String,
     session_id: String,
     external_id: String,
@@ -262,6 +262,10 @@ pub(super) struct ConversationTurnRow {
 }
 
 impl ConversationTurnRow {
+    pub(crate) fn into_turn(self) -> ConversationTurn {
+        self.into_domain()
+    }
+
     fn into_domain(self) -> ConversationTurn {
         ConversationTurn {
             id: self.id,

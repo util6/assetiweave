@@ -247,12 +247,11 @@ describe("MarkdownContent", () => {
     expect(html).not.toContain("$$");
   });
 
-  it("renders a question-based preview with markdown parts and turn split controls", () => {
+  it("renders a question-based preview with markdown parts", () => {
     const html = renderToStaticMarkup(
       <QuestionPreview
         onExport={async () => undefined}
         onPickOutputRoot={async () => null}
-        onSplit={async () => undefined}
         outputRoot="/tmp/conversation-export"
         question={questionDetail}
         session={sessionDetail}
@@ -267,7 +266,6 @@ describe("MarkdownContent", () => {
     expect(html).toContain("同步流程");
     expect(html).toContain("<li>按 Session 导入</li>");
     expect(html).toContain("assetiweave-cli conversation sync --dry-run");
-    expect(html).toContain("从这里拆分");
   });
 
   it("omits project path from web record question previews", () => {
@@ -325,7 +323,6 @@ describe("MarkdownContent", () => {
       <QuestionPreview
         onExport={async () => undefined}
         onPickOutputRoot={async () => null}
-        onSplit={async () => undefined}
         outputRoot="/tmp/conversation-export"
         question={questionDetail}
         session={sessionDetail}
@@ -998,7 +995,6 @@ describe("MarkdownContent", () => {
       <QuestionPreview
         onExport={async () => undefined}
         onPickOutputRoot={async () => null}
-        onSplit={async () => undefined}
         outputRoot="/tmp/conversation-export"
         question={questionDetail}
         session={sessionDetail}
@@ -1275,7 +1271,6 @@ describe("MarkdownContent", () => {
       <QuestionPreview
         onExport={async () => undefined}
         onPickOutputRoot={async () => null}
-        onSplit={async () => undefined}
         outputRoot="/tmp/conversation-export"
         question={richQuestionDetail}
         session={{ ...sessionDetail, questions: [richQuestionDetail] }}
@@ -1450,11 +1445,9 @@ describe("MarkdownContent", () => {
           tool: "#22c55e",
         }}
         onExport={async () => undefined}
-        onMerge={async () => undefined}
         onPickOutputRoot={async () => null}
         onQuestionSelect={vi.fn()}
         onQuestionSelectionChange={vi.fn()}
-        onSplit={async () => undefined}
         outputRoot="/tmp/conversation-export"
         question={richQuestionDetail}
         questions={[questionDetail, richQuestionDetail]}

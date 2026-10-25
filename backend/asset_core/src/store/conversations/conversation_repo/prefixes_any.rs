@@ -25,7 +25,11 @@ pub async fn resolve_any_id_to_session_id_sqlx(
             (Some(IdPrefixEntityKind::WebSession), stripped)
         } else if let Some(stripped) = trimmed.strip_prefix("conversation-turn-") {
             (Some(IdPrefixEntityKind::Turn), stripped)
+        } else if let Some(stripped) = trimmed.strip_prefix("conversation-question-") {
+            (Some(IdPrefixEntityKind::Turn), stripped)
         } else if let Some(stripped) = trimmed.strip_prefix("web-record-turn-") {
+            (Some(IdPrefixEntityKind::WebTurn), stripped)
+        } else if let Some(stripped) = trimmed.strip_prefix("web-record-question-") {
             (Some(IdPrefixEntityKind::WebTurn), stripped)
         } else if let Some(stripped) = trimmed.strip_prefix("conversation-part-") {
             (Some(IdPrefixEntityKind::Part), stripped)
@@ -34,6 +38,8 @@ pub async fn resolve_any_id_to_session_id_sqlx(
         } else if let Some(stripped) = trimmed.strip_prefix("session-") {
             (Some(IdPrefixEntityKind::Session), stripped)
         } else if let Some(stripped) = trimmed.strip_prefix("turn-") {
+            (Some(IdPrefixEntityKind::Turn), stripped)
+        } else if let Some(stripped) = trimmed.strip_prefix("question-") {
             (Some(IdPrefixEntityKind::Turn), stripped)
         } else if let Some(stripped) = trimmed.strip_prefix("part-") {
             (Some(IdPrefixEntityKind::Part), stripped)

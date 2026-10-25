@@ -109,13 +109,19 @@ pub async fn resolve_conversation_question_id_prefix_sqlx(
     }
     let clean_prefix = prefix_or_id
         .strip_prefix("conversation-question-")
+        .or_else(|| prefix_or_id.strip_prefix("question-"))
         .unwrap_or(prefix_or_id);
     let like_pattern_verbatim = format!("{}%", prefix_or_id);
     let like_pattern_domain = format!("conversation-question-{}%", clean_prefix);
+    let like_pattern_turn = format!("conversation-turn-{}%", clean_prefix);
 
     let rows: Vec<String> = sqlx::query_scalar(
         r#"
         WITH candidates AS (
+            SELECT id
+            FROM conversation_turns
+            WHERE tenant_id = ?1 AND (id = ?2 OR id LIKE ?3 OR id LIKE ?5)
+            UNION
             SELECT question_id AS id
             FROM conversation_turns
             WHERE tenant_id = ?1 AND (question_id = ?2 OR question_id LIKE ?3 OR question_id LIKE ?4)
@@ -132,6 +138,7 @@ pub async fn resolve_conversation_question_id_prefix_sqlx(
     .bind(prefix_or_id)
     .bind(&like_pattern_verbatim)
     .bind(&like_pattern_domain)
+    .bind(&like_pattern_turn)
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
@@ -144,8 +151,16 @@ pub async fn resolve_conversation_question_id_prefix_sqlx(
     }
     let mut matched = BTreeSet::new();
     for row in &rows {
+        let qid = if row.starts_with("conversation-turn-") {
+            crate::backend::domain::conversations::derive_question_id_from_turn_id(
+                "conversation-question",
+                row,
+            )
+        } else {
+            row.clone()
+        };
         matched
-            .insert(resolve_conversation_question_redirect_pool_sqlx(pool, tenant_id, row).await?);
+            .insert(resolve_conversation_question_redirect_pool_sqlx(pool, tenant_id, &qid).await?);
     }
     if matched.len() > 1 {
         let examples = matched

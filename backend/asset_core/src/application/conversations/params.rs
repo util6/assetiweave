@@ -452,24 +452,6 @@ pub struct ConversationBlockGetParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ConversationQuestionMergeParams {
-    #[serde(alias = "questionIds")]
-    pub question_ids: Vec<String>,
-    #[serde(default, alias = "dryRun")]
-    pub dry_run: bool,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ConversationQuestionSplitParams {
-    #[serde(alias = "questionId")]
-    pub question_id: String,
-    #[serde(alias = "beforeTurnId")]
-    pub before_turn_id: String,
-    #[serde(default, alias = "dryRun")]
-    pub dry_run: bool,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ConversationPartTranslationUpdateParams {
     #[serde(default, alias = "recordKind")]
     pub record_kind: Option<String>,

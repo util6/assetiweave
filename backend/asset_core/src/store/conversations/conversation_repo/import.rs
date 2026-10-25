@@ -173,8 +173,6 @@ pub async fn import_conversation_sessions_with_control_sqlx(
             )
             .await?;
             prune_conversation_turns_sqlx_tx(&mut tx, tenant_id, &session.id, normalized).await?;
-            ensure_question_groups_for_session_sqlx_tx(&mut tx, tenant_id, &session.id, &now)
-                .await?;
             insert_conversation_sync_delta_sqlx_tx(
                 &mut tx,
                 tenant_id,

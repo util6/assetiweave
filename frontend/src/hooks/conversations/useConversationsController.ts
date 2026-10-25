@@ -255,19 +255,6 @@ export function useConversationsController({
     [],
   );
 
-  const updateQuestionSelectionAfterMerge = useCallback(
-    (previousQuestionId: string, currentQuestionId: string) => {
-      setSelectedQuestionIds((selectedIds) => {
-        const next = new Set(selectedIds);
-        if (next.delete(currentQuestionId)) {
-          next.add(previousQuestionId);
-        }
-        return next;
-      });
-    },
-    [],
-  );
-
   const showAllContentSearchCardTypes = useCallback(() => {
     setContentSearchCardKinds([]);
     setContentSearchSemanticRoles([]);
@@ -373,7 +360,6 @@ export function useConversationsController({
     toggleContentSearchCardKind,
     toggleContentSearchSemanticRole,
     toggleQuestionSelection,
-    updateQuestionSelectionAfterMerge,
     reconcileAppSelection,
     reconcileProjectSelection,
     reconcileQuestionSelection,

@@ -216,8 +216,6 @@ pub(crate) fn command_handler(
         get_conversation_question,
         list_conversation_blocks,
         get_conversation_block,
-        merge_conversation_questions,
-        split_conversation_question,
         update_conversation_part_translation,
         create_plan,
         execute_plan,

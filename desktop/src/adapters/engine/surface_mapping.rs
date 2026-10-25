@@ -301,16 +301,6 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
-        canonical_method: "conversation.question.merge",
-        tauri_command: Some("merge_conversation_questions"),
-        note: None,
-    },
-    SurfaceMapping {
-        canonical_method: "conversation.question.split",
-        tauri_command: Some("split_conversation_question"),
-        note: None,
-    },
-    SurfaceMapping {
         canonical_method: "conversation.script.catalog",
         tauri_command: Some("list_conversation_script_catalog"),
         note: None,
