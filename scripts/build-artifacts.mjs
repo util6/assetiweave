@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const artifactDirectories = ["target", "dist"];
-const defaultMaxArtifactMiB = 6144;
+const defaultMaxArtifactMiB = 8192;
 
 async function pathSize(path, seenFiles) {
   let info;
