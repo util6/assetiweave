@@ -289,8 +289,8 @@ async fn bug3_id_fragment_search_off_by_one_upper_bound() {
         r#"
         INSERT INTO conversation_turns (
             tenant_id, id, session_id, external_id, turn_index, prompt,
-            fingerprint, missing, imported_at, question_id, question_origin
-        ) VALUES ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000001', 'conversation-session-0000000000000000000000000000000000000000000000000000000000000001', 't-1', 0, 'hi', 'fp', 0, '2026-10-24T00:00:00Z', 'conversation-question-0000000000000000000000000000000000000000000000000000000000000001', 'imported')
+            fingerprint, missing, imported_at
+        ) VALUES ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000001', 'conversation-session-0000000000000000000000000000000000000000000000000000000000000001', 't-1', 0, 'hi', 'fp', 0, '2026-10-24T00:00:00Z')
         "#,
     )
     .execute(&pool)
@@ -548,10 +548,10 @@ async fn bug7_ambiguous_short_id_swallowed_into_not_found_in_block_detail() {
         r#"
         INSERT INTO conversation_turns (
             tenant_id, id, session_id, external_id, turn_index, prompt,
-            fingerprint, missing, imported_at, question_id, question_origin
+            fingerprint, missing, imported_at
         ) VALUES
-        ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000010', 'conversation-session-0000000000000000000000000000000000000000000000000000000000000002', 't-1', 0, 'q1', 'fp1', 0, '2026-10-24T00:00:00Z', 'conversation-question-0000000000000000000000000000000000000000000000000000000000000010', 'imported'),
-        ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000011', 'conversation-session-0000000000000000000000000000000000000000000000000000000000000002', 't-2', 1, 'q2', 'fp2', 0, '2026-10-24T00:00:00Z', 'conversation-question-0000000000000000000000000000000000000000000000000000000000000011', 'imported')
+        ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000010', 'conversation-session-0000000000000000000000000000000000000000000000000000000000000002', 't-1', 0, 'q1', 'fp1', 0, '2026-10-24T00:00:00Z'),
+        ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000011', 'conversation-session-0000000000000000000000000000000000000000000000000000000000000002', 't-2', 1, 'q2', 'fp2', 0, '2026-10-24T00:00:00Z')
         "#,
     )
     .execute(&pool)

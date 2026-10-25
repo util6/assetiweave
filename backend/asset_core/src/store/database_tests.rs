@@ -154,6 +154,7 @@ async fn conversation_question_contract_contains_only_stable_metadata() {
         "conversation_question_turn_audits",
         "web_record_questions",
         "web_record_question_turns",
+        "conversation_question_redirects",
     ] {
         let count: i64 = conn
             .query_row(
@@ -164,6 +165,23 @@ async fn conversation_question_contract_contains_only_stable_metadata() {
             .expect("query dropped table");
         assert_eq!(count, 0, "{table} must not exist in converged schema");
     }
+    let expected_turn_cols = vec![
+        "tenant_id",
+        "id",
+        "session_id",
+        "external_id",
+        "turn_index",
+        "prompt",
+        "process",
+        "response",
+        "title",
+        "started_at",
+        "ended_at",
+        "model",
+        "fingerprint",
+        "missing",
+        "imported_at",
+    ];
     for table in ["conversation_turns", "web_record_turns"] {
         let columns = conn
             .prepare(&format!(
@@ -174,21 +192,43 @@ async fn conversation_question_contract_contains_only_stable_metadata() {
             .expect("query turn columns")
             .collect::<Result<Vec<_>, _>>()
             .expect("collect turn columns");
-        assert!(columns.contains(&"question_id".to_string()));
-        assert!(columns.contains(&"question_origin".to_string()));
+        assert_eq!(columns.len(), 15, "{table} 必须严格为 15 列终态结构");
+        assert_eq!(
+            columns, expected_turn_cols,
+            "{table} 列名与顺序必须严格与 15 列终态一致"
+        );
+        assert!(!columns.contains(&"question_id".to_string()));
+        assert!(!columns.contains(&"question_origin".to_string()));
     }
     let index_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN (
                 'idx_conversation_turns_tenant_session_question',
                 'idx_conversation_turns_tenant_question',
-                'idx_web_record_turns_tenant_session_question'
+                'idx_web_record_turns_tenant_session_question',
+                'idx_web_record_turns_tenant_question'
             )",
             [],
             |row| row.get(0),
         )
         .expect("query question indexes");
-    assert_eq!(index_count, 3);
+    assert_eq!(index_count, 0, "所有旧版 question 相关索引必须已全部清除");
+
+    let session_idx_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN (
+                'idx_conversation_turns_tenant_session',
+                'idx_web_record_turns_tenant_session'
+            )",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query session indexes");
+    assert_eq!(
+        session_idx_count, 2,
+        "轮次表上的 tenant_session 索引必须保留"
+    );
+
     cleanup_database(&db_path);
 }
 
@@ -1043,252 +1083,248 @@ async fn begin_immediate_commits_and_rolls_back_cleanly() {
 }
 
 #[tokio::test]
-async fn migrations_backfill_turn_question_columns_from_membership() {
-    let db_path = temp_database_path("conversation-turn-question-columns");
+async fn migrations_drop_turn_question_columns_and_redirects_preserves_data() {
+    let db_path = temp_database_path("drop-turn-question-columns");
     migrate_database(&db_path)
         .await
-        .expect("create current database");
+        .expect("initial database creation");
 
-    let conn = Connection::open(&db_path).expect("open current database");
+    let conn = Connection::open(&db_path).expect("open database");
+
+    // 1. 模拟迁移 202610260001 执行前的 17 列 Schema 与跳转表
     conn.execute_batch(
         r#"
-            PRAGMA foreign_keys = OFF;
-            CREATE TABLE IF NOT EXISTS conversation_question_turns (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                question_id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                turn_order INTEGER NOT NULL,
-                assignment_origin TEXT NOT NULL DEFAULT 'imported',
-                assigned_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (tenant_id, question_id, turn_id)
-            );
-            CREATE TABLE IF NOT EXISTS web_record_question_turns (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                question_id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                turn_order INTEGER NOT NULL,
-                assignment_origin TEXT NOT NULL DEFAULT 'imported',
-                assigned_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (tenant_id, question_id, turn_id)
-            );
-            INSERT INTO conversation_sessions (
-                tenant_id, id, source_id, adapter_id, external_id, title, project_path,
-                started_at, updated_at, source_locator, source_fingerprint, missing,
-                created_at, imported_at
-            ) VALUES (
-                'default', 'question-column-session', 'question-column-source',
-                'question-column-adapter', 'question-column-external', 'Question columns',
-                NULL, NULL, NULL, NULL, NULL, 0,
-                '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
-            );
-            INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, prompt,
-                title, started_at, ended_at, fingerprint, missing, imported_at
-            ) VALUES
-                ('default', 'conversation-turn-1111', 'question-column-session',
-                 'ext-1', 0, 'How does segmentation work?', NULL, NULL, NULL,
-                 'fingerprint-1', 0, '2026-10-23T00:00:00Z'),
-                ('default', 'conversation-turn-2222', 'question-column-session',
-                 'ext-2', 1, '继续', NULL, NULL, NULL,
-                 'fingerprint-2', 0, '2026-10-23T00:00:00Z'),
-                ('default', 'conversation-turn-3333', 'question-column-session',
-                 'ext-3', 2, 'Orphan turn', NULL, NULL, NULL,
-                 'fingerprint-3', 0, '2026-10-23T00:00:00Z');
-            INSERT INTO conversation_question_turns (
-                tenant_id, question_id, turn_id, turn_order, assignment_origin,
-                assigned_at, updated_at
-            ) VALUES
-                ('default', 'conversation-question-manual-group',
-                 'conversation-turn-1111', 0, 'manual',
-                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'),
-                ('default', 'conversation-question-auto-group',
-                 'conversation-turn-2222', 1, 'auto_merged',
-                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z');
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE IF NOT EXISTS conversation_question_redirects (
+            tenant_id TEXT NOT NULL DEFAULT 'default',
+            source_question_id TEXT NOT NULL,
+            target_question_id TEXT NOT NULL,
+            operation_kind TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, source_question_id)
+        );
+        INSERT INTO conversation_question_redirects (
+            tenant_id, source_question_id, target_question_id, operation_kind, created_at, updated_at
+        ) VALUES (
+            'default', 'q-legacy-src', 'q-legacy-target', 'merge', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
+        );
 
-            INSERT INTO web_record_sessions (
-                tenant_id, id, source_id, adapter_id, external_id, title,
-                started_at, updated_at, source_locator, source_fingerprint, missing,
-                created_at, imported_at
-            ) VALUES (
-                'default', 'question-column-web-session', 'question-column-source',
-                'question-column-adapter', 'question-column-web-external', 'Web columns',
-                NULL, NULL, NULL, NULL, 0,
-                '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
-            );
-            INSERT INTO web_record_turns (
-                tenant_id, id, session_id, external_id, turn_index, prompt,
-                title, started_at, ended_at, fingerprint, missing, imported_at
-            ) VALUES
-                ('default', 'web-record-turn-4444', 'question-column-web-session',
-                 'web-ext-1', 0, 'Web question', NULL, NULL, NULL,
-                 'web-fingerprint-1', 0, '2026-10-23T00:00:00Z'),
-                ('default', 'web-record-turn-5555', 'question-column-web-session',
-                 'web-ext-2', 1, 'Web orphan', NULL, NULL, NULL,
-                 'web-fingerprint-2', 0, '2026-10-23T00:00:00Z');
-            INSERT INTO web_record_question_turns (
-                tenant_id, question_id, turn_id, turn_order, assignment_origin,
-                assigned_at, updated_at
-            ) VALUES (
-                'default', 'web-record-question-imported-group',
-                'web-record-turn-4444', 0, 'imported',
-                '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
-            );
-            "#,
+        CREATE TABLE conversation_turns_pre (
+            tenant_id       TEXT NOT NULL DEFAULT 'default',
+            id              TEXT NOT NULL,
+            session_id      TEXT NOT NULL,
+            external_id     TEXT NOT NULL,
+            turn_index      INTEGER NOT NULL,
+            prompt          TEXT NOT NULL DEFAULT '',
+            process         TEXT,
+            response        TEXT,
+            title           TEXT,
+            started_at      TEXT,
+            ended_at        TEXT,
+            model           TEXT,
+            fingerprint     TEXT NOT NULL,
+            missing         INTEGER NOT NULL DEFAULT 0,
+            imported_at     TEXT NOT NULL,
+            question_id     TEXT NOT NULL DEFAULT '',
+            question_origin TEXT NOT NULL DEFAULT 'imported',
+            PRIMARY KEY (tenant_id, id),
+            UNIQUE (tenant_id, session_id, external_id)
+        );
+        INSERT INTO conversation_turns_pre (
+            tenant_id, id, session_id, external_id, turn_index,
+            prompt, process, response, title, started_at, ended_at,
+            model, fingerprint, missing, imported_at, question_id, question_origin
+        ) VALUES (
+            'default', 'turn-preserve-1', 'session-preserve-1', 'ext-1', 0,
+            'Hello AI', '{"items":[]}', 'Hello User', 'Turn 1',
+            '2026-10-25T10:00:00Z', '2026-10-25T10:01:00Z', 'gpt-4o',
+            'fp-preserve-1', 0, '2026-10-25T10:01:00Z', 'q-obsolete-1', 'imported'
+        );
+        DROP TABLE conversation_turns;
+        ALTER TABLE conversation_turns_pre RENAME TO conversation_turns;
+        CREATE INDEX idx_conversation_turns_tenant_session_question
+        ON conversation_turns (tenant_id, session_id, question_id, turn_index);
+        CREATE INDEX idx_conversation_turns_tenant_question
+        ON conversation_turns (tenant_id, question_id);
+
+        CREATE TABLE web_record_turns_pre (
+            tenant_id       TEXT NOT NULL DEFAULT 'default',
+            id              TEXT NOT NULL,
+            session_id      TEXT NOT NULL,
+            external_id     TEXT NOT NULL,
+            turn_index      INTEGER NOT NULL,
+            prompt          TEXT NOT NULL DEFAULT '',
+            process         TEXT,
+            response        TEXT,
+            title           TEXT,
+            started_at      TEXT,
+            ended_at        TEXT,
+            model           TEXT,
+            fingerprint     TEXT NOT NULL,
+            missing         INTEGER NOT NULL DEFAULT 0,
+            imported_at     TEXT NOT NULL,
+            question_id     TEXT NOT NULL DEFAULT '',
+            question_origin TEXT NOT NULL DEFAULT 'imported',
+            PRIMARY KEY (tenant_id, id),
+            UNIQUE (tenant_id, session_id, external_id)
+        );
+        INSERT INTO web_record_turns_pre (
+            tenant_id, id, session_id, external_id, turn_index,
+            prompt, process, response, title, started_at, ended_at,
+            model, fingerprint, missing, imported_at, question_id, question_origin
+        ) VALUES (
+            'default', 'web-turn-preserve-1', 'web-session-preserve-1', 'web-ext-1', 0,
+            'Web prompt', NULL, 'Web response', 'Web Turn 1',
+            '2026-10-25T11:00:00Z', '2026-10-25T11:01:00Z', 'claude-3-5',
+            'web-fp-1', 0, '2026-10-25T11:01:00Z', 'wq-obsolete-1', 'imported'
+        );
+        DROP TABLE web_record_turns;
+        ALTER TABLE web_record_turns_pre RENAME TO web_record_turns;
+        CREATE INDEX idx_web_record_turns_tenant_session_question
+        ON web_record_turns (tenant_id, session_id, question_id, turn_index);
+        CREATE INDEX idx_web_record_turns_tenant_question
+        ON web_record_turns (tenant_id, question_id);
+
+        DELETE FROM _sqlx_migrations WHERE CAST(version AS TEXT) >= '202610260001';
+        PRAGMA foreign_keys = ON;
+        "#,
     )
-    .expect("seed turns and membership rows");
-
-    conn.execute_batch(LEGACY_TURN_QUESTION_ROLLBACK)
-        .expect("restore pre-migration turn shape");
+    .expect("setup pre-migration state");
     drop(conn);
 
+    // 2. 运行 202610260001 迁移
     migrate_database(&db_path)
         .await
-        .expect("re-apply turn question column migration");
-    let first_pass = load_turn_question_columns(&db_path);
+        .expect("run slimming migration");
 
+    // 3. 校验终态 Schema 与数据无损
     let conn = Connection::open(&db_path).expect("open migrated database");
-    conn.execute_batch(LEGACY_TURN_QUESTION_ROLLBACK)
-        .expect("restore pre-migration turn shape");
-    drop(conn);
-    migrate_database(&db_path)
-        .await
-        .expect("replay turn question column migration");
-    let second_pass = load_turn_question_columns(&db_path);
 
-    let conn = Connection::open(&db_path).expect("open migrated database");
-    let index_count: i64 = conn
+    // A. PRAGMA 15 列同构校验
+    for table in ["conversation_turns", "web_record_turns"] {
+        let columns = conn
+            .prepare(&format!(
+                "SELECT name FROM pragma_table_info('{table}') ORDER BY cid"
+            ))
+            .expect("prepare turn columns")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query turn columns")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect turn columns");
+        assert_eq!(columns.len(), 15, "{table} 必须严格为 15 列");
+        assert!(!columns.contains(&"question_id".to_string()));
+        assert!(!columns.contains(&"question_origin".to_string()));
+    }
+
+    // B. 跳转表已被清除
+    let redirect_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversation_question_redirects'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query redirect table");
+    assert_eq!(
+        redirect_count, 0,
+        "conversation_question_redirects 表已被 DROP"
+    );
+
+    // C. 3 个 question 相关索引均已清除
+    let question_idx_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN (
                 'idx_conversation_turns_tenant_session_question',
                 'idx_conversation_turns_tenant_question',
-                'idx_web_record_turns_tenant_session_question'
+                'idx_web_record_turns_tenant_session_question',
+                'idx_web_record_turns_tenant_question'
             )",
             [],
             |row| row.get(0),
         )
-        .expect("query question column indexes");
-    drop(conn);
+        .expect("query question indexes");
+    assert_eq!(question_idx_count, 0);
 
-    assert_eq!(first_pass, second_pass);
-    assert_eq!(index_count, 3);
-    assert_eq!(
-        first_pass,
-        vec![
-            (
-                "conversation_turns".to_string(),
-                "conversation-turn-1111".to_string(),
-                "conversation-question-manual-group".to_string(),
-                "manual".to_string(),
-            ),
-            (
-                "conversation_turns".to_string(),
-                "conversation-turn-2222".to_string(),
-                "conversation-question-auto-group".to_string(),
-                "auto_merged".to_string(),
-            ),
-            (
-                "conversation_turns".to_string(),
-                "conversation-turn-3333".to_string(),
-                "conversation-question-3333".to_string(),
-                "imported".to_string(),
-            ),
-            (
-                "web_record_turns".to_string(),
-                "web-record-turn-4444".to_string(),
-                "web-record-question-imported-group".to_string(),
-                "imported".to_string(),
-            ),
-            (
-                "web_record_turns".to_string(),
-                "web-record-turn-5555".to_string(),
-                "web-record-question-5555".to_string(),
-                "imported".to_string(),
-            ),
-        ]
-    );
+    // D. 轮次数据 15 列完全无损
+    let turn_row = conn
+        .query_row(
+            "SELECT tenant_id, id, session_id, external_id, turn_index, prompt, process, response, title, started_at, ended_at, model, fingerprint, missing, imported_at FROM conversation_turns WHERE id = 'turn-preserve-1'",
+            [],
+            |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, Option<String>>(7)?,
+                r.get::<_, Option<String>>(8)?,
+                r.get::<_, Option<String>>(9)?,
+                r.get::<_, Option<String>>(10)?,
+                r.get::<_, Option<String>>(11)?,
+                r.get::<_, String>(12)?,
+                r.get::<_, i64>(13)?,
+                r.get::<_, String>(14)?,
+            )),
+        )
+        .expect("query conversation turn");
+    assert_eq!(turn_row.0, "default");
+    assert_eq!(turn_row.1, "turn-preserve-1");
+    assert_eq!(turn_row.2, "session-preserve-1");
+    assert_eq!(turn_row.3, "ext-1");
+    assert_eq!(turn_row.4, 0);
+    assert_eq!(turn_row.5, "Hello AI");
+    assert_eq!(turn_row.6.as_deref(), Some("{\"items\":[]}"));
+    assert_eq!(turn_row.7.as_deref(), Some("Hello User"));
+    assert_eq!(turn_row.8.as_deref(), Some("Turn 1"));
+    assert_eq!(turn_row.9.as_deref(), Some("2026-10-25T10:00:00Z"));
+    assert_eq!(turn_row.10.as_deref(), Some("2026-10-25T10:01:00Z"));
+    assert_eq!(turn_row.11.as_deref(), Some("gpt-4o"));
+    assert_eq!(turn_row.12, "fp-preserve-1");
+    assert_eq!(turn_row.13, 0);
+    assert_eq!(turn_row.14, "2026-10-25T10:01:00Z");
+
+    let web_turn_row = conn
+        .query_row(
+            "SELECT tenant_id, id, session_id, external_id, turn_index, prompt, process, response, title, started_at, ended_at, model, fingerprint, missing, imported_at FROM web_record_turns WHERE id = 'web-turn-preserve-1'",
+            [],
+            |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, Option<String>>(7)?,
+                r.get::<_, Option<String>>(8)?,
+                r.get::<_, Option<String>>(9)?,
+                r.get::<_, Option<String>>(10)?,
+                r.get::<_, Option<String>>(11)?,
+                r.get::<_, String>(12)?,
+                r.get::<_, i64>(13)?,
+                r.get::<_, String>(14)?,
+            )),
+        )
+        .expect("query web turn");
+    assert_eq!(web_turn_row.0, "default");
+    assert_eq!(web_turn_row.1, "web-turn-preserve-1");
+    assert_eq!(web_turn_row.2, "web-session-preserve-1");
+    assert_eq!(web_turn_row.3, "web-ext-1");
+    assert_eq!(web_turn_row.4, 0);
+    assert_eq!(web_turn_row.5, "Web prompt");
+    assert_eq!(web_turn_row.6, None);
+    assert_eq!(web_turn_row.7.as_deref(), Some("Web response"));
+    assert_eq!(web_turn_row.8.as_deref(), Some("Web Turn 1"));
+    assert_eq!(web_turn_row.9.as_deref(), Some("2026-10-25T11:00:00Z"));
+    assert_eq!(web_turn_row.10.as_deref(), Some("2026-10-25T11:01:00Z"));
+    assert_eq!(web_turn_row.11.as_deref(), Some("claude-3-5"));
+    assert_eq!(web_turn_row.12, "web-fp-1");
+    assert_eq!(web_turn_row.13, 0);
+    assert_eq!(web_turn_row.14, "2026-10-25T11:01:00Z");
 
     cleanup_database(&db_path);
-}
-
-const LEGACY_TURN_QUESTION_ROLLBACK: &str = r#"
-    CREATE TABLE IF NOT EXISTS conversation_question_turns (
-        tenant_id TEXT NOT NULL DEFAULT 'default',
-        question_id TEXT NOT NULL,
-        turn_id TEXT NOT NULL,
-        turn_order INTEGER NOT NULL,
-        assignment_origin TEXT NOT NULL DEFAULT 'imported',
-        assigned_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, question_id, turn_id)
-    );
-    CREATE TABLE IF NOT EXISTS web_record_question_turns (
-        tenant_id TEXT NOT NULL DEFAULT 'default',
-        question_id TEXT NOT NULL,
-        turn_id TEXT NOT NULL,
-        turn_order INTEGER NOT NULL,
-        assignment_origin TEXT NOT NULL DEFAULT 'imported',
-        assigned_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, question_id, turn_id)
-    );
-    DELETE FROM conversation_question_turns;
-    INSERT INTO conversation_question_turns (
-        tenant_id, question_id, turn_id, turn_order, assignment_origin,
-        assigned_at, updated_at
-    ) VALUES
-        ('default', 'conversation-question-manual-group',
-         'conversation-turn-1111', 0, 'manual',
-         '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'),
-        ('default', 'conversation-question-auto-group',
-         'conversation-turn-2222', 1, 'auto_merged',
-         '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z');
-    DELETE FROM web_record_question_turns;
-    INSERT INTO web_record_question_turns (
-        tenant_id, question_id, turn_id, turn_order, assignment_origin,
-        assigned_at, updated_at
-    ) VALUES (
-        'default', 'web-record-question-imported-group',
-        'web-record-turn-4444', 0, 'imported',
-        '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
-    );
-    DROP INDEX IF EXISTS idx_conversation_turns_tenant_session_question;
-    DROP INDEX IF EXISTS idx_conversation_turns_tenant_question;
-    DROP INDEX IF EXISTS idx_web_record_turns_tenant_session_question;
-    DROP INDEX IF EXISTS idx_web_record_turns_tenant_question;
-    ALTER TABLE conversation_turns DROP COLUMN question_id;
-    ALTER TABLE conversation_turns DROP COLUMN question_origin;
-    ALTER TABLE web_record_turns DROP COLUMN question_id;
-    ALTER TABLE web_record_turns DROP COLUMN question_origin;
-    DELETE FROM _sqlx_migrations WHERE version IN (202610230004, 202610230007);
-"#;
-
-fn load_turn_question_columns(db_path: &std::path::Path) -> Vec<(String, String, String, String)> {
-    let conn = Connection::open(db_path).expect("open migrated database");
-    let mut rows = Vec::new();
-    for (table, id_prefix) in [
-        ("conversation_turns", "conversation-turn-"),
-        ("web_record_turns", "web-record-turn-"),
-    ] {
-        let sql = format!("SELECT id, question_id, question_origin FROM {table} ORDER BY id");
-        let mut statement = conn.prepare(&sql).expect("prepare question column query");
-        let mut cursor = statement.query([]).expect("query question columns");
-        while let Some(row) = cursor.next().expect("read question column row") {
-            let id: String = row.get(0).expect("read turn id");
-            assert!(
-                id.starts_with(id_prefix),
-                "unexpected turn id {id} in {table}"
-            );
-            rows.push((
-                table.to_string(),
-                id,
-                row.get(1).expect("read question id"),
-                row.get(2).expect("read question origin"),
-            ));
-        }
-    }
-    rows
 }
 
 fn temp_database_path(label: &str) -> std::path::PathBuf {
@@ -1440,6 +1476,19 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 code_text,
                 command_text
             );
+            ALTER TABLE conversation_turns ADD COLUMN question_id TEXT NOT NULL DEFAULT '';
+            ALTER TABLE conversation_turns ADD COLUMN question_origin TEXT NOT NULL DEFAULT 'imported';
+            ALTER TABLE web_record_turns ADD COLUMN question_id TEXT NOT NULL DEFAULT '';
+            ALTER TABLE web_record_turns ADD COLUMN question_origin TEXT NOT NULL DEFAULT 'imported';
+            CREATE TABLE IF NOT EXISTS conversation_question_redirects (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                source_question_id TEXT NOT NULL,
+                target_question_id TEXT NOT NULL,
+                operation_kind TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, source_question_id)
+            );
             DELETE FROM _sqlx_migrations WHERE CAST(version AS TEXT) >= '202610230006';
             "#,
     )
@@ -1504,176 +1553,130 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
     cleanup_database(&db_path);
 }
 
-const LEGACY_QUESTION_TABLES_ROLLBACK: &str = r#"
-    CREATE TABLE IF NOT EXISTS conversation_questions (
-        tenant_id TEXT NOT NULL DEFAULT 'default',
-        id TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        title TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, id)
-    );
-    CREATE TABLE IF NOT EXISTS conversation_question_turns (
-        tenant_id TEXT NOT NULL DEFAULT 'default',
-        question_id TEXT NOT NULL,
-        turn_id TEXT NOT NULL,
-        turn_order INTEGER NOT NULL,
-        assignment_origin TEXT NOT NULL DEFAULT 'imported',
-        assigned_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, question_id, turn_id)
-    );
-    CREATE TABLE IF NOT EXISTS conversation_question_turn_audits (
-        tenant_id TEXT NOT NULL DEFAULT 'default',
-        record_kind TEXT NOT NULL,
-        question_id TEXT NOT NULL,
-        turn_id TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        detected_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, record_kind, question_id, turn_id, reason)
-    );
-    CREATE TABLE IF NOT EXISTS web_record_questions (
-        tenant_id TEXT NOT NULL DEFAULT 'default',
-        id TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        title TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, id)
-    );
-    CREATE TABLE IF NOT EXISTS web_record_question_turns (
-        tenant_id TEXT NOT NULL DEFAULT 'default',
-        question_id TEXT NOT NULL,
-        turn_id TEXT NOT NULL,
-        turn_order INTEGER NOT NULL,
-        assignment_origin TEXT NOT NULL DEFAULT 'imported',
-        assigned_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, question_id, turn_id)
-    );
-    INSERT INTO conversation_questions (tenant_id, id, session_id, title, created_at, updated_at)
-    SELECT tenant_id, question_id, session_id, prompt, imported_at, imported_at
-    FROM conversation_turns
-    WHERE question_id <> ''
-    GROUP BY tenant_id, session_id, question_id;
-
-    INSERT INTO conversation_question_turns (tenant_id, question_id, turn_id, turn_order, assignment_origin, assigned_at, updated_at)
-    SELECT tenant_id, question_id, id, turn_index, question_origin, imported_at, imported_at
-    FROM conversation_turns
-    WHERE question_id <> '';
-
-    INSERT INTO web_record_questions (tenant_id, id, session_id, title, created_at, updated_at)
-    SELECT tenant_id, question_id, session_id, prompt, imported_at, imported_at
-    FROM web_record_turns
-    WHERE question_id <> ''
-    GROUP BY tenant_id, session_id, question_id;
-
-    INSERT INTO web_record_question_turns (tenant_id, question_id, turn_id, turn_order, assignment_origin, assigned_at, updated_at)
-    SELECT tenant_id, question_id, id, turn_index, question_origin, imported_at, imported_at
-    FROM web_record_turns
-    WHERE question_id <> '';
-
-    DELETE FROM _sqlx_migrations WHERE version = 202610230007;
-"#;
-
 #[tokio::test]
-async fn migrations_drop_and_rollback_conversation_question_tables() {
-    let db_path = temp_database_path("conversation-question-drop-rollback");
-    migrate_database(&db_path).await.expect("initial migration");
+async fn production_code_has_zero_turn_question_remnants() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("locate repo root");
 
-    // 1. 验证迁移后五张表不存在
-    let conn = Connection::open(&db_path).expect("open migrated db");
-    for table in [
-        "conversation_questions",
-        "conversation_question_turns",
-        "conversation_question_turn_audits",
-        "web_record_questions",
-        "web_record_question_turns",
-    ] {
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-                [table],
-                |row| row.get(0),
-            )
-            .expect("check dropped table");
-        assert_eq!(count, 0, "{table} must not exist after drop migration");
+    let prod_dirs = [
+        repo_root.join("backend/asset_core/src"),
+        repo_root.join("backend/agent_engine/src"),
+        repo_root.join("backend/cli/src"),
+        repo_root.join("desktop/src"),
+        repo_root.join("frontend/src"),
+    ];
+
+    let mut forbidden_hits = Vec::new();
+
+    fn scan_dir(dir: &std::path::Path, forbidden_hits: &mut Vec<String>) {
+        if !dir.exists() {
+            return;
+        }
+        for entry in std::fs::read_dir(dir).expect("read dir") {
+            let entry = entry.expect("dir entry");
+            let path = entry.path();
+            if path.is_dir() {
+                scan_dir(&path, forbidden_hits);
+            } else if path.is_file() {
+                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                // 排除测试代码与夹具文件
+                if file_name.ends_with("_test.rs")
+                    || file_name.ends_with("_tests.rs")
+                    || file_name.ends_with(".test.ts")
+                    || file_name.ends_with(".spec.ts")
+                    || path.components().any(|c| c.as_os_str() == "tests")
+                {
+                    continue;
+                }
+                // 只扫描源码文件：.rs, .ts, .tsx, .js
+                if !file_name.ends_with(".rs")
+                    && !file_name.ends_with(".ts")
+                    && !file_name.ends_with(".tsx")
+                    && !file_name.ends_with(".js")
+                {
+                    continue;
+                }
+                let content = std::fs::read_to_string(&path).unwrap_or_default();
+                for (line_idx, line) in content.lines().enumerate() {
+                    let line_num = line_idx + 1;
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("//")
+                        || trimmed.starts_with("/*")
+                        || trimmed.starts_with('*')
+                    {
+                        continue;
+                    }
+                    if line.contains("question_origin") {
+                        forbidden_hits.push(format!(
+                            "{}:{}: 出现遗留列名 'question_origin'",
+                            path.display(),
+                            line_num
+                        ));
+                    }
+                    if line.contains("conversation_question_redirects") {
+                        forbidden_hits.push(format!(
+                            "{}:{}: 出现遗留跳转表 'conversation_question_redirects'",
+                            path.display(),
+                            line_num
+                        ));
+                    }
+                    let lower = line.to_lowercase();
+                    if (lower.contains("conversation_turns") || lower.contains("web_record_turns"))
+                        && lower.contains("question_id")
+                    {
+                        forbidden_hits.push(format!(
+                            "{}:{}: 轮次表 SQL 中引用了 question_id 列: {}",
+                            path.display(),
+                            line_num,
+                            trimmed
+                        ));
+                    }
+                    // 匹配独立的 SQL 表别名引用：t.question_id 或 turns.question_id
+                    let has_t_question_id = {
+                        let target = "t.question_id";
+                        let mut start = 0;
+                        let mut found = false;
+                        while let Some(idx) = lower[start..].find(target) {
+                            let abs_idx = start + idx;
+                            let before_is_word = if abs_idx > 0 {
+                                let ch = lower[..abs_idx].chars().last().unwrap();
+                                ch.is_alphanumeric() || ch == '_'
+                            } else {
+                                false
+                            };
+                            if !before_is_word {
+                                found = true;
+                                break;
+                            }
+                            start = abs_idx + target.len();
+                        }
+                        found
+                    };
+                    if has_t_question_id || lower.contains("turns.question_id") {
+                        forbidden_hits.push(format!(
+                            "{}:{}: 生产代码中出现 t.question_id / turns.question_id 引用: {}",
+                            path.display(),
+                            line_num,
+                            trimmed
+                        ));
+                    }
+                }
+            }
+        }
     }
 
-    // 2. 插入测试会话和轮次
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = OFF;
-        INSERT INTO conversation_sessions (
-            tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at
-        ) VALUES ('default', 's-rb-1', 'src-1', 'adp-1', 'ext-rb-1', 'Session RB', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z');
-        INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin
-        ) VALUES
-            ('default', 't-rb-1', 's-rb-1', 'ext-t-1', 0, 'First prompt', 'fp-1', 0, '2026-10-23T00:00:00Z', 'q-rb-1', 'imported'),
-            ('default', 't-rb-2', 's-rb-1', 'ext-t-2', 1, 'Second prompt', 'fp-2', 0, '2026-10-23T00:00:00Z', 'q-rb-1', 'auto_merged');
-        "#,
-    )
-    .expect("insert test turns");
-
-    // 3. 执行可逆回滚：恢复五张表并回填数据
-    conn.execute_batch(LEGACY_QUESTION_TABLES_ROLLBACK)
-        .expect("execute rollback");
-
-    // 4. 验证回滚后数据完整恢复
-    let restored_question_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM conversation_questions WHERE id = 'q-rb-1'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query restored question");
-    assert_eq!(restored_question_count, 1);
-    let restored_turns_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM conversation_question_turns WHERE question_id = 'q-rb-1'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query restored question turns");
-    assert_eq!(restored_turns_count, 2);
-    drop(conn);
-
-    // 5. 重新前向迁移，验证可重入
-    migrate_database(&db_path)
-        .await
-        .expect("re-apply migration");
-
-    let conn = Connection::open(&db_path).expect("open re-migrated db");
-    for table in [
-        "conversation_questions",
-        "conversation_question_turns",
-        "conversation_question_turn_audits",
-        "web_record_questions",
-        "web_record_question_turns",
-    ] {
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-                [table],
-                |row| row.get(0),
-            )
-            .expect("check dropped table again");
-        assert_eq!(count, 0, "{table} must be dropped after re-migrating");
+    for dir in &prod_dirs {
+        scan_dir(dir, &mut forbidden_hits);
     }
 
-    // 轮次上的数据完好无损
-    let turn_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM conversation_turns WHERE session_id = 's-rb-1' AND question_id = 'q-rb-1'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query turns");
-    assert_eq!(turn_count, 2);
-
-    cleanup_database(&db_path);
+    assert!(
+        forbidden_hits.is_empty(),
+        "生产代码中存在未清零的 Question 遗留项:\n{}",
+        forbidden_hits.join("\n")
+    );
 }
 
 #[tokio::test]
@@ -1683,7 +1686,7 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
 
     let conn = Connection::open(&db_path).expect("open database");
 
-    // 1. 验证被删除的 8 张历史表（三张问题表、两张边表、两张 web 问题表、旧 FTS 表）零残留
+    // 1. 验证被删除的历史表（三张问题表、两张边表、两张 web 问题表、旧 FTS 表、跳转表）零残留
     let dropped_legacy_tables = [
         "conversation_questions",
         "conversation_question_turns",
@@ -1693,6 +1696,7 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         "web_record_question_turns",
         "web_record_part_links",
         "conversation_question_fts",
+        "conversation_question_redirects",
     ];
     for table in dropped_legacy_tables {
         let count: i64 = conn
@@ -1733,7 +1737,6 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         "conversation_part_index_state",
         "conversation_parts",
         "conversation_payload_policy_state",
-        "conversation_question_redirects",
         "conversation_search_index_state",
         "conversation_session_observations",
         "conversation_sessions",
@@ -1754,6 +1757,10 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
             "缺少预期的会话域表: {expected}"
         );
     }
+    assert!(
+        !table_names.contains(&"conversation_question_redirects".to_string()),
+        "conversation_question_redirects 表必须彻底删除"
+    );
 
     // 3. 验证关键列与索引
     for table in ["conversation_turns", "web_record_turns"] {
@@ -1764,8 +1771,9 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
             .expect("query columns")
             .collect::<Result<Vec<_>, _>>()
             .expect("collect columns");
-        assert!(columns.contains(&"question_id".to_string()));
-        assert!(columns.contains(&"question_origin".to_string()));
+        assert_eq!(columns.len(), 15, "{table} 必须为 15 列终态");
+        assert!(!columns.contains(&"question_id".to_string()));
+        assert!(!columns.contains(&"question_origin".to_string()));
     }
 
     let question_index_count: i64 = conn
@@ -1773,13 +1781,14 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN (
                 'idx_conversation_turns_tenant_session_question',
                 'idx_conversation_turns_tenant_question',
-                'idx_web_record_turns_tenant_session_question'
+                'idx_web_record_turns_tenant_session_question',
+                'idx_web_record_turns_tenant_question'
             )",
             [],
             |r| r.get(0),
         )
         .expect("query index count");
-    assert_eq!(question_index_count, 3);
+    assert_eq!(question_index_count, 0, "旧版 question 相关索引必须为 0");
 
     cleanup_database(&db_path);
 }
@@ -1818,8 +1827,8 @@ async fn acceptance_spec_104_search_recalls_extended_part_categories() {
     ).expect("insert session");
 
     conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) 
-         VALUES (?1, ?2, ?3, 'ext-t-1', 0, 'first prompt', 'fp-1', 0, '2026-10-24T00:00:00Z', 'q-1', 'imported')",
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) 
+         VALUES (?1, ?2, ?3, 'ext-t-1', 0, 'first prompt', 'fp-1', 0, '2026-10-24T00:00:00Z')",
         [tenant_id, turn_id, session_id],
     ).expect("insert turn");
 
@@ -1933,9 +1942,9 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
             let turn_id = format!("bench-turn-{s:03}-{t:02}");
             let q_id = format!("bench-q-{s:03}-{}", t / 2);
             conn.execute(
-                "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) 
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'user prompt', 'fp', 0, '2026-10-24T00:00:00Z', ?6, 'imported')",
-                rusqlite::params![tenant_id, &turn_id, &session_id, &turn_id, t as i64, &q_id],
+                "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) 
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'user prompt', 'fp', 0, '2026-10-24T00:00:00Z')",
+                rusqlite::params![tenant_id, &turn_id, &session_id, &turn_id, t as i64],
             ).expect("insert turn");
 
             for p in 0..parts_per_turn {
@@ -2068,9 +2077,22 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         ALTER TABLE conversation_parts_old RENAME TO conversation_parts;
         ALTER TABLE conversation_sessions DROP COLUMN last_cwd;
         ALTER TABLE conversation_turns ADD COLUMN user_text TEXT DEFAULT '';
+        ALTER TABLE conversation_turns ADD COLUMN question_id TEXT NOT NULL DEFAULT '';
+        ALTER TABLE conversation_turns ADD COLUMN question_origin TEXT NOT NULL DEFAULT 'imported';
         ALTER TABLE web_record_turns ADD COLUMN user_text TEXT DEFAULT '';
+        ALTER TABLE web_record_turns ADD COLUMN question_id TEXT NOT NULL DEFAULT '';
+        ALTER TABLE web_record_turns ADD COLUMN question_origin TEXT NOT NULL DEFAULT 'imported';
         UPDATE conversation_turns SET user_text = prompt;
         UPDATE web_record_turns SET user_text = prompt;
+        CREATE TABLE IF NOT EXISTS conversation_question_redirects (
+            tenant_id TEXT NOT NULL,
+            source_question_id TEXT NOT NULL,
+            target_question_id TEXT NOT NULL,
+            operation_kind TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, source_question_id)
+        );
 
         CREATE TABLE web_record_parts_old (
             tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -2404,11 +2426,13 @@ async fn acceptance_spec_126_turn_triad_schema_and_parts_slimming() {
             .expect("collect cols");
         rows
     };
-    assert_eq!(turn_cols.len(), 17, "conversation_turns 必须严格为 17 列");
+    assert_eq!(turn_cols.len(), 15, "conversation_turns 必须严格为 15 列");
     assert!(turn_cols.contains(&"prompt".to_string()));
     assert!(turn_cols.contains(&"process".to_string()));
     assert!(turn_cols.contains(&"response".to_string()));
     assert!(!turn_cols.contains(&"user_text".to_string()));
+    assert!(!turn_cols.contains(&"question_id".to_string()));
+    assert!(!turn_cols.contains(&"question_origin".to_string()));
 
     let web_turn_cols: Vec<String> = {
         let mut stmt = conn

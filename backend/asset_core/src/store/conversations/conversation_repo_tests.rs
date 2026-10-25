@@ -735,18 +735,27 @@ async fn sqlx_import_leaves_turn_question_id_unwritten_and_zero_write_dependency
         .await
         .expect("import session");
 
-    // Check that conversation_turns.question_id is NULL or empty
-    let turn_question_ids: Vec<Option<String>> =
-        sqlx::query_scalar("SELECT question_id FROM conversation_turns WHERE tenant_id = ?1")
-            .bind(TEST_TENANT_ID)
-            .fetch_all(pool)
-            .await
-            .expect("query question_id");
+    // Ticket 03: conversation_turns table no longer has question_id column
+    let query_err = sqlx::query("SELECT question_id FROM conversation_turns WHERE tenant_id = ?1")
+        .bind(TEST_TENANT_ID)
+        .fetch_all(pool)
+        .await
+        .expect_err("question_id column must no longer exist");
+    assert!(
+        query_err
+            .to_string()
+            .contains("no such column: question_id"),
+        "expected 'no such column: question_id', got: {query_err}"
+    );
 
-    assert!(!turn_question_ids.is_empty());
-    for qid in turn_question_ids {
-        assert!(qid.is_none() || qid.as_deref() == Some(""));
-    }
+    // Verify turns were imported
+    let turn_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversation_turns WHERE tenant_id = ?1")
+            .bind(TEST_TENANT_ID)
+            .fetch_one(pool)
+            .await
+            .expect("count turns");
+    assert!(turn_count > 0);
 
     drop(database);
     cleanup_database(&db_path);
@@ -2771,146 +2780,10 @@ async fn test_explain_query_plan_for_session_parts_uses_efficient_indexes() {
     cleanup_database(&db_path);
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TurnQuestionRead {
-    question_id: String,
-    origin: String,
-}
-
-/// 同一会话的两条读法：轮次列（question_id / question_origin）与成员表。
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TurnQuestionReads {
-    columns: BTreeMap<String, TurnQuestionRead>,
-    membership: BTreeMap<String, TurnQuestionRead>,
-}
-
-impl TurnQuestionReads {
-    fn assert_column_view_matches_membership(&self) {
-        assert!(
-            !self.columns.is_empty(),
-            "no turn question columns were read"
-        );
-        for (external_id, read) in &self.columns {
-            assert!(
-                !read.question_id.is_empty(),
-                "turn {external_id} has an empty question id"
-            );
-            let membership = self
-                .membership
-                .get(external_id)
-                .unwrap_or_else(|| panic!("turn {external_id} has no membership row"));
-            assert_eq!(
-                read, membership,
-                "turn column and membership reads disagree for {external_id}"
-            );
-        }
-        assert_eq!(self.columns.len(), self.membership.len());
-    }
-}
-
-async fn load_turn_question_reads(pool: &SqlitePool) -> StoreResult<TurnQuestionReads> {
-    let column_rows = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT external_id, question_id, question_origin FROM conversation_turns WHERE tenant_id = ?1",
-    )
-    .bind(TEST_TENANT_ID)
-    .fetch_all(pool)
-    .await
-    .map_err(StoreError::external)?;
-    let to_map = |rows: Vec<(String, String, String)>| {
-        rows.into_iter()
-            .map(|(external_id, question_id, origin)| {
-                (
-                    external_id,
-                    TurnQuestionRead {
-                        question_id,
-                        origin,
-                    },
-                )
-            })
-            .collect::<BTreeMap<_, _>>()
-    };
-    let cols = to_map(column_rows);
-    Ok(TurnQuestionReads {
-        membership: cols.clone(),
-        columns: cols,
-    })
-}
-
 fn cleanup_database(db_path: &std::path::Path) {
     let _ = std::fs::remove_file(db_path);
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
-}
-
-/// 写入审计：用触发器记录「哪张表、哪种操作」被写过，用来确认合并 / 拆分不碰旧表。
-const GROUPING_WRITE_AUDIT_TABLES: [&str; 6] = [
-    "conversation_questions",
-    "conversation_question_turns",
-    "conversation_question_turn_audits",
-    "conversation_question_redirects",
-    "conversation_parts",
-    "conversation_turns",
-];
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct GroupingWrite {
-    target: String,
-    operation: String,
-}
-
-async fn install_grouping_write_audit(pool: &SqlitePool) {
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS grouping_write_audit (
-            target TEXT NOT NULL,
-            operation TEXT NOT NULL
-        )",
-    )
-    .execute(pool)
-    .await
-    .expect("create the write audit table");
-    for table in GROUPING_WRITE_AUDIT_TABLES {
-        let exists: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-        )
-        .bind(table)
-        .fetch_one(pool)
-        .await
-        .expect("check table existence");
-        if exists == 0 {
-            continue;
-        }
-        for operation in ["INSERT", "UPDATE", "DELETE"] {
-            let statement = format!(
-                "CREATE TRIGGER IF NOT EXISTS grouping_write_audit_{table}_{operation} \
-                 AFTER {operation} ON {table} \
-                 BEGIN INSERT INTO grouping_write_audit (target, operation) \
-                 VALUES ('{table}', '{operation}'); END"
-            );
-            sqlx::query(AssertSqlSafe(statement))
-                .execute(pool)
-                .await
-                .expect("install a write audit trigger");
-        }
-    }
-}
-
-async fn clear_grouping_write_audit(pool: &SqlitePool) {
-    sqlx::query("DELETE FROM grouping_write_audit")
-        .execute(pool)
-        .await
-        .expect("clear the write audit");
-}
-
-async fn load_grouping_write_audit(pool: &SqlitePool) -> Vec<GroupingWrite> {
-    sqlx::query_as::<_, (String, String)>(
-        "SELECT target, operation FROM grouping_write_audit ORDER BY rowid ASC",
-    )
-    .fetch_all(pool)
-    .await
-    .expect("read the write audit")
-    .into_iter()
-    .map(|(target, operation)| GroupingWrite { target, operation })
-    .collect()
 }
 
 pub async fn delete_conversation_adapter_sqlx(
@@ -3207,37 +3080,20 @@ async fn seed_grouped_turns_without_question_rows(pool: &SqlitePool, source_id: 
     .execute(pool)
     .await
     .expect("insert session");
-    for (turn_id, turn_index, question_id) in [
-        (
-            "conversation-turn-count-1",
-            0,
-            "conversation-question-count-a",
-        ),
-        (
-            "conversation-turn-count-2",
-            1,
-            "conversation-question-count-a",
-        ),
-        (
-            "conversation-turn-count-3",
-            2,
-            "conversation-question-count-b",
-        ),
-        (
-            "conversation-turn-count-4",
-            3,
-            "conversation-question-count-b",
-        ),
+    for (turn_id, turn_index) in [
+        ("conversation-turn-count-1", 0),
+        ("conversation-turn-count-2", 1),
+        ("conversation-turn-count-3", 2),
+        ("conversation-turn-count-4", 3),
     ] {
         sqlx::query(
             r#"
             INSERT INTO conversation_turns (
                 tenant_id, id, session_id, external_id, turn_index, prompt, title,
-                started_at, ended_at, fingerprint, missing, imported_at,
-                question_id, question_origin
+                started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 ?1, ?2, 'count-session', ?3, ?4, ?5, NULL, NULL, NULL, ?6, 0,
-                '2026-10-23T00:00:00Z', ?7, 'imported'
+                '2026-10-23T00:00:00Z'
             )
             "#,
         )
@@ -3247,7 +3103,6 @@ async fn seed_grouped_turns_without_question_rows(pool: &SqlitePool, source_id: 
         .bind(turn_index)
         .bind(format!("turn {turn_index}"))
         .bind(format!("fingerprint-{turn_index}"))
-        .bind(question_id)
         .execute(pool)
         .await
         .expect("insert grouped turn");

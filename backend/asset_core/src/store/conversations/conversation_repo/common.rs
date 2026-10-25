@@ -224,7 +224,6 @@ pub(super) struct ConversationRecordTables {
     pub(super) parts: &'static str,
     pub(super) part_columns: &'static str,
     pub(super) session_id_prefix: &'static str,
-    pub(super) question_id_prefix: &'static str,
     pub(super) turn_id_prefix: &'static str,
 }
 
@@ -239,7 +238,6 @@ impl ConversationRecordKind {
                 parts: "conversation_parts",
                 part_columns: "p.turn_id, p.part_index, p.kind, p.content, p.attrs_json, p.translated_text",
                 session_id_prefix: "conversation-session-",
-                question_id_prefix: "conversation-question-",
                 turn_id_prefix: "conversation-turn-",
             },
             ConversationRecordKind::Web => ConversationRecordTables {
@@ -250,7 +248,6 @@ impl ConversationRecordKind {
                 parts: "web_record_parts",
                 part_columns: "p.turn_id, p.part_index, p.kind, p.content, NULL AS attrs_json, p.translated_text",
                 session_id_prefix: "web-record-session-",
-                question_id_prefix: "web-record-question-",
                 turn_id_prefix: "web-record-turn-",
             },
         }

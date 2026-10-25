@@ -702,9 +702,9 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
             r#"
             INSERT INTO conversation_turns (
                 tenant_id, id, session_id, external_id, turn_index, prompt,
-                fingerprint, missing, imported_at, question_id, question_origin
+                fingerprint, missing, imported_at
             ) VALUES ('default', 'maintenance-orphan-turn', 'maintenance-missing-session', 'ext-orphan', 0,
-                'orphan text', 'fp-orphan', 0, '2026-08-25T00:00:00Z', '', 'imported')
+                'orphan text', 'fp-orphan', 0, '2026-08-25T00:00:00Z')
             "#,
         )
         .execute(&mut *connection)
