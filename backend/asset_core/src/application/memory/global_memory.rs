@@ -27,7 +27,6 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 const GLOBAL_MEMORY_ACTION: &str = "memory.global";
-const MAX_GLOBAL_MEMORY_OUTPUT_LENGTH: usize = 100_000;
 
 pub use super::global_memory_documents::*;
 

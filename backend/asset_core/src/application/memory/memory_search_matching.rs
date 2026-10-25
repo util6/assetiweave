@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 
 use crate::backend::application::prelude::*;
 use crate::backend::application::{AppError, AppResult};
-use crate::backend::domain::ConversationPart;
 
 pub(super) const RECALL_LEXICAL_WEIGHT: u64 = 100;
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub(super) struct RecallPart {
     pub(super) turn_id: Option<String>,
@@ -13,23 +13,6 @@ pub(super) struct RecallPart {
     pub(super) block_id: String,
     pub(super) card_type: String,
     pub(super) content: String,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct RecallSearchDocument {
-    pub(super) reference: MemoryRecallQuestionRef,
-    pub(super) search_text: String,
-    pub(super) parts: Vec<RecallPart>,
-    pub(super) source_parts: Vec<ConversationPart>,
-}
-
-pub(super) fn recall_question_key(reference: &MemoryRecallQuestionRef) -> String {
-    format!(
-        "{}\0{}\0{}",
-        reference.record_kind.as_str(),
-        reference.session_id,
-        reference.question_id
-    )
 }
 
 pub(super) fn recall_locator_key(
@@ -72,77 +55,6 @@ pub(super) fn merge_recall_search_hit(
     existing.sources.extend(candidate.sources);
     existing.sources.sort();
     existing.sources.dedup();
-}
-
-pub(super) fn document_matches_search_hints(
-    document: &RecallSearchDocument,
-    params: &MemoryRecallSearchParams,
-) -> bool {
-    let contains_hint = |hint: Option<&String>, values: Vec<String>| {
-        hint.map(|value| value.trim())
-            .filter(|hint| !hint.is_empty())
-            .is_none_or(|hint| {
-                values
-                    .iter()
-                    .any(|value| value.to_lowercase().contains(&hint.to_lowercase()))
-            })
-    };
-    let values = document
-        .source_parts
-        .iter()
-        .flat_map(|part| {
-            [
-                part.text.clone(),
-                part.command.clone(),
-                part.cwd.clone(),
-                part.command_label.clone(),
-                part.metadata_json.clone(),
-            ]
-            .into_iter()
-            .flatten()
-        })
-        .collect::<Vec<_>>();
-    if !contains_hint(params.file.as_ref(), values.clone()) {
-        return false;
-    }
-    if let Some(command) = params
-        .command
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        let command = command.to_lowercase();
-        if !document.source_parts.iter().any(|part| {
-            part.kind == crate::backend::domain::ConversationPartKind::Command
-                || part.command.is_some()
-        }) || !values
-            .iter()
-            .any(|value| value.to_lowercase().contains(&command))
-        {
-            return false;
-        }
-    }
-    if let Some(error) = params
-        .error
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        let error = error.to_lowercase();
-        if !document.source_parts.iter().any(|part| {
-            part.exit_code.is_some_and(|code| code != 0)
-                || part
-                    .status
-                    .as_deref()
-                    .is_some_and(|status| status.to_lowercase().contains("error"))
-                || values
-                    .iter()
-                    .any(|value| value.to_lowercase().contains(&error))
-        }) {
-            return false;
-        }
-    }
-    true
 }
 
 pub(super) fn part_facts_match_search_hints(
@@ -215,10 +127,7 @@ pub(super) fn part_facts_match_search_hints(
     true
 }
 
-pub(super) fn leading_recall_snippet(content: &str) -> String {
-    content.chars().take(320).collect()
-}
-
+#[cfg(test)]
 pub(super) fn recall_evidence_parts(
     detail: &crate::backend::domain::conversations::ConversationQuestionDetail,
 ) -> Vec<RecallPart> {

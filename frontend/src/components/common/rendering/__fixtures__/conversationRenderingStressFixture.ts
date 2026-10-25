@@ -172,9 +172,9 @@ function createTurn(index: number): ConversationTurn {
     id: `stress-turn-${String(number).padStart(2, "0")}`,
     imported_at: FIXTURE_TIMESTAMP,
     missing: false,
+    prompt: userText,
     session_id: "rendering-stress-session",
     turn_index: index,
-    user_text: userText,
   };
 }
 

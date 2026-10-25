@@ -136,29 +136,6 @@ pub(super) fn conversation_session_from_normalized(
     }
 }
 
-pub(super) fn conversation_turn_from_normalized(
-    session_id: &str,
-    normalized: &crate::backend::domain::NormalizedConversationTurn,
-    now: &str,
-) -> ConversationTurn {
-    ConversationTurn {
-        id: stable_id("conversation-turn", &[session_id, &normalized.external_id]),
-        session_id: session_id.to_string(),
-        external_id: normalized.external_id.clone(),
-        turn_index: normalized.turn_index,
-        prompt: normalized.user_text.trim().to_string(),
-        title: normalized.title.clone(),
-        started_at: normalized.started_at.clone(),
-        ended_at: normalized.ended_at.clone(),
-        fingerprint: conversation_turn_fingerprint(normalized),
-        missing: false,
-        imported_at: now.to_string(),
-        model: normalized.model.clone(),
-        process: None,
-        response: None,
-    }
-}
-
 pub(super) async fn prepare_turn_for_import_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,

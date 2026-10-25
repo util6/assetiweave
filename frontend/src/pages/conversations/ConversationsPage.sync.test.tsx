@@ -1255,7 +1255,7 @@ const conversationSessionDetail: ConversationSessionDetail = {
           missing: false,
           session_id: "session-export-target",
           turn_index: 0,
-          user_text: "Can this be exported?",
+          prompt: "Can this be exported?",
         },
       ],
       question_turns: [
@@ -1331,7 +1331,7 @@ const secondConversationSessionDetail: ConversationSessionDetail = {
       fingerprint: "turn-second-target",
       id: "turn-second-target",
       session_id: "session-second-target",
-      user_text: "What is the second session?",
+      prompt: "What is the second session?",
     })),
   })),
   session: secondConversationSession,

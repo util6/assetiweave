@@ -417,7 +417,9 @@ export interface ConversationTurn {
   session_id: string;
   external_id: string;
   turn_index: number;
-  user_text: string;
+  prompt: string;
+  process?: string | null;
+  response?: string | null;
   title?: string | null;
   started_at?: string | null;
   ended_at?: string | null;
