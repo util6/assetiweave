@@ -160,7 +160,11 @@ describe("DialogFrame", () => {
     render(
       <DialogFrame onClose={onClose} title="Resizable Dialog">
         <div>
-          <div aria-label="Resize" className="ui-resize-handle" role="separator">
+          <div
+            aria-label="Resize"
+            className="ui-resize-handle"
+            role="separator"
+          >
             Separator
           </div>
         </div>

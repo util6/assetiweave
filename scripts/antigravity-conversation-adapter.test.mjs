@@ -766,6 +766,172 @@ test("Antigravity maintains unique execution ids across multiple tool calls in a
   }
 });
 
+test("Antigravity reconstructs concrete diff for modern edit_file tool call and extracts starting line", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-ag-edit-file-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    const targetFile = "/tmp/repo/backend/cli/tests/cli_tests.rs";
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-10-21T01:00:00Z",
+        content: "<USER_REQUEST>Update cli tests</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-21T01:00:01Z",
+        tool_calls: [{
+          name: "edit_file",
+          args: {
+            Path: targetFile,
+            Target: "assert_eq!(old, 1);\nassert_eq!(count, 0);\n",
+            Replacement: "assert_eq!(new, 2);\n",
+          },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-10-21T01:00:02Z",
+        content: `Made 1 replacement in ${targetFile} starting at line 301 (+1/-2 lines).`,
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    const fileChange = session.turns[0].parts.find((part) => part.kind === "file_change");
+    assert.ok(fileChange, "fileChange part should exist");
+    assert.equal(fileChange.content_card?.kind, "antigravity.file-change");
+    assert.equal(fileChange.content_card?.renderer, "diff");
+    assert.match(fileChange.text, /^diff --git a\/tmp\/repo\/backend\/cli\/tests\/cli_tests\.rs b\/tmp\/repo\/backend\/cli\/tests\/cli_tests\.rs/m);
+    assert.match(fileChange.text, /@@ -301,2 \+301,1 @@/);
+    assert.match(fileChange.text, /-assert_eq!\(old, 1\);/);
+    assert.match(fileChange.text, /\+assert_eq!\(new, 2\);/);
+    assert.doesNotMatch(fileChange.text, /Made 1 replacement/);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity reconstructs concrete diff for modern write_file tool call", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-ag-write-file-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    const targetFile = "/tmp/repo/backend/new_feature.rs";
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-10-21T01:05:00Z",
+        content: "<USER_REQUEST>Create new feature</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-21T01:05:01Z",
+        tool_calls: [{
+          name: "write_file",
+          args: {
+            Path: targetFile,
+            Content: "pub fn test_hello() {}\n",
+            Overwrite: true,
+          },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-10-21T01:05:02Z",
+        content: `Created file file://${targetFile} with requested content.`,
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    const fileChange = session.turns[0].parts.find((part) => part.kind === "file_change");
+    assert.ok(fileChange, "fileChange part should exist");
+    assert.equal(fileChange.content_card?.kind, "antigravity.file-change");
+    assert.equal(fileChange.content_card?.renderer, "diff");
+    assert.match(fileChange.text, /new file mode 100644/);
+    assert.match(fileChange.text, /\+pub fn test_hello\(\) \{\}/);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity reliably infers project path from modern Path parameter and resolves git root", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-ag-path-infer-"));
+  try {
+    // Create simulated git repo structure
+    const gitDir = path.join(fixtureRoot, ".git");
+    const subDir = path.join(fixtureRoot, "backend", "cli");
+    mkdirSync(gitDir, { recursive: true });
+    mkdirSync(subDir, { recursive: true });
+
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    const targetFile = path.join(subDir, "main.rs");
+    writeFileSync(targetFile, "// hello");
+
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-10-21T01:10:00Z",
+        content: "<USER_REQUEST>Read and run tests</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-21T01:10:01Z",
+        tool_calls: [
+          {
+            name: "read_file",
+            args: {
+              Path: targetFile,
+            },
+          },
+          {
+            name: "run_command",
+            args: {
+              CommandLine: "cargo test",
+              WaitMsBeforeAsync: "5000",
+              toolSummary: "Run tests",
+            },
+          },
+        ],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "VIEW_FILE",
+        status: "DONE",
+        created_at: "2026-10-21T01:10:02Z",
+        content: `File Path: \`file://${targetFile}\`\n1: // hello`,
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "RUN_COMMAND",
+        status: "DONE",
+        created_at: "2026-10-21T01:10:03Z",
+        content: "Process exited with code 0\nOutput:\ntest ok",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    // Git root should be resolved to fixtureRoot instead of subDir
+    assert.equal(session.project_path, fixtureRoot);
+    const cmdPart = session.turns[0].parts.find((part) => part.kind === "command");
+    assert.ok(cmdPart);
+    assert.equal(cmdPart.cwd, fixtureRoot);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 
 function readFixtureSession(transcriptPath) {
   const result = spawnSync(process.execPath, [adapterPath], {

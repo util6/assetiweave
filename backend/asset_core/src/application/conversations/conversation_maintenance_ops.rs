@@ -35,53 +35,15 @@ where
         Some("web") => vec![("web", "web_record")],
         _ => vec![("session", "conversation"), ("web", "web_record")],
     };
-    let family_check_count = families.len() * 7;
+    let family_check_count = families.len() * 3;
     let mut issues = Vec::new();
     let mut progress_index = 0;
     for (family_kind, table_prefix) in families {
         ensure_maintenance_not_cancelled(cancellation)?;
         let sessions = format!("{table_prefix}_sessions");
-        let questions = format!("{table_prefix}_questions");
-        let question_turns = format!("{table_prefix}_question_turns");
         let turns = format!("{table_prefix}_turns");
         let parts = format!("{table_prefix}_parts");
         let checks = [
-            (
-                "duplicate_memberships",
-                format!(
-                    "SELECT COUNT(*) FROM (SELECT qt.turn_id FROM {question_turns} qt JOIN {questions} q ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id JOIN {sessions} s ON s.tenant_id = q.tenant_id AND s.id = q.session_id WHERE qt.tenant_id = ?1 AND (?2 IS NULL OR s.source_id = ?2) GROUP BY qt.turn_id HAVING COUNT(*) > 1)"
-                ),
-                "error",
-                false,
-                "a Turn is assigned to multiple Questions",
-            ),
-            (
-                "cross_session_memberships",
-                format!(
-                    "SELECT COUNT(*) FROM {question_turns} qt JOIN {questions} q ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id JOIN {sessions} s ON s.tenant_id = q.tenant_id AND s.id = q.session_id WHERE qt.tenant_id = ?1 AND q.session_id != t.session_id AND (?2 IS NULL OR s.source_id = ?2)"
-                ),
-                "error",
-                false,
-                "Question and Turn belong to different Sessions",
-            ),
-            (
-                "orphan_memberships",
-                format!(
-                    "SELECT COUNT(*) FROM {question_turns} qt LEFT JOIN {questions} q ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id LEFT JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id LEFT JOIN {sessions} s ON s.tenant_id = q.tenant_id AND s.id = q.session_id WHERE qt.tenant_id = ?1 AND (q.id IS NULL OR t.id IS NULL) AND (?2 IS NULL OR (q.id IS NOT NULL AND s.source_id = ?2))"
-                ),
-                "error",
-                true,
-                "QuestionTurn references a missing Question or Turn",
-            ),
-            (
-                "orphan_questions",
-                format!(
-                    "SELECT COUNT(*) FROM {questions} q LEFT JOIN {sessions} s ON s.tenant_id = q.tenant_id AND s.id = q.session_id WHERE q.tenant_id = ?1 AND s.id IS NULL AND ?2 IS NULL"
-                ),
-                "error",
-                true,
-                "Question references a missing Session",
-            ),
             (
                 "orphan_turns",
                 format!(
@@ -360,41 +322,19 @@ pub async fn apply_safe_conversation_repairs_sqlx(
         ],
     };
     let mut deleted_parts = 0u64;
-    let mut deleted_memberships = 0u64;
-    let mut deleted_questions = 0u64;
+    let deleted_memberships = 0u64;
+    let deleted_questions = 0u64;
     let mut deleted_turns = 0u64;
     ensure_maintenance_not_cancelled(cancellation)?;
     let mut tx = pool.begin().await.map_err(AppError::external)?;
     for (prefix, _) in families {
         ensure_maintenance_not_cancelled(cancellation)?;
         let sessions = format!("{prefix}_sessions");
-        let questions = format!("{prefix}_questions");
-        let question_turns = format!("{prefix}_question_turns");
         let turns = format!("{prefix}_turns");
         let parts = format!("{prefix}_parts");
         ensure_maintenance_not_cancelled(cancellation)?;
         deleted_parts += sqlx::query(AssertSqlSafe(format!(
             "DELETE FROM {parts} WHERE tenant_id = ?1 AND NOT EXISTS (SELECT 1 FROM {turns} t WHERE t.tenant_id = {parts}.tenant_id AND t.id = {parts}.turn_id) AND ?2 IS NULL"
-        )))
-        .bind(tenant_id)
-        .bind(source_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(AppError::external)?
-        .rows_affected();
-        ensure_maintenance_not_cancelled(cancellation)?;
-        deleted_memberships += sqlx::query(AssertSqlSafe(format!(
-            "DELETE FROM {question_turns} WHERE tenant_id = ?1 AND (NOT EXISTS (SELECT 1 FROM {questions} q WHERE q.tenant_id = {question_turns}.tenant_id AND q.id = {question_turns}.question_id) OR NOT EXISTS (SELECT 1 FROM {turns} t WHERE t.tenant_id = {question_turns}.tenant_id AND t.id = {question_turns}.turn_id)) AND (?2 IS NULL OR EXISTS (SELECT 1 FROM {questions} q JOIN {sessions} s ON s.tenant_id = q.tenant_id AND s.id = q.session_id WHERE q.tenant_id = {question_turns}.tenant_id AND q.id = {question_turns}.question_id AND s.source_id = ?2))"
-        )))
-        .bind(tenant_id)
-        .bind(source_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(AppError::external)?
-        .rows_affected();
-        ensure_maintenance_not_cancelled(cancellation)?;
-        deleted_questions += sqlx::query(AssertSqlSafe(format!(
-            "DELETE FROM {questions} WHERE tenant_id = ?1 AND NOT EXISTS (SELECT 1 FROM {sessions} s WHERE s.tenant_id = {questions}.tenant_id AND s.id = {questions}.session_id) AND ?2 IS NULL"
         )))
         .bind(tenant_id)
         .bind(source_id)

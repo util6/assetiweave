@@ -74,17 +74,49 @@ function sessionVersionToken(row) {
     .digest("hex");
 }
 
-function sqliteJson(dbPath, sql) {
-  const result = spawnSync("sqlite3", ["-json", dbPath, sql], {
-    encoding: "utf8",
-    maxBuffer: SQLITE_MAX_BUFFER_BYTES,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error((result.stderr || `sqlite3 exited with ${result.status}`).trim());
+function sleepSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {}
   }
-  const text = result.stdout.trim();
-  return text ? JSON.parse(text) : [];
+}
+
+function sqliteJson(dbPath, sql, maxRetries = 3) {
+  const resolved = path.resolve(expandPath(dbPath));
+  const uri = `file:${resolved}?mode=ro`;
+  let lastError = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    let result = spawnSync("sqlite3", ["-json", "-cmd", ".timeout 10000", uri, sql], {
+      encoding: "utf8",
+      maxBuffer: SQLITE_MAX_BUFFER_BYTES,
+    });
+
+    if (result.status !== 0 && result.stderr && (result.stderr.includes("unable to open database") || result.stderr.includes("URI"))) {
+      result = spawnSync("sqlite3", ["-json", "-cmd", ".timeout 10000", resolved, sql], {
+        encoding: "utf8",
+        maxBuffer: SQLITE_MAX_BUFFER_BYTES,
+      });
+    }
+
+    if (!result.error && result.status === 0) {
+      const text = result.stdout.trim();
+      return text ? JSON.parse(text) : [];
+    }
+
+    const errMsg = (result.error ? result.error.message : result.stderr || `sqlite3 exited with ${result.status}`).trim();
+    lastError = new Error(errMsg);
+
+    if (errMsg.includes("database is locked") || errMsg.includes("busy")) {
+      sleepSync(200 * (attempt + 1));
+      continue;
+    }
+    break;
+  }
+
+  throw lastError;
 }
 
 function quoteIdent(name) {
@@ -260,6 +292,8 @@ function normalizePart(row, role) {
     ? row.source_execution_id.trim()
     : null;
   const resultText = String(text ?? "").trim();
+  const rawLabel = valueText(data, ["title", "description", "tool"]);
+  const commandLabel = rawLabel?.trim() || null;
   if (normalizedKind === "command" || command) {
     const parts = [];
     if (command?.trim()) {
@@ -273,7 +307,8 @@ function normalizePart(row, role) {
         status: null,
         exit_code: null,
         source_execution_id: sourceExecutionId,
-        metadata_json: metadata(compactObject({ type: "command", cwd }), smallMetadata(data)),
+        command_label: commandLabel,
+        metadata_json: metadata(compactObject({ type: "command", cwd, command_label: commandLabel }), smallMetadata(data)),
       });
     }
     if (resultText) {

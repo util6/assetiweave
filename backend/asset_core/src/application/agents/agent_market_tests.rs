@@ -126,33 +126,53 @@ async fn test_preview_update_aligns_candidate_resolved_version_with_target_versi
         .await
         .expect("open application service");
 
+    let (market_item, distribution) = service
+        .list_agent_market(AgentMarketListRequest {
+            query: None,
+            protocol: None,
+            installed_only: false,
+        })
+        .await
+        .expect("list agent market")
+        .into_iter()
+        .find_map(|item| {
+            let distribution = item
+                .distributions
+                .iter()
+                .find(|candidate| {
+                    candidate.recommended && candidate.distribution_type != DistributionType::System
+                })?
+                .clone();
+            Some((item, distribution))
+        })
+        .expect("catalog has a recommended managed distribution on this platform");
     let repo = AgentInstallationRepository::new(service.db.pool().clone());
     let now = chrono::Utc::now().to_rfc3339();
 
-    let fake_bin = root.join("fake_opencode");
+    let fake_bin = root.join(format!("fake_{}", market_item.id));
     fs::write(&fake_bin, b"#!/bin/sh\necho 1.0.0\n").expect("write fake bin");
 
     let installation = AgentInstallation {
-        agent_id: "opencode".to_string(),
-        installation_id: "inst-opencode".to_string(),
-        display_name: "OpenCode".to_string(),
-        catalog_item_version: "1.0.0".to_string(),
-        agent_version: "1.0.0".to_string(),
-        protocol: AgentMarketProtocol::Acp,
-        distribution_id: "binary-darwin-aarch64".to_string(),
-        distribution_type: DistributionType::Binary,
-        ownership: Ownership::Managed,
+        agent_id: market_item.id.clone(),
+        installation_id: format!("inst-{}", market_item.id),
+        display_name: market_item.display_name.clone(),
+        catalog_item_version: market_item.catalog_version.clone(),
+        agent_version: market_item.version.clone(),
+        protocol: market_item.protocol,
+        distribution_id: distribution.distribution_id.clone(),
+        distribution_type: distribution.distribution_type,
+        ownership: distribution.ownership,
         install_dir: Some(root.clone()),
         resolved_program: fake_bin,
         args: vec![],
         definition_json: serde_json::json!({
-            "id": "opencode",
-            "version": "1.0.0",
-            "protocol": "acp"
+            "id": market_item.id.clone(),
+            "version": market_item.version.clone(),
+            "protocol": market_item.protocol.as_str()
         }),
         integrity_json: None,
         source_registry: "curated".to_string(),
-        catalog_version: "1.0.0".to_string(),
+        catalog_version: market_item.catalog_version,
         enabled: true,
         installation_status: InstallationStatus::Ready,
         runtime_status: RuntimeStatus::Ready,
@@ -175,7 +195,7 @@ async fn test_preview_update_aligns_candidate_resolved_version_with_target_versi
 
     let preview = service
         .preview_agent_installation(AgentInstallPreviewRequest {
-            agent_id: "opencode".to_string(),
+            agent_id: market_item.id,
             catalog_version: None,
             agent_version: None,
             distribution_id: None,

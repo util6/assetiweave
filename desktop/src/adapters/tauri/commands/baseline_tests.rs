@@ -15,8 +15,8 @@ fn baseline_contains_exactly_194_unique_commands() {
     let baseline = load_baseline_commands();
     assert_eq!(
         baseline.len(),
-        204,
-        "Baseline commands count should be exactly 204"
+        206,
+        "Baseline commands count should be exactly 206"
     );
 }
 
@@ -57,7 +57,7 @@ fn commands_mod_handler_matches_baseline_commands() {
     );
     assert_eq!(
         registered_commands.len(),
-        204,
-        "Total registered commands in commands.rs should be exactly 204"
+        206,
+        "Total registered commands in commands.rs should be exactly 206"
     );
 }

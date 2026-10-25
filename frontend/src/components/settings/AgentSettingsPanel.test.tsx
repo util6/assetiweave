@@ -21,8 +21,10 @@ const previewAgentUninstallMock = vi.hoisted(() => vi.fn());
 const agentRuntime = vi.hoisted(() => ({
   listAgentMarket: undefined as undefined | typeof listAgentMarketMock,
   refreshAgentMarket: undefined as undefined | typeof refreshAgentMarketMock,
-  getAgentMarketRefreshTask: undefined as undefined | typeof getAgentMarketRefreshTaskMock,
-  previewAgentUninstall: undefined as undefined | typeof previewAgentUninstallMock,
+  getAgentMarketRefreshTask: undefined as
+    undefined | typeof getAgentMarketRefreshTaskMock,
+  previewAgentUninstall: undefined as
+    undefined | typeof previewAgentUninstallMock,
   listAgentCatalog: vi.fn(),
   listAgentModels: vi.fn(),
   cancelAgentModelProbe: vi.fn(),
@@ -780,8 +782,12 @@ describe("AgentSettingsPanel", () => {
     const openCodeRow = openCodeHeading.closest("article") as HTMLElement;
     expect(openCodeRow).toBeTruthy();
 
-    expect(within(openCodeRow).queryByRole("button", { name: "重装" })).toBeNull();
-    const updateButton = within(openCodeRow).getByRole("button", { name: "升级" });
+    expect(
+      within(openCodeRow).queryByRole("button", { name: "重装" }),
+    ).toBeNull();
+    const updateButton = within(openCodeRow).getByRole("button", {
+      name: "升级",
+    });
     expect(updateButton).toBeTruthy();
 
     fireEvent.click(updateButton);
@@ -808,8 +814,12 @@ describe("AgentSettingsPanel", () => {
     const openCodeRow = openCodeHeading.closest("article") as HTMLElement;
     expect(openCodeRow).toBeTruthy();
 
-    expect(within(openCodeRow).queryByRole("button", { name: "升级" })).toBeNull();
-    expect(within(openCodeRow).getByRole("button", { name: "重装" })).toBeTruthy();
+    expect(
+      within(openCodeRow).queryByRole("button", { name: "升级" }),
+    ).toBeNull();
+    expect(
+      within(openCodeRow).getByRole("button", { name: "重装" }),
+    ).toBeTruthy();
   });
 
   it("renders 检查更新 button in market header and triggers refreshAgentMarket on click", async () => {
@@ -838,9 +848,7 @@ describe("AgentSettingsPanel", () => {
     await waitFor(() =>
       expect(refreshAgentMarketMock).toHaveBeenCalledTimes(1),
     );
-    await waitFor(() =>
-      expect(listAgentMarketMock).toHaveBeenCalledTimes(2),
-    );
+    await waitFor(() => expect(listAgentMarketMock).toHaveBeenCalledTimes(2));
   });
 });
 

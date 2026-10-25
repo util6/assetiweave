@@ -197,16 +197,20 @@ fn should_auto_merge_micro_follow_up(user_text: &str) -> bool {
     .any(|prefix| normalized.starts_with(prefix))
 }
 
+/// 自动归并规则：确认语、打断恢复与微型追问都并入上一组。
+pub fn should_merge_into_previous_question(user_text: &str) -> bool {
+    should_auto_merge_acknowledgement(user_text)
+        || should_auto_merge_interruption_recovery(user_text)
+        || should_auto_merge_micro_follow_up(user_text)
+}
+
 pub fn group_turn_ids_by_question<I>(turns: I) -> Vec<ConversationGroupSeed>
 where
     I: IntoIterator<Item = (String, String)>,
 {
     let mut groups: Vec<ConversationGroupSeed> = Vec::new();
     for (turn_id, user_text) in turns {
-        if should_auto_merge_acknowledgement(&user_text)
-            || should_auto_merge_interruption_recovery(&user_text)
-            || should_auto_merge_micro_follow_up(&user_text)
-        {
+        if should_merge_into_previous_question(&user_text) {
             if let Some(previous) = groups.last_mut() {
                 previous.turn_ids.push(turn_id);
                 if previous.origin == ConversationGroupingOrigin::Imported {

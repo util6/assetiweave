@@ -1,12 +1,15 @@
+use std::io::{IsTerminal, Write};
+
 use anyhow::{Context, Result};
 use asset_core::application::{
-    AppService, ConversationAdapterPackageInspectParams, ConversationBlockGetParams,
-    ConversationBlockListParams, ConversationDataAuditParams, ConversationDataRepairParams,
-    ConversationDataRollbackParams, ConversationPartTranslationUpdateParams,
-    ConversationQuestionGetParams, ConversationQuestionListParams, ConversationQuestionMergeParams,
-    ConversationQuestionSplitParams, ConversationSyncMode, ConversationSyncParams,
+    AppService, ConversationAdapterPackageInspectParams, ConversationCardGetParams,
+    ConversationDataAuditParams, ConversationDataRepairParams, ConversationDataRollbackParams,
+    ConversationOutlineParams, ConversationSyncMode, ConversationSyncParams,
 };
+use asset_core::domain::conversations::ConversationCardDetail;
 use serde_json::Value;
+
+use crate::args::conversation::ConversationSyncArgs;
 
 pub struct ConversationOperations<'a> {
     app_service: &'a AppService,
@@ -37,6 +40,46 @@ impl<'a> ConversationOperations<'a> {
             .await
             .context("failed to list sources")?;
         Ok(serde_json::to_value(sources)?)
+    }
+
+    pub async fn sync_conversations(&self, args: &ConversationSyncArgs) -> Result<Value> {
+        let mode = if args.full {
+            ConversationSyncMode::Full
+        } else {
+            ConversationSyncMode::Incremental
+        };
+        let params = ConversationSyncParams {
+            source_id: args.source.clone(),
+            adapter_id: args.adapter.clone(),
+            record_kind: args.kind.clone(),
+            mode,
+            dry_run: args.dry_run,
+        };
+        let is_tty = std::io::stderr().is_terminal();
+        let result = self
+            .app_service
+            .sync_conversations_with_progress(
+                params,
+                move |completed, total, current_detail, _completed_adapters| {
+                    if is_tty {
+                        if let Some(ref detail) = current_detail {
+                            eprint!("\r\x1b[2K⠋ [{completed}/{total}] {detail}");
+                        } else {
+                            eprint!("\r\x1b[2K⠋ [{completed}/{total}] 同步中...");
+                        }
+                        let _ = std::io::stderr().flush();
+                    }
+                },
+            )
+            .await;
+
+        if std::io::stderr().is_terminal() {
+            eprint!("\r\x1b[2K");
+            let _ = std::io::stderr().flush();
+        }
+
+        let result = result.context("failed to synchronize conversations")?;
+        Ok(serde_json::to_value(result)?)
     }
 
     pub async fn sync_source(&self, source_id: String, full: bool) -> Result<Value> {
@@ -119,114 +162,23 @@ impl<'a> ConversationOperations<'a> {
         Ok(serde_json::to_value(result)?)
     }
 
-    pub async fn list_questions(
-        &self,
-        session_id: String,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Value> {
-        let params = ConversationQuestionListParams {
-            session_id,
-            query: None,
-            limit: Some(limit),
-            offset: Some(offset),
-        };
-        let result = self
-            .app_service
-            .list_conversation_questions(params)
-            .await
-            .context("failed to list conversation questions")?;
-        Ok(serde_json::to_value(result)?)
-    }
-
-    pub async fn get_question(&self, question_id: String) -> Result<Value> {
-        let params = ConversationQuestionGetParams { question_id };
-        let result = self
-            .app_service
-            .get_conversation_question(params)
-            .await
-            .context("failed to get conversation question")?;
-        Ok(serde_json::to_value(result)?)
-    }
-
-    pub async fn merge_question(&self, question_id: String, dry_run: bool) -> Result<Value> {
-        let params = ConversationQuestionMergeParams {
-            question_ids: vec![question_id],
-            dry_run,
-        };
-        let result = self
-            .app_service
-            .merge_conversation_questions(params)
-            .await
-            .context("failed to merge conversation question")?;
-        Ok(serde_json::to_value(result)?)
-    }
-
-    pub async fn split_question(
-        &self,
-        question_id: String,
-        before_turn: String,
-        dry_run: bool,
-    ) -> Result<Value> {
-        let params = ConversationQuestionSplitParams {
-            question_id,
-            before_turn_id: before_turn,
-            dry_run,
-        };
-        let result = self
-            .app_service
-            .split_conversation_question(params)
-            .await
-            .context("failed to split conversation question")?;
-        Ok(serde_json::to_value(result)?)
-    }
-
-    pub async fn list_blocks(&self, question_id: String) -> Result<Value> {
-        let params = ConversationBlockListParams { question_id };
-        let result = self
-            .app_service
-            .list_conversation_blocks(params)
-            .await
-            .context("failed to list conversation blocks")?;
-        Ok(serde_json::to_value(result)?)
-    }
-
-    pub async fn get_block(&self, block_id: String) -> Result<Value> {
-        let params = ConversationBlockGetParams { block_id };
-        let result = self
-            .app_service
-            .get_conversation_block(params)
-            .await
-            .context("failed to get conversation block")?;
-        Ok(serde_json::to_value(result)?)
-    }
-
-    pub async fn update_part_translation(
-        &self,
-        part_id: String,
-        record_kind: String,
-        text: String,
-    ) -> Result<Value> {
-        let params = ConversationPartTranslationUpdateParams {
-            part_id,
-            record_kind: Some(record_kind),
-            translated_text: text,
-        };
-        let result = self
-            .app_service
-            .update_conversation_part_translation(params)
-            .await
-            .context("failed to update conversation part translation")?;
-        Ok(serde_json::to_value(result)?)
-    }
-
-    pub async fn get_session_outline(&self, id: String) -> Result<Value> {
-        let params = asset_core::application::ConversationSessionOutlineParams { id };
+    pub async fn get_outline(&self, id: String) -> Result<Value> {
+        let params = ConversationOutlineParams { id };
         let outline = self
             .app_service
-            .get_conversation_session_outline(params)
+            .get_conversation_outline(params)
             .await
-            .context("failed to get conversation session outline")?;
+            .context("failed to get conversation outline")?;
         Ok(serde_json::to_value(outline)?)
+    }
+
+    pub async fn get_card(&self, card_id: String) -> Result<ConversationCardDetail> {
+        let params = ConversationCardGetParams { card_id };
+        let card = self
+            .app_service
+            .get_conversation_card(params)
+            .await
+            .context("failed to get conversation card")?;
+        Ok(card)
     }
 }

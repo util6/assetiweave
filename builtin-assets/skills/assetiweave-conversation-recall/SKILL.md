@@ -34,25 +34,21 @@ description: 从 AssetIWeave 的标准化对话 Card 中渐进检索历史证据
 
 4. 如果首次搜索命中不足，改写关键词或分别搜索方法名、命令名、错误文本。不要仅因一次零命中就断言历史中不存在。
 
-5. 对排名靠前且互不重复的 `question_id`，先只读取关联 Block 定位器：
+5. 对命中的目标会话或轮次，先读取轻量结构骨架：
 
    ```bash
-   assetiweave-cli conversation block list <question-id>
+   aiwc conversation outline <id>
    ```
 
-   该命令不返回正文。根据 `kind`、`semantic_role`、`content_length`、`status` 和 `exit_code` 选择下一步要读的 Block。先读少量 `answer`，Answer 不足时才读 `command`、`result` 或 `tool`：
+   `outline` 支持 Session ID、Turn ID 或 Card ID（支持 8 字符短 ID），返回列式 Matrix JSON 紧凑骨架。先读 `question` 意图与 `activities` 连续去重摘要。
+
+6. 仅在确实需要代码 diff、错误堆栈、配置参数或模型精确回复细节时，依据卡片 ID 单点下钻：
 
    ```bash
-   assetiweave-cli conversation block get <block-id>
+   aiwc conversation card get <card-id>
    ```
 
-   `question_id` 与 `block_id` 的前缀自动区分 Session 和网页记录；不需要为网页记录加载完整 Session。
-
-6. 只有在 Question 缺少前后决策、同一 Session 中存在关联问题，或用户明确要求完整回顾时，才读取整个 Session：
-
-   ```bash
-   assetiweave-cli conversation session get <session-id>
-   ```
+   加 `--raw` 开关可直接将原始文本输出到 stdout，便于代码/日志提取。**严禁全量 dump 会话正文**，每次仅查 1~2 张关键卡片，查完即止。
 
 ## 同步边界
 

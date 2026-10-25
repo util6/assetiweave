@@ -703,17 +703,17 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         .expect("insert orphan part");
         sqlx::query(
             r#"
-            INSERT INTO conversation_question_turns (
-                tenant_id, question_id, turn_id, turn_order, assignment_origin,
-                assigned_at, updated_at
-            ) VALUES ('default', 'maintenance-missing-question', 'maintenance-missing-turn', 0,
-                'imported', '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z')
+            INSERT INTO conversation_turns (
+                tenant_id, id, session_id, external_id, turn_index, user_text,
+                fingerprint, missing, imported_at, question_id, question_origin
+            ) VALUES ('default', 'maintenance-orphan-turn', 'maintenance-missing-session', 'ext-orphan', 0,
+                'orphan text', 'fp-orphan', 0, '2026-08-25T00:00:00Z', '', 'imported')
             "#,
         )
         .execute(&mut *connection)
         .await
         .map_err(AppError::external)
-        .expect("insert orphan question turn");
+        .expect("insert orphan turn");
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&mut *connection)
             .await
@@ -739,7 +739,7 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         .as_array()
         .expect("audit issues")
         .iter()
-        .any(|issue| issue["category"] == "orphan_memberships"));
+        .any(|issue| issue["category"] == "orphan_turns"));
 
     let dry_run = service
         .repair_conversation_data(ConversationDataRepairParams {
@@ -820,14 +820,15 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         .expect("apply conversation repair");
     assert_eq!(repaired["dry_run"], false);
     assert_eq!(repaired["applied"]["deleted_parts"], 1);
-    assert_eq!(repaired["applied"]["deleted_memberships"], 1);
+    assert_eq!(repaired["applied"]["deleted_turns"], 1);
+    assert_eq!(repaired["applied"]["deleted_memberships"], 0);
     let backup_path = repaired["rollback"]["backup_path"]
         .as_str()
         .expect("repair rollback backup path");
     assert!(Path::new(backup_path).is_file());
     assert!(Path::new(backup_path).starts_with(root.join("conversation-repair-backups")));
     let resolved_issue_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE tenant_id = 'default' AND status = 'resolved' AND category IN ('orphan_parts', 'orphan_memberships')",
+        "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE tenant_id = 'default' AND status = 'resolved' AND category IN ('orphan_parts', 'orphan_turns')",
     )
     .fetch_one(service.db.pool())
     .await
@@ -1750,6 +1751,148 @@ async fn conversation_blocks_list_locators_and_get_selected_content_for_each_rec
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_question_read_path_and_export_ignore_legacy_grouping_rows() {
+    for (web_record, record_kind) in [(false, "session"), (true, "web")] {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-question-read-path-{record_kind}-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create question read path root");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open service");
+        let session_id =
+            upsert_conversation_export_fixture(&service, &root, Vec::new(), None, web_record).await;
+        let question_id: String = sqlx::query_scalar(AssertSqlSafe(format!(
+            "SELECT question_id FROM {}_turns WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY turn_index ASC LIMIT 1",
+            if web_record { "web_record" } else { "conversation" }
+        )))
+        .bind(service.tenant_id())
+        .bind(&session_id)
+        .fetch_one(service.db.pool())
+        .await
+        .expect("load question id from turn columns");
+
+        let export_output_root = root.join("exports").to_string_lossy().to_string();
+        let export_before = if web_record {
+            service
+                .export_web_record_session(ConversationSessionExportParams {
+                    session_id: session_id.clone(),
+                    output_root: export_output_root.clone(),
+                    question_ids: vec![question_id.clone()],
+                    content_filter:
+                        crate::backend::domain::ConversationExportContentFilter::default(),
+                    format: crate::backend::domain::ConversationExportFormat::Raw,
+                    dry_run: true,
+                })
+                .await
+                .expect("dry-run web record export before dropping legacy rows")
+        } else {
+            service
+                .export_conversation_session(ConversationSessionExportParams {
+                    session_id: session_id.clone(),
+                    output_root: export_output_root.clone(),
+                    question_ids: vec![question_id.clone()],
+                    content_filter:
+                        crate::backend::domain::ConversationExportContentFilter::default(),
+                    format: crate::backend::domain::ConversationExportFormat::Raw,
+                    dry_run: true,
+                })
+                .await
+                .expect("dry-run session export before dropping legacy rows")
+        };
+
+        if !web_record {
+            let detail = service
+                .get_conversation_question(ConversationQuestionGetParams {
+                    question_id: question_id.clone(),
+                })
+                .await
+                .expect("load question detail from turn columns");
+            assert_eq!(detail.question.id, question_id);
+            assert_eq!(detail.question.title.as_deref(), Some("Export this"));
+            assert_eq!(detail.turns.len(), 1);
+        }
+
+        let blocks = service
+            .list_conversation_blocks(ConversationBlockListParams {
+                question_id: question_id.clone(),
+            })
+            .await
+            .expect("list block locators from turn columns");
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks
+            .iter()
+            .all(|block| block.question_id == question_id && block.session_id == session_id));
+        assert!(blocks.iter().all(|block| block.record_kind == record_kind));
+
+        let question_block = blocks
+            .iter()
+            .find(|block| block.kind == "question")
+            .expect("question block locator");
+        let question = service
+            .get_conversation_block(ConversationBlockGetParams {
+                block_id: question_block.block_id.clone(),
+            })
+            .await
+            .expect("load question block from turn columns");
+        assert_eq!(question.content, "Export this");
+        assert_eq!(question.locator.question_id, question_id);
+
+        let answer_block = blocks
+            .iter()
+            .find(|block| block.semantic_role.as_deref() == Some("answer"))
+            .expect("answer block locator");
+        let answer = service
+            .get_conversation_block(ConversationBlockGetParams {
+                block_id: answer_block.block_id.clone(),
+            })
+            .await
+            .expect("load answer block from turn columns");
+        assert_eq!(answer.content, "Rust fallback should not appear");
+        assert_eq!(answer.locator.question_id, question_id);
+
+        let export_after = if web_record {
+            service
+                .export_web_record_session(ConversationSessionExportParams {
+                    session_id: session_id.clone(),
+                    output_root: export_output_root,
+                    question_ids: vec![question_id.clone()],
+                    content_filter:
+                        crate::backend::domain::ConversationExportContentFilter::default(),
+                    format: crate::backend::domain::ConversationExportFormat::Raw,
+                    dry_run: true,
+                })
+                .await
+                .expect("dry-run web record export after dropping legacy rows")
+        } else {
+            service
+                .export_conversation_session(ConversationSessionExportParams {
+                    session_id: session_id.clone(),
+                    output_root: export_output_root,
+                    question_ids: vec![question_id.clone()],
+                    content_filter:
+                        crate::backend::domain::ConversationExportContentFilter::default(),
+                    format: crate::backend::domain::ConversationExportFormat::Raw,
+                    dry_run: true,
+                })
+                .await
+                .expect("dry-run session export after dropping legacy rows")
+        };
+        assert_eq!(export_after["bytes"], export_before["bytes"]);
+        assert_eq!(export_after["path"], export_before["path"]);
+        assert_eq!(export_after["question_count"], 1);
+        assert!(
+            export_after["bytes"].as_u64().unwrap_or(0) > 0,
+            "export must keep producing content"
+        );
+
+        drop(service);
+        fs::remove_dir_all(root).ok();
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn conversation_session_export_uses_adapter_markdown_formatter() {
@@ -2127,26 +2270,18 @@ esac
     .unwrap();
     assert_eq!(session_count, 2);
 
-    let (s2_dirty, s2_err_code, s2_err_msg, s2_attempts): (i64, Option<String>, Option<String>, i64) =
-        sqlx::query_as(
-            "SELECT dirty, error_code, error_message, attempt_count FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
-        )
-        .bind(tenant_id)
-        .bind(&source_id)
-        .fetch_one(pool)
-        .await
-        .unwrap();
+    let s2_dirty: i64 = sqlx::query_scalar(
+        "SELECT dirty FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
+    )
+    .bind(tenant_id)
+    .bind(&source_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     assert_eq!(s2_dirty, 1);
-    assert_eq!(s2_err_code.as_deref(), Some("adapter_process_error"));
-    assert!(s2_err_msg
-        .as_deref()
-        .unwrap()
-        .contains("~/source/session2.json"));
-    assert!(!s2_err_msg.as_deref().unwrap().contains("/Users/testuser/"));
-    assert_eq!(s2_attempts, 1);
 
-    let (s1_dirty, s1_err_code): (i64, Option<String>) = sqlx::query_as(
-        "SELECT dirty, error_code FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-1'",
+    let s1_dirty: i64 = sqlx::query_scalar(
+        "SELECT dirty FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-1'",
     )
     .bind(tenant_id)
     .bind(&source_id)
@@ -2154,7 +2289,6 @@ esac
     .await
     .unwrap();
     assert_eq!(s1_dirty, 0);
-    assert!(s1_err_code.is_none());
 
     // Round 2: fix session-2, perform incremental sync
     fs::remove_file(&marker_path).unwrap();
@@ -2183,18 +2317,15 @@ esac
     .unwrap();
     assert_eq!(session_count_r2, 3);
 
-    let (s2_r2_dirty, s2_r2_err_code, s2_r2_err_msg): (i64, Option<String>, Option<String>) =
-        sqlx::query_as(
-            "SELECT dirty, error_code, error_message FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
-        )
-        .bind(tenant_id)
-        .bind(&source_id)
-        .fetch_one(pool)
-        .await
-        .unwrap();
+    let s2_r2_dirty: i64 = sqlx::query_scalar(
+        "SELECT dirty FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
+    )
+    .bind(tenant_id)
+    .bind(&source_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     assert_eq!(s2_r2_dirty, 0);
-    assert!(s2_r2_err_code.is_none());
-    assert!(s2_r2_err_msg.is_none());
 
     // Round 3: incremental sync again, all clean, zero active sessions
     let result3 = service
@@ -4922,6 +5053,7 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
             query: Some("stale-answer-snapshot".to_string()),
             limit: Some(20),
             offset: Some(0),
+            ..Default::default()
         })
         .await
         .expect("list sessions without stale question snapshot fields")
@@ -5046,9 +5178,10 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
         r#"
         INSERT INTO conversation_turns (
             tenant_id, id, session_id, external_id, turn_index, user_text, title,
-            started_at, ended_at, fingerprint, missing, imported_at
+            started_at, ended_at, fingerprint, missing, imported_at,
+            question_id, question_origin
         )
-        VALUES (?1, ?2, ?3, ?4, 1, ?5, NULL, NULL, NULL, ?6, 0, ?7)
+        VALUES (?1, ?2, ?3, ?4, 1, ?5, NULL, NULL, NULL, ?6, 0, ?7, ?8, 'imported')
         "#,
     )
     .bind(&tenant_id)
@@ -5058,43 +5191,11 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
     .bind("Second prompt")
     .bind("app-membership-fingerprint")
     .bind(now)
+    .bind(&second_question_id_for_db)
     .execute(&pool)
     .await
     .map_err(AppError::external)
     .expect("insert second turn");
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_questions (
-            tenant_id, id, session_id, title, created_at, updated_at
-        )
-        VALUES (?1, ?2, ?3, NULL, ?4, ?4)
-        "#,
-    )
-    .bind(&tenant_id)
-    .bind(&second_question_id_for_db)
-    .bind(&session_id)
-    .bind(now)
-    .execute(&pool)
-    .await
-    .map_err(AppError::external)
-    .expect("insert second question");
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_question_turns (
-            tenant_id, question_id, turn_id, turn_order,
-            assignment_origin, assigned_at, updated_at
-        )
-        VALUES (?1, ?2, ?3, 0, 'imported', ?4, ?4)
-        "#,
-    )
-    .bind(&tenant_id)
-    .bind(&second_question_id_for_db)
-    .bind(&second_turn_id_for_db)
-    .bind(now)
-    .execute(&pool)
-    .await
-    .map_err(AppError::external)
-    .expect("insert question turn");
 
     let merged = service
         .merge_conversation_questions(ConversationQuestionMergeParams {

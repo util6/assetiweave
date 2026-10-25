@@ -32,7 +32,7 @@ pub(crate) async fn get_conversation_session(
 pub(crate) async fn get_conversation_session_outline(
     state: State<'_, AppState>,
     params: ConversationSessionOutlineParams,
-) -> RuntimeAppResult<crate::backend::domain::ConversationSessionOutline> {
+) -> RuntimeAppResult<crate::backend::domain::ConversationOutline> {
     AppService::from_runtime(&state.runtime)
         .get_conversation_session_outline(params)
         .await

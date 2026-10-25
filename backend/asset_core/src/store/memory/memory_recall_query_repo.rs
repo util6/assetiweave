@@ -1,6 +1,71 @@
 use crate::backend::domain::{MemoryRecallQuestionRef, MemoryRecordKind, MemoryScope};
 use crate::backend::store::{StoreError, StoreResult};
-use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite, SqlitePool};
+use sqlx::{sqlite::SqliteRow, AssertSqlSafe, Row, SqlitePool};
+
+/// 召回单元（等价于轮次分组）的定位时间与顺序统一由轮次列派生。
+///
+/// 定位时间取组内首轮的 `started_at`；缺失（NULL / 空白）或不可解析时回退该轮的
+/// `imported_at`。窗口边界与定位时间都先归一到 UTC 秒级再比较，因此：
+/// `since` 与 `until` 都是**双端闭区间**，且跨时区偏移不会因字符串字典序而错位。
+/// 计数与分页共用同一段 CTE，时间口径不可能漂移。
+const RECALL_UNITS_SQL: &str = r#"
+  WITH recall_turns AS (
+    SELECT 'session' AS record_kind, s.source_id, s.id AS session_id,
+           s.title AS session_title, s.project_path, t.question_id,
+           t.turn_index, t.id AS turn_id,
+           COALESCE(
+               strftime('%Y-%m-%dT%H:%M:%SZ', NULLIF(trim(t.started_at), '')),
+               strftime('%Y-%m-%dT%H:%M:%SZ', t.imported_at)
+           ) AS turn_time
+    FROM conversation_turns t
+    JOIN conversation_sessions s ON s.tenant_id=t.tenant_id AND s.id=t.session_id
+    JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
+    WHERE t.tenant_id=?1 AND source.adapter_id <> 'assetiweave-memory-recall'
+      AND t.question_id <> ''
+      AND s.user_visible = 1 AND s.execution_origin != 'internal_memory'
+      AND (?2 IS NULL OR s.adapter_id=?2)
+      AND (?3 IS NULL OR s.source_id=?3) AND (?4 IS NULL OR s.project_path=?4)
+      AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
+    UNION ALL
+    SELECT 'web', s.source_id, s.id, s.title, NULL, t.question_id,
+           t.turn_index, t.id,
+           COALESCE(
+               strftime('%Y-%m-%dT%H:%M:%SZ', NULLIF(trim(t.started_at), '')),
+               strftime('%Y-%m-%dT%H:%M:%SZ', t.imported_at)
+           )
+    FROM web_record_turns t
+    JOIN web_record_sessions s ON s.tenant_id=t.tenant_id AND s.id=t.session_id
+    JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
+    WHERE t.tenant_id=?1 AND source.adapter_id <> 'assetiweave-memory-recall'
+      AND t.question_id <> ''
+      AND (?2 IS NULL OR s.adapter_id=?2)
+      AND (?3 IS NULL OR s.source_id=?3) AND ?4 IS NULL
+      AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
+  ),
+  ranked_turns AS (
+    SELECT *,
+           ROW_NUMBER() OVER (
+               PARTITION BY record_kind, session_id, question_id
+               ORDER BY turn_index ASC, turn_id ASC
+           ) AS group_rank
+    FROM recall_turns
+  ),
+  recall_units AS (
+    SELECT record_kind, source_id, session_id, session_title, project_path,
+           question_id, turn_time AS located_at,
+           ROW_NUMBER() OVER (
+               PARTITION BY record_kind, session_id
+               ORDER BY turn_index ASC, turn_id ASC
+           ) - 1 AS question_index
+    FROM ranked_turns
+    WHERE group_rank = 1
+  )
+"#;
+
+const RECALL_UNITS_TIME_FILTER: &str = r#"
+    WHERE (?7 IS NULL OR located_at >= COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', ?7), ?7))
+      AND (?8 IS NULL OR located_at <= COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', ?8), ?8))
+"#;
 
 pub async fn list_memory_recall_question_refs_sqlx(
     pool: &SqlitePool,
@@ -12,50 +77,9 @@ pub async fn list_memory_recall_question_refs_sqlx(
     limit: usize,
     offset: usize,
 ) -> StoreResult<(usize, Vec<MemoryRecallQuestionRef>)> {
-    if scope.project_path.is_some() {
-        return list_session_memory_recall_question_refs_sqlx(
-            pool,
-            tenant_id,
-            scope,
-            since,
-            until,
-            include_unavailable,
-            limit,
-            offset,
-        )
-        .await;
-    }
-    const RECALL_COUNT_SQL: &str = r#"
-      WITH all_questions AS (
-        SELECT 'session' AS record_kind, s.source_id, s.id AS session_id,
-               s.title AS session_title, s.project_path, q.id AS question_id,
-               ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index,
-               q.created_at AS sort_time
-        FROM conversation_questions q
-        JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
-        JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
-        WHERE q.tenant_id=?1 AND source.adapter_id <> 'assetiweave-memory-recall'
-          AND s.user_visible = 1 AND s.execution_origin != 'internal_memory'
-          AND (?2 IS NULL OR s.adapter_id=?2)
-          AND (?3 IS NULL OR s.source_id=?3) AND (?4 IS NULL OR s.project_path=?4)
-          AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
-          AND (?7 IS NULL OR q.created_at>=?7) AND (?8 IS NULL OR q.created_at<=?8)
-        UNION ALL
-        SELECT 'web', s.source_id, s.id, s.title, NULL, q.id,
-               ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index,
-               q.created_at
-        FROM web_record_questions q
-        JOIN web_record_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
-        JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
-        WHERE q.tenant_id=?1 AND source.adapter_id <> 'assetiweave-memory-recall'
-          AND (?2 IS NULL OR s.adapter_id=?2)
-          AND (?3 IS NULL OR s.source_id=?3) AND ?4 IS NULL
-          AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
-          AND (?7 IS NULL OR q.created_at>=?7) AND (?8 IS NULL OR q.created_at<=?8)
-      )
-      SELECT COUNT(*) FROM all_questions
-    "#;
-    let total_count: i64 = sqlx::query(RECALL_COUNT_SQL)
+    let count_sql =
+        format!("{RECALL_UNITS_SQL} SELECT COUNT(*) FROM recall_units{RECALL_UNITS_TIME_FILTER}");
+    let total_count: i64 = sqlx::query(AssertSqlSafe(count_sql))
         .bind(tenant_id)
         .bind(&scope.app_id)
         .bind(&scope.source_id)
@@ -67,40 +91,14 @@ pub async fn list_memory_recall_question_refs_sqlx(
         .fetch_one(pool)
         .await?
         .try_get(0)?;
-    const RECALL_PAGE_SQL: &str = r#"
-      WITH all_questions AS (
-        SELECT 'session' AS record_kind, s.source_id, s.id AS session_id,
-               s.title AS session_title, s.project_path, q.id AS question_id,
-               ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index,
-               q.created_at AS sort_time
-        FROM conversation_questions q
-        JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
-        JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
-        WHERE q.tenant_id=?1 AND source.adapter_id <> 'assetiweave-memory-recall'
-          AND s.user_visible = 1 AND s.execution_origin != 'internal_memory'
-          AND (?2 IS NULL OR s.adapter_id=?2)
-          AND (?3 IS NULL OR s.source_id=?3) AND (?4 IS NULL OR s.project_path=?4)
-          AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
-          AND (?7 IS NULL OR q.created_at>=?7) AND (?8 IS NULL OR q.created_at<=?8)
-        UNION ALL
-        SELECT 'web', s.source_id, s.id, s.title, NULL, q.id,
-               ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index,
-               q.created_at
-        FROM web_record_questions q
-        JOIN web_record_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
-        JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
-        WHERE q.tenant_id=?1 AND source.adapter_id <> 'assetiweave-memory-recall'
-          AND (?2 IS NULL OR s.adapter_id=?2)
-          AND (?3 IS NULL OR s.source_id=?3) AND ?4 IS NULL
-          AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
-          AND (?7 IS NULL OR q.created_at>=?7) AND (?8 IS NULL OR q.created_at<=?8)
-      )
-      SELECT record_kind,source_id,session_id,session_title,project_path,question_id,question_index
-      FROM all_questions
-      ORDER BY sort_time DESC,record_kind,session_id,question_index,question_id
-      LIMIT ?9 OFFSET ?10
-    "#;
-    let rows = sqlx::query(RECALL_PAGE_SQL)
+    let page_sql = format!(
+        "{RECALL_UNITS_SQL}
+         SELECT record_kind,source_id,session_id,session_title,project_path,question_id,question_index
+         FROM recall_units{RECALL_UNITS_TIME_FILTER}
+         ORDER BY located_at DESC,record_kind,session_id,question_index,question_id
+         LIMIT ?9 OFFSET ?10"
+    );
+    let rows = sqlx::query(AssertSqlSafe(page_sql))
         .bind(tenant_id)
         .bind(&scope.app_id)
         .bind(&scope.source_id)
@@ -126,80 +124,6 @@ pub async fn list_memory_recall_question_refs_sqlx(
         .map(map_memory_recall_question_ref)
         .collect::<StoreResult<Vec<_>>>()?;
     Ok((total, selected))
-}
-
-async fn list_session_memory_recall_question_refs_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    scope: &MemoryScope,
-    since: Option<&str>,
-    until: Option<&str>,
-    include_unavailable: bool,
-    limit: usize,
-    offset: usize,
-) -> StoreResult<(usize, Vec<MemoryRecallQuestionRef>)> {
-    let mut count = QueryBuilder::<Sqlite>::new(
-        "SELECT COUNT(*) FROM conversation_questions q JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id WHERE q.tenant_id=",
-    );
-    count.push_bind(tenant_id);
-    push_session_recall_scope(&mut count, scope, since, until, include_unavailable);
-    let total_count = count.build_query_scalar::<i64>().fetch_one(pool).await?;
-
-    let mut page = QueryBuilder::<Sqlite>::new(
-        "SELECT 'session' AS record_kind,s.source_id,s.id AS session_id,s.title AS session_title,s.project_path,q.id AS question_id,ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index FROM conversation_questions q JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id WHERE q.tenant_id=",
-    );
-    page.push_bind(tenant_id);
-    push_session_recall_scope(&mut page, scope, since, until, include_unavailable);
-    page.push(" ORDER BY q.created_at DESC,s.id,q.created_at,q.id LIMIT ");
-    page.push_bind(
-        i64::try_from(limit)
-            .map_err(|_| StoreError::Validation("invalid Recall limit".to_string()))?,
-    );
-    page.push(" OFFSET ");
-    page.push_bind(
-        i64::try_from(offset)
-            .map_err(|_| StoreError::Validation("invalid Recall offset".to_string()))?,
-    );
-    let rows = page.build().fetch_all(pool).await?;
-    Ok((
-        usize::try_from(total_count)
-            .map_err(|_| StoreError::Validation("invalid Recall question count".to_string()))?,
-        rows.iter()
-            .map(map_memory_recall_question_ref)
-            .collect::<StoreResult<Vec<_>>>()?,
-    ))
-}
-
-fn push_session_recall_scope(
-    query: &mut QueryBuilder<Sqlite>,
-    scope: &MemoryScope,
-    since: Option<&str>,
-    until: Option<&str>,
-    include_unavailable: bool,
-) {
-    if let Some(app_id) = &scope.app_id {
-        query.push(" AND s.adapter_id=").push_bind(app_id);
-    }
-    if let Some(source_id) = &scope.source_id {
-        query.push(" AND s.source_id=").push_bind(source_id);
-    }
-    if let Some(project_path) = &scope.project_path {
-        query.push(" AND s.project_path=").push_bind(project_path);
-    }
-    if let Some(session_id) = &scope.session_id {
-        query.push(" AND s.id=").push_bind(session_id);
-    }
-    if !include_unavailable {
-        query.push(" AND s.missing=0 AND source.enabled=1");
-    }
-    query.push(" AND source.adapter_id <> 'assetiweave-memory-recall'");
-    query.push(" AND s.user_visible = 1 AND s.execution_origin != 'internal_memory'");
-    if let Some(since) = since {
-        query.push(" AND q.created_at>=").push_bind(since);
-    }
-    if let Some(until) = until {
-        query.push(" AND q.created_at<=").push_bind(until);
-    }
 }
 
 fn map_memory_recall_question_ref(row: &SqliteRow) -> StoreResult<MemoryRecallQuestionRef> {
@@ -301,3 +225,7 @@ pub async fn load_recall_parts_for_questions_sqlx(
         .map_err(StoreError::external)?;
     Ok(rows)
 }
+
+#[cfg(test)]
+#[path = "memory_recall_query_repo_tests.rs"]
+mod tests;

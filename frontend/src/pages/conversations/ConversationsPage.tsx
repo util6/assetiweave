@@ -92,6 +92,7 @@ import { useQueryScope } from "../../app/query/QueryScopeProvider";
 import {
   conversationAdaptersQueryOptions,
   conversationKeys,
+  conversationPartIndexQueryOptions,
   conversationSessionsQueryOptions,
   isWebRecordAdapter,
   loadAllConversationSessionPages,
@@ -121,6 +122,7 @@ import {
   mergeConversationQuestions,
   searchConversationRecords,
   splitConversationQuestion,
+  startConversationPartIndexRebuild,
 } from "../../services/conversations";
 import { selectTargetDirectory } from "../../services/catalog";
 import {
@@ -293,6 +295,12 @@ export function ConversationsPage({
   const sessionsQuery = useQuery(
     conversationSessionsQueryOptions(activeScope, currentRecordKind, query),
   );
+  const partIndexQuery = useQuery(
+    conversationPartIndexQueryOptions(activeScope),
+  );
+  const partIndexDegraded = partIndexQuery.data?.is_ready === false;
+  const [partIndexRebuildStarting, setPartIndexRebuildStarting] =
+    useState(false);
 
   const adapters = adaptersQuery.data ?? [];
   const sessions = sessionsQuery.data ?? [];
@@ -307,6 +315,21 @@ export function ConversationsPage({
   const searchIndexRunning = searchIndexTask?.status === "running";
   const sessionDetailRequestIdRef = useRef(0);
   const sessionSearchLoading = sessionsQuery.isFetching;
+
+  async function handleRebuildPartIndex() {
+    if (partIndexRebuildStarting) return;
+    setPartIndexRebuildStarting(true);
+    try {
+      await startConversationPartIndexRebuild();
+      await queryClient.invalidateQueries({
+        queryKey: conversationKeys.partIndex(activeScope),
+      });
+    } catch (error) {
+      onNotifyError(formatErrorMessage(error));
+    } finally {
+      setPartIndexRebuildStarting(false);
+    }
+  }
   const sessionCatalogReady = sessionsQuery.data !== undefined;
 
   useEffect(() => {
@@ -1396,6 +1419,21 @@ export function ConversationsPage({
           onScriptInstalled={handleScriptInstalled}
           recordKind={currentRecordKind}
         />
+      ) : null}
+
+      {partIndexDegraded ? (
+        <div
+          className="flex flex-wrap items-center gap-3 px-[var(--app-page-x)] py-2 text-[12px] text-theme-muted"
+          role="status"
+        >
+          <span>{t("conversation.partIndex.degraded")}</span>
+          <ToolbarTextButton
+            disabled={partIndexRebuildStarting}
+            icon={<RefreshCw size={14} />}
+            label={t("conversation.partIndex.rebuild")}
+            onClick={() => void handleRebuildPartIndex()}
+          />
+        </div>
       ) : null}
 
       {sessionView === "browser" ? (

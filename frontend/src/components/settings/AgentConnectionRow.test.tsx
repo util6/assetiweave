@@ -163,20 +163,14 @@ describe("AgentConnectionRow lifecycle progress & error classification", () => {
   });
 
   it("renders classified badge for upstream version not found (404)", () => {
-    const task = createLifecycleTask(
-      "failed",
-      null,
-      null,
-      "failed",
-      {
-        code: "upstream_version_not_found",
-        message: "HTTP 404 Not Found",
-        agentId: "opencode",
-        phase: "download",
-        retryable: false,
-        action: null,
-      },
-    );
+    const task = createLifecycleTask("failed", null, null, "failed", {
+      code: "upstream_version_not_found",
+      message: "HTTP 404 Not Found",
+      agentId: "opencode",
+      phase: "download",
+      retryable: false,
+      action: null,
+    });
     render(
       <I18nProvider>
         <TestRow connectionState="failed" lifecycleTask={task} />
@@ -188,20 +182,14 @@ describe("AgentConnectionRow lifecycle progress & error classification", () => {
   });
 
   it("renders classified badge for network error", () => {
-    const task = createLifecycleTask(
-      "failed",
-      null,
-      null,
-      "failed",
-      {
-        code: "network_error",
-        message: "connection timed out",
-        agentId: "opencode",
-        phase: "download",
-        retryable: true,
-        action: null,
-      },
-    );
+    const task = createLifecycleTask("failed", null, null, "failed", {
+      code: "network_error",
+      message: "connection timed out",
+      agentId: "opencode",
+      phase: "download",
+      retryable: true,
+      action: null,
+    });
     render(
       <I18nProvider>
         <TestRow connectionState="failed" lifecycleTask={task} />
@@ -213,20 +201,14 @@ describe("AgentConnectionRow lifecycle progress & error classification", () => {
   });
 
   it("renders classified badge for install failed", () => {
-    const task = createLifecycleTask(
-      "failed",
-      null,
-      null,
-      "failed",
-      {
-        code: "install_failed",
-        message: "npm install failed with exit code 1",
-        agentId: "opencode",
-        phase: "install",
-        retryable: false,
-        action: null,
-      },
-    );
+    const task = createLifecycleTask("failed", null, null, "failed", {
+      code: "install_failed",
+      message: "npm install failed with exit code 1",
+      agentId: "opencode",
+      phase: "install",
+      retryable: false,
+      action: null,
+    });
     render(
       <I18nProvider>
         <TestRow connectionState="failed" lifecycleTask={task} />
@@ -234,24 +216,20 @@ describe("AgentConnectionRow lifecycle progress & error classification", () => {
     );
 
     expect(screen.getByText("安装失败")).toBeTruthy();
-    expect(screen.getByText(/npm install failed with exit code 1/)).toBeTruthy();
+    expect(
+      screen.getByText(/npm install failed with exit code 1/),
+    ).toBeTruthy();
   });
 
   it("renders classified badge for protocol handshake failure", () => {
-    const task = createLifecycleTask(
-      "failed",
-      null,
-      null,
-      "failed",
-      {
-        code: "protocol_handshake_failed",
-        message: "ACP initialize response timed out",
-        agentId: "opencode",
-        phase: "verify",
-        retryable: false,
-        action: null,
-      },
-    );
+    const task = createLifecycleTask("failed", null, null, "failed", {
+      code: "protocol_handshake_failed",
+      message: "ACP initialize response timed out",
+      agentId: "opencode",
+      phase: "verify",
+      retryable: false,
+      action: null,
+    });
     render(
       <I18nProvider>
         <TestRow connectionState="failed" lifecycleTask={task} />

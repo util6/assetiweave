@@ -131,6 +131,40 @@ pub fn render_skills(skills: &[CatalogAsset], format: OutputFormat) {
     }
 }
 
+pub fn render_builtin_skills(
+    skills: &[asset_core::application::BuiltinSkillMetadata],
+    format: OutputFormat,
+) {
+    match format {
+        OutputFormat::Json => {
+            render_ok_json(skills);
+        }
+        OutputFormat::Table => {
+            if skills.is_empty() {
+                println!("No built-in skills found.");
+                return;
+            }
+            let mut table = Table::new();
+            table.load_preset(UTF8_FULL);
+            table.set_content_arrangement(ContentArrangement::Dynamic);
+            table.set_header(vec![
+                Cell::new("Name").fg(Color::Cyan),
+                Cell::new("ID").fg(Color::Cyan),
+                Cell::new("Description").fg(Color::Cyan),
+            ]);
+            for item in skills {
+                table.add_row(vec![
+                    Cell::new(&item.name),
+                    Cell::new(&item.id),
+                    Cell::new(&item.description),
+                ]);
+            }
+            println!("{table}");
+            println!("\nTotal: {} built-in skills", skills.len());
+        }
+    }
+}
+
 pub fn render_assets(assets: &[CatalogAsset], format: OutputFormat) {
     match format {
         OutputFormat::Json => {
@@ -260,125 +294,8 @@ pub fn render_profiles(profiles: &[TargetProfileDescriptor], format: OutputForma
     }
 }
 
-pub fn render_conversation_search(
-    res: &asset_core::application::ConversationSearchResult,
-    format: OutputFormat,
-) {
-    match format {
-        OutputFormat::Json => {
-            render_ok_json(res);
-        }
-        OutputFormat::Table => {
-            println!(
-                "Search query: \"{}\" | Matches: {} (Backend: {})",
-                res.query, res.total_count, res.backend
-            );
-            if res.hits.is_empty() {
-                println!("No conversation hits found.");
-                return;
-            }
-            let mut table = Table::new();
-            table.load_preset(UTF8_FULL);
-            table.set_content_arrangement(ContentArrangement::Dynamic);
-            table.set_header(vec![
-                Cell::new("Session Title").fg(Color::Cyan),
-                Cell::new("Adapter").fg(Color::Cyan),
-                Cell::new("Type").fg(Color::Cyan),
-                Cell::new("Snippet").fg(Color::Cyan),
-            ]);
-            for hit in &res.hits {
-                let clean_snippet = hit.snippet.trim().replace('\n', " ");
-                let truncated = if clean_snippet.chars().count() > 80 {
-                    format!("{}...", clean_snippet.chars().take(80).collect::<String>())
-                } else {
-                    clean_snippet
-                };
-                table.add_row(vec![
-                    Cell::new(&hit.session.session.title),
-                    Cell::new(&hit.session.session.adapter_id),
-                    Cell::new(format!("{:?}", hit.card_type)),
-                    Cell::new(truncated),
-                ]);
-            }
-            println!("{table}");
-            println!("\nShowing {} hits", res.hits.len());
-        }
-    }
-}
-
-pub fn render_conversation_sessions(
-    sessions: &[asset_core::domain::conversations::ConversationSessionListItem],
-    format: OutputFormat,
-) {
-    match format {
-        OutputFormat::Json => {
-            render_ok_json(sessions);
-        }
-        OutputFormat::Table => {
-            if sessions.is_empty() {
-                println!("No conversation sessions found.");
-                return;
-            }
-            let mut table = Table::new();
-            table.load_preset(UTF8_FULL);
-            table.set_content_arrangement(ContentArrangement::Dynamic);
-            table.set_header(vec![
-                Cell::new("Session ID").fg(Color::Cyan),
-                Cell::new("Adapter").fg(Color::Cyan),
-                Cell::new("Title").fg(Color::Cyan),
-                Cell::new("Questions / Turns").fg(Color::Cyan),
-                Cell::new("Updated At").fg(Color::Cyan),
-            ]);
-            for s in sessions {
-                table.add_row(vec![
-                    Cell::new(&s.session.id),
-                    Cell::new(&s.session.adapter_id),
-                    Cell::new(&s.session.title),
-                    Cell::new(format!("{} / {}", s.question_count, s.turn_count)),
-                    Cell::new(s.session.updated_at.as_deref().unwrap_or("—")),
-                ]);
-            }
-            println!("{table}");
-            println!("\nTotal: {} sessions", sessions.len());
-        }
-    }
-}
-
-pub fn render_conversation_adapters(
-    adapters: &[asset_core::domain::conversations::ConversationAdapter],
-    format: OutputFormat,
-) {
-    match format {
-        OutputFormat::Json => {
-            render_ok_json(adapters);
-        }
-        OutputFormat::Table => {
-            if adapters.is_empty() {
-                println!("No conversation adapters installed.");
-                return;
-            }
-            let mut table = Table::new();
-            table.load_preset(UTF8_FULL);
-            table.set_content_arrangement(ContentArrangement::Dynamic);
-            table.set_header(vec![
-                Cell::new("Adapter ID").fg(Color::Cyan),
-                Cell::new("Name").fg(Color::Cyan),
-                Cell::new("Version").fg(Color::Cyan),
-                Cell::new("Kind").fg(Color::Cyan),
-            ]);
-            for a in adapters {
-                table.add_row(vec![
-                    Cell::new(&a.id),
-                    Cell::new(&a.name),
-                    Cell::new(&a.version),
-                    Cell::new(format!("{:?}", a.kind)),
-                ]);
-            }
-            println!("{table}");
-            println!("\nTotal: {} adapters", adapters.len());
-        }
-    }
-}
+pub mod conversation;
+pub use conversation::*;
 
 pub fn render_doctor(report: &serde_json::Value, format: OutputFormat) {
     match format {
@@ -470,6 +387,32 @@ pub fn render_harvester_templates(
                 ]);
             }
             println!("{table}");
+        }
+    }
+}
+
+pub fn render_error(err: &anyhow::Error, format: OutputFormat) {
+    let cli_err = crate::error::CliError::from_anyhow(err);
+    match format {
+        OutputFormat::Json => {
+            let envelope = serde_json::json!({
+                "ok": false,
+                "error": cli_err
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&envelope).unwrap_or_default()
+            );
+        }
+        OutputFormat::Table => {
+            eprintln!("Error: {}", cli_err.message);
+            if let Some(hint) = &cli_err.hint {
+                if hint.starts_with("run ") {
+                    eprintln!("Hint: {}", hint);
+                } else {
+                    eprintln!("Hint: run '{}'", hint);
+                }
+            }
         }
     }
 }

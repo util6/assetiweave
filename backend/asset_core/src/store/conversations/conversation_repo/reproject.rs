@@ -29,7 +29,6 @@ pub async fn reproject_conversation_session_sqlx(
 
     prune_conversation_turns_sqlx_tx(&mut tx, tenant_id, &session.id, normalized).await?;
     ensure_question_groups_for_session_sqlx_tx(&mut tx, tenant_id, &session.id, &now).await?;
-    rebuild_session_question_aggregates_sqlx_tx(&mut tx, tenant_id, &session.id, &now).await?;
 
     upsert_single_session_observation_clean_sqlx_tx(
         &mut tx,

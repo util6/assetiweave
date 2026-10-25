@@ -1,13 +1,34 @@
 use crate::args::asset::AssetCommands;
-use crate::args::skill::{SkillCommands, SkillGroupCommands, SkillRemoteCommands};
+use crate::args::skill::{
+    SkillBuiltinCommands, SkillCommands, SkillGroupCommands, SkillRemoteCommands,
+};
 use crate::args::{asset::AssetArgs, skill::SkillArgs, OutputFormat};
+use crate::error::CliError;
 use crate::render;
 use crate::service::CliService;
 use anyhow::Result;
 
 pub async fn handle_skill(args: SkillArgs, format: OutputFormat) -> Result<()> {
+    match args.command {
+        SkillCommands::Builtin(b) => match b.command {
+            SkillBuiltinCommands::List => {
+                let skills = asset_core::application::list_builtin_skills();
+                render::render_builtin_skills(&skills, format);
+                return Ok(());
+            }
+            SkillBuiltinCommands::Read(r) => {
+                return handle_skill_read(&r.name);
+            }
+        },
+        SkillCommands::Read(r) => {
+            return handle_skill_read(&r.name);
+        }
+        _ => {}
+    }
+
     let service = CliService::bootstrap().await?;
     match args.command {
+        SkillCommands::Builtin(_) | SkillCommands::Read(_) => unreachable!(),
         SkillCommands::List => {
             let skills = service.list_skills().await?;
             render::render_skills(&skills, format);
@@ -97,6 +118,17 @@ pub async fn handle_asset(args: AssetArgs, format: OutputFormat) -> Result<()> {
             let assets = service.list_assets(l.kind).await?;
             render::render_assets(&assets, format);
         }
+    }
+    Ok(())
+}
+
+fn handle_skill_read(name: &str) -> Result<()> {
+    let markdown = asset_core::application::get_builtin_skill_markdown(name)
+        .ok_or_else(|| CliError::skill_not_found(name))?;
+    if markdown.ends_with('\n') {
+        print!("{}", markdown);
+    } else {
+        println!("{}", markdown);
     }
     Ok(())
 }

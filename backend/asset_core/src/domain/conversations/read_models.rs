@@ -85,12 +85,24 @@ pub enum ConversationExportFormat {
     Raw,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationSessionListItem {
     #[serde(flatten)]
     pub session: ConversationSession,
     pub question_count: usize,
     pub turn_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_user_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_turn_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_start_turn_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_start_user_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_end_turn_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_end_user_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -112,6 +124,8 @@ pub struct ConversationBlockLocator {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub part_id: Option<String>,
     pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub semantic_role: Option<String>,
     pub renderer: ConversationCardRenderer,
@@ -165,6 +179,12 @@ pub struct ConversationCardRunGroup {
     pub card_kind: String,
     pub count: usize,
     pub card_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command_labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
@@ -201,6 +221,19 @@ pub struct ConversationSearchIndexRebuildReport {
     pub document_count: i64,
     pub size_bytes: i64,
     pub duration_ms: u64,
+}
+
+/// 零件级全文索引的可用状态。
+///
+/// `ready` 之外的取值意味着会话列表的文本搜索已降级为标题级匹配，界面需要给出可见提示。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ConversationPartIndexStatus {
+    pub status: String,
+    pub is_ready: bool,
+    pub part_count: i64,
+    pub last_error: Option<String>,
+    pub rebuilt_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

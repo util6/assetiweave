@@ -276,6 +276,16 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
+        canonical_method: "conversation.part.index.rebuild",
+        tauri_command: Some("start_conversation_part_index_rebuild"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "conversation.part.index.status",
+        tauri_command: Some("get_conversation_part_index_status"),
+        note: None,
+    },
+    SurfaceMapping {
         canonical_method: "conversation.part.translation.update",
         tauri_command: Some("update_conversation_part_translation"),
         note: None,

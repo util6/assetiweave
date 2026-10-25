@@ -104,7 +104,7 @@ function projectCommandBlock(
   return projection.nodes.map((node, index) => ({
     ...rawBlock,
     id: `${rawBlock.partId ?? rawBlock.id}::display:${node.display_order}`,
-    commandLabel: node.command_label,
+    commandLabel: node.command_label || rawBlock.commandLabel || null,
     legacyAnchorIds:
       index === 0
         ? Array.from(

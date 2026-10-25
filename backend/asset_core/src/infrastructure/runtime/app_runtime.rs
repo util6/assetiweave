@@ -52,6 +52,7 @@ pub struct AppRuntime {
     pub(super) context: ArcSwap<RequestContextSnapshot>,
     pub(super) task_runtime: TaskRuntime,
     pub(super) context_update_gate: tokio::sync::Mutex<()>,
+    pub(super) conversation_import_gate: tokio::sync::Mutex<()>,
     pub(super) shutdown: ShutdownState,
     pub(super) shutdown_gate: tokio::sync::Mutex<()>,
     pub(super) coordinator_timed_out: AtomicBool,
@@ -109,6 +110,7 @@ impl AppRuntime {
             context: ArcSwap::from_pointee(snapshot),
             task_runtime,
             context_update_gate: tokio::sync::Mutex::new(()),
+            conversation_import_gate: tokio::sync::Mutex::new(()),
             shutdown: ShutdownState::new(),
             shutdown_gate: tokio::sync::Mutex::new(()),
             coordinator_timed_out: AtomicBool::new(false),
@@ -193,6 +195,7 @@ impl AppRuntime {
             }),
             task_runtime: TaskRuntime::new(),
             context_update_gate: tokio::sync::Mutex::new(()),
+            conversation_import_gate: tokio::sync::Mutex::new(()),
             shutdown: ShutdownState::new(),
             shutdown_gate: tokio::sync::Mutex::new(()),
             coordinator_timed_out: AtomicBool::new(false),
@@ -349,6 +352,10 @@ impl AppRuntime {
 
     pub fn context_update_gate(&self) -> &tokio::sync::Mutex<()> {
         &self.context_update_gate
+    }
+
+    pub fn conversation_import_gate(&self) -> &tokio::sync::Mutex<()> {
+        &self.conversation_import_gate
     }
 
     /// Commit an already prepared tenant context snapshot into runtime.

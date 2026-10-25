@@ -53,14 +53,12 @@ pub async fn import_conversation_sessions_advanced_sqlx(
         });
     }
 
-    audit_invalid_conversation_question_turns_sqlx(pool, tenant_id).await?;
-
     let now = Utc::now().to_rfc3339();
     let sync_run_id = stable_id("conversation-sync", &[&source.id, &now]);
     let mut skipped_session_count = 0usize;
     let mut changed_session_count = 0usize;
 
-    // 先记录读取阶段失败的会话到 observation 表 (dirty = 1, presence = present)
+    // 先记录读取阶段失败的会话到 observation 表，dirty = 1 是下一轮重试的唯一信号
     for failure in &session_failures {
         let observed_version = descriptor_versions.and_then(|map| {
             map.get(failure.session_external_id.as_str())
@@ -73,10 +71,6 @@ pub async fn import_conversation_sessions_advanced_sqlx(
             "session",
             &failure.session_external_id,
             observed_version,
-            &failure.error_code,
-            &failure.error_message,
-            &failure.stage,
-            failure.retryable,
         )
         .await;
     }
@@ -107,14 +101,14 @@ pub async fn import_conversation_sessions_advanced_sqlx(
     let mut completed_session_count = 0;
     let mut all_changed_session_ids = Vec::new();
     let mut succeeded_external_ids = Vec::new();
-    const SESSION_IMPORT_BATCH_SIZE: usize = 50;
+    const SESSION_IMPORT_BATCH_SIZE: usize = 25;
 
     for chunk in sessions.chunks(SESSION_IMPORT_BATCH_SIZE) {
         ensure_sync_import_active(cancellation)?;
 
         // 优先尝试以批量事务导入当前批次，减少 SQLite 写锁争抢与频繁磁盘 fsync
         let mut batch_success = false;
-        if let Ok(mut batch_tx) = crate::backend::store::begin_immediate(pool).await {
+        if let Ok(mut batch_tx) = begin_immediate_with_retry(pool, 8).await {
             let mut chunk_changed = Vec::new();
             let mut chunk_skipped = 0usize;
             let mut chunk_ok = true;
@@ -179,7 +173,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                     on_progress(completed_session_count, sessions.len());
                     continue;
                 }
-                let mut tx = match begin_immediate_with_retry(pool, 3).await {
+                let mut tx = match begin_immediate_with_retry(pool, 8).await {
                     Ok(tx) => tx,
                     Err(err) => {
                         let sanitized = sanitize_store_sync_error_message(&err.to_string());
@@ -197,10 +191,6 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                             "session",
                             &normalized.external_id,
                             session.source_fingerprint.as_deref(),
-                            "transaction_begin_failed",
-                            &sanitized,
-                            "storage",
-                            true,
                         )
                         .await;
                         completed_session_count += 1;
@@ -265,10 +255,6 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                             "session",
                             &session.external_id,
                             session.source_fingerprint.as_deref(),
-                            "storage_error",
-                            &sanitized,
-                            "storage",
-                            true,
                         )
                         .await;
                     }
@@ -474,7 +460,6 @@ async fn import_single_session_sqlx_tx(
     }
     prune_conversation_turns_sqlx_tx(&mut *tx, tenant_id, &session.id, normalized).await?;
     ensure_question_groups_for_session_sqlx_tx(&mut *tx, tenant_id, &session.id, now).await?;
-    rebuild_session_question_aggregates_sqlx_tx(&mut *tx, tenant_id, &session.id, now).await?;
     insert_conversation_sync_delta_sqlx_tx(
         &mut *tx,
         tenant_id,
@@ -502,29 +487,4 @@ async fn import_single_session_sqlx_tx(
     .await?;
 
     Ok(Some(session.id.clone()))
-}
-
-async fn begin_immediate_with_retry(
-    pool: &SqlitePool,
-    max_attempts: usize,
-) -> StoreResult<sqlx::Transaction<'static, sqlx::Sqlite>> {
-    let mut attempts = 0;
-    loop {
-        attempts += 1;
-        match crate::backend::store::begin_immediate(pool).await {
-            Ok(tx) => return Ok(tx),
-            Err(err) if attempts < max_attempts && is_retryable_db_lock_err(&err) => {
-                tokio::time::sleep(std::time::Duration::from_millis(100 * attempts as u64)).await;
-            }
-            Err(err) => return Err(err),
-        }
-    }
-}
-
-fn is_retryable_db_lock_err(err: &StoreError) -> bool {
-    let msg = err.to_string();
-    msg.contains("database is locked")
-        || msg.contains("code: 517")
-        || msg.contains("code: 5")
-        || msg.contains("busy")
 }

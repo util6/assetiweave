@@ -18,6 +18,18 @@ pub(super) struct ConversationSessionListItemRow {
     question_count: i64,
     turn_count: i64,
     #[sqlx(default)]
+    latest_user_prompt: Option<String>,
+    #[sqlx(default)]
+    window_turn_count: Option<i64>,
+    #[sqlx(default)]
+    window_start_turn_index: Option<i64>,
+    #[sqlx(default)]
+    window_start_user_prompt: Option<String>,
+    #[sqlx(default)]
+    window_end_turn_index: Option<i64>,
+    #[sqlx(default)]
+    window_end_user_prompt: Option<String>,
+    #[sqlx(default)]
     execution_origin: Option<String>,
     #[sqlx(default)]
     execution_purpose: Option<String>,
@@ -49,10 +61,23 @@ impl ConversationSessionListItemRow {
             execution_purpose: self.execution_purpose,
             user_visible: self.user_visible.map(|v| v != 0).unwrap_or(true),
         };
+        let window_turn_count = self.window_turn_count.and_then(|c| usize::try_from(c).ok());
+        let window_start_turn_index = self
+            .window_start_turn_index
+            .and_then(|c| usize::try_from(c).ok());
+        let window_end_turn_index = self
+            .window_end_turn_index
+            .and_then(|c| usize::try_from(c).ok());
         Ok(ConversationSessionListItem {
             session,
             question_count,
             turn_count,
+            latest_user_prompt: self.latest_user_prompt,
+            window_turn_count,
+            window_start_turn_index,
+            window_start_user_prompt: self.window_start_user_prompt,
+            window_end_turn_index,
+            window_end_user_prompt: self.window_end_user_prompt,
         })
     }
 }
@@ -114,6 +139,12 @@ impl RecentConversationSessionRecordRow {
                 session,
                 question_count,
                 turn_count,
+                latest_user_prompt: None,
+                window_turn_count: None,
+                window_start_turn_index: None,
+                window_start_user_prompt: None,
+                window_end_turn_index: None,
+                window_end_user_prompt: None,
             },
             last_activity_at: self.last_activity_at,
             cwd: self.cwd,
@@ -395,12 +426,6 @@ pub(super) async fn replace_conversation_parts_sqlx_tx(
         .into_iter()
         .filter(|id| !incoming_ids.contains(id))
     {
-        sqlx::query("DELETE FROM conversation_part_links WHERE tenant_id = ?1 AND part_id = ?2")
-            .bind(tenant_id)
-            .bind(&stale_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(StoreError::external)?;
         sqlx::query("DELETE FROM conversation_parts WHERE tenant_id = ?1 AND id = ?2")
             .bind(tenant_id)
             .bind(stale_id)
@@ -408,40 +433,8 @@ pub(super) async fn replace_conversation_parts_sqlx_tx(
             .await
             .map_err(StoreError::external)?;
     }
-    sqlx::query(
-        r#"
-        DELETE FROM conversation_part_links
-        WHERE tenant_id = ?1 AND part_id IN (
-            SELECT id FROM conversation_parts WHERE tenant_id = ?1 AND turn_id = ?2
-        )
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(turn_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    let links = extract_part_links_for_turn(turn_id, parts);
-    for link in links {
-        sqlx::query(
-            r#"
-            INSERT INTO conversation_part_links (
-                tenant_id, part_id, relation, target_kind, target_id, metadata_json
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-            ON CONFLICT(tenant_id, part_id, relation, target_id) DO UPDATE SET
-                metadata_json = excluded.metadata_json
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(&link.part_id)
-        .bind(&link.relation)
-        .bind(&link.target_kind)
-        .bind(&link.target_id)
-        .bind(&link.metadata_json)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-    }
+    // 索引随零件写入增量维护：只重建这个轮次的索引行，不触碰其它轮次。
+    replace_turn_part_index_sqlx_tx(tx, tenant_id, turn_id, ConversationRecordKind::Session)
+        .await?;
     Ok(())
 }

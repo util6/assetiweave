@@ -217,6 +217,40 @@ fn packaged_zcode_adapter_matches_the_builtin_asset_source() {
     );
 }
 
+#[test]
+fn test_list_builtin_skills_metadata() {
+    let skills = list_builtin_skills();
+    assert_eq!(skills.len(), 5);
+
+    let memory = skills
+        .iter()
+        .find(|s| s.name == "assetiweave-memory")
+        .expect("assetiweave-memory should be listed");
+    assert_eq!(memory.id, "assetiweave.memory");
+    assert!(!memory.description.is_empty());
+
+    let organizer = skills
+        .iter()
+        .find(|s| s.name == "assetiweave-conversation-organizer")
+        .expect("organizer should be listed");
+    assert_eq!(organizer.id, "assetiweave.conversation-organizer");
+    assert!(!organizer.description.is_empty());
+}
+
+#[test]
+fn test_get_builtin_skill_markdown() {
+    let md_full = get_builtin_skill_markdown("assetiweave-memory").expect("by full name");
+    assert!(md_full.contains("name: assetiweave-memory"));
+
+    let md_id = get_builtin_skill_markdown("assetiweave.memory").expect("by id");
+    assert_eq!(md_full, md_id);
+
+    let md_short = get_builtin_skill_markdown("memory").expect("by short name");
+    assert_eq!(md_full, md_short);
+
+    assert!(get_builtin_skill_markdown("unknown-skill").is_none());
+}
+
 fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()))
 }

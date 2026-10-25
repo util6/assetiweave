@@ -6,6 +6,7 @@ pub mod conversation_adapter_installer_fetch;
 pub mod conversation_adapters;
 pub mod conversation_maintenance;
 pub mod conversation_maintenance_ops;
+pub mod conversation_part_index;
 pub mod conversation_pricing;
 pub mod conversation_pricing_sync;
 pub mod conversation_records;
@@ -20,6 +21,7 @@ pub mod event_handlers;
 pub mod params;
 pub mod usage_dto;
 
+pub use conversation_records::{resolve_time_window_bounds, resolve_unified_time};
 pub use event_handlers::{SearchIndexAdvanceConsumer, SessionMemoryConsumer};
 pub use usage_dto::{
     CurrencyCostDto, ModelPriceEntryDto, ModelPricingCatalogDto, ModelPricingStatusDto,

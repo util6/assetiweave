@@ -228,7 +228,8 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
       }
 
       const isStructural =
-        snapshot.change_class !== "cosmetic" && snapshot.changeClass !== "cosmetic";
+        snapshot.change_class !== "cosmetic" &&
+        snapshot.changeClass !== "cosmetic";
       if (nowTerminal && isStructural) {
         void taskInvalidationRegistry.trigger(snapshot, queryClient);
       }

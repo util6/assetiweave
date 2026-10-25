@@ -8,7 +8,9 @@ describe("formatErrorMessage", () => {
   });
 
   it("formats Error instances", () => {
-    expect(formatErrorMessage(new Error("standard error"))).toBe("standard error");
+    expect(formatErrorMessage(new Error("standard error"))).toBe(
+      "standard error",
+    );
   });
 
   it("extracts message from Tauri AppErrorView plain object", () => {

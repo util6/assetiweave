@@ -16,8 +16,7 @@ export function CatalogTaskIndicator() {
 
   if (!isSourceActive && !isBatchActive) return null;
 
-  const sourceStarted =
-    sourceScan?.started_at ?? sourceScan?.startedAt ?? "";
+  const sourceStarted = sourceScan?.started_at ?? sourceScan?.startedAt ?? "";
   const batchStarted = batchMount?.started_at ?? "";
 
   const showSource =
@@ -38,10 +37,10 @@ export function CatalogTaskIndicator() {
 
   const label = showSource ? "Source scan" : "Batch mount";
   const activeStage = showSource
-    ? sourceScan?.stages?.find((s) => s.status === "running")?.name ??
+    ? (sourceScan?.stages?.find((s) => s.status === "running")?.name ??
       sourceScan?.title ??
-      "Scanning"
-    : batchMount?.progress.phase ?? "Mounting";
+      "Scanning")
+    : (batchMount?.progress.phase ?? "Mounting");
 
   const progressText = showSource
     ? sourceScan?.progress
