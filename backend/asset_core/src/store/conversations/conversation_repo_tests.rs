@@ -3556,15 +3556,25 @@ async fn sqlx_question_short_id_prefix_reports_ambiguity_instead_of_guessing() {
     let (session_id, question_id, _) = import_read_path_fixture(pool, &adapter, &source).await;
     let third_turn_id = stable_id("conversation-turn", &[&session_id, "t3"]);
     let fragment = crate::backend::domain::conversation_id_fragment(&question_id);
-    let colliding_question_id = format!("conversation-question-{fragment}{}", "0".repeat(56));
+    let colliding_turn_id = format!("conversation-turn-{fragment}{}", "0".repeat(56));
 
-    sqlx::query("UPDATE conversation_turns SET question_id = ?1 WHERE tenant_id = ?2 AND id = ?3")
-        .bind(&colliding_question_id)
+    let mut conn = pool.acquire().await.expect("acquire connection");
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await
+        .expect("disable foreign keys");
+    sqlx::query("UPDATE conversation_turns SET id = ?1 WHERE tenant_id = ?2 AND id = ?3")
+        .bind(&colliding_turn_id)
         .bind(TEST_TENANT_ID)
         .bind(&third_turn_id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await
         .expect("force a colliding question prefix");
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *conn)
+        .await
+        .expect("enable foreign keys");
+    drop(conn);
     drop_legacy_grouping_rows(pool).await;
 
     let error = resolve_question_prefix(pool, &fragment)

@@ -524,14 +524,23 @@ async fn import_read_path_session(service: &AppService, adapter_id: &str) -> (St
 
 /// 轮次列上的分组标识，作为「分组身份不变」的独立事实源。
 async fn turn_question_columns(service: &AppService, session_id: &str) -> Vec<(String, String)> {
-    sqlx::query_as(
-        "SELECT id, question_id FROM conversation_turns \
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM conversation_turns \
          WHERE tenant_id = 'default' AND session_id = ?1 ORDER BY turn_index ASC",
     )
     .bind(session_id)
     .fetch_all(service.db.pool())
     .await
-    .expect("load turn question columns")
+    .expect("load turn question columns");
+    rows.into_iter()
+        .map(|id| {
+            let q_id = crate::domain::conversations::derive_question_id_from_turn_id(
+                "conversation-question",
+                &id,
+            );
+            (id, q_id)
+        })
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -694,14 +703,24 @@ async fn drop_legacy_web_grouping_rows(_service: &AppService, _tenant_id: &str) 
 async fn test_web_record_session_detail_derives_members_from_turn_columns() {
     let (service, root) = setup_fixture_service("web-turn-column-detail").await;
     let session_id = import_web_read_path_session(&service, "web-read-path-detail").await;
-    let expected_columns: Vec<(String, String)> = sqlx::query_as(
-        "SELECT id, question_id FROM web_record_turns \
+    let turn_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM web_record_turns \
          WHERE tenant_id = 'default' AND session_id = ?1 ORDER BY turn_index ASC",
     )
     .bind(&session_id)
     .fetch_all(service.db.pool())
     .await
-    .expect("load web turn question columns");
+    .expect("load web turn ids");
+    let expected_columns: Vec<(String, String)> = turn_ids
+        .into_iter()
+        .map(|id| {
+            let q_id = crate::domain::conversations::derive_question_id_from_turn_id(
+                "web-record-question",
+                &id,
+            );
+            (id, q_id)
+        })
+        .collect();
     assert_eq!(expected_columns.len(), 3);
 
     drop_legacy_web_grouping_rows(&service, "default").await;

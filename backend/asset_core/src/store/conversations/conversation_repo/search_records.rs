@@ -8,14 +8,12 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
 ) -> StoreResult<BTreeSet<String>> {
     let (session_lower, session_upper) =
         conversation_id_fragment_range(tables.session_id_prefix, fragment);
-    let (question_lower, question_upper) =
-        conversation_id_fragment_range(tables.question_id_prefix, fragment);
     let (turn_lower, turn_upper) = conversation_id_fragment_range(tables.turn_id_prefix, fragment);
     let (part_clause, part_low_bytes, part_high_bytes) =
         if let Some(parsed) = crate::backend::domain::parse_id_key_prefix(fragment) {
             match parsed.lookup {
                 crate::backend::domain::IdKeyLookup::Exact(exact) => (
-                    "p.id_key = ?8 AND (?9 IS NULL OR 1 = 1)",
+                    "p.id_key = ?6 AND (?7 IS NULL OR 1 = 1)",
                     Some(exact.to_vec()),
                     None,
                 ),
@@ -23,19 +21,19 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
                     low,
                     high: Some(high),
                 } => (
-                    "p.id_key >= ?8 AND p.id_key < ?9",
+                    "p.id_key >= ?6 AND p.id_key < ?7",
                     Some(low.to_vec()),
                     Some(high.to_vec()),
                 ),
                 crate::backend::domain::IdKeyLookup::Range { low, high: None } => (
-                    "p.id_key >= ?8 AND (?9 IS NULL OR 1 = 1)",
+                    "p.id_key >= ?6 AND (?7 IS NULL OR 1 = 1)",
                     Some(low.to_vec()),
                     None,
                 ),
             }
         } else {
             (
-                "0 = 1 AND (?8 IS NULL OR 1 = 1) AND (?9 IS NULL OR 1 = 1)",
+                "0 = 1 AND (?6 IS NULL OR 1 = 1) AND (?7 IS NULL OR 1 = 1)",
                 None,
                 None,
             )
@@ -50,12 +48,7 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
             SELECT t.session_id
             FROM {turns} t
             JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
-            WHERE t.tenant_id = ?1 AND s.missing = 0 AND t.question_id >= ?4 AND t.question_id < ?5
-            UNION
-            SELECT t.session_id
-            FROM {turns} t
-            JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
-            WHERE t.tenant_id = ?1 AND s.missing = 0 AND t.id >= ?6 AND t.id < ?7
+            WHERE t.tenant_id = ?1 AND s.missing = 0 AND t.id >= ?4 AND t.id < ?5
             UNION
             SELECT t.session_id
             FROM {parts} p
@@ -73,8 +66,6 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
         .bind(tenant_id)
         .bind(session_lower)
         .bind(session_upper)
-        .bind(question_lower)
-        .bind(question_upper)
         .bind(turn_lower)
         .bind(turn_upper);
     let rows = builder

@@ -73,21 +73,11 @@ pub async fn resolve_any_id_to_session_id_sqlx(
             UNION
             SELECT t.session_id, 'session' AS kind
             FROM conversation_turns t
-            WHERE t.tenant_id = ?1 AND (?6 = 1)
-              AND (t.question_id = ?2 OR t.question_id LIKE ?3 OR t.question_id LIKE ?4)
-            UNION
-            SELECT t.session_id, 'session' AS kind
-            FROM conversation_turns t
             WHERE t.tenant_id = ?1 AND (?6 = 1) AND (t.id = ?2 OR t.id LIKE ?3 OR t.id LIKE ?4)
             UNION
             SELECT s.id AS session_id, 'web' AS kind
             FROM web_record_sessions s
             WHERE s.tenant_id = ?1 AND (?7 = 1) AND (s.id = ?2 OR s.id LIKE ?3 OR s.id LIKE ?4)
-            UNION
-            SELECT t.session_id, 'web' AS kind
-            FROM web_record_turns t
-            WHERE t.tenant_id = ?1 AND (?8 = 1)
-              AND (t.question_id = ?2 OR t.question_id LIKE ?3 OR t.question_id LIKE ?4)
             UNION
             SELECT t.session_id, 'web' AS kind
             FROM web_record_turns t

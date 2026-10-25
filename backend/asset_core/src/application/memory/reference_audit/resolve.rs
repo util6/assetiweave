@@ -38,7 +38,12 @@ async fn question_exists(
 ) -> AppResult<bool> {
     let sql = format!(
         "SELECT EXISTS(SELECT 1 FROM {turns} \
-         WHERE tenant_id = ?1 AND question_id = ?2 AND session_id = ?3)"
+         WHERE tenant_id = ?1 AND session_id = ?3 \
+           AND ( \
+               id = ?2 \
+               OR (?2 LIKE 'conversation-question-%' AND id = 'conversation-turn-' || substr(?2, 23)) \
+               OR (?2 LIKE 'web-record-question-%' AND id = 'web-record-turn-' || substr(?2, 21)) \
+           ))"
     );
     Ok(sqlx::query_scalar::<_, i64>(AssertSqlSafe(sql))
         .bind(tenant_id)
@@ -49,34 +54,13 @@ async fn question_exists(
         != 0)
 }
 
-/// 合并后的旧问题标识通过跳转表墓碑解析到幸存分组。
+/// 合并后的旧问题标识：Ticket 02 下线跳转表，不再走墓碑解析。
 async fn redirect_target(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    reference: &ReferenceRow,
+    _pool: &SqlitePool,
+    _tenant_id: &str,
+    _reference: &ReferenceRow,
 ) -> AppResult<Option<String>> {
-    if reference.record_kind != "session" {
-        return Ok(None);
-    }
-    let mut current = reference.question_id.clone();
-    let mut visited = HashSet::new();
-    loop {
-        if !visited.insert(current.clone()) {
-            return Ok(None);
-        }
-        let target = sqlx::query_scalar::<_, String>(
-            "SELECT target_question_id FROM conversation_question_redirects \
-             WHERE tenant_id = ?1 AND source_question_id = ?2",
-        )
-        .bind(tenant_id)
-        .bind(&current)
-        .fetch_optional(pool)
-        .await?;
-        match target {
-            Some(next) => current = next,
-            None => return Ok((current != reference.question_id).then_some(current)),
-        }
-    }
+    Ok(None)
 }
 
 async fn turn_question(
@@ -87,8 +71,10 @@ async fn turn_question(
     turn_id: &str,
 ) -> AppResult<Option<String>> {
     let sql = format!(
-        "SELECT question_id FROM {turns} \
-         WHERE tenant_id = ?1 AND id = ?2 AND session_id = ?3 AND question_id <> '' LIMIT 1"
+        "SELECT id FROM {turns} \
+         WHERE tenant_id = ?1 AND id = ?2 AND session_id = ?3 \
+           AND (id LIKE 'conversation-question-%' OR id LIKE 'web-record-question-%' OR id LIKE 'q-%' OR id LIKE 'wq-%') \
+         LIMIT 1"
     );
     Ok(sqlx::query_scalar::<_, String>(AssertSqlSafe(sql))
         .bind(tenant_id)
@@ -125,10 +111,11 @@ async fn nearest_question(
     index: i64,
 ) -> AppResult<Vec<(String, i64)>> {
     let sql = format!(
-        "SELECT question_id, MIN(ABS(turn_index - ?3)) AS distance \
+        "SELECT id, MIN(ABS(turn_index - ?3)) AS distance \
          FROM {turns} \
-         WHERE tenant_id = ?1 AND session_id = ?2 AND question_id <> '' \
-         GROUP BY question_id ORDER BY distance ASC, question_id ASC LIMIT 2"
+         WHERE tenant_id = ?1 AND session_id = ?2 \
+           AND (id LIKE 'conversation-question-%' OR id LIKE 'web-record-question-%' OR id LIKE 'q-%' OR id LIKE 'wq-%') \
+         GROUP BY id ORDER BY distance ASC, id ASC LIMIT 2"
     );
     Ok(sqlx::query_as::<_, (String, i64)>(AssertSqlSafe(sql))
         .bind(tenant_id)
@@ -145,10 +132,10 @@ async fn session_questions(
     session_id: &str,
 ) -> AppResult<Vec<String>> {
     let sql = format!(
-        "SELECT question_id FROM {turns} \
-         WHERE tenant_id = ?1 AND session_id = ?2 AND question_id <> '' \
-         GROUP BY question_id \
-         ORDER BY MIN(turn_index) ASC, question_id ASC"
+        "SELECT id FROM {turns} \
+         WHERE tenant_id = ?1 AND session_id = ?2 AND id <> '' \
+         GROUP BY id \
+         ORDER BY MIN(turn_index) ASC, id ASC"
     );
     Ok(sqlx::query_scalar::<_, String>(AssertSqlSafe(sql))
         .bind(tenant_id)

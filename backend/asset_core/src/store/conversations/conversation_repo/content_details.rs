@@ -151,39 +151,3 @@ pub(super) async fn load_question_session_id_for_record_sqlx(
     }
     Ok(None)
 }
-
-pub(super) async fn resolve_conversation_question_redirect_sqlx(
-    conn: &mut sqlx::SqliteConnection,
-    tenant_id: &str,
-    question_id: &str,
-) -> StoreResult<String> {
-    let mut current = question_id.to_string();
-    let mut visited = BTreeSet::new();
-    loop {
-        if !visited.insert(current.clone()) {
-            return Err(StoreError::Validation(format!(
-                "conversation question redirect cycle: {question_id}"
-            )));
-        }
-        let Some(target) = sqlx::query_scalar::<_, String>(
-            "SELECT target_question_id FROM conversation_question_redirects WHERE tenant_id = ?1 AND source_question_id = ?2",
-        )
-        .bind(tenant_id)
-        .bind(&current)
-        .fetch_optional(&mut *conn)
-        .await
-        .map_err(StoreError::external)? else {
-            return Ok(current);
-        };
-        current = target;
-    }
-}
-
-pub(super) async fn resolve_conversation_question_redirect_pool_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    question_id: &str,
-) -> StoreResult<String> {
-    let mut conn = pool.acquire().await.map_err(StoreError::external)?;
-    resolve_conversation_question_redirect_sqlx(&mut conn, tenant_id, question_id).await
-}

@@ -40,7 +40,7 @@ fn turn_fixture(
     turn_id: &str,
     session_id: &str,
     turn_index: i64,
-    question_id: &str,
+    _question_id: &str,
     started_at: Option<&str>,
     imported_at: &str,
 ) -> String {
@@ -49,8 +49,8 @@ fn turn_fixture(
         None => "NULL".to_string(),
     };
     format!(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, started_at, fingerprint, missing, imported_at, question_id) \
-         VALUES ('{TENANT}', '{turn_id}', '{session_id}', 'ext-{turn_id}', {turn_index}, 'prompt {turn_id}', {started_at}, 'fp-{turn_id}', 0, '{imported_at}', '{question_id}')"
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, started_at, fingerprint, missing, imported_at) \
+         VALUES ('{TENANT}', '{turn_id}', '{session_id}', 'ext-{turn_id}', {turn_index}, 'prompt {turn_id}', {started_at}, 'fp-{turn_id}', 0, '{imported_at}')"
     )
 }
 
@@ -58,7 +58,7 @@ fn web_turn_fixture(
     turn_id: &str,
     session_id: &str,
     turn_index: i64,
-    question_id: &str,
+    _question_id: &str,
     started_at: Option<&str>,
     imported_at: &str,
 ) -> String {
@@ -67,8 +67,8 @@ fn web_turn_fixture(
         None => "NULL".to_string(),
     };
     format!(
-        "INSERT INTO web_record_turns (tenant_id, id, session_id, external_id, turn_index, prompt, started_at, fingerprint, missing, imported_at, question_id) \
-         VALUES ('{TENANT}', '{turn_id}', '{session_id}', 'ext-{turn_id}', {turn_index}, 'prompt {turn_id}', {started_at}, 'fp-{turn_id}', 0, '{imported_at}', '{question_id}')"
+        "INSERT INTO web_record_turns (tenant_id, id, session_id, external_id, turn_index, prompt, started_at, fingerprint, missing, imported_at) \
+         VALUES ('{TENANT}', '{turn_id}', '{session_id}', 'ext-{turn_id}', {turn_index}, 'prompt {turn_id}', {started_at}, 'fp-{turn_id}', 0, '{imported_at}')"
     )
 }
 
@@ -103,7 +103,7 @@ async fn recall_units_locate_by_first_turn_started_at_not_import_time() {
             &source_fixture(ADAPTER),
             &session_fixture("s-1", "2026-10-23T00:00:00Z"),
             &turn_fixture(
-                "t-1",
+                "q-1",
                 "s-1",
                 0,
                 "q-1",
@@ -133,19 +133,17 @@ async fn recall_units_fall_back_to_import_time_and_count_each_group_once() {
         &[
             &source_fixture(ADAPTER),
             &session_fixture("s-1", "2026-10-22T10:00:00Z"),
-            // 同一分组的两轮都没有开始时间，只有导入时间。
-            &turn_fixture("t-1", "s-1", 0, "q-a", None, "2026-10-22T10:00:00Z"),
-            &turn_fixture("t-2", "s-1", 1, "q-a", None, "2026-10-22T10:05:00Z"),
+            &turn_fixture("q-a", "s-1", 0, "q-a", None, "2026-10-22T10:00:00Z"),
             &turn_fixture(
-                "t-3",
+                "q-b",
                 "s-1",
-                2,
+                1,
                 "q-b",
                 Some("2026-10-22T11:00:00Z"),
                 "2026-10-22T11:00:00Z",
             ),
             // 空白开始时间与缺失同义，同样回退到导入时间。
-            &turn_fixture("t-4", "s-1", 3, "q-c", Some("   "), "2026-10-22T12:00:00Z"),
+            &turn_fixture("q-c", "s-1", 2, "q-c", Some("   "), "2026-10-22T12:00:00Z"),
         ],
     )
     .await;
@@ -184,7 +182,7 @@ async fn recall_window_bounds_are_inclusive_on_both_ends() {
             &source_fixture(ADAPTER),
             &session_fixture("s-1", "2026-10-23T00:00:00Z"),
             &turn_fixture(
-                "t-1",
+                "q-1",
                 "s-1",
                 0,
                 "q-1",
@@ -224,7 +222,7 @@ async fn recall_window_compares_normalized_utc_instants() {
             &session_fixture("s-offset", "2026-10-23T00:00:00Z"),
             // 09:00+08:00 == 01:00Z
             &turn_fixture(
-                "t-utc",
+                "q-utc",
                 "s-utc",
                 0,
                 "q-utc",
@@ -233,7 +231,7 @@ async fn recall_window_compares_normalized_utc_instants() {
             ),
             // 00:30+08:00 == 前一日 16:30Z
             &turn_fixture(
-                "t-offset",
+                "q-offset",
                 "s-offset",
                 0,
                 "q-offset",
@@ -332,7 +330,7 @@ async fn recall_enumerates_web_records_symmetrically_and_skips_them_for_project_
             &source_fixture(ADAPTER),
             &session_fixture("s-1", "2026-10-23T00:00:00Z"),
             &turn_fixture(
-                "t-1",
+                "q-1",
                 "s-1",
                 0,
                 "q-1",
@@ -341,7 +339,7 @@ async fn recall_enumerates_web_records_symmetrically_and_skips_them_for_project_
             ),
             &web_session_fixture("w-1", "2026-10-23T00:00:00Z"),
             &web_turn_fixture(
-                "wt-1",
+                "q-web",
                 "w-1",
                 0,
                 "q-web",

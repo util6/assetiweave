@@ -1762,15 +1762,23 @@ async fn conversation_question_read_path_and_export_ignore_legacy_grouping_rows(
             .expect("open service");
         let session_id =
             upsert_conversation_export_fixture(&service, &root, Vec::new(), None, web_record).await;
-        let question_id: String = sqlx::query_scalar(AssertSqlSafe(format!(
-            "SELECT question_id FROM {}_turns WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY turn_index ASC LIMIT 1",
+        let turn_id: String = sqlx::query_scalar(AssertSqlSafe(format!(
+            "SELECT id FROM {}_turns WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY turn_index ASC LIMIT 1",
             if web_record { "web_record" } else { "conversation" }
         )))
         .bind(service.tenant_id())
         .bind(&session_id)
         .fetch_one(service.db.pool())
         .await
-        .expect("load question id from turn columns");
+        .expect("load turn id from turn columns");
+        let question_id = crate::backend::domain::conversations::derive_question_id_from_turn_id(
+            if web_record {
+                "web-record-question"
+            } else {
+                "conversation-question"
+            },
+            &turn_id,
+        );
 
         let export_output_root = root.join("exports").to_string_lossy().to_string();
         let export_before = if web_record {

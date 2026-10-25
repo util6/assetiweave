@@ -11,7 +11,7 @@ use sqlx::{sqlite::SqliteRow, AssertSqlSafe, Row, SqlitePool};
 const RECALL_UNITS_SQL: &str = r#"
   WITH recall_turns AS (
     SELECT 'session' AS record_kind, s.source_id, s.id AS session_id,
-           s.title AS session_title, s.project_path, t.question_id,
+           s.title AS session_title, s.project_path, t.id AS question_id,
            t.turn_index, t.id AS turn_id,
            COALESCE(
                strftime('%Y-%m-%dT%H:%M:%SZ', NULLIF(trim(t.started_at), '')),
@@ -21,13 +21,13 @@ const RECALL_UNITS_SQL: &str = r#"
     JOIN conversation_sessions s ON s.tenant_id=t.tenant_id AND s.id=t.session_id
     JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
     WHERE t.tenant_id=?1 AND source.adapter_id <> 'assetiweave-memory-recall'
-      AND t.question_id <> ''
+      AND t.id <> ''
       AND s.user_visible = 1 AND s.execution_origin != 'internal_memory'
       AND (?2 IS NULL OR s.adapter_id=?2)
       AND (?3 IS NULL OR s.source_id=?3) AND (?4 IS NULL OR s.project_path=?4)
       AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
     UNION ALL
-    SELECT 'web', s.source_id, s.id, s.title, NULL, t.question_id,
+    SELECT 'web', s.source_id, s.id, s.title, NULL, t.id AS question_id,
            t.turn_index, t.id,
            COALESCE(
                strftime('%Y-%m-%dT%H:%M:%SZ', NULLIF(trim(t.started_at), '')),
@@ -37,7 +37,7 @@ const RECALL_UNITS_SQL: &str = r#"
     JOIN web_record_sessions s ON s.tenant_id=t.tenant_id AND s.id=t.session_id
     JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
     WHERE t.tenant_id=?1 AND source.adapter_id <> 'assetiweave-memory-recall'
-      AND t.question_id <> ''
+      AND t.id <> ''
       AND (?2 IS NULL OR s.adapter_id=?2)
       AND (?3 IS NULL OR s.source_id=?3) AND ?4 IS NULL
       AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
@@ -214,7 +214,7 @@ pub async fn load_recall_parts_for_questions_sqlx(
     let sql = match record_kind {
         MemoryRecordKind::Session => {
             r#"
-            SELECT t.question_id, p.kind,
+            SELECT t.id AS question_id, p.kind,
                    (CASE WHEN p.kind = 'command' THEN
                        CASE WHEN json_extract(p.attrs_json, '$.has_command') = 0 THEN COALESCE(json_extract(p.attrs_json, '$.summary'), p.content)
                             ELSE json_extract(p.attrs_json, '$.summary')
@@ -236,12 +236,16 @@ pub async fn load_recall_parts_for_questions_sqlx(
             FROM conversation_parts p
             JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
             WHERE p.tenant_id = ?1
-              AND t.question_id IN (SELECT value FROM json_each(?2))
+              AND (
+                  t.id IN (SELECT value FROM json_each(?2))
+                  OR ('conversation-question-' || substr(t.id, 19)) IN (SELECT value FROM json_each(?2))
+                  OR ('web-record-question-' || substr(t.id, 17)) IN (SELECT value FROM json_each(?2))
+              )
             "#
         }
         MemoryRecordKind::Web => {
             r#"
-            SELECT t.question_id,
+            SELECT t.id AS question_id,
                    (CASE WHEN p.kind = 'answer' THEN 'text' ELSE 'tool' END) AS kind,
                    p.content AS text,
                    NULL AS command,
@@ -256,7 +260,11 @@ pub async fn load_recall_parts_for_questions_sqlx(
             FROM web_record_parts p
             JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
             WHERE p.tenant_id = ?1
-              AND t.question_id IN (SELECT value FROM json_each(?2))
+              AND (
+                  t.id IN (SELECT value FROM json_each(?2))
+                  OR ('conversation-question-' || substr(t.id, 19)) IN (SELECT value FROM json_each(?2))
+                  OR ('web-record-question-' || substr(t.id, 17)) IN (SELECT value FROM json_each(?2))
+              )
             "#
         }
     };

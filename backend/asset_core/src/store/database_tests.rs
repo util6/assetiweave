@@ -1957,7 +1957,7 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
     for _ in 0..query_iterations {
         let mut stmt = conn
             .prepare(
-                "SELECT t.id, t.turn_index, t.question_id, p.part_index, p.content
+                "SELECT t.id, t.turn_index, p.part_index, p.content
                  FROM conversation_turns t
                  JOIN conversation_parts p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
                  WHERE t.tenant_id = ?1 AND t.session_id = ?2
@@ -1969,9 +1969,8 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, i64>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, String>(4)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, String>(3)?,
                 ))
             })
             .expect("query map")

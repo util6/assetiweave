@@ -6,9 +6,7 @@ pub async fn list_conversation_block_locators_sqlx(
     record_kind: ConversationRecordKind,
     question_id: &str,
 ) -> StoreResult<Vec<ConversationBlockLocator>> {
-    let question_id =
-        resolve_conversation_question_redirect_pool_sqlx(pool, tenant_id, question_id).await?;
-    let detail = load_conversation_question_detail_sqlx(pool, tenant_id, &question_id).await?;
+    let detail = load_conversation_question_detail_sqlx(pool, tenant_id, question_id).await?;
     let (adapter_id, card_kinds) = load_conversation_card_projection_context_for_record_sqlx(
         pool,
         tenant_id,

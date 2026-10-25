@@ -303,12 +303,12 @@ impl AppService {
         let exists = match record_kind {
             crate::backend::domain::conversations::ConversationRecordKind::Session => {
                 sqlx::query_scalar::<_, i64>(
-                    "SELECT EXISTS(SELECT 1 FROM conversation_turns WHERE tenant_id=?1 AND question_id=?2 AND session_id=?3 AND missing=0)",
+                    "SELECT EXISTS(SELECT 1 FROM conversation_turns WHERE tenant_id=?1 AND (id=?2 OR (?2 LIKE 'conversation-question-%' AND id='conversation-turn-' || substr(?2, 23))) AND session_id=?3 AND missing=0)",
                 )
             }
             crate::backend::domain::conversations::ConversationRecordKind::Web => {
                 sqlx::query_scalar::<_, i64>(
-                    "SELECT EXISTS(SELECT 1 FROM web_record_turns WHERE tenant_id=?1 AND question_id=?2 AND session_id=?3 AND missing=0)",
+                    "SELECT EXISTS(SELECT 1 FROM web_record_turns WHERE tenant_id=?1 AND (id=?2 OR (?2 LIKE 'web-record-question-%' AND id='web-record-turn-' || substr(?2, 21))) AND session_id=?3 AND missing=0)",
                 )
             }
         }
@@ -338,12 +338,12 @@ impl AppService {
         let parent_exists = match record_kind {
             crate::backend::domain::conversations::ConversationRecordKind::Session => {
                 sqlx::query_scalar::<_, i64>(
-                    "SELECT EXISTS(SELECT 1 FROM conversation_turns t JOIN conversation_sessions s ON s.tenant_id=t.tenant_id AND s.id=t.session_id JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id WHERE t.tenant_id=?1 AND t.question_id=?2 AND t.session_id=?3 AND s.missing=0 AND t.missing=0 AND source.enabled=1 AND source.adapter_id <> 'assetiweave-memory-recall' AND (?4 IS NULL OR s.adapter_id=?4) AND (?5 IS NULL OR s.source_id=?5) AND (?6 IS NULL OR s.project_path=?6) AND (?7 IS NULL OR s.id=?7))",
+                    "SELECT EXISTS(SELECT 1 FROM conversation_turns t JOIN conversation_sessions s ON s.tenant_id=t.tenant_id AND s.id=t.session_id JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id WHERE t.tenant_id=?1 AND (t.id=?2 OR (?2 LIKE 'conversation-question-%' AND t.id='conversation-turn-' || substr(?2, 23))) AND t.session_id=?3 AND s.missing=0 AND t.missing=0 AND source.enabled=1 AND source.adapter_id <> 'assetiweave-memory-recall' AND (?4 IS NULL OR s.adapter_id=?4) AND (?5 IS NULL OR s.source_id=?5) AND (?6 IS NULL OR s.project_path=?6) AND (?7 IS NULL OR s.id=?7))",
                 )
             }
             crate::backend::domain::conversations::ConversationRecordKind::Web => {
                 sqlx::query_scalar::<_, i64>(
-                    "SELECT EXISTS(SELECT 1 FROM web_record_turns t JOIN web_record_sessions s ON s.tenant_id=t.tenant_id AND s.id=t.session_id JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id WHERE t.tenant_id=?1 AND t.question_id=?2 AND t.session_id=?3 AND s.missing=0 AND t.missing=0 AND source.enabled=1 AND source.adapter_id <> 'assetiweave-memory-recall' AND (?4 IS NULL OR s.adapter_id=?4) AND (?5 IS NULL OR s.source_id=?5) AND (?7 IS NULL OR s.id=?7))",
+                    "SELECT EXISTS(SELECT 1 FROM web_record_turns t JOIN web_record_sessions s ON s.tenant_id=t.tenant_id AND s.id=t.session_id JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id WHERE t.tenant_id=?1 AND (t.id=?2 OR (?2 LIKE 'web-record-question-%' AND t.id='web-record-turn-' || substr(?2, 21))) AND t.session_id=?3 AND s.missing=0 AND t.missing=0 AND source.enabled=1 AND source.adapter_id <> 'assetiweave-memory-recall' AND (?4 IS NULL OR s.adapter_id=?4) AND (?5 IS NULL OR s.source_id=?5) AND (?7 IS NULL OR s.id=?7))",
                 )
             }
         }
