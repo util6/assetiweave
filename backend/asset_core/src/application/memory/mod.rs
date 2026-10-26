@@ -12,6 +12,7 @@ pub mod memory_agent_session;
 pub mod memory_generation_tools;
 pub mod memory_maintenance_coordinator;
 pub mod memory_maintenance_runner;
+pub mod memory_markdown_pipeline;
 pub mod memory_pipeline;
 pub mod memory_pipeline_query;
 pub mod memory_pipeline_stage1;
@@ -25,6 +26,8 @@ pub mod memory_recall_workflow;
 pub mod memory_search;
 pub mod memory_search_matching;
 pub mod memory_tasks;
+pub mod memory_workflow_global;
+pub mod memory_workflow_recent_project;
 pub mod params;
 pub mod project_memory;
 pub mod project_memory_documents;
@@ -35,6 +38,9 @@ pub mod session_coordinator;
 pub mod session_memory;
 pub mod types;
 
+pub use memory_markdown_pipeline::*;
+pub use memory_workflow_global::*;
+pub use memory_workflow_recent_project::*;
 pub use session_branch_workflow::*;
 
 pub use activity_watchdog::{
