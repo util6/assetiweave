@@ -395,9 +395,7 @@ async fn bug4_outline_fails_on_10_or_12_char_part_prefix() {
 
     let app = AppService::open_with_db_path(dir.db_path()).await.unwrap();
     let outline = app
-        .get_conversation_outline(ConversationOutlineParams {
-            id: hex12.to_string(),
-        })
+        .get_conversation_outline(ConversationOutlineParams::new(hex12))
         .await;
     assert!(
         outline.is_ok(),
