@@ -226,3 +226,80 @@ where
     }
     groups
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DynamicGroupedTurn<T> {
+    pub question_id: String,
+    pub origin: ConversationGroupingOrigin,
+    pub turns: Vec<T>,
+}
+
+pub fn derive_question_id_from_turn_id(prefix: &str, turn_id: &str) -> String {
+    let clean = if let Some(suffix) = turn_id.strip_prefix("conversation-turn-") {
+        suffix
+    } else if let Some(suffix) = turn_id.strip_prefix("web-record-turn-") {
+        suffix
+    } else {
+        turn_id
+    };
+    format!("{prefix}-{clean}")
+}
+
+pub fn derive_turn_id_from_question_id(question_id: &str) -> Option<String> {
+    if let Some(suffix) = question_id.strip_prefix("conversation-question-") {
+        Some(format!("conversation-turn-{suffix}"))
+    } else if let Some(suffix) = question_id.strip_prefix("web-record-question-") {
+        Some(format!("web-record-turn-{suffix}"))
+    } else {
+        None
+    }
+}
+
+/// 从轮次标识直接推导分组（问题）标识。
+/// 若以 `web-record-turn-` 开头则派生为 `web-record-question-`；
+/// 若以 `conversation-turn-` 开头则派生为 `conversation-question-`；
+/// 其它自定义/测试标识原样返回。
+pub fn derive_question_id_from_turn(turn_id: &str) -> String {
+    if turn_id.starts_with("web-record-turn-") {
+        derive_question_id_from_turn_id("web-record-question", turn_id)
+    } else if turn_id.starts_with("conversation-turn-") {
+        derive_question_id_from_turn_id("conversation-question", turn_id)
+    } else {
+        turn_id.to_string()
+    }
+}
+
+pub fn group_turns_by_dynamic_projection<T, F, I>(
+    prefix: &str,
+    turns: Vec<T>,
+    prompt_extractor: F,
+    id_extractor: I,
+) -> Vec<DynamicGroupedTurn<T>>
+where
+    F: Fn(&T) -> &str,
+    I: Fn(&T) -> &str,
+{
+    let mut groups: Vec<DynamicGroupedTurn<T>> = Vec::new();
+    for turn in turns {
+        let prompt = prompt_extractor(&turn);
+        if should_merge_into_previous_question(prompt) {
+            if let Some(prev) = groups.last_mut() {
+                prev.origin = ConversationGroupingOrigin::AutoMerged;
+                prev.turns.push(turn);
+                continue;
+            }
+        }
+        let turn_id = id_extractor(&turn);
+        let question_id = derive_question_id_from_turn_id(prefix, turn_id);
+        groups.push(DynamicGroupedTurn {
+            question_id,
+            origin: ConversationGroupingOrigin::Imported,
+            turns: vec![turn],
+        });
+    }
+    groups
+}
+
+#[cfg(test)]
+#[path = "grouping_tests.rs"]
+mod tests;

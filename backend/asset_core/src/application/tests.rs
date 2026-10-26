@@ -702,9 +702,9 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
             r#"
             INSERT INTO conversation_turns (
                 tenant_id, id, session_id, external_id, turn_index, prompt,
-                fingerprint, missing, imported_at, question_id, question_origin
+                fingerprint, missing, imported_at
             ) VALUES ('default', 'maintenance-orphan-turn', 'maintenance-missing-session', 'ext-orphan', 0,
-                'orphan text', 'fp-orphan', 0, '2026-08-25T00:00:00Z', '', 'imported')
+                'orphan text', 'fp-orphan', 0, '2026-08-25T00:00:00Z')
             "#,
         )
         .execute(&mut *connection)
@@ -1762,15 +1762,23 @@ async fn conversation_question_read_path_and_export_ignore_legacy_grouping_rows(
             .expect("open service");
         let session_id =
             upsert_conversation_export_fixture(&service, &root, Vec::new(), None, web_record).await;
-        let question_id: String = sqlx::query_scalar(AssertSqlSafe(format!(
-            "SELECT question_id FROM {}_turns WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY turn_index ASC LIMIT 1",
+        let turn_id: String = sqlx::query_scalar(AssertSqlSafe(format!(
+            "SELECT id FROM {}_turns WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY turn_index ASC LIMIT 1",
             if web_record { "web_record" } else { "conversation" }
         )))
         .bind(service.tenant_id())
         .bind(&session_id)
         .fetch_one(service.db.pool())
         .await
-        .expect("load question id from turn columns");
+        .expect("load turn id from turn columns");
+        let question_id = crate::backend::domain::conversations::derive_question_id_from_turn_id(
+            if web_record {
+                "web-record-question"
+            } else {
+                "conversation-question"
+            },
+            &turn_id,
+        );
 
         let export_output_root = root.join("exports").to_string_lossy().to_string();
         let export_before = if web_record {
@@ -5165,61 +5173,6 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
             .as_ref()
             .and_then(|counts| counts.get("answer")),
         Some(&1)
-    );
-
-    let second_turn_id = format!("app-membership-turn-{}", Uuid::new_v4());
-    let second_question_id = format!("app-membership-question-{}", Uuid::new_v4());
-    let now = "2026-08-25T00:00:00Z";
-    let pool = service.db.pool().clone();
-    let tenant_id = service.tenant_id().to_string();
-    let session_id = detail.question.session_id.clone();
-    let question_id = detail.question.id.clone();
-    let second_turn_id_for_db = second_turn_id.clone();
-    let second_question_id_for_db = second_question_id.clone();
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, prompt, title,
-            started_at, ended_at, fingerprint, missing, imported_at,
-            question_id, question_origin
-        )
-        VALUES (?1, ?2, ?3, ?4, 1, ?5, NULL, NULL, NULL, ?6, 0, ?7, ?8, 'imported')
-        "#,
-    )
-    .bind(&tenant_id)
-    .bind(&second_turn_id_for_db)
-    .bind(&session_id)
-    .bind("app-membership-turn-2")
-    .bind("Second prompt")
-    .bind("app-membership-fingerprint")
-    .bind(now)
-    .bind(&second_question_id_for_db)
-    .execute(&pool)
-    .await
-    .map_err(AppError::external)
-    .expect("insert second turn");
-
-    let merged = service
-        .merge_conversation_questions(ConversationQuestionMergeParams {
-            question_ids: vec![question_id.clone(), second_question_id],
-            dry_run: false,
-        })
-        .await
-        .expect("merge question memberships through AppService");
-    assert_eq!(merged.questions.len(), 1);
-    assert_eq!(merged.questions[0].question.id, question_id);
-    assert_eq!(merged.questions[0].question_turns.len(), 2);
-    assert_eq!(
-        merged.questions[0].question_turns[1].turn_id,
-        second_turn_id
-    );
-    assert_eq!(
-        merged.questions[0].question_turns[1].assignment_origin,
-        ConversationGroupingOrigin::Manual
-    );
-    assert_eq!(
-        merged.questions[0].question.title.as_deref(),
-        Some("Export this")
     );
 
     let session_fragment =

@@ -129,16 +129,7 @@ pub async fn search_conversation_cards_sqlx(
                 .then_with(|| left.session.title.cmp(&right.session.title))
         });
     }
-    let mut questions_by_session = load_search_questions_sqlx(
-        pool,
-        tenant_id,
-        tables,
-        adapter_id,
-        source_id,
-        session_ids_json.as_deref(),
-    )
-    .await?;
-    let mut turns_by_question = load_search_turns_sqlx(
+    let (mut questions_by_session, mut turns_by_question) = load_search_question_groups_sqlx(
         pool,
         tenant_id,
         tables,
@@ -298,7 +289,7 @@ pub async fn hydrate_conversation_search_matches_sqlx(
     .into_iter()
     .map(|item| (item.session.id.clone(), item))
     .collect::<BTreeMap<_, _>>();
-    let question_groups = load_search_questions_sqlx(
+    let (question_groups, turns_by_question) = load_search_question_groups_sqlx(
         pool,
         tenant_id,
         tables,
@@ -317,15 +308,6 @@ pub async fn hydrate_conversation_search_matches_sqlx(
         .flatten()
         .map(|item| (item.id.clone(), item))
         .collect::<BTreeMap<_, _>>();
-    let turns_by_question = load_search_turns_sqlx(
-        pool,
-        tenant_id,
-        tables,
-        adapter_id,
-        source_id,
-        Some(&session_ids_json),
-    )
-    .await?;
     let turns = turns_by_question
         .values()
         .flatten()
@@ -366,11 +348,20 @@ pub async fn hydrate_conversation_search_matches_sqlx(
         let session = sessions.get(&matched.session_id).ok_or_else(|| {
             StoreError::external("conversation search index hydration missed a session".to_string())
         })?;
-        let question = questions.get(&matched.question_id).ok_or_else(|| {
-            StoreError::external(
-                "conversation search index hydration missed a question".to_string(),
-            )
-        })?;
+        let question = questions
+            .get(&matched.question_id)
+            .or_else(|| {
+                questions.values().find(|q| {
+                    turns_by_question
+                        .get(&q.id)
+                        .is_some_and(|turns| turns.iter().any(|t| t.id == matched.turn_id))
+                })
+            })
+            .ok_or_else(|| {
+                StoreError::external(
+                    "conversation search index hydration missed a question".to_string(),
+                )
+            })?;
         let question_title = search_question_title_from_turns(
             question,
             turns_by_question

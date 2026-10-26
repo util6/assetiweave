@@ -153,7 +153,6 @@ describe("ConversationTurn", () => {
         controller={controller}
         index={0}
         model={model}
-        onSplit={() => undefined}
         recordKind="session"
         t={t}
         visibility={{

@@ -6,8 +6,8 @@ use sqlx::{AssertSqlSafe, SqlitePool};
 
 use super::scan::ReferenceRow;
 use super::{
-    STRATEGY_AMBIGUOUS, STRATEGY_NEAREST_GROUP, STRATEGY_NO_GROUP, STRATEGY_REDIRECT,
-    STRATEGY_SINGLE_GROUP, STRATEGY_TURN_MEMBERSHIP,
+    STRATEGY_AMBIGUOUS, STRATEGY_NEAREST_GROUP, STRATEGY_NO_GROUP, STRATEGY_SINGLE_GROUP,
+    STRATEGY_TURN_MEMBERSHIP,
 };
 
 pub(super) enum Resolution {
@@ -29,56 +29,6 @@ fn turn_table(record_kind: &str) -> &'static str {
     }
 }
 
-async fn question_exists(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    turns: &str,
-    question_id: &str,
-    session_id: &str,
-) -> AppResult<bool> {
-    let sql = format!(
-        "SELECT EXISTS(SELECT 1 FROM {turns} \
-         WHERE tenant_id = ?1 AND question_id = ?2 AND session_id = ?3)"
-    );
-    Ok(sqlx::query_scalar::<_, i64>(AssertSqlSafe(sql))
-        .bind(tenant_id)
-        .bind(question_id)
-        .bind(session_id)
-        .fetch_one(pool)
-        .await?
-        != 0)
-}
-
-/// 合并后的旧问题标识通过跳转表墓碑解析到幸存分组。
-async fn redirect_target(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    reference: &ReferenceRow,
-) -> AppResult<Option<String>> {
-    if reference.record_kind != "session" {
-        return Ok(None);
-    }
-    let mut current = reference.question_id.clone();
-    let mut visited = HashSet::new();
-    loop {
-        if !visited.insert(current.clone()) {
-            return Ok(None);
-        }
-        let target = sqlx::query_scalar::<_, String>(
-            "SELECT target_question_id FROM conversation_question_redirects \
-             WHERE tenant_id = ?1 AND source_question_id = ?2",
-        )
-        .bind(tenant_id)
-        .bind(&current)
-        .fetch_optional(pool)
-        .await?;
-        match target {
-            Some(next) => current = next,
-            None => return Ok((current != reference.question_id).then_some(current)),
-        }
-    }
-}
-
 async fn turn_question(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -87,15 +37,19 @@ async fn turn_question(
     turn_id: &str,
 ) -> AppResult<Option<String>> {
     let sql = format!(
-        "SELECT question_id FROM {turns} \
-         WHERE tenant_id = ?1 AND id = ?2 AND session_id = ?3 AND question_id <> '' LIMIT 1"
+        "SELECT id FROM {turns} \
+         WHERE tenant_id = ?1 AND id = ?2 AND session_id = ?3 \
+           AND (id LIKE 'conversation-turn-%' OR id LIKE 'web-record-turn-%' OR id LIKE 'conversation-question-%' OR id LIKE 'web-record-question-%' OR id LIKE 'q-%' OR id LIKE 'wq-%') \
+         LIMIT 1"
     );
-    Ok(sqlx::query_scalar::<_, String>(AssertSqlSafe(sql))
+    let matched_id: Option<String> = sqlx::query_scalar::<_, String>(AssertSqlSafe(sql))
         .bind(tenant_id)
         .bind(turn_id)
         .bind(&reference.session_id)
         .fetch_optional(pool)
-        .await?)
+        .await?;
+    Ok(matched_id
+        .map(|id| crate::backend::domain::conversations::derive_question_id_from_turn(&id)))
 }
 
 async fn turn_index(
@@ -125,17 +79,27 @@ async fn nearest_question(
     index: i64,
 ) -> AppResult<Vec<(String, i64)>> {
     let sql = format!(
-        "SELECT question_id, MIN(ABS(turn_index - ?3)) AS distance \
+        "SELECT id, MIN(ABS(turn_index - ?3)) AS distance \
          FROM {turns} \
-         WHERE tenant_id = ?1 AND session_id = ?2 AND question_id <> '' \
-         GROUP BY question_id ORDER BY distance ASC, question_id ASC LIMIT 2"
+         WHERE tenant_id = ?1 AND session_id = ?2 \
+           AND (id LIKE 'conversation-turn-%' OR id LIKE 'web-record-turn-%' OR id LIKE 'conversation-question-%' OR id LIKE 'web-record-question-%' OR id LIKE 'q-%' OR id LIKE 'wq-%') \
+         GROUP BY id ORDER BY distance ASC, id ASC LIMIT 2"
     );
-    Ok(sqlx::query_as::<_, (String, i64)>(AssertSqlSafe(sql))
+    let rows = sqlx::query_as::<_, (String, i64)>(AssertSqlSafe(sql))
         .bind(tenant_id)
         .bind(session_id)
         .bind(index)
         .fetch_all(pool)
-        .await?)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, dist)| {
+            (
+                crate::backend::domain::conversations::derive_question_id_from_turn(&id),
+                dist,
+            )
+        })
+        .collect())
 }
 
 async fn session_questions(
@@ -145,19 +109,23 @@ async fn session_questions(
     session_id: &str,
 ) -> AppResult<Vec<String>> {
     let sql = format!(
-        "SELECT question_id FROM {turns} \
-         WHERE tenant_id = ?1 AND session_id = ?2 AND question_id <> '' \
-         GROUP BY question_id \
-         ORDER BY MIN(turn_index) ASC, question_id ASC"
+        "SELECT id FROM {turns} \
+         WHERE tenant_id = ?1 AND session_id = ?2 AND id <> '' \
+         GROUP BY id \
+         ORDER BY MIN(turn_index) ASC, id ASC"
     );
-    Ok(sqlx::query_scalar::<_, String>(AssertSqlSafe(sql))
+    let rows = sqlx::query_scalar::<_, String>(AssertSqlSafe(sql))
         .bind(tenant_id)
         .bind(session_id)
         .fetch_all(pool)
-        .await?)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|id| crate::backend::domain::conversations::derive_question_id_from_turn(&id))
+        .collect())
 }
 
-/// 修复策略的唯一实现：先墓碑、再轮次归属、再最近分组、最后单分组回退；
+/// 修复策略的唯一实现：先轮次归属、再最近分组、最后单分组回退；
 /// 全都无法确定时显式失效，绝不删除引用。
 pub(super) async fn resolve_orphan(
     pool: &SqlitePool,
@@ -165,14 +133,6 @@ pub(super) async fn resolve_orphan(
     reference: &ReferenceRow,
 ) -> AppResult<Resolution> {
     let turns = turn_table(&reference.record_kind);
-    if let Some(target) = redirect_target(pool, tenant_id, reference).await? {
-        if question_exists(pool, tenant_id, turns, &target, &reference.session_id).await? {
-            return Ok(Resolution::Remapped {
-                question_id: target,
-                strategy: STRATEGY_REDIRECT,
-            });
-        }
-    }
     if let Some(turn_id) = reference.turn_id.as_deref() {
         if let Some(question_id) = turn_question(pool, tenant_id, turns, reference, turn_id).await?
         {

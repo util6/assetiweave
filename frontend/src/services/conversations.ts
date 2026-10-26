@@ -1697,67 +1697,6 @@ export async function getConversationQuestion(
   }
 }
 
-export async function mergeConversationQuestions(
-  questionIds: string[],
-  dryRun = false,
-): Promise<ConversationMutationResult> {
-  try {
-    return await invoke<ConversationMutationResult>(
-      "merge_conversation_questions",
-      {
-        params: { question_ids: questionIds, dry_run: dryRun },
-      },
-    );
-  } catch (error) {
-    if (isTauriRuntime()) {
-      throw error;
-    }
-
-    return {
-      dry_run: dryRun,
-      session_id: fallbackSessionDetail.session.id,
-      affected_question_ids: questionIds,
-      questions: fallbackSessionDetail.questions.filter((question) =>
-        questionIds.includes(question.question.id),
-      ),
-    };
-  }
-}
-
-export async function splitConversationQuestion(
-  questionId: string,
-  beforeTurnId: string,
-  dryRun = false,
-): Promise<ConversationMutationResult> {
-  try {
-    return await invoke<ConversationMutationResult>(
-      "split_conversation_question",
-      {
-        params: {
-          question_id: questionId,
-          before_turn_id: beforeTurnId,
-          dry_run: dryRun,
-        },
-      },
-    );
-  } catch (error) {
-    if (isTauriRuntime()) {
-      throw error;
-    }
-
-    return {
-      dry_run: dryRun,
-      session_id: fallbackSessionDetail.session.id,
-      affected_question_ids: [questionId],
-      questions: fallbackSessionDetail.questions.filter(
-        (question) =>
-          question.question.id === questionId ||
-          question.turns.some((turn) => turn.id === beforeTurnId),
-      ),
-    };
-  }
-}
-
 export async function exportConversationSession(
   sessionId: string,
   outputRoot: string,

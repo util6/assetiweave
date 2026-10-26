@@ -29,6 +29,20 @@ pub struct ConversationRawExport<'a> {
     parts: Vec<crate::backend::domain::ConversationPart>,
 }
 
+pub fn question_detail_matches_export_selection(
+    question: &crate::backend::domain::conversations::ConversationQuestionDetail,
+    selected: &BTreeSet<&String>,
+) -> bool {
+    if selected.is_empty() {
+        return true;
+    }
+    selected.contains(&question.question.id)
+        || question
+            .turns
+            .iter()
+            .any(|turn| selected.contains(&turn.id))
+}
+
 pub fn export_conversation_raw_json(
     detail: &crate::backend::domain::conversations::ConversationSessionDetail,
     source: &ConversationSource,
@@ -39,7 +53,7 @@ pub fn export_conversation_raw_json(
     let selected_questions = detail
         .questions
         .iter()
-        .filter(|question| selected.is_empty() || selected.contains(&question.question.id))
+        .filter(|question| question_detail_matches_export_selection(question, &selected))
         .collect::<Vec<_>>();
     let questions = selected_questions
         .iter()
@@ -54,19 +68,19 @@ pub fn export_conversation_raw_json(
     let question_turns = detail
         .questions
         .iter()
-        .filter(|question| selected.is_empty() || selected.contains(&question.question.id))
+        .filter(|question| question_detail_matches_export_selection(question, &selected))
         .flat_map(|question| question.question_turns.iter().cloned())
         .collect();
     let turns = detail
         .questions
         .iter()
-        .filter(|question| selected.is_empty() || selected.contains(&question.question.id))
+        .filter(|question| question_detail_matches_export_selection(question, &selected))
         .flat_map(|question| question.turns.iter().cloned())
         .collect();
     let parts = detail
         .questions
         .iter()
-        .filter(|question| selected.is_empty() || selected.contains(&question.question.id))
+        .filter(|question| question_detail_matches_export_selection(question, &selected))
         .flat_map(|question| question.parts.iter().cloned())
         .collect();
     serde_json::to_string_pretty(&ConversationRawExport {
@@ -117,18 +131,16 @@ pub fn validate_export_question_ids(
     if question_ids.is_empty() {
         return Ok(());
     }
-    let available = detail
-        .questions
-        .iter()
-        .map(|question| &question.question.id)
-        .collect::<BTreeSet<_>>();
-    if let Some(missing_id) = question_ids
-        .iter()
-        .find(|question_id| !available.contains(question_id))
-    {
-        return Err(AppError::NotFound(format!(
-            "conversation question not found in session: {missing_id}"
-        )));
+    for id in question_ids {
+        let found = detail
+            .questions
+            .iter()
+            .any(|q| q.question.id == *id || q.turns.iter().any(|turn| turn.id == *id));
+        if !found {
+            return Err(AppError::NotFound(format!(
+                "conversation question not found in session: {id}"
+            )));
+        }
     }
     Ok(())
 }

@@ -19,7 +19,7 @@ pub async fn list_web_record_sessions_sqlx(
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
                (
-                   SELECT COUNT(DISTINCT t.question_id)
+                   SELECT COUNT(*)
                    FROM web_record_turns t
                    WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                ) AS question_count,
@@ -280,11 +280,10 @@ pub async fn load_web_record_session_detail_sqlx(
     .ok_or_else(|| StoreError::NotFound(format!("web record session not found: {session_id}")))?;
     let session = map_sqlx_conversation_session(&session_row).map_err(StoreError::external)?;
 
-    let turn_rows = sqlx::query_as::<_, ConversationTurnQuestionRow>(
+    let turn_rows = sqlx::query_as::<_, ConversationTurnRow>(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.prompt, t.process, t.response, t.title,
-               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
-               t.question_id, t.question_origin
+               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at
         FROM web_record_turns t
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
         ORDER BY t.turn_index ASC, t.id ASC
@@ -297,7 +296,7 @@ pub async fn load_web_record_session_detail_sqlx(
     .map_err(StoreError::external)?;
     let turns = turn_rows
         .into_iter()
-        .map(ConversationTurnQuestionRow::into_grouped_turn)
+        .map(ConversationTurnRow::into_turn)
         .collect::<Vec<_>>();
 
     let part_rows = sqlx::query_as::<_, (String, i64, String, Option<String>, Option<String>)>(
@@ -332,7 +331,7 @@ pub async fn load_web_record_session_detail_sqlx(
     }
 
     let mut parts_by_turn = BTreeMap::<String, Vec<ConversationPart>>::new();
-    for (_, _, turn) in &turns {
+    for turn in &turns {
         let empty_vec = Vec::new();
         let turn_parts = triad_parts_by_turn.get(&turn.id).unwrap_or(&empty_vec);
         let process: Option<crate::backend::domain::conversations::triad::TurnProcess> = turn
@@ -362,8 +361,14 @@ pub async fn load_web_record_session_detail_sqlx(
     .unwrap_or_else(|| "[]".to_string());
     let card_kinds: Vec<crate::backend::domain::ConversationCardKindDefinition> =
         decode_json_app(card_kinds_json)?;
-    let question_details = build_question_details_from_turn_columns(
+    let groups = crate::backend::domain::conversations::group_turns_by_dynamic_projection(
+        "web-record-question",
         turns,
+        |turn| &turn.prompt,
+        |turn| &turn.id,
+    );
+    let question_details = build_question_details_from_dynamic_groups(
+        groups,
         parts_by_turn,
         &session.adapter_id,
         &card_kinds,

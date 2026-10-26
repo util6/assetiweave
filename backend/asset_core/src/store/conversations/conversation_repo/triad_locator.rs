@@ -175,15 +175,15 @@ pub async fn load_triad_block_detail(
         "conversation_turns"
     };
 
-    let rows = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, String)>(
-        AssertSqlSafe(format!("SELECT session_id, id, process, response, question_id FROM {table} WHERE tenant_id = ?1 AND (process IS NOT NULL OR response IS NOT NULL)"))
+    let rows = sqlx::query_as::<_, (String, String, Option<String>, Option<String>)>(
+        AssertSqlSafe(format!("SELECT session_id, id, process, response FROM {table} WHERE tenant_id = ?1 AND (process IS NOT NULL OR response IS NOT NULL)"))
     )
     .bind(tenant_id)
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
 
-    for (session_id, turn_id, process_json, response_text, question_id) in rows {
+    for (session_id, turn_id, process_json, response_text) in rows {
         let process: Option<TurnProcess> = process_json
             .as_deref()
             .and_then(|s| serde_json::from_str(s).ok());
@@ -197,6 +197,10 @@ pub async fn load_triad_block_detail(
                     derive_conversation_part_id(&turn_id, item.seq)
                 };
                 if part_id == resolved_part_id {
+                    let question_detail =
+                        super::load_conversation_question_detail_sqlx(pool, tenant_id, &turn_id)
+                            .await?;
+                    let question_id = question_detail.question.id;
                     let (adapter_id, card_kinds) =
                         load_conversation_card_projection_context_for_record_sqlx(
                             pool,
@@ -311,6 +315,10 @@ pub async fn load_triad_block_detail(
                 };
 
                 if part_id == resolved_part_id {
+                    let question_detail =
+                        super::load_conversation_question_detail_sqlx(pool, tenant_id, &turn_id)
+                            .await?;
+                    let question_id = question_detail.question.id;
                     let (adapter_id, card_kinds) =
                         load_conversation_card_projection_context_for_record_sqlx(
                             pool,

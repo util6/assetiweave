@@ -62,8 +62,6 @@
 | `conversation.part.translation.update` | `conversation.part.translation.update`<br>`update_conversation_part_translation` | `assetiweave-cli conversation part translation update <part-id> --text <text>` | `update_conversation_part_translation` | `write` | `false` |
 | `conversation.question.get` | `conversation.question.get`<br>`get_conversation_question` | `assetiweave-cli conversation question get <question-id>` | `get_conversation_question` | `read` | `false` |
 | `conversation.question.list` | `conversation.question.list`<br>`list_conversation_questions` | `assetiweave-cli conversation question list <session-id>` | `list_conversation_questions` | `read` | `false` |
-| `conversation.question.merge` | `conversation.question.merge`<br>`merge_conversation_questions` | `assetiweave-cli conversation question merge <question-id>...` | `merge_conversation_questions` | `write` | `false` |
-| `conversation.question.split` | `conversation.question.split`<br>`split_conversation_question` | `assetiweave-cli conversation question split <question-id> --before-turn <turn-id>` | `split_conversation_question` | `write` | `false` |
 | `conversation.script.catalog` | `conversation.script.catalog`<br>`list_conversation_script_catalog` | — | `list_conversation_script_catalog` | `read` | `false` |
 | `conversation.script.install` | `conversation.script.install`<br>`install_conversation_script` | — | `install_conversation_script` | `high-risk-write` | `true` |
 | `conversation.search` | `conversation.search`<br>`search_conversation_records` | `assetiweave-cli conversation search --query <query>` | `search_conversation_records` | `read` | `false` |

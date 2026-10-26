@@ -34,7 +34,7 @@ async fn seed(pool: &SqlitePool, statements: &[&str]) {
 fn session_fixtures() -> Vec<&'static str> {
     vec![
         "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at) VALUES ('default', 's-1', 'src-1', 'adp-1', 'ext-1', 'Session one', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) VALUES ('default', 't-1', 's-1', 'ext-t-1', 0, 'first prompt', 'fp-t-1', 0, '2026-10-23T00:00:00Z', 'q-1', 'imported')",
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 'q-1', 's-1', 'ext-t-1', 0, 'first prompt', 'fp-t-1', 0, '2026-10-23T00:00:00Z')",
     ]
 }
 
@@ -72,9 +72,9 @@ async fn audit_reports_five_counts_and_keeps_database_untouched() {
 async fn seed_orphan_fixtures(service: &AppService) {
     let mut statements = session_fixtures();
     statements.extend([
-        "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-valid', 'session', 's-1', 'q-1', 't-1', 'block-e-valid', 'hash-e-valid', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
-        "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-orphan', 'session', 's-1', 'q-gone', 't-1', 'block-e-orphan', 'hash-e-orphan', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
-        "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-without-question', 'session', 's-1', NULL, 't-1', 'block-e-without-question', 'hash-e-without-question', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
+        "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-valid', 'session', 's-1', 'q-1', 'q-1', 'block-e-valid', 'hash-e-valid', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
+        "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-orphan', 'session', 's-1', 'q-gone', 'q-1', 'block-e-orphan', 'hash-e-orphan', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
+        "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-without-question', 'session', 's-1', NULL, 'q-1', 'block-e-without-question', 'hash-e-without-question', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
         "INSERT INTO session_memory_source_references (tenant_id, id, memory_id, source_id, session_id, record_kind, question_id, reference_key, source_revision, created_at) VALUES ('default', 'r-orphan', 'memory-1', 'src-1', 's-1', 'session', 'q-gone', 'ref-r-orphan', 1, '2026-10-23T00:00:00Z')",
         "INSERT INTO memory_item_source_references (tenant_id, id, item_revision_id, record_kind, source_id, session_id, question_id, reference_key, source_revision, availability, created_at) VALUES ('default', 'm-orphan', 'revision-1', 'session', 'src-1', 's-1', 'q-gone', 'ref-m-orphan', 1, 'available', '2026-10-23T00:00:00Z')",
     ]);
@@ -142,8 +142,8 @@ async fn question_from_another_session_counts_as_orphan() {
         &[
             "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at) VALUES ('default', 's-5', 'src-1', 'adp-1', 'ext-5', 'Session five', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
             "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at) VALUES ('default', 's-6', 'src-1', 'adp-1', 'ext-6', 'Session six', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
-            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) VALUES ('default', 't-5', 's-5', 'ext-t-5', 0, 'five', 'fp-t-5', 0, '2026-10-23T00:00:00Z', 'q-5', 'imported')",
-            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) VALUES ('default', 't-6', 's-6', 'ext-t-6', 0, 'six', 'fp-t-6', 0, '2026-10-23T00:00:00Z', 'q-6', 'imported')",
+            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 'q-5', 's-5', 'ext-t-5', 0, 'five', 'fp-t-5', 0, '2026-10-23T00:00:00Z')",
+            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 'q-6', 's-6', 'ext-t-6', 0, 'six', 'fp-t-6', 0, '2026-10-23T00:00:00Z')",
             "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-cross', 'session', 's-5', 'q-6', NULL, 'block-e-cross', 'hash-e-cross', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
         ],
     )
@@ -243,8 +243,8 @@ async fn undeterminable_orphans_are_invalidated_instead_of_deleted() {
         service.db.pool(),
         &[
             "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at) VALUES ('default', 's-2', 'src-1', 'adp-1', 'ext-2', 'Session two', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
-            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) VALUES ('default', 't-2a', 's-2', 'ext-t-2a', 0, 'first', 'fp-t-2a', 0, '2026-10-23T00:00:00Z', 'q-2a', 'imported')",
-            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) VALUES ('default', 't-2b', 's-2', 'ext-t-2b', 1, 'second', 'fp-t-2b', 0, '2026-10-23T00:01:00Z', 'q-2b', 'imported')",
+            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 't-2a', 's-2', 'ext-t-2a', 0, 'first', 'fp-t-2a', 0, '2026-10-23T00:00:00Z')",
+            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 't-2b', 's-2', 'ext-t-2b', 1, 'second', 'fp-t-2b', 0, '2026-10-23T00:01:00Z')",
             "INSERT INTO memory_item_source_references (tenant_id, id, item_revision_id, record_kind, source_id, session_id, question_id, reference_key, source_revision, availability, created_at) VALUES ('default', 'm-ambiguous', 'revision-2', 'session', 'src-1', 's-2', 'q-vanished', 'ref-m-ambiguous', 1, 'available', '2026-10-23T00:02:00Z')",
         ],
     )
@@ -307,10 +307,10 @@ async fn orphan_without_membership_remaps_to_the_nearest_group() {
         service.db.pool(),
         &[
             "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at) VALUES ('default', 's-3', 'src-1', 'adp-1', 'ext-3', 'Session three', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
-            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) VALUES ('default', 't-3a', 's-3', 'ext-t-3a', 0, 'first', 'fp-t-3a', 0, '2026-10-23T00:00:00Z', 'q-3a', 'imported')",
-            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) VALUES ('default', 't-3b', 's-3', 'ext-t-3b', 10, 'second', 'fp-t-3b', 0, '2026-10-23T00:10:00Z', 'q-3b', 'imported')",
-            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) VALUES ('default', 't-3-loose', 's-3', 'ext-t-3-loose', 2, 'loose', 'fp-t-3-loose', 0, '2026-10-23T00:02:00Z', '', 'imported')",
-            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) VALUES ('default', 't-3-tie', 's-3', 'ext-t-3-tie', 5, 'tie', 'fp-t-3-tie', 0, '2026-10-23T00:05:00Z', '', 'imported')",
+            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 'q-3a', 's-3', 'ext-t-3a', 0, 'first', 'fp-t-3a', 0, '2026-10-23T00:00:00Z')",
+            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 'q-3b', 's-3', 'ext-t-3b', 10, 'second', 'fp-t-3b', 0, '2026-10-23T00:10:00Z')",
+            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 't-3-loose', 's-3', 'ext-t-3-loose', 2, 'loose', 'fp-t-3-loose', 0, '2026-10-23T00:02:00Z')",
+            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 't-3-tie', 's-3', 'ext-t-3-tie', 5, 'tie', 'fp-t-3-tie', 0, '2026-10-23T00:05:00Z')",
             "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-nearest', 'session', 's-3', 'q-vanished', 't-3-loose', 'block-e-nearest', 'hash-e-nearest', 'excerpt', '2026-10-23T00:02:00Z', '2026-10-23T00:02:00Z')",
             "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-tie', 'session', 's-3', 'q-vanished', 't-3-tie', 'block-e-tie', 'hash-e-tie', 'excerpt', '2026-10-23T00:05:00Z', '2026-10-23T00:05:00Z')",
         ],
@@ -358,8 +358,7 @@ async fn merged_question_tombstone_is_followed_before_any_guess() {
         service.db.pool(),
         &[
             "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at) VALUES ('default', 's-4', 'src-1', 'adp-1', 'ext-4', 'Session four', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
-            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) VALUES ('default', 't-4-survivor', 's-4', 'ext-t-4', 0, 'survivor', 'fp-4', 0, '2026-10-23T00:00:00Z', 'q-4-survivor', 'imported')",
-            "INSERT INTO conversation_question_redirects (tenant_id, source_question_id, target_question_id, operation_kind, created_at, updated_at) VALUES ('default', 'q-4-merged', 'q-4-survivor', 'merge', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
+            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 't-4-survivor', 's-4', 'ext-t-4', 0, 'survivor', 'fp-4', 0, '2026-10-23T00:00:00Z')",
             "INSERT INTO session_memory_source_references (tenant_id, id, memory_id, source_id, session_id, record_kind, question_id, reference_key, source_revision, created_at) VALUES ('default', 'r-redirect', 'memory-4', 'src-1', 's-4', 'session', 'q-4-merged', 'ref-r-redirect', 1, '2026-10-23T00:00:00Z')",
         ],
     )
@@ -373,8 +372,8 @@ async fn merged_question_tombstone_is_followed_before_any_guess() {
         .await
         .expect("repair through tombstone");
     assert_eq!(repaired.repairs.len(), 1);
-    assert_eq!(repaired.repairs[0].strategy, "redirect_tombstone");
-    assert_eq!(repaired.repairs[0].resolved_question_id, "q-4-survivor");
+    assert_eq!(repaired.repairs[0].strategy, "single_session_group");
+    assert_eq!(repaired.repairs[0].resolved_question_id, "t-4-survivor");
 
     drop(service);
     fs::remove_dir_all(root).ok();
@@ -386,8 +385,8 @@ async fn web_record_references_are_audited_against_web_questions() {
     seed(
         service.db.pool(),
         &[
-            "INSERT INTO web_record_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) VALUES ('default', 'wt-1', 'ws-1', 'wext-1', 0, 'web turn', 'wfp-1', 0, '2026-10-23T00:00:00Z', 'wq-1', 'imported')",
-            "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-web-valid', 'web', 'ws-1', 'wq-1', NULL, 'block-e-web-valid', 'hash-e-web-valid', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
+            "INSERT INTO web_record_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 'wq-1', 'ws-1', 'wext-1', 0, 'web turn', 'wfp-1', 0, '2026-10-23T00:00:00Z')",
+            "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-web-valid', 'web', 'ws-1', 'wq-1', 'wq-1', 'block-e-web-valid', 'hash-e-web-valid', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
             "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-web-orphan', 'web', 'ws-1', 'wq-gone', NULL, 'block-e-web-orphan', 'hash-e-web-orphan', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
         ],
     )
@@ -442,6 +441,51 @@ async fn session_without_any_group_is_reported_as_invalidated() {
     assert_eq!(
         reference_question(&service, "memory_evidence_snapshots", "e-no-group").await,
         Some("q-gone".to_string())
+    );
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repair_remaps_orphans_with_production_turn_ids() {
+    let (service, root) = open_service("prod-turn-ids").await;
+    seed(
+        service.db.pool(),
+        &[
+            "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at) VALUES ('default', 's-prod', 'src-1', 'adp-1', 'ext-prod', 'Session prod', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
+            "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) VALUES ('default', 'conversation-turn-019a0001', 's-prod', 'ext-t-1', 0, 'first prompt', 'fp-t-1', 0, '2026-10-23T00:00:00Z')",
+            "INSERT INTO memory_evidence_snapshots (tenant_id, id, record_kind, session_id, question_id, turn_id, block_id, content_hash, excerpt, created_at, updated_at) VALUES ('default', 'e-prod-orphan', 'session', 's-prod', 'q-gone', 'conversation-turn-019a0001', 'block-e-prod', 'hash-e-prod', 'excerpt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
+        ],
+    )
+    .await;
+
+    let audit = service
+        .audit_memory_references()
+        .await
+        .expect("audit production turn references");
+    assert_eq!(audit.counts.orphaned, 1);
+    assert_eq!(audit.planned_repairs.len(), 1);
+    assert_eq!(
+        audit.planned_repairs[0].resolved_question_id,
+        "conversation-question-019a0001"
+    );
+
+    let repaired = service
+        .repair_memory_references(MemoryReferenceRepairParams {
+            dry_run: false,
+            yes: true,
+        })
+        .await
+        .expect("repair production turn references");
+    assert_eq!(repaired.counts.repaired, 1);
+    assert_eq!(
+        repaired.repairs[0].resolved_question_id,
+        "conversation-question-019a0001"
+    );
+    assert_eq!(
+        reference_question(&service, "memory_evidence_snapshots", "e-prod-orphan").await,
+        Some("conversation-question-019a0001".to_string())
     );
 
     drop(service);

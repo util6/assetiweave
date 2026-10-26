@@ -60,13 +60,9 @@ pub async fn import_web_record_sessions_sqlx(
                 load_web_record_part_translation_state_sqlx_tx(&mut tx, tenant_id, &session.id)
                     .await
                     .map_err(StoreError::external)?;
-            let existing_question_assignments =
-                load_web_record_turn_question_assignments_sqlx_tx(&mut tx, tenant_id, &session.id)
-                    .await?;
             delete_web_record_session_sqlx_tx(&mut tx, tenant_id, &session.id).await?;
             insert_web_record_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
 
-            let mut stored_turns = Vec::new();
             for turn in &normalized.turns {
                 if turn.user_text.trim().is_empty() {
                     warning_count += 1;
@@ -90,17 +86,7 @@ pub async fn import_web_record_sessions_sqlx(
                     &translation_state,
                 )
                 .await?;
-                stored_turns.push(stored_turn);
             }
-            insert_web_record_questions_sqlx_tx(
-                &mut tx,
-                tenant_id,
-                &session.id,
-                &stored_turns,
-                &existing_question_assignments,
-                &now,
-            )
-            .await?;
             insert_conversation_sync_delta_sqlx_tx(
                 &mut tx,
                 tenant_id,

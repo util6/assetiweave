@@ -96,56 +96,113 @@ pub async fn resolve_conversation_session_id_prefix_sqlx(
     Ok(rows[0].clone())
 }
 
-/// 分组标识 → 完整标识。候选集来自轮次列，并额外并入跳转表里的墓碑标识，
-/// 使合并前的旧标识继续解析到幸存分组。
+/// 分组标识 → 完整标识。通过轮次 ID 确定性解析。
 pub async fn resolve_conversation_question_id_prefix_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     prefix_or_id: &str,
 ) -> StoreResult<String> {
-    if prefix_or_id.len() >= 86 && prefix_or_id.starts_with("conversation-question-") {
-        return resolve_conversation_question_redirect_pool_sqlx(pool, tenant_id, prefix_or_id)
-            .await;
+    let trimmed = prefix_or_id.trim();
+    if trimmed.is_empty() {
+        return Err(StoreError::Validation(
+            "question identifier cannot be empty".to_string(),
+        ));
     }
-    let clean_prefix = prefix_or_id
-        .strip_prefix("conversation-question-")
-        .unwrap_or(prefix_or_id);
-    let like_pattern_verbatim = format!("{}%", prefix_or_id);
-    let like_pattern_domain = format!("conversation-question-{}%", clean_prefix);
 
-    let rows: Vec<String> = sqlx::query_scalar(
-        r#"
-        WITH candidates AS (
-            SELECT question_id AS id
-            FROM conversation_turns
-            WHERE tenant_id = ?1 AND (question_id = ?2 OR question_id LIKE ?3 OR question_id LIKE ?4)
-            UNION
-            SELECT source_question_id AS id
-            FROM conversation_question_redirects
-            WHERE tenant_id = ?1
-              AND (source_question_id = ?2 OR source_question_id LIKE ?3 OR source_question_id LIKE ?4)
-        )
-        SELECT id FROM candidates LIMIT 11
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(prefix_or_id)
-    .bind(&like_pattern_verbatim)
-    .bind(&like_pattern_domain)
-    .fetch_all(pool)
-    .await
-    .map_err(StoreError::external)?;
-
-    if rows.is_empty() {
+    if trimmed.starts_with("conversation-turn-")
+        || trimmed.starts_with("web-record-turn-")
+        || trimmed.starts_with("turn-")
+        || trimmed.starts_with("conversation-session-")
+        || trimmed.starts_with("web-record-session-")
+        || trimmed.starts_with("session-")
+        || trimmed.starts_with("conversation-part-")
+        || trimmed.starts_with("web-record-part-")
+        || trimmed.starts_with("part-")
+    {
         return Err(StoreError::NotFound(format!(
             "no question matches prefix {:?}",
             prefix_or_id
         )));
     }
+
+    let (clean_prefix, allow_conversation, allow_web) =
+        if let Some(stripped) = trimmed.strip_prefix("conversation-question-") {
+            (stripped, true, false)
+        } else if let Some(stripped) = trimmed.strip_prefix("question-") {
+            (stripped, true, false)
+        } else if let Some(stripped) = trimmed.strip_prefix("web-record-question-") {
+            (stripped, false, true)
+        } else if let Some(stripped) = trimmed.strip_prefix("web-question-") {
+            (stripped, false, true)
+        } else {
+            (trimmed, true, true)
+        };
+
     let mut matched = BTreeSet::new();
-    for row in &rows {
-        matched
-            .insert(resolve_conversation_question_redirect_pool_sqlx(pool, tenant_id, row).await?);
+
+    if allow_conversation {
+        let like_verbatim = format!("{}%", trimmed);
+        let like_turn = format!("conversation-turn-{}%", clean_prefix);
+        let rows: Vec<String> = sqlx::query_scalar(
+            r#"
+            SELECT id
+            FROM conversation_turns
+            WHERE tenant_id = ?1
+              AND (id = ?2 OR id LIKE ?3 OR id LIKE ?4)
+            LIMIT 11
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(format!("conversation-turn-{}", clean_prefix))
+        .bind(&like_verbatim)
+        .bind(&like_turn)
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::external)?;
+
+        for row in rows {
+            let qid = crate::backend::domain::conversations::derive_question_id_from_turn_id(
+                "conversation-question",
+                &row,
+            );
+            matched.insert(qid);
+        }
+    }
+
+    if allow_web {
+        let like_verbatim = format!("{}%", trimmed);
+        let like_turn = format!("web-record-turn-{}%", clean_prefix);
+        let rows: Vec<String> = sqlx::query_scalar(
+            r#"
+            SELECT id
+            FROM web_record_turns
+            WHERE tenant_id = ?1
+              AND (id = ?2 OR id LIKE ?3 OR id LIKE ?4)
+            LIMIT 11
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(format!("web-record-turn-{}", clean_prefix))
+        .bind(&like_verbatim)
+        .bind(&like_turn)
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::external)?;
+
+        for row in rows {
+            let qid = crate::backend::domain::conversations::derive_question_id_from_turn_id(
+                "web-record-question",
+                &row,
+            );
+            matched.insert(qid);
+        }
+    }
+
+    if matched.is_empty() {
+        return Err(StoreError::NotFound(format!(
+            "no question matches prefix {:?}",
+            prefix_or_id
+        )));
     }
     if matched.len() > 1 {
         let examples = matched

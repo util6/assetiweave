@@ -73,6 +73,4 @@ fn test_conversations_module_exports_expected_commands() {
     let _ = get_conversation_question;
     let _ = list_conversation_blocks;
     let _ = get_conversation_block;
-    let _ = merge_conversation_questions;
-    let _ = split_conversation_question;
 }

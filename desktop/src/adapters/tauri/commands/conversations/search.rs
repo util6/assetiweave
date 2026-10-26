@@ -8,8 +8,8 @@ use crate::backend::application::prelude::*;
 use crate::backend::application::AppResult as RuntimeAppResult;
 use crate::backend::application::{
     BackgroundTaskGetParams, ConversationBlockGetParams, ConversationBlockListParams,
-    ConversationQuestionGetParams, ConversationQuestionListParams, ConversationQuestionMergeParams,
-    ConversationQuestionSplitParams, ConversationSearchParams, ConversationSearchResult,
+    ConversationQuestionGetParams, ConversationQuestionListParams, ConversationSearchParams,
+    ConversationSearchResult,
 };
 use crate::backend::domain::{AppErrorView, ConversationSearchIndexStatus};
 
@@ -194,25 +194,5 @@ pub(crate) async fn get_conversation_block(
 ) -> RuntimeAppResult<crate::backend::domain::ConversationBlockDetail> {
     AppService::from_runtime(&state.runtime)
         .get_conversation_block(params)
-        .await
-}
-
-#[tauri::command]
-pub(crate) async fn merge_conversation_questions(
-    state: State<'_, AppState>,
-    params: ConversationQuestionMergeParams,
-) -> RuntimeAppResult<crate::backend::domain::ConversationMutationResult> {
-    AppService::from_runtime(&state.runtime)
-        .merge_conversation_questions(params)
-        .await
-}
-
-#[tauri::command]
-pub(crate) async fn split_conversation_question(
-    state: State<'_, AppState>,
-    params: ConversationQuestionSplitParams,
-) -> RuntimeAppResult<crate::backend::domain::ConversationMutationResult> {
-    AppService::from_runtime(&state.runtime)
-        .split_conversation_question(params)
         .await
 }

@@ -293,37 +293,6 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation block get <block-id>")
     ),
     command!(
-        "conversation.question.merge",
-        "conversation.question.merge",
-        "Merge adjacent conversation question groups",
-        Write,
-        Friendly,
-        true,
-        crate::backend::application::ConversationQuestionMergeParams,
-        ServiceAsync => |service, params| service.merge_conversation_questions(params).await,
-        &[
-            param!("question_ids", "Adjacent question identifiers in session order", ["questionIds"]),
-            param!("dry_run", "Preview without merging", ["dryRun"]),
-        ],
-        Some("assetiweave-cli conversation question merge <question-id>...")
-    ),
-    command!(
-        "conversation.question.split",
-        "conversation.question.split",
-        "Split a conversation question group before a turn",
-        Write,
-        Friendly,
-        true,
-        crate::backend::application::ConversationQuestionSplitParams,
-        ServiceAsync => |service, params| service.split_conversation_question(params).await,
-        &[
-            param!("question_id", "Question identifier", ["questionId"]),
-            param!("before_turn_id", "Turn identifier that starts the new question", ["beforeTurnId"]),
-            param!("dry_run", "Preview without splitting", ["dryRun"]),
-        ],
-        Some("assetiweave-cli conversation question split <question-id> --before-turn <turn-id>")
-    ),
-    command!(
         "translate_conversation_card",
         "conversation.card.translation.run",
         "Translate a conversation content card with the configured translation provider",
@@ -611,37 +580,6 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         crate::backend::application::ConversationBlockGetParams,
         ServiceAsync => |service, params| service.get_conversation_block(params).await,
         &[param!("block_id", "Block identifier", ["blockId"])],
-        None
-    ),
-    command!(
-        "merge_conversation_questions",
-        "conversation.question.merge",
-        "Merge adjacent conversation question groups",
-        Write,
-        App,
-        false,
-        crate::backend::application::ConversationQuestionMergeParams,
-        ServiceAsync => |service, params| service.merge_conversation_questions(params).await,
-        &[
-            param!("question_ids", "Adjacent question identifiers in session order", ["questionIds"]),
-            param!("dry_run", "Preview without merging", ["dryRun"]),
-        ],
-        None
-    ),
-    command!(
-        "split_conversation_question",
-        "conversation.question.split",
-        "Split a conversation question group before a turn",
-        Write,
-        App,
-        false,
-        crate::backend::application::ConversationQuestionSplitParams,
-        ServiceAsync => |service, params| service.split_conversation_question(params).await,
-        &[
-            param!("question_id", "Question identifier", ["questionId"]),
-            param!("before_turn_id", "Turn identifier that starts the new question", ["beforeTurnId"]),
-            param!("dry_run", "Preview without splitting", ["dryRun"]),
-        ],
         None
     ),
 ];

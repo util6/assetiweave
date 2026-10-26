@@ -114,7 +114,11 @@ async fn load_orphans(
                     SELECT 1 FROM {turns} t \
                     WHERE t.tenant_id = r.tenant_id \
                       AND t.session_id = r.session_id \
-                      AND t.question_id = r.question_id \
+                      AND ( \
+                          t.id = r.question_id \
+                          OR (?2 = 'session' AND t.id = 'conversation-turn-' || substr(r.question_id, 23)) \
+                          OR (?2 = 'web' AND t.id = 'web-record-turn-' || substr(r.question_id, 21)) \
+                      ) \
                 )"
         );
         let found =

@@ -16,7 +16,6 @@ import {
   ChevronRight,
   Download,
   Folder,
-  GitMerge,
   Layers3,
   PackageCheck,
   PanelLeftClose,
@@ -119,9 +118,7 @@ import {
   listConversationAdapters,
   listConversationSessions,
   listWebRecordSessions,
-  mergeConversationQuestions,
   searchConversationRecords,
-  splitConversationQuestion,
   startConversationPartIndexRebuild,
 } from "../../services/conversations";
 import { selectTargetDirectory } from "../../services/catalog";
@@ -274,7 +271,6 @@ export function ConversationsPage({
     toggleContentSearchCardKind,
     toggleContentSearchSemanticRole,
     toggleQuestionSelection,
-    updateQuestionSelectionAfterMerge,
     updateContentVisibility,
   } = useConversationsController({ recordKind: currentRecordKind });
   const { startSync, taskFor } = conversationSync;
@@ -1000,42 +996,6 @@ export function ConversationsPage({
     }
   }
 
-  async function handleMerge(
-    previous: ConversationQuestionDetail,
-    current: ConversationQuestionDetail,
-  ) {
-    try {
-      await mergeConversationQuestions(
-        [previous.question.id, current.question.id],
-        false,
-      );
-      selectQuestion(previous.question.id);
-      updateQuestionSelectionAfterMerge(
-        previous.question.id,
-        current.question.id,
-      );
-      onNotify({ messageKey: "conversation.status.merged", tone: "success" });
-      if (selectedSessionId) await loadSession(selectedSessionId);
-      await refreshSessions();
-    } catch (error) {
-      onNotifyError(errorMessage(error));
-    }
-  }
-
-  async function handleSplit(
-    question: ConversationQuestionDetail,
-    turnId: string,
-  ) {
-    try {
-      await splitConversationQuestion(question.question.id, turnId, false);
-      onNotify({ messageKey: "conversation.status.split", tone: "success" });
-      if (selectedSessionId) await loadSession(selectedSessionId);
-      await refreshSessions();
-    } catch (error) {
-      onNotifyError(errorMessage(error));
-    }
-  }
-
   function openExportDialog(
     mode: ConversationExportMode,
     questionIds: string[] = [],
@@ -1466,13 +1426,11 @@ export function ConversationsPage({
           contentCardColors={appSettings.conversations.contentCardColors}
           onExport={() => openExportDialog("session")}
           onCopyError={onNotifyError}
-          onMerge={webRecordMode ? undefined : handleMerge}
           onPickOutputRoot={() =>
             selectTargetDirectory(t("conversation.export.pickOutputRoot"))
           }
           onQuestionSelect={selectQuestion}
           onQuestionSelectionChange={handleQuestionSelectionChange}
-          onSplit={webRecordMode ? undefined : handleSplit}
           columnMinWidth={appSettings.columnMinWidth}
           outputRoot={outputRoot}
           question={selectedQuestion}
@@ -2559,11 +2517,9 @@ export function SessionQuestionWorkspace({
   contentCardColors,
   onExport,
   onCopyError,
-  onMerge,
   onPickOutputRoot,
   onQuestionSelect,
   onQuestionSelectionChange,
-  onSplit,
   outputRoot,
   question,
   questions,
@@ -2583,17 +2539,9 @@ export function SessionQuestionWorkspace({
   contentCardColors: ConversationContentCardColorSettings;
   onExport: () => void;
   onCopyError?: (message: string) => void;
-  onMerge?: (
-    previous: ConversationQuestionDetail,
-    current: ConversationQuestionDetail,
-  ) => Promise<void>;
   onPickOutputRoot: () => Promise<string | null>;
   onQuestionSelect: (questionId: string) => void;
   onQuestionSelectionChange: (questionId: string, checked: boolean) => void;
-  onSplit?: (
-    question: ConversationQuestionDetail,
-    turnId: string,
-  ) => Promise<void>;
   outputRoot: string;
   question: ConversationQuestionDetail | null;
   questions: ConversationQuestionDetail[];
@@ -2633,7 +2581,6 @@ export function SessionQuestionWorkspace({
           onExport={onExport}
           onCopyError={onCopyError}
           onPickOutputRoot={onPickOutputRoot}
-          onSplit={onSplit}
           outputRoot={outputRoot}
           question={question}
           questionListToggle={
@@ -2723,34 +2670,18 @@ export function SessionQuestionWorkspace({
                   ? new Set([selectedQuestionListKey])
                   : undefined
               }
-              renderItem={(item) => {
-                const sessionQuestionIndex = session.questions.findIndex(
-                  (candidate) => candidate.question.id === item.question.id,
-                );
-                const previousQuestion =
-                  sessionQuestionIndex > 0
-                    ? session.questions[sessionQuestionIndex - 1]
-                    : null;
-                return (
-                  <QuestionListItem
-                    onMergeWithPrevious={
-                      previousQuestion && onMerge
-                        ? () => void onMerge(previousQuestion, item)
-                        : undefined
-                    }
-                    onSelect={() => onQuestionSelect(item.question.id)}
-                    onSelectionChange={(checked) =>
-                      onQuestionSelectionChange(item.question.id, checked)
-                    }
-                    question={item}
-                    selected={item.question.id === selectedQuestionId}
-                    selectedForExport={selectedQuestionIds.has(
-                      item.question.id,
-                    )}
-                    t={t}
-                  />
-                );
-              }}
+              renderItem={(item) => (
+                <QuestionListItem
+                  onSelect={() => onQuestionSelect(item.question.id)}
+                  onSelectionChange={(checked) =>
+                    onQuestionSelectionChange(item.question.id, checked)
+                  }
+                  question={item}
+                  selected={item.question.id === selectedQuestionId}
+                  selectedForExport={selectedQuestionIds.has(item.question.id)}
+                  t={t}
+                />
+              )}
               scrollElementRef={questionListScrollRef}
               size="compact"
             />
@@ -2823,7 +2754,6 @@ function QuestionListToggleButton({
 }
 
 function QuestionListItem({
-  onMergeWithPrevious,
   onSelect,
   onSelectionChange,
   question,
@@ -2831,7 +2761,6 @@ function QuestionListItem({
   selectedForExport,
   t,
 }: {
-  onMergeWithPrevious?: () => void;
   onSelect: () => void;
   onSelectionChange: (checked: boolean) => void;
   question: ConversationQuestionDetail;
@@ -2885,15 +2814,6 @@ function QuestionListItem({
           </p>
         </button>
       </div>
-      {onMergeWithPrevious ? (
-        <div className="px-4 pb-3 pl-14">
-          <ToolbarTextButton
-            icon={<GitMerge size={15} />}
-            label={t("conversation.question.mergePrevious")}
-            onClick={onMergeWithPrevious}
-          />
-        </div>
-      ) : null}
     </article>
   );
 }
@@ -2905,7 +2825,6 @@ export function QuestionPreview({
   onExport,
   onCopyError,
   onPickOutputRoot,
-  onSplit,
   outputRoot,
   question,
   questionListToggle,
@@ -2923,10 +2842,6 @@ export function QuestionPreview({
   onExport?: () => void;
   onCopyError?: (message: string) => void;
   onPickOutputRoot?: () => Promise<string | null>;
-  onSplit?: (
-    question: ConversationQuestionDetail,
-    turnId: string,
-  ) => Promise<void>;
   outputRoot?: string;
   question: ConversationQuestionDetail;
   questionListToggle?: ReactNode;
@@ -3141,11 +3056,6 @@ export function QuestionPreview({
                   model={model}
                   onCopyError={onCopyError}
                   onCommandPartsVisible={handleCommandPartsVisible}
-                  onSplit={
-                    onSplit
-                      ? (turnId) => void onSplit(question, turnId)
-                      : undefined
-                  }
                   recordKind={recordKind}
                   resultPreviewLineLimit={resultPreviewLineLimit}
                   t={t}
