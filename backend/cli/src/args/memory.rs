@@ -37,7 +37,16 @@ pub struct MemoryRecentArgs {
 #[derive(Subcommand, Debug)]
 pub enum MemoryRecentCommand {
     #[command(about = "Get recent memory state and snapshot")]
-    Get,
+    Get(MemoryRecentGetArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct MemoryRecentGetArgs {
+    #[arg(
+        long,
+        help = "specific date snapshot, e.g. 2026-10-26 (defaults to latest)"
+    )]
+    pub date: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -91,7 +100,10 @@ pub enum MemoryProjectCommand {
 #[derive(Args, Debug)]
 pub struct MemoryProjectGetArgs {
     #[arg(help = "project path")]
-    pub project_path: String,
+    pub project_path: Option<String>,
+
+    #[arg(long, help = "use current working directory as project scope")]
+    pub current_project: bool,
 }
 
 #[derive(Args, Debug)]

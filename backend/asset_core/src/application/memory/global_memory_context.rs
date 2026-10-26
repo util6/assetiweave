@@ -11,7 +11,115 @@ impl AppService {
         let token_budget = params.token_budget.unwrap_or(2_000).clamp(64, 32_000);
         let project_path = self
             .resolve_context_project_path(params.project_path.as_deref())
-            .await?;
+            .await?
+            .or(params.project_path);
+        let tenant_id = self.tenant_id().to_string();
+        let storage = crate::backend::domain::memory::storage::MemoryStorage::new(&tenant_id);
+
+        let mut sections = Vec::new();
+        let mut references = Vec::new();
+
+        // 1. Global Memory (MEMORY.md)
+        if let Ok(Some(global_content)) = storage.read_markdown("MEMORY.md") {
+            if !global_content.trim().is_empty() {
+                sections.push(format!(
+                    "## 全局长期记忆 (Global Memory)\n{}",
+                    global_content.trim()
+                ));
+                references.push(MemoryContextReference {
+                    kind: "global_memory".to_string(),
+                    id: "MEMORY.md".to_string(),
+                    source_revision: None,
+                    session_id: None,
+                });
+            }
+        }
+
+        // 2. Project Memory (projects/<slug>.md)
+        let proj_slug = project_path
+            .as_deref()
+            .map(crate::backend::application::memory::project_path_to_slug);
+        if let (Some(proj), Some(slug)) = (project_path.as_deref(), proj_slug.as_ref()) {
+            let rel_path = format!("projects/{}.md", slug);
+            if let Ok(Some(proj_content)) = storage.read_markdown(&rel_path) {
+                if !proj_content.trim().is_empty() {
+                    sections.push(format!(
+                        "## 项目记忆: {} (Project Memory)\n{}",
+                        proj,
+                        proj_content.trim()
+                    ));
+                    references.push(MemoryContextReference {
+                        kind: "project_memory".to_string(),
+                        id: rel_path,
+                        source_revision: None,
+                        session_id: None,
+                    });
+                }
+            }
+        }
+
+        // 3. Recent Work (recent/latest.md)
+        if let Ok(Some(recent_content)) = storage.read_markdown("recent/latest.md") {
+            if !recent_content.trim().is_empty() {
+                sections.push(format!(
+                    "## 近期研发进展 (Recent Work)\n{}",
+                    recent_content.trim()
+                ));
+                references.push(MemoryContextReference {
+                    kind: "recent_memory".to_string(),
+                    id: "recent/latest.md".to_string(),
+                    source_revision: None,
+                    session_id: None,
+                });
+            }
+        }
+
+        if !sections.is_empty() {
+            let full_text = sections.join("\n\n");
+            let char_budget = token_budget * 4;
+            let text = if full_text.len() > char_budget {
+                format!(
+                    "{}\n\n...[truncated due to token budget]",
+                    &full_text[..char_budget]
+                )
+            } else {
+                full_text
+            };
+            let estimated_tokens = (text.len() + 3) / 4;
+            let mut hasher = Sha256::new();
+            Digest::update(&mut hasher, text.as_bytes());
+            let revision = format!("{:x}", Digest::finalize(hasher));
+
+            let compiled = MemoryContextResult {
+                text,
+                revision,
+                generated_at: Some(chrono::Utc::now().to_rfc3339()),
+                estimated_tokens,
+                token_budget,
+                references,
+                global_version: None,
+                project_version: None,
+                project_sources: Vec::new(),
+            };
+
+            if self.backend_settings()?.is_memory_usage_enabled() {
+                let used_at = Utc::now().to_rfc3339();
+                for reference in &compiled.references {
+                    store::record_memory_usage_event_sqlx(
+                        self.db.pool(),
+                        &tenant_id,
+                        &reference.kind,
+                        &reference.id,
+                        "context",
+                        &compiled.revision,
+                        &used_at,
+                    )
+                    .await?;
+                }
+            }
+            return Ok(compiled);
+        }
+
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let query = params.query.unwrap_or_default();

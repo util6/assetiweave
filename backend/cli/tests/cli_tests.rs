@@ -304,6 +304,44 @@ fn test_memory_recent_get() {
 }
 
 #[test]
+fn test_memory_project_get() {
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .args([
+            "memory",
+            "project",
+            "get",
+            "--current-project",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+}
+
+#[test]
+fn test_memory_context_resolve() {
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .args([
+            "memory",
+            "context",
+            "resolve",
+            "--current-project",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+}
+
+#[test]
 fn test_completion() {
     let mut cmd = aiwc_command();
     let assert = cmd.args(["completion", "bash"]).assert().success();

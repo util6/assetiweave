@@ -47,6 +47,9 @@ description: 通过 AssetIWeave 的统一 Memory API 与会话逐级取证体系
 | 单卡正文 | `aiwc conversation card get <card_id>` | O(1) 直读正文；`--raw` 直接输出纯文本到 stdout |
 | 定位会话 | `aiwc conversation list [--window 24h]` | 人读表格，用于拿到短 ID |
 | 跨会话检索 | `aiwc conversation search --query <q>` | 关键词命中卡片 |
+| 记忆上下文（组装） | `aiwc memory context resolve --current-project [--query <q>] [--token-budget 2000]` | 从 `MEMORY.md`、当前项目的 `projects/<slug>.md` 与 `recent/latest.md` 组装返回有界 Markdown 上下文 |
+| 近期工作（Recent） | `aiwc memory recent get [--date <YYYY-MM-DD>]` | 直读 `recent/latest.md`（或指定日期文件），查看最新思维分支与闭环任务 |
+| 项目记忆（Project） | `aiwc memory project get <project_path> / --current-project` | 直读 `projects/<slug>.md` 悬空叶子池，查看当前项目尚未探索的思维分支 |
 
 - `card get` 默认输出 `{card_id, session_id, turn_id, kind, label?, status?, content}`；加 `--raw` 则只吐 `content` 纯文本，适合管道与代码/日志提取。
 

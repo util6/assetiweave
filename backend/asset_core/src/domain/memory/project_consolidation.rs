@@ -104,6 +104,8 @@ pub struct ProjectConsolidationResult {
 pub struct L2ProjectMemoryView {
     pub project_key: String,
     pub project_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
     pub items: Vec<L2MemoryItemView>,
     pub last_successful_consolidation_at: Option<String>,
     pub revision_hash: String,
