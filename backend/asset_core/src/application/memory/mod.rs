@@ -30,9 +30,12 @@ pub mod project_memory;
 pub mod project_memory_documents;
 pub mod recent;
 pub mod reference_audit;
+pub mod session_branch_workflow;
 pub mod session_coordinator;
 pub mod session_memory;
 pub mod types;
+
+pub use session_branch_workflow::*;
 
 pub use activity_watchdog::{
     run_with_activity_watchdog, ActivityWatchdogConfig, WatchdogTimeoutKind,

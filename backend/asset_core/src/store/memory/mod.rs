@@ -12,6 +12,7 @@ pub mod recent_snapshot_fixtures;
 pub mod recent_snapshot_jobs;
 pub mod recent_snapshot_repo;
 pub mod session_memory_repo;
+pub mod watermark_repo;
 
 pub use global_memory_jobs::*;
 pub use global_memory_repo::*;
@@ -23,3 +24,4 @@ pub use project_memory_jobs::*;
 pub use project_memory_repo::*;
 pub use recent_snapshot_repo::*;
 pub use session_memory_repo::*;
+pub use watermark_repo::*;
