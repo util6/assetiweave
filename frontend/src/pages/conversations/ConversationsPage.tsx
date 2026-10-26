@@ -3086,12 +3086,19 @@ export function QuestionPreview({
             >
               {session.session.title || t("conversation.session.untitled")}
             </h2>
-            {recordKind !== "web" && (session.session.project_path || session.session.last_cwd) ? (
+            {recordKind !== "web" &&
+            (session.session.project_path || session.session.last_cwd) ? (
               <span
                 className="hidden truncate font-mono text-code-xs text-on-surface-muted sm:inline-block"
-                title={session.session.project_path || session.session.last_cwd || ""}
+                title={
+                  session.session.project_path || session.session.last_cwd || ""
+                }
               >
-                {abbreviateHomePath(session.session.project_path || session.session.last_cwd || "")}
+                {abbreviateHomePath(
+                  session.session.project_path ||
+                    session.session.last_cwd ||
+                    "",
+                )}
               </span>
             ) : null}
           </div>
