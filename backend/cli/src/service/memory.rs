@@ -1,10 +1,9 @@
 use anyhow::{Context, Result};
 use asset_core::application::AppService;
 use asset_core::application::{
-    MemoryContextResolveParams, MemoryProjectGetParams, MemoryRecallSearchParams,
-    MemoryRecallSessionCreateParams, MemoryRecallSessionGetParams, MemoryRecallTurnCancelParams,
-    MemoryRecallTurnSendParams, MemoryScopeRebuildParams, MemoryTaskGetParams,
-    MemoryTaskListParams, MemoryTaskRetryParams,
+    MemoryContextResolveParams, MemoryRecallSearchParams, MemoryRecallSessionCreateParams,
+    MemoryRecallSessionGetParams, MemoryRecallTurnCancelParams, MemoryRecallTurnSendParams,
+    MemoryScopeRebuildParams, MemoryTaskGetParams, MemoryTaskListParams, MemoryTaskRetryParams,
 };
 use asset_core::domain::MemoryScope;
 use serde_json::Value;
@@ -18,13 +17,13 @@ impl<'a> MemoryOperations<'a> {
         Self { app_service }
     }
 
-    pub async fn get_recent_snapshot(&self) -> Result<Value> {
-        let snapshot = self
+    pub async fn get_recent_snapshot(&self, date: Option<String>) -> Result<Value> {
+        let view = self
             .app_service
-            .get_recent_memory_snapshot()
+            .get_recent_memory_markdown_view(date.as_deref())
             .await
-            .context("failed to get recent memory snapshot")?;
-        Ok(serde_json::to_value(snapshot)?)
+            .context("failed to get recent memory markdown")?;
+        Ok(serde_json::to_value(view)?)
     }
 
     pub async fn resolve_context(
@@ -47,13 +46,12 @@ impl<'a> MemoryOperations<'a> {
     }
 
     pub async fn get_project(&self, project_path: String) -> Result<Value> {
-        let params = MemoryProjectGetParams { project_path };
-        let result = self
+        let view = self
             .app_service
-            .get_memory_project(params)
+            .get_project_memory_markdown_view(&project_path)
             .await
-            .context("failed to get memory project")?;
-        Ok(serde_json::to_value(result)?)
+            .context("failed to get project memory markdown")?;
+        Ok(serde_json::to_value(view)?)
     }
 
     pub async fn rebuild(&self, params: MemoryScopeRebuildParams) -> Result<Value> {

@@ -45,5 +45,11 @@ description: AssetIWeave 后台记忆提取与结构化沉淀生成模板
 ## 8. 工具读取步骤
 优先消费 Work Order 首包中已下发的有界证据；仅在存在关键缺失信息时，按需调用有界读取工具补读证据片段。
 
-## 9. 输出要求
-严格只返回符合 `MemoryGenerationResult` JSON Schema 的纯 JSON 对象，严禁包含任何 Markdown 格式包裹、代码块反引号或解释文字。
+## 9. 产物规范与思维分支格式 (Markdown-First & Branch Format)
+在 Markdown 优先工作流中，生成结果包含两类高信号分支条目：
+1. `## 🍂 待探索的悬空叶子节点 (Unexplored Branches)`：探索了备选方案但本会话未展开、待后续探索的分支；
+2. `## ✅ 已完成的闭环任务 (Completed Tasks)`：本会话已彻底解决并完成验证的闭环事项。
+
+每一项条目必须采用精准锚点格式：
+`- [<short_id>#T<turn_index>](aiwc://session/<short_id>/turn/<turn_index>): <标题/简述>`
+产物由工作流统一沉淀至 `recent/latest.md`、`projects/<slug>.md` 与 `MEMORY.md`，可直接通过 `aiwc memory recent get` 与 `aiwc memory project get --current-project` 消费。

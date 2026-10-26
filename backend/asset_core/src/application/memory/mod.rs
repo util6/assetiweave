@@ -13,6 +13,7 @@ pub mod memory_generation_tools;
 pub mod memory_maintenance_coordinator;
 pub mod memory_maintenance_runner;
 pub mod memory_markdown_pipeline;
+pub mod memory_markdown_views;
 pub mod memory_pipeline;
 pub mod memory_pipeline_query;
 pub mod memory_pipeline_stage1;
@@ -39,6 +40,7 @@ pub mod session_memory;
 pub mod types;
 
 pub use memory_markdown_pipeline::*;
+pub use memory_markdown_views::*;
 pub use memory_workflow_global::*;
 pub use memory_workflow_recent_project::*;
 pub use session_branch_workflow::*;

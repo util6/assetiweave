@@ -12,8 +12,8 @@ pub async fn handle_memory(args: MemoryArgs, _format: OutputFormat) -> Result<()
     let service = CliService::bootstrap().await?;
     match args.command {
         MemoryCommand::Recent(r) => match r.command {
-            MemoryRecentCommand::Get => {
-                let res = service.memory().get_recent_snapshot().await?;
+            MemoryRecentCommand::Get(g) => {
+                let res = service.memory().get_recent_snapshot(g.date).await?;
                 render::render_json_value(&res);
             }
         },
@@ -35,7 +35,17 @@ pub async fn handle_memory(args: MemoryArgs, _format: OutputFormat) -> Result<()
         },
         MemoryCommand::Project(p) => match p.command {
             MemoryProjectCommand::Get(g) => {
-                let res = service.memory().get_project(g.project_path).await?;
+                let project_path = if g.current_project {
+                    std::env::current_dir()
+                        .ok()
+                        .map(|p| p.to_string_lossy().to_string())
+                } else {
+                    g.project_path
+                };
+                let project_path = project_path.ok_or_else(|| {
+                    anyhow::anyhow!("project path is required (provide <project_path> or use --current-project)")
+                })?;
+                let res = service.memory().get_project(project_path).await?;
                 render::render_json_value(&res);
             }
         },

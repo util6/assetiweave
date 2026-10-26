@@ -75,6 +75,7 @@ export const memoryContextResultSchema: z.ZodType<MemoryContextResult> =
 export const memoryProjectViewSchema: z.ZodType<MemoryProjectView> = z.object({
   projectKey: z.string().min(1),
   projectPath: z.string().nullable(),
+  content: z.string().nullable().optional(),
   items: z.array(z.record(z.string(), z.unknown())),
   lastSuccessfulConsolidationAt: z.string().nullable(),
   revisionHash: z.string(),
