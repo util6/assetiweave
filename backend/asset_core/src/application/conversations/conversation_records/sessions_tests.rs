@@ -194,9 +194,9 @@ async fn test_conversation_session_outline_folding_and_universal_resolver() {
 
     // 1. Query by full session ID
     let outline = service
-        .get_conversation_session_outline(ConversationSessionOutlineParams {
-            id: full_session_id.clone(),
-        })
+        .get_conversation_session_outline(ConversationSessionOutlineParams::new(
+            full_session_id.clone(),
+        ))
         .await
         .expect("get outline with full session ID");
 
@@ -204,25 +204,27 @@ async fn test_conversation_session_outline_folding_and_universal_resolver() {
         ConversationOutline::Session(s) => {
             assert_eq!(s.session_id, short_session_id);
             assert_eq!(s.total_turns, 2);
-            assert_eq!(s.turns.rows[0].index, 1);
+            assert_eq!(s.turns.rows[0].index(), 1);
             assert_eq!(
-                s.turns.rows[0].question,
+                s.turns.rows[0].question(),
                 "Please run diagnostics and show status"
             );
-            assert_eq!(s.turns.rows[0].activities, vec!["check", "test", "status"]);
-            assert_eq!(s.turns.rows[0].cards, 4);
-            assert!(s.turns.rows[0].answer_id.is_some());
-            assert_eq!(s.turns.rows[1].index, 2);
-            assert_eq!(s.turns.rows[1].question, "Now clean up");
+            assert_eq!(
+                s.turns.rows[0].activities().unwrap(),
+                &["check", "test", "status"]
+            );
+            assert_eq!(s.turns.rows[0].cards().unwrap(), 4);
+            assert_eq!(s.turns.rows[1].index(), 2);
+            assert_eq!(s.turns.rows[1].question(), "Now clean up");
         }
         _ => panic!("expected session outline"),
     }
 
     // 2. Query by 8-hex short session ID
     let outline_by_short = service
-        .get_conversation_session_outline(ConversationSessionOutlineParams {
-            id: short_session_id.clone(),
-        })
+        .get_conversation_session_outline(ConversationSessionOutlineParams::new(
+            short_session_id.clone(),
+        ))
         .await
         .expect("get outline with short session ID");
     assert!(matches!(outline_by_short, ConversationOutline::Session(_)));

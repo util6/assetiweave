@@ -162,8 +162,12 @@ impl<'a> ConversationOperations<'a> {
         Ok(serde_json::to_value(result)?)
     }
 
-    pub async fn get_outline(&self, id: String) -> Result<Value> {
-        let params = ConversationOutlineParams { id };
+    pub async fn get_outline(
+        &self,
+        id: String,
+        detail_level: asset_core::backend::domain::conversations::outline::ConversationOutlineDetailLevel,
+    ) -> Result<Value> {
+        let params = ConversationOutlineParams { id, detail_level };
         let outline = self
             .app_service
             .get_conversation_outline(params)

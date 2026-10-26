@@ -43,7 +43,7 @@ description: 通过 AssetIWeave 的统一 Memory API 与会话逐级取证体系
 
 | 目的 | 命令 | 说明 |
 | --- | --- | --- |
-| 骨架（唯一入口） | `aiwc conversation outline <id>` | 按 ID 类型自适应返回 **session / turn / card** 三级骨架，支持 8 位短 ID |
+| 骨架（唯一入口） | `aiwc conversation outline <id>` | 按 ID 类型自适应返回 **session / turn / card** 三级骨架，支持 8 位短 ID。Session 级支持 `--questions` / `--qa` / `--full` 详细度选项 |
 | 单卡正文 | `aiwc conversation card get <card_id>` | O(1) 直读正文；`--raw` 直接输出纯文本到 stdout |
 | 定位会话 | `aiwc conversation list [--window 24h]` | 人读表格，用于拿到短 ID |
 | 跨会话检索 | `aiwc conversation search --query <q>` | 关键词命中卡片 |
@@ -55,11 +55,14 @@ description: 通过 AssetIWeave 的统一 Memory API 与会话逐级取证体系
 所有骨架统一为 `{"columns": [...], "rows": [[...]]}`：列名只声明一次，行是**定长元组数组**。
 必须按 **columns 的列序**取值，不要指望行内出现字段名。
 
-**Session 级**（`level: "session"`）：`session_id`、`source_id`、`total_turns`、`created_at?`，以及
-`turns.columns = ["index","turn_id","question","activities","cards","answer_id"]`
+**Session 级**（`level: "session"`）：`session_id`、`source_id`、`total_turns`、`created_at?`。
+支持三档互斥详细度开关与默认骨架：
+- 默认（不带开关）：`turns.columns = ["index", "turn_id", "question", "activities", "cards"]`
+- `--questions`（最精简）：`turns.columns = ["index", "turn_id", "question"]`，仅输出用户问题主干。
+- `--qa`（问答主干，思维分支寻回主力档）：`turns.columns = ["index", "turn_id", "question", "answer"]`，直接返回最终回答内容（`turn.response`），不含 activities 与 cards 噪音。
+- `--full`（最详细）：`turns.columns = ["index", "turn_id", "question", "activities", "cards", "answer"]`，包含卡片/活动概况与最终回答。
 - `activities`：该轮工具/命令活动的**连续去重**摘要（如 `["Git status check","Build desktop crate"]`），不是逐条流水。
 - `cards`：该轮卡片数量（整数），据此判断是否需要放大到 Turn 级。
-- `answer_id`：该轮最终答案卡 ID，可直接下钻，无需扫描全部卡片。
 - `index` 为 **1-based** 轮次序号。
 
 **Turn 级**（`level: "turn"`）：`session_id`、`turn_id`、`turn_index`、`total_turns`、`user_question`，以及

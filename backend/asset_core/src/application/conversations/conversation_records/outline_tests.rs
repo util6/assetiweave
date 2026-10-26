@@ -195,9 +195,7 @@ async fn test_conversation_outline_and_card_get_full_suite() {
 
     // 1. Query outline by full session ID
     let outline_session = service
-        .get_conversation_outline(ConversationOutlineParams {
-            id: full_session_id.clone(),
-        })
+        .get_conversation_outline(ConversationOutlineParams::new(full_session_id.clone()))
         .await
         .expect("get outline with full session ID");
 
@@ -207,36 +205,29 @@ async fn test_conversation_outline_and_card_get_full_suite() {
             assert_eq!(s.total_turns, 2);
             assert_eq!(
                 s.turns.columns,
-                vec![
-                    "index",
-                    "turn_id",
-                    "question",
-                    "activities",
-                    "cards",
-                    "answer_id"
-                ]
+                vec!["index", "turn_id", "question", "activities", "cards"]
             );
             assert_eq!(s.turns.rows.len(), 2);
-            assert_eq!(s.turns.rows[0].index, 1);
+            assert_eq!(s.turns.rows[0].index(), 1);
             assert_eq!(
-                s.turns.rows[0].question,
+                s.turns.rows[0].question(),
                 "Please run diagnostics and show status"
             );
-            assert_eq!(s.turns.rows[0].activities, vec!["check", "test", "status"]);
-            assert_eq!(s.turns.rows[0].cards, 4);
-            assert!(s.turns.rows[0].answer_id.is_some());
-            assert_eq!(s.turns.rows[1].index, 2);
-            assert_eq!(s.turns.rows[1].question, "Now clean up");
-            assert_eq!(s.turns.rows[1].cards, 1);
+            assert_eq!(
+                s.turns.rows[0].activities().unwrap(),
+                &["check", "test", "status"]
+            );
+            assert_eq!(s.turns.rows[0].cards().unwrap(), 4);
+            assert_eq!(s.turns.rows[1].index(), 2);
+            assert_eq!(s.turns.rows[1].question(), "Now clean up");
+            assert_eq!(s.turns.rows[1].cards().unwrap(), 1);
         }
         _ => panic!("expected ConversationOutline::Session"),
     }
 
     // 2. Query outline by 8-hex short session ID
     let outline_short = service
-        .get_conversation_outline(ConversationOutlineParams {
-            id: short_session_id.clone(),
-        })
+        .get_conversation_outline(ConversationOutlineParams::new(short_session_id.clone()))
         .await
         .expect("get outline with short session ID");
 
@@ -260,9 +251,7 @@ async fn test_conversation_outline_and_card_get_full_suite() {
 
     // 3. Query outline by Turn ID
     let outline_turn = service
-        .get_conversation_outline(ConversationOutlineParams {
-            id: short_turn_id.clone(),
-        })
+        .get_conversation_outline(ConversationOutlineParams::new(short_turn_id.clone()))
         .await
         .expect("get outline with turn ID");
 
@@ -296,9 +285,7 @@ async fn test_conversation_outline_and_card_get_full_suite() {
 
     // 4. Query outline by Card ID
     let outline_card = service
-        .get_conversation_outline(ConversationOutlineParams {
-            id: short_part_id.clone(),
-        })
+        .get_conversation_outline(ConversationOutlineParams::new(short_part_id.clone()))
         .await
         .expect("get outline with card ID");
 
@@ -342,11 +329,89 @@ async fn test_conversation_outline_and_card_get_full_suite() {
     // 6. Test JSON serialization and round-trip
     let json_session = serde_json::to_string(&outline_session).expect("serialize session outline");
     assert!(json_session.contains("\"level\":\"session\""));
-    assert!(json_session.contains(
-        "\"columns\":[\"index\",\"turn_id\",\"question\",\"activities\",\"cards\",\"answer_id\"]"
-    ));
+    assert!(json_session
+        .contains("\"columns\":[\"index\",\"turn_id\",\"question\",\"activities\",\"cards\"]"));
     assert!(!json_session.contains("\"stats\""));
     assert!(!json_session.contains("\"title\""));
+    assert!(!json_session.contains("\"answer_id\""));
+
+    // 7. Test Detail Level: Questions
+    let outline_questions = service
+        .get_conversation_outline(ConversationOutlineParams {
+            id: full_session_id.clone(),
+            detail_level: ConversationOutlineDetailLevel::Questions,
+        })
+        .await
+        .expect("get outline with questions mode");
+    if let ConversationOutline::Session(s) = &outline_questions {
+        assert_eq!(s.turns.columns, vec!["index", "turn_id", "question"]);
+        assert_eq!(s.turns.rows.len(), 2);
+        assert_eq!(s.turns.rows[0].index(), 1);
+        assert_eq!(
+            s.turns.rows[0].question(),
+            "Please run diagnostics and show status"
+        );
+        let q_val = serde_json::to_value(&s.turns.rows[0]).unwrap();
+        assert_eq!(
+            q_val,
+            serde_json::json!([
+                1,
+                s.turns.rows[0].turn_id(),
+                "Please run diagnostics and show status"
+            ])
+        );
+    } else {
+        panic!("expected session outline");
+    }
+
+    // 8. Test Detail Level: QA
+    let outline_qa = service
+        .get_conversation_outline(ConversationOutlineParams {
+            id: full_session_id.clone(),
+            detail_level: ConversationOutlineDetailLevel::Qa,
+        })
+        .await
+        .expect("get outline with qa mode");
+    if let ConversationOutline::Session(s) = &outline_qa {
+        assert_eq!(
+            s.turns.columns,
+            vec!["index", "turn_id", "question", "answer"]
+        );
+        assert_eq!(s.turns.rows.len(), 2);
+        let qa_val = serde_json::to_value(&s.turns.rows[0]).unwrap();
+        assert!(qa_val.is_array());
+        assert_eq!(qa_val.as_array().unwrap().len(), 4);
+    } else {
+        panic!("expected session outline");
+    }
+
+    // 9. Test Detail Level: Full
+    let outline_full = service
+        .get_conversation_outline(ConversationOutlineParams {
+            id: full_session_id.clone(),
+            detail_level: ConversationOutlineDetailLevel::Full,
+        })
+        .await
+        .expect("get outline with full mode");
+    if let ConversationOutline::Session(s) = &outline_full {
+        assert_eq!(
+            s.turns.columns,
+            vec![
+                "index",
+                "turn_id",
+                "question",
+                "activities",
+                "cards",
+                "answer"
+            ]
+        );
+        assert_eq!(s.turns.rows.len(), 2);
+        let full_val = serde_json::to_value(&s.turns.rows[0]).unwrap();
+        assert!(full_val.is_array());
+        assert_eq!(full_val.as_array().unwrap().len(), 6);
+    } else {
+        panic!("expected session outline");
+    }
 
     let json_turn = serde_json::to_string(&outline_turn).expect("serialize turn outline");
     assert!(json_turn.contains("\"level\":\"turn\""));
@@ -358,10 +423,11 @@ async fn test_conversation_outline_and_card_get_full_suite() {
     assert!(json_card.contains("\"is_target\""));
     assert!(json_card.contains("true"));
 
-    // 7. Non-existent ID returns NotFound
+    // 10. Non-existent ID returns NotFound
     let not_found = service
         .get_conversation_outline(ConversationOutlineParams {
             id: "non-existent-99999999".to_string(),
+            detail_level: ConversationOutlineDetailLevel::Default,
         })
         .await;
     assert!(matches!(not_found, Err(AppError::NotFound(_))));

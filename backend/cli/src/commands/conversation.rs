@@ -62,7 +62,11 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
             render::render_conversation_sessions(&sessions, format, window_desc.as_deref());
         }
         ConversationCommands::Outline(o) => {
-            let outline = match service.conversation().get_outline(o.id.clone()).await {
+            let outline = match service
+                .conversation()
+                .get_outline(o.id.clone(), o.detail_level())
+                .await
+            {
                 Ok(outline) => outline,
                 Err(err) => {
                     let full_err = format!("{err:#}");

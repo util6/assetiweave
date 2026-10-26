@@ -498,8 +498,67 @@ fn test_conversation_outline_and_card_drilldown() {
     let json_so: Value = serde_json::from_str(&out_so).unwrap();
     assert_eq!(json_so["ok"], true);
     assert_eq!(json_so["data"]["level"], "session");
-    assert!(json_so["data"]["turns"]["columns"].is_array());
+    assert_eq!(
+        json_so["data"]["turns"]["columns"],
+        serde_json::json!(["index", "turn_id", "question", "activities", "cards"])
+    );
     assert!(json_so["data"]["turns"]["rows"].is_array());
+
+    // 1.1 Test --questions mode
+    let mut cmd_q = aiwc_command();
+    let assert_q = cmd_q
+        .args(["conversation", "outline", session_id, "--questions"])
+        .assert()
+        .success();
+    let out_q = String::from_utf8(assert_q.get_output().stdout.clone()).unwrap();
+    let json_q: Value = serde_json::from_str(&out_q).unwrap();
+    assert_eq!(json_q["ok"], true);
+    assert_eq!(
+        json_q["data"]["turns"]["columns"],
+        serde_json::json!(["index", "turn_id", "question"])
+    );
+
+    // 1.2 Test --qa mode
+    let mut cmd_qa = aiwc_command();
+    let assert_qa = cmd_qa
+        .args(["conversation", "outline", session_id, "--qa"])
+        .assert()
+        .success();
+    let out_qa = String::from_utf8(assert_qa.get_output().stdout.clone()).unwrap();
+    let json_qa: Value = serde_json::from_str(&out_qa).unwrap();
+    assert_eq!(json_qa["ok"], true);
+    assert_eq!(
+        json_qa["data"]["turns"]["columns"],
+        serde_json::json!(["index", "turn_id", "question", "answer"])
+    );
+
+    // 1.3 Test --full mode
+    let mut cmd_full = aiwc_command();
+    let assert_full = cmd_full
+        .args(["conversation", "outline", session_id, "--full"])
+        .assert()
+        .success();
+    let out_full = String::from_utf8(assert_full.get_output().stdout.clone()).unwrap();
+    let json_full: Value = serde_json::from_str(&out_full).unwrap();
+    assert_eq!(json_full["ok"], true);
+    assert_eq!(
+        json_full["data"]["turns"]["columns"],
+        serde_json::json!([
+            "index",
+            "turn_id",
+            "question",
+            "activities",
+            "cards",
+            "answer"
+        ])
+    );
+
+    // 1.4 Test mutually exclusive flags conflict
+    let mut cmd_conflict = aiwc_command();
+    cmd_conflict
+        .args(["conversation", "outline", session_id, "--questions", "--qa"])
+        .assert()
+        .failure();
 
     // If turns exist in the session, drill down to turn outline
     let rows = json_so["data"]["turns"]["rows"].as_array().unwrap();
