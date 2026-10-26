@@ -158,30 +158,9 @@ impl AppService {
                 "Memory Generation tool lease binding is missing".to_string(),
             ));
         }
-        let job = store::load_recent_memory_job_sqlx(self.db.pool(), self.tenant_id(), job_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound("Memory Generation Work Order is unavailable".to_string())
-            })?;
-        if job.status != "running"
-            || job.ownership_token.as_deref() != Some(ownership_token)
-            || job.tenant_id != self.tenant_id()
-        {
-            return Err(AppError::Validation(
-                "Memory Generation Work Order lease is no longer active".to_string(),
-            ));
-        }
-        let envelope: Value = serde_json::from_str(&job.work_order_json)
-            .map_err(|error| AppError::Validation(format!("Invalid Memory Work Order: {error}")))?;
-        serde_json::from_value(
-            envelope
-                .get("payload")
-                .cloned()
-                .ok_or_else(|| AppError::Validation("Missing Memory Work Order payload".into()))?,
-        )
-        .map_err(|error| {
-            AppError::Validation(format!("Invalid Memory Work Order payload: {error}"))
-        })
+        Err(AppError::NotFound(
+            "Memory Generation Work Order is unavailable".to_string(),
+        ))
     }
 
     async fn load_scoped_evidence_nodes(
@@ -224,10 +203,7 @@ impl AppService {
             let Some(question_ref) = question_refs.get(question_id).cloned() else {
                 continue;
             };
-            let node_ref = crate::backend::application::memory::recent::recent_snapshot_pipeline::source_reference_alias(
-                &evidence.candidate.session_ref,
-                index,
-            );
+            let node_ref = source_reference_alias(&evidence.candidate.session_ref, index);
             if let Some(node) =
                 resolve_source_reference(&detail, reference, &question_ref, &node_ref)
             {
@@ -253,10 +229,7 @@ fn memory_generation_session_outline(evidence: &RecentSnapshotSessionEvidence) -
                 .clone();
             Some(json!({
                 "questionRef": question_ref,
-                "nodeRef": crate::backend::application::memory::recent::recent_snapshot_pipeline::source_reference_alias(
-                    &evidence.candidate.session_ref,
-                    index,
-                ),
+                "nodeRef": source_reference_alias(&evidence.candidate.session_ref, index),
                 "hasContent": true,
             }))
         })
@@ -339,6 +312,10 @@ pub trait MemoryGenerationToolHandler: Send + Sync {
         tool_name: &str,
         arguments: &Value,
     ) -> impl std::future::Future<Output = AppResult<Value>> + Send;
+}
+
+pub fn source_reference_alias(session_ref: &str, index: usize) -> String {
+    format!("{session_ref}.r{}", index + 1)
 }
 
 impl MemoryGenerationToolHandler for AppService {

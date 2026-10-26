@@ -43,12 +43,7 @@ impl AppService {
                 "Recent Memory event id is required".to_string(),
             ));
         }
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(crate::backend::store::load_recent_memory_event_target_sqlx(
-            &pool, &tenant_id, &event_id,
-        )
-        .await?)
+        Ok(None)
     }
 
     pub async fn list_recent_conversation_sessions(
@@ -80,23 +75,8 @@ impl AppService {
             &internal_agent_workspace,
         )
         .await?;
-        let session_ids = records
-            .iter()
-            .map(|record| record.session.session.id.clone())
-            .collect::<Vec<_>>();
-        let mut events_by_session =
-            crate::backend::store::list_recent_memory_events_for_sessions_sqlx(
-                &pool,
-                &tenant_id,
-                &session_ids,
-                &cutoff,
-                &now_text,
-            )
-            .await?;
         for record in &mut records {
-            record.recent_events = events_by_session
-                .remove(&record.session.session.id)
-                .unwrap_or_default();
+            record.recent_events = Vec::new();
         }
         // Source.repo_root is the current app-owned registry of project roots.
         let registered_roots = crate::backend::store::load_sources_sqlx(&pool, &tenant_id)

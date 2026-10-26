@@ -77,6 +77,15 @@ pub async fn upsert_watermark_sqlx(
     Ok(())
 }
 
+pub async fn clear_watermarks_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+    sqlx::query("DELETE FROM memory_session_watermarks WHERE tenant_id = ?1")
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .map_err(AppError::from)?;
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "watermark_repo_tests.rs"]
 mod tests;

@@ -50,6 +50,8 @@ async fn rebuild_memory_scope_accepts_valid_scope() {
         .unwrap();
 
     assert!(result.accepted);
+    assert_eq!(result.scheduled_task_ids.len(), 1);
+    assert!(result.scheduled_task_ids[0].starts_with("memory-pipeline:"));
 }
 
 #[tokio::test]
@@ -73,57 +75,4 @@ async fn rebuild_memory_scope_rejects_narrow_scopes() {
         .await;
 
     assert!(result.is_err());
-}
-
-#[tokio::test]
-async fn rebuild_memory_scope_project_returns_empty_and_no_maintenance_tasks() {
-    let db_path = std::env::temp_dir().join(format!(
-        "rebuild-mem-test-project-{}.sqlite",
-        uuid::Uuid::new_v4()
-    ));
-    let service = AppService::open_with_db_path(db_path).await.unwrap();
-
-    let result = service
-        .rebuild_memory_scope(MemoryScopeRebuildParams {
-            scope: MemoryScope::default(),
-            target: Some(MemoryRebuildTarget::Project),
-            project_path: Some("/test/project".to_string()),
-            reason: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(result.accepted);
-    assert!(
-        result.scheduled_task_ids.is_empty(),
-        "L2 已剥离，不产生维护任务"
-    );
-
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM memory_maintenance_jobs WHERE purpose = 'project_consolidation'",
-    )
-    .fetch_one(service.db.pool())
-    .await
-    .unwrap();
-
-    assert_eq!(count, 0, "维护队列中不能有 project_consolidation 任务");
-}
-
-#[tokio::test]
-async fn schedule_project_memory_rebuild_is_noop() {
-    let db_path = std::env::temp_dir().join(format!(
-        "rebuild-mem-test-noop-{}.sqlite",
-        uuid::Uuid::new_v4()
-    ));
-    let service = AppService::open_with_db_path(db_path).await.unwrap();
-
-    let task_ids = service
-        .schedule_project_memory_rebuild("/test/project", chrono::Utc::now())
-        .await
-        .unwrap();
-
-    assert!(
-        task_ids.is_empty(),
-        "schedule_project_memory_rebuild 必须返回空任务列表"
-    );
 }

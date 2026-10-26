@@ -111,7 +111,6 @@ pub fn parse_recent_markdown_to_state_view(content: &str) -> RecentMemoryStateVi
 
 impl AppService {
     pub async fn get_recent_memory_snapshot(&self) -> AppResult<RecentMemoryStateView> {
-        let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
 
         let storage = crate::backend::domain::memory::storage::MemoryStorage::new(&tenant_id);
@@ -121,10 +120,11 @@ impl AppService {
             }
         }
 
-        super::recent_snapshot_view::load_recent_memory_state_view(&pool, &tenant_id).await
+        Ok(RecentMemoryStateView {
+            status: RecentMemoryStatus::Empty,
+            snapshot: None,
+            latest_attempt_task_id: None,
+            latest_attempt_error: None,
+        })
     }
 }
-
-#[cfg(test)]
-#[path = "recent_snapshot_tests.rs"]
-mod tests;

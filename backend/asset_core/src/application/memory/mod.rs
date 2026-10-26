@@ -1,24 +1,13 @@
 pub mod activity_watchdog;
 pub mod generation_skill;
-pub mod global_consolidation_candidates;
-pub mod global_consolidation_persist;
-pub mod global_consolidation_pipeline;
-pub mod global_consolidation_view;
-pub mod global_memory;
 pub mod global_memory_context;
-pub mod global_memory_documents;
 pub mod legacy_archive;
 pub mod memory_agent_session;
 pub mod memory_generation_tools;
-pub mod memory_maintenance_coordinator;
-pub mod memory_maintenance_runner;
 pub mod memory_markdown_pipeline;
 pub mod memory_markdown_views;
 pub mod memory_pipeline;
 pub mod memory_pipeline_query;
-pub mod memory_pipeline_stage1;
-pub mod memory_projection;
-pub mod memory_projection_markdown;
 pub mod memory_public;
 pub mod memory_rebuild;
 pub mod memory_recall_executor;
@@ -30,20 +19,22 @@ pub mod memory_tasks;
 pub mod memory_workflow_global;
 pub mod memory_workflow_recent_project;
 pub mod params;
-pub mod project_memory;
-pub mod project_memory_documents;
 pub mod recent;
-pub mod reference_audit;
 pub mod session_branch_workflow;
 pub mod session_coordinator;
-pub mod session_memory;
 pub mod types;
 
-pub use memory_markdown_pipeline::*;
-pub use memory_markdown_views::*;
-pub use memory_workflow_global::*;
-pub use memory_workflow_recent_project::*;
-pub use session_branch_workflow::*;
+pub use memory_markdown_pipeline::MemoryMarkdownPipelineReport;
+pub use memory_markdown_views::MemoryMarkdownFileView;
+pub use memory_workflow_global::GlobalMemoryWorkflowReport;
+pub use memory_workflow_recent_project::{
+    parse_session_markdown, project_path_to_slug, ParsedSessionMarkdown,
+    RecentAndProjectWorkflowReport,
+};
+pub use session_branch_workflow::{
+    BranchItem, ExtractedSessionBranches, HeuristicSessionBranchExtractorAgent,
+    SessionBranchExtractorAgent, SessionBranchWorkflowReport,
+};
 
 pub use activity_watchdog::{
     run_with_activity_watchdog, ActivityWatchdogConfig, WatchdogTimeoutKind,
