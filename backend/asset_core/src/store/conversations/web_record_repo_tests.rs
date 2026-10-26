@@ -1,7 +1,5 @@
 use super::*;
-use crate::backend::domain::conversations::{
-    projection::ConversationCardRenderer, ConversationRecordKind, ConversationSearchCardType,
-};
+use crate::backend::domain::conversations::{ConversationRecordKind, ConversationSearchCardType};
 use crate::backend::domain::{
     ConversationContentCardDescriptor, ConversationPartKind, ConversationPartRole,
     ConversationSourceKind, NormalizedConversationPart, NormalizedConversationTurn,
@@ -81,7 +79,7 @@ async fn sqlx_web_records_use_independent_tables_and_remove_legacy_session_rows(
     assert_eq!(sessions[0].question_count, 1);
     assert_eq!(sessions[0].turn_count, 1);
     assert_eq!(detail.questions.len(), 1);
-    assert_eq!(detail.questions[0].turns[0].user_text, "Hello from the web");
+    assert_eq!(detail.questions[0].turns[0].prompt, "Hello from the web");
     assert!(detail.questions[0]
         .projected_content_nodes
         .iter()
@@ -181,14 +179,21 @@ async fn sqlx_web_record_details_derive_execution_pairs_from_parts() {
     let execution_nodes = detail.questions[0]
         .projected_content_nodes
         .iter()
-        .filter(|node| node.source_execution_id.as_deref() == Some("exec-web-1"))
+        .filter(|node| {
+            node.semantic_role.as_deref() == Some("command")
+                || node.semantic_role.as_deref() == Some("result")
+        })
         .collect::<Vec<_>>();
     assert_eq!(execution_nodes.len(), 2);
+    assert_eq!(execution_nodes[0].content, "cat README.md");
     assert_eq!(execution_nodes[0].semantic_role.as_deref(), Some("command"));
+    assert_eq!(execution_nodes[1].content, "# AssetIWeave");
     assert_eq!(execution_nodes[1].semantic_role.as_deref(), Some("result"));
+    assert_eq!(
+        execution_nodes[0].source_execution_id,
+        execution_nodes[1].source_execution_id
+    );
     assert!(execution_nodes[0].part_order < execution_nodes[1].part_order);
-    assert_eq!(execution_nodes[1].status.as_deref(), Some("success"));
-    assert_eq!(execution_nodes[1].exit_code, Some(0));
 
     drop(database);
     cleanup_database(&db_path);
@@ -495,12 +500,12 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
     let source = fixture_source();
     let mut old_session = fixture_session();
     old_session.source_fingerprint = Some("same-source".to_string());
-    old_session.turns[0].parts[0].metadata_json = None;
+    old_session.turns[0].parts[0].text = Some("initial body".to_string());
     let mut refreshed_session = fixture_session();
     refreshed_session.source_fingerprint = Some("same-source".to_string());
-    refreshed_session.turns[0].parts[0].metadata_json = content_card_metadata("answer");
+    refreshed_session.turns[0].parts[0].text = Some("refreshed body".to_string());
 
-    let (result, imported_at, metadata_json, indexed_rows) = async {
+    let (result, imported_at, refreshed_content, indexed_rows) = async {
         super::super::conversation_repo::upsert_conversation_source_sqlx(
             database.pool(),
             TEST_TENANT_ID,
@@ -561,14 +566,13 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
         .fetch_one(database.pool())
         .await
         .map_err(StoreError::external)?;
-        let metadata_json = sqlx::query_scalar::<_, Option<String>>(
+        let refreshed_content = sqlx::query_scalar::<_, String>(
             r#"
-                    SELECT p.metadata_json
-                    FROM web_record_parts p
-                    JOIN web_record_turns t ON t.id = p.turn_id
+                    SELECT t.response
+                    FROM web_record_turns t
                     JOIN web_record_sessions s ON s.id = t.session_id
                     WHERE s.source_id = ?1
-                    ORDER BY p.part_index ASC
+                    ORDER BY t.turn_index ASC
                     LIMIT 1
                     "#,
         )
@@ -595,7 +599,7 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
         StoreResult::Ok((
             result,
             imported_at,
-            metadata_json,
+            refreshed_content,
             (fts_row_count, fts_texts),
         ))
     }
@@ -604,10 +608,7 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
 
     assert_eq!(result.skipped_session_count, 0);
     assert_ne!(imported_at, "preserved");
-    assert!(metadata_json
-        .as_deref()
-        .unwrap_or("")
-        .contains(r#""content_card""#));
+    assert_eq!(refreshed_content, "refreshed body");
     let (fts_row_count, fts_texts) = indexed_rows;
     assert_eq!(fts_row_count, 1, "轮次级重建不应留下重复或过期索引行");
     assert_eq!(fts_texts.len(), 1);
@@ -776,7 +777,9 @@ async fn sqlx_web_record_aggregates_only_declared_content_cards() {
     let database = Database::open_async(&db_path).await.expect("open database");
     let source = fixture_source();
     let mut session = fixture_session();
-    session.turns[0].parts[0].text = Some("undeclared web answer".to_string());
+    session.turns[0].parts[0].role = ConversationPartRole::Tool;
+    session.turns[0].parts[0].kind = ConversationPartKind::Tool;
+    session.turns[0].parts[0].text = Some("intermediate web search process".to_string());
     session.turns[0].parts[0].metadata_json = None;
     session.turns.push(NormalizedConversationTurn {
         external_id: "turn-2".to_string(),
@@ -1045,7 +1048,7 @@ async fn sqlx_web_records_round_trip_structured_cards_and_preserve_translation()
     assert_eq!(part.translated_text.as_deref(), Some("网页译文"));
     assert_eq!(
         part.content_card.as_ref().map(|card| card.kind.as_str()),
-        Some("qwen-web.analysis")
+        Some("qwen-web.answer")
     );
     assert_eq!(detail.questions[0].projected_content_nodes.len(), 1);
     assert_eq!(

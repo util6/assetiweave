@@ -255,9 +255,12 @@ function conversationContentNodeToBlock(
     translatedText: node.translated_content,
     format: node.renderer === "markdown" ? "markdown" : "plain",
     signal:
-      node.renderer === "compact_action" || node.semantic_role === "ambient"
+      node.signal ??
+      (node.renderer === "compact_action" || node.semantic_role === "ambient"
         ? "ambient"
-        : undefined,
+        : undefined),
+    filePath: node.file_path,
+    toolName: node.tool_name,
   };
 }
 
@@ -1884,30 +1887,10 @@ function createBlock(
     (status != null || exitCode != null || renderer === "diff");
   if (!text && !statusOnlyResult) return [];
 
-  let signal = overrides.signal;
-  let filePath = overrides.filePath;
-  let toolName = overrides.toolName;
-  let commandLabel = part.command_label ?? null;
-  if (part.metadata_json) {
-    try {
-      const meta = JSON.parse(part.metadata_json);
-      if (typeof meta === "object" && meta !== null) {
-        if (!signal && typeof meta.signal === "string") signal = meta.signal;
-        if (!filePath && typeof meta.file_path === "string")
-          filePath = meta.file_path;
-        if (!toolName && typeof meta.tool_name === "string")
-          toolName = meta.tool_name;
-        if (
-          !commandLabel &&
-          typeof meta.command_label === "string" &&
-          meta.command_label.trim()
-        )
-          commandLabel = meta.command_label.trim();
-      }
-    } catch {
-      // Ignore JSON parse error in non-critical metadata inspection
-    }
-  }
+  const signal = overrides.signal ?? part.signal ?? null;
+  const filePath = overrides.filePath ?? part.file_path ?? null;
+  const toolName = overrides.toolName ?? part.tool_name ?? null;
+  const commandLabel = part.command_label ?? null;
 
   return [
     {
@@ -1950,86 +1933,34 @@ function createBlock(
 function createDeclaredContentBlock(
   part: ConversationPart,
 ): ConversationContentBlock[] {
-  if (part.content_card) {
-    const renderer = part.content_card.renderer ?? "plain";
-    const declaredType = contentTypeValue(part.content_card.kind);
-    if (!declaredType) return [];
-    const type = conversationCardPresentationKind(declaredType);
-    return createBlock(
-      part,
-      type,
-      defaultContentCardText(part, type),
-      type,
-      "all",
-      {
-        renderer,
-        format: renderer === "markdown" ? "markdown" : "plain",
-      },
-    );
-  }
-  const card = contentCardMetadata(part.metadata_json);
-  if (!card) return [];
+  if (!part.content_card) return [];
 
-  const declaredType = contentTypeValue(card.type);
+  const renderer =
+    part.content_card.renderer ??
+    (part.content_card.kind.endsWith(".answer") ||
+    part.content_card.semantic_role === "answer"
+      ? "markdown"
+      : "plain");
+  const declaredType = contentTypeValue(part.content_card.kind);
   if (!declaredType) return [];
   const type = conversationCardPresentationKind(declaredType);
-
-  const format = contentFormatValue(card.format);
-  const renderer =
-    rendererValue(card.renderer) ??
-    rendererValue(
-      isRecord(card.presentation) ? card.presentation.renderer : undefined,
-    ) ??
-    legacyRenderer(type, format);
-  const text = stringValue(card.text) ?? defaultContentCardText(part, type);
-  const suffix = stringValue(card.suffix) ?? type;
-
-  return createBlock(part, type, text, suffix, "all", {
-    format,
-    renderer,
-    language: stringValue(card.language),
-    cwd: stringValue(card.cwd),
-    status: stringValue(card.status),
-    exitCode: numberValue(card.exit_code) ?? numberValue(card.exitCode),
-  });
-}
-
-function contentCardMetadata(value?: string | null) {
-  const metadata = parseMetadataRecord(value);
-  const card = metadata?.content_card ?? metadata?.contentCard;
-  return isRecord(card) ? card : null;
-}
-
-function parseMetadataRecord(value?: string | null) {
-  if (!value?.trim()) return null;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  return createBlock(
+    part,
+    type,
+    defaultContentCardText(part, type),
+    type,
+    "all",
+    {
+      renderer,
+      format: renderer === "markdown" ? "markdown" : "plain",
+    },
+  );
 }
 
 function contentTypeValue(value: unknown): ConversationContentType | null {
   return typeof value === "string" && /^[a-z0-9][a-z0-9._-]{0,127}$/.test(value)
     ? value
     : null;
-}
-
-function rendererValue(value: unknown): ConversationCardRenderer | undefined {
-  return value === "markdown" ||
-    value === "plain" ||
-    value === "path" ||
-    value === "json" ||
-    value === "code" ||
-    value === "command" ||
-    value === "terminal_output" ||
-    value === "diff" ||
-    value === "compact_action" ||
-    value === "subagent_tree" ||
-    value === "accordion"
-    ? value
-    : undefined;
 }
 
 function legacyRenderer(
@@ -2043,12 +1974,6 @@ function legacyRenderer(
   return "markdown";
 }
 
-function contentFormatValue(
-  value: unknown,
-): ConversationContentFormat | undefined {
-  return value === "markdown" || value === "plain" ? value : undefined;
-}
-
 function defaultContentCardText(
   part: ConversationPart,
   type: ConversationContentType,
@@ -2059,21 +1984,7 @@ function defaultContentCardText(
   return part.text ?? part.command;
 }
 
-function stringValue(value: unknown) {
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
-
 function visibleCardText(value?: string | null) {
   const text = value?.replace(adapterBrowseMarkerPattern, "").trim();
   return text || undefined;
-}
-
-function numberValue(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

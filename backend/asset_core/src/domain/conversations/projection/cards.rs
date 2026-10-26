@@ -58,18 +58,6 @@ pub struct ConversationCardProjectionSource<'a> {
     pub exit_code: Option<i32>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PersistedConversationCardProjectionSource<'a> {
-    pub content_card_json: Option<&'a str>,
-    pub metadata_json: Option<&'a str>,
-    pub text: Option<&'a str>,
-    pub language: Option<&'a str>,
-    pub command: Option<&'a str>,
-    pub cwd: Option<&'a str>,
-    pub status: Option<&'a str>,
-    pub exit_code: Option<i32>,
-}
-
 pub fn project_conversation_content_card(
     part: &ConversationPart,
     adapter_id: &str,
@@ -138,34 +126,6 @@ pub fn project_conversation_content_cards(
     )
 }
 
-pub fn project_persisted_content_card(
-    source: PersistedConversationCardProjectionSource<'_>,
-    card_kinds: &[ConversationCardKindDefinition],
-) -> Result<Option<ResolvedConversationContentCard>, ProjectionError> {
-    let descriptor = source
-        .content_card_json
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| {
-            serde_json::from_str::<ConversationContentCardDescriptor>(value)
-                .map_err(ProjectionError::InvalidPersistedCardJson)
-        })
-        .transpose()?;
-    project_resolved_content_card(
-        ConversationCardProjectionSource {
-            content_card: descriptor.as_ref(),
-            metadata_json: source.metadata_json,
-            text: source.text,
-            language: source.language,
-            command: source.command,
-            cwd: source.cwd,
-            status: source.status,
-            exit_code: source.exit_code,
-        },
-        card_kinds,
-    )
-}
-
 pub fn project_resolved_content_card(
     source: ConversationCardProjectionSource<'_>,
     card_kinds: &[ConversationCardKindDefinition],
@@ -173,14 +133,29 @@ pub fn project_resolved_content_card(
     let Some(mut card) = resolve_historical_content_card(source)? else {
         return Ok(None);
     };
+    let matching_definition = card_kinds
+        .iter()
+        .find(|definition| definition.id == card.kind);
     if card.semantic_role.is_none() {
-        card.semantic_role = card_kinds
-            .iter()
-            .find(|definition| definition.id == card.kind)
+        card.semantic_role = matching_definition
             .and_then(|definition| definition.semantic_role.clone())
             .or_else(|| {
                 super::cards_validation::infer_semantic_role(&card.kind).map(ToString::to_string)
             });
+    }
+    if source
+        .content_card
+        .as_ref()
+        .and_then(|d| d.renderer.as_deref())
+        .is_none()
+    {
+        if let Some(definition) = matching_definition {
+            if let Ok(default_renderer) =
+                super::cards_validation::parse_renderer(&definition.default_renderer)
+            {
+                card.renderer = default_renderer;
+            }
+        }
     }
     Ok(Some(card))
 }
@@ -210,7 +185,13 @@ pub fn resolve_content_card(
                     CardParseMode::HistoricalRead => Ok(ConversationCardRenderer::Plain),
                 })?
             }
-            None => ConversationCardRenderer::Plain,
+            None => {
+                if descriptor.kind.ends_with(".answer") {
+                    ConversationCardRenderer::Markdown
+                } else {
+                    ConversationCardRenderer::Plain
+                }
+            }
         };
         let status = source.status.and_then(owned);
         let exit_code = source.exit_code;

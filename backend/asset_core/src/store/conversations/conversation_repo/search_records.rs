@@ -11,7 +11,35 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
     let (question_lower, question_upper) =
         conversation_id_fragment_range(tables.question_id_prefix, fragment);
     let (turn_lower, turn_upper) = conversation_id_fragment_range(tables.turn_id_prefix, fragment);
-    let (part_lower, part_upper) = conversation_id_fragment_range(tables.part_id_prefix, fragment);
+    let (part_clause, part_low_bytes, part_high_bytes) =
+        if let Some(parsed) = crate::backend::domain::parse_id_key_prefix(fragment) {
+            match parsed.lookup {
+                crate::backend::domain::IdKeyLookup::Exact(exact) => (
+                    "p.id_key = ?8 AND (?9 IS NULL OR 1 = 1)",
+                    Some(exact.to_vec()),
+                    None,
+                ),
+                crate::backend::domain::IdKeyLookup::Range {
+                    low,
+                    high: Some(high),
+                } => (
+                    "p.id_key >= ?8 AND p.id_key < ?9",
+                    Some(low.to_vec()),
+                    Some(high.to_vec()),
+                ),
+                crate::backend::domain::IdKeyLookup::Range { low, high: None } => (
+                    "p.id_key >= ?8 AND (?9 IS NULL OR 1 = 1)",
+                    Some(low.to_vec()),
+                    None,
+                ),
+            }
+        } else {
+            (
+                "0 = 1 AND (?8 IS NULL OR 1 = 1) AND (?9 IS NULL OR 1 = 1)",
+                None,
+                None,
+            )
+        };
     let query = format!(
         r#"
         SELECT session_id FROM (
@@ -33,23 +61,25 @@ pub(super) async fn load_search_session_ids_by_id_fragment_sqlx(
             FROM {parts} p
             JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
             JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
-            WHERE p.tenant_id = ?1 AND s.missing = 0 AND p.id >= ?8 AND p.id < ?9
+            WHERE p.tenant_id = ?1 AND s.missing = 0 AND {part_clause}
         )
         "#,
         sessions = tables.sessions,
         turns = tables.turns,
         parts = tables.parts,
+        part_clause = part_clause,
     );
-    let rows = sqlx::query_scalar::<_, String>(AssertSqlSafe(query))
+    let builder = sqlx::query_scalar::<_, String>(AssertSqlSafe(query))
         .bind(tenant_id)
         .bind(session_lower)
         .bind(session_upper)
         .bind(question_lower)
         .bind(question_upper)
         .bind(turn_lower)
-        .bind(turn_upper)
-        .bind(part_lower)
-        .bind(part_upper)
+        .bind(turn_upper);
+    let rows = builder
+        .bind(part_low_bytes)
+        .bind(part_high_bytes)
         .fetch_all(pool)
         .await
         .map_err(StoreError::external)?;
@@ -69,6 +99,7 @@ pub(super) async fn load_search_sessions_sqlx(
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, {project_path_expr} AS project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
+               {session_metadata_expr}
                (
                    SELECT COUNT(DISTINCT t.question_id)
                    FROM {turns} t
@@ -88,6 +119,7 @@ pub(super) async fn load_search_sessions_sqlx(
         "#,
         sessions = tables.sessions,
         project_path_expr = tables.session_project_path_expr,
+        session_metadata_expr = tables.session_metadata_expr,
         turns = tables.turns,
     );
     let rows = sqlx::query_as::<_, ConversationSessionListItemRow>(AssertSqlSafe(query))
@@ -190,7 +222,7 @@ pub(super) async fn load_search_turns_sqlx(
 ) -> StoreResult<BTreeMap<String, Vec<ConversationTurn>>> {
     let query = format!(
         r#"
-        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
+        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.prompt, t.process, t.response, t.title,
                t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
                t.question_id
         FROM {turns} t
@@ -228,11 +260,42 @@ pub(super) async fn load_search_parts_sqlx(
     source_id: Option<&str>,
     session_ids_json: Option<&str>,
 ) -> StoreResult<BTreeMap<String, Vec<ConversationPart>>> {
-    let query = format!(
+    let turn_query = format!(
         r#"
-        SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
+        SELECT t.id, s.adapter_id, t.prompt, t.process, t.response
+        FROM {turns} t
+        JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
+        WHERE t.tenant_id = ?1
+          AND (?2 IS NULL OR s.adapter_id = ?2)
+          AND (?3 IS NULL OR s.source_id = ?3)
+          AND (?4 IS NULL OR s.id IN (SELECT value FROM json_each(?4)))
+        ORDER BY t.session_id ASC, t.turn_index ASC, t.id ASC
+        "#,
+        turns = tables.turns,
+        sessions = tables.sessions,
+    );
+    let turn_rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>)>(
+        AssertSqlSafe(turn_query),
+    )
+    .bind(tenant_id)
+    .bind(adapter_id)
+    .bind(source_id)
+    .bind(session_ids_json)
+    .fetch_all(pool)
+    .await
+    .map_err(StoreError::external)?;
+
+    let is_web = tables.parts == "web_record_parts";
+    let attrs_expr = if is_web { "NULL" } else { "p.attrs_json" };
+    let prefix = if is_web {
+        "web-record-part"
+    } else {
+        "conversation-part"
+    };
+
+    let part_query = format!(
+        r#"
+        SELECT p.turn_id, p.part_index, p.kind, p.content, {attrs_expr} AS attrs_json, p.translated_text
         FROM {parts} p
         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
@@ -245,23 +308,60 @@ pub(super) async fn load_search_parts_sqlx(
         parts = tables.parts,
         turns = tables.turns,
         sessions = tables.sessions,
+        attrs_expr = attrs_expr,
     );
-    let rows = sqlx::query(AssertSqlSafe(query))
-        .bind(tenant_id)
-        .bind(adapter_id)
-        .bind(source_id)
-        .bind(session_ids_json)
-        .fetch_all(pool)
-        .await
-        .map_err(StoreError::external)?;
-    let mut parts_by_turn = BTreeMap::<String, Vec<ConversationPart>>::new();
-    for row in &rows {
-        let part = map_sqlx_conversation_part(row)?;
-        parts_by_turn
-            .entry(part.turn_id.clone())
-            .or_default()
-            .push(part);
+    let part_rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            i64,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(AssertSqlSafe(part_query))
+    .bind(tenant_id)
+    .bind(adapter_id)
+    .bind(source_id)
+    .bind(session_ids_json)
+    .fetch_all(pool)
+    .await
+    .map_err(StoreError::external)?;
+
+    let mut triad_parts_by_turn =
+        BTreeMap::<String, Vec<crate::backend::domain::conversations::triad::TriadPart>>::new();
+    for (turn_id, part_index, kind, content, attrs_json, translated_text) in part_rows {
+        triad_parts_by_turn.entry(turn_id).or_default().push(
+            crate::backend::domain::conversations::triad::TriadPart {
+                part_index,
+                kind,
+                content,
+                attrs_json,
+                translated_text,
+            },
+        );
     }
+
+    let mut parts_by_turn = BTreeMap::<String, Vec<ConversationPart>>::new();
+    for (turn_id, turn_adapter_id, prompt, process_json, response) in turn_rows {
+        let t_parts = triad_parts_by_turn.remove(&turn_id).unwrap_or_default();
+        let process = process_json.as_deref().and_then(|s| {
+            serde_json::from_str::<crate::backend::domain::conversations::triad::TurnProcess>(s)
+                .ok()
+        });
+        let restored = crate::backend::domain::conversations::triad::merge_turn_triad(
+            &turn_adapter_id,
+            prefix,
+            &turn_id,
+            &prompt,
+            process.as_ref(),
+            response.as_deref(),
+            &t_parts,
+        );
+        parts_by_turn.insert(turn_id, restored);
+    }
+
     Ok(parts_by_turn)
 }
 

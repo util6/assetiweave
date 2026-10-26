@@ -4,11 +4,9 @@ use crate::adapters::app_state::AppState;
 use crate::adapters::tauri::background_tasks::{
     BackgroundTaskStatus, ConversationSyncTaskSnapshot,
 };
-use crate::backend::application::conversations::UsageDashboardFilter;
 use crate::backend::application::prelude::*;
 use crate::backend::application::AppResult as RuntimeAppResult;
 use crate::backend::application::{BackgroundTaskGetParams, ConversationSyncParams};
-use crate::backend::domain::UsageDashboardDto;
 
 pub(crate) fn start_conversation_sync_background(
     app: AppHandle,

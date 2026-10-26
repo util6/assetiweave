@@ -290,15 +290,8 @@ async fn test_conversation_outline_and_card_get_full_suite() {
         _ => panic!("expected ConversationOutline::Turn"),
     }
 
-    // Load full part 2 (cargo test) ID
-    let full_part_id: String = sqlx::query_scalar(
-        "SELECT id FROM conversation_parts WHERE tenant_id = ?1 AND turn_id = ?2 AND part_index = 1",
-    )
-    .bind(tenant_id)
-    .bind(&full_turn_id)
-    .fetch_one(pool)
-    .await
-    .expect("load full part id");
+    // Derive full part 2 (cargo test) ID
+    let full_part_id = crate::backend::domain::derive_conversation_part_id(&full_turn_id, 1);
     let short_part_id = crate::backend::domain::conversation_id_fragment(&full_part_id);
 
     // 4. Query outline by Card ID

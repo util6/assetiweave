@@ -1,50 +1,40 @@
 use super::*;
+use crate::backend::domain::{
+    derive_part_id_key, derive_standard_part_id, ConversationPartKind, ConversationPartRole,
+};
 
 pub async fn insert_web_record_parts_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     turn_id: &str,
-    parts: &[crate::backend::domain::NormalizedConversationPart],
+    parts: &[crate::backend::domain::conversations::triad::TriadPart],
     translation_state: &BTreeMap<String, (Option<String>, Option<String>, Option<String>)>,
 ) -> StoreResult<()> {
-    for (index, part) in parts.iter().enumerate() {
-        let part_id = stable_id("web-record-part", &[turn_id, &index.to_string()]);
-        let content_card_json = part
-            .content_card
-            .as_ref()
-            .map(encode_json_app)
-            .transpose()?;
+    for part in parts {
+        let part_id = derive_standard_part_id("web-record-part", turn_id, part.part_index);
+        let id_key = derive_part_id_key(&part_id).unwrap_or([0u8; 8]);
+        let content = part.content.clone().unwrap_or_default();
         let translated_text = translation_state
             .get(&part_id)
-            .filter(|(text, command, _)| text == &part.text && command == &part.command)
-            .and_then(|(_, _, translated_text)| translated_text.as_ref());
+            .filter(|(old_content, _, _)| old_content.as_deref() == Some(&content))
+            .and_then(|(_, _, translated_text)| translated_text.as_ref())
+            .cloned()
+            .or_else(|| part.translated_text.clone());
         sqlx::query(
             r#"
             INSERT INTO web_record_parts (
-                tenant_id, id, turn_id, part_index, role, kind, text, language, command,
-                cwd, status, exit_code, command_label, metadata_json, content_card_json, translated_text,
-                source_execution_id
+                tenant_id, turn_id, part_index, id_key, kind, content, translated_text
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             "#,
         )
         .bind(tenant_id)
-        .bind(part_id)
         .bind(turn_id)
-        .bind(index as i64)
-        .bind(encode_enum_app(part.role)?)
-        .bind(encode_enum_app(part.kind)?)
-        .bind(&part.text)
-        .bind(&part.language)
-        .bind(&part.command)
-        .bind(&part.cwd)
-        .bind(&part.status)
-        .bind(part.exit_code)
-        .bind(&part.command_label)
-        .bind(&part.metadata_json)
-        .bind(content_card_json)
+        .bind(part.part_index)
+        .bind(id_key.to_vec())
+        .bind(&part.kind)
+        .bind(&content)
         .bind(translated_text)
-        .bind(&part.source_execution_id)
         .execute(&mut **tx)
         .await
         .map_err(StoreError::external)?;
@@ -59,9 +49,9 @@ pub async fn load_web_record_part_translation_state_sqlx_tx(
     tenant_id: &str,
     session_id: &str,
 ) -> StoreResult<BTreeMap<String, (Option<String>, Option<String>, Option<String>)>> {
-    let rows = sqlx::query_as::<_, WebRecordPartTranslationRow>(
+    let rows = sqlx::query_as::<_, (String, i64, String, Option<String>)>(
         r#"
-        SELECT p.id, p.text, p.command, p.translated_text
+        SELECT p.turn_id, p.part_index, p.content, p.translated_text
         FROM web_record_parts p
         JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
@@ -74,7 +64,10 @@ pub async fn load_web_record_part_translation_state_sqlx_tx(
     .map_err(StoreError::external)?;
     Ok(rows
         .into_iter()
-        .map(|row| (row.id, (row.text, row.command, row.translated_text)))
+        .map(|(turn_id, part_index, content, translated_text)| {
+            let part_id = derive_standard_part_id("web-record-part", &turn_id, part_index);
+            (part_id, (Some(content), None, translated_text))
+        })
         .collect())
 }
 
@@ -110,7 +103,7 @@ pub async fn insert_web_record_questions_sqlx_tx(
     session_id: &str,
     turns: &[ConversationTurn],
     existing: &BTreeMap<String, (String, ConversationGroupingOrigin)>,
-    now: &str,
+    _now: &str,
 ) -> StoreResult<()> {
     let mut ordered_turns = turns.to_vec();
     ordered_turns.sort_by(|left, right| {
@@ -122,7 +115,7 @@ pub async fn insert_web_record_questions_sqlx_tx(
         .iter()
         .map(|turn| TurnQuestionInput {
             turn_id: turn.id.clone(),
-            user_text: turn.user_text.clone(),
+            user_text: turn.prompt.clone(),
             existing: existing.get(&turn.id).cloned(),
         })
         .collect::<Vec<_>>();
@@ -145,27 +138,4 @@ pub async fn insert_web_record_questions_sqlx_tx(
         .map_err(StoreError::external)?;
     }
     Ok(())
-}
-
-pub async fn load_web_record_parts_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    turn_id: &str,
-) -> StoreResult<Vec<ConversationPart>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT id, turn_id, part_index, role, kind, text, language, command,
-               cwd, status, exit_code, metadata_json, content_card_json, translated_text,
-               source_execution_id, command_label
-        FROM web_record_parts
-        WHERE tenant_id = ?1 AND turn_id = ?2
-        ORDER BY part_index ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(turn_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    rows.iter().map(map_sqlx_conversation_part).collect()
 }

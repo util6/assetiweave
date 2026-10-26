@@ -209,7 +209,7 @@ export const ConversationTurn = memo(function ConversationTurn({
     try {
       if (!navigator.clipboard?.writeText)
         throw new Error("Clipboard API is unavailable");
-      await navigator.clipboard.writeText(model.turn.user_text);
+      await navigator.clipboard.writeText(model.turn.prompt);
       if (copiedTimerRef.current !== null)
         window.clearTimeout(copiedTimerRef.current);
       setCopied(true);
@@ -275,7 +275,7 @@ export const ConversationTurn = memo(function ConversationTurn({
             />
           </div>
         </div>
-        <MarkdownContent value={model.turn.user_text} />
+        <MarkdownContent value={model.turn.prompt} />
       </div>
       <div className="mt-3 pl-3">
         <h3 className="mb-3 text-label-caps text-on-surface-muted">

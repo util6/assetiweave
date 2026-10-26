@@ -193,6 +193,12 @@ pub struct RecallPartFacts {
     pub metadata_json: Option<String>,
     pub status: Option<String>,
     pub exit_code: Option<i64>,
+    #[sqlx(default)]
+    pub signal: Option<String>,
+    #[sqlx(default)]
+    pub tool_name: Option<String>,
+    #[sqlx(default)]
+    pub file_path: Option<String>,
 }
 
 pub async fn load_recall_parts_for_questions_sqlx(
@@ -205,18 +211,55 @@ pub async fn load_recall_parts_for_questions_sqlx(
         return Ok(Vec::new());
     }
     let question_ids_json = serde_json::to_string(question_ids).map_err(StoreError::external)?;
-    let parts_table = match record_kind {
-        MemoryRecordKind::Session => "conversation_parts",
-        MemoryRecordKind::Web => "web_record_parts",
+    let sql = match record_kind {
+        MemoryRecordKind::Session => {
+            r#"
+            SELECT t.question_id, p.kind,
+                   (CASE WHEN p.kind = 'command' THEN
+                       CASE WHEN json_extract(p.attrs_json, '$.has_command') = 0 THEN COALESCE(json_extract(p.attrs_json, '$.summary'), p.content)
+                            ELSE json_extract(p.attrs_json, '$.summary')
+                       END
+                    ELSE p.content END) AS text,
+                   (CASE WHEN p.kind = 'command' THEN
+                       CASE WHEN json_extract(p.attrs_json, '$.has_command') = 0 THEN NULL
+                            ELSE p.content
+                       END
+                    ELSE NULL END) AS command,
+                   json_extract(p.attrs_json, '$.cwd') AS cwd,
+                   json_extract(p.attrs_json, '$.command_label') AS command_label,
+                   NULL AS metadata_json,
+                   json_extract(p.attrs_json, '$.status') AS status,
+                   CAST(json_extract(p.attrs_json, '$.exit_code') AS INTEGER) AS exit_code,
+                   json_extract(p.attrs_json, '$.signal') AS signal,
+                   json_extract(p.attrs_json, '$.tool_name') AS tool_name,
+                   json_extract(p.attrs_json, '$.file_path') AS file_path
+            FROM conversation_parts p
+            JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
+            WHERE p.tenant_id = ?1
+              AND t.question_id IN (SELECT value FROM json_each(?2))
+            "#
+        }
+        MemoryRecordKind::Web => {
+            r#"
+            SELECT t.question_id,
+                   (CASE WHEN p.kind = 'answer' THEN 'text' ELSE 'tool' END) AS kind,
+                   p.content AS text,
+                   NULL AS command,
+                   NULL AS cwd,
+                   NULL AS command_label,
+                   NULL AS metadata_json,
+                   NULL AS status,
+                   NULL AS exit_code,
+                   NULL AS signal,
+                   NULL AS tool_name,
+                   NULL AS file_path
+            FROM web_record_parts p
+            JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
+            WHERE p.tenant_id = ?1
+              AND t.question_id IN (SELECT value FROM json_each(?2))
+            "#
+        }
     };
-    let sql = format!(
-        r#"
-        SELECT p.question_id, p.kind, p.text, p.command, p.cwd, p.command_label, p.metadata_json, p.status, p.exit_code
-        FROM {parts_table} p
-        WHERE p.tenant_id = ?1
-          AND p.question_id IN (SELECT value FROM json_each(?2))
-        "#
-    );
     let rows: Vec<RecallPartFacts> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(tenant_id)
         .bind(question_ids_json)

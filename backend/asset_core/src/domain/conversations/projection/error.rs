@@ -40,9 +40,6 @@ pub enum ProjectionError {
     #[error("adapter card manifest validation failed: {0}")]
     ManifestValidation(String),
 
-    #[error("invalid persisted conversation content card JSON: {0}")]
-    InvalidPersistedCardJson(#[source] serde_json::Error),
-
     #[error("{0}")]
     Other(String),
 }

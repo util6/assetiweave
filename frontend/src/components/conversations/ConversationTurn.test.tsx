@@ -42,7 +42,7 @@ const question: ConversationQuestionDetail = {
       session_id: "session-1",
       external_id: "turn-1",
       turn_index: 0,
-      user_text: "First question",
+      prompt: "First question",
       fingerprint: "turn-1",
       missing: false,
       imported_at: now,
@@ -52,7 +52,7 @@ const question: ConversationQuestionDetail = {
       session_id: "session-1",
       external_id: "turn-2",
       turn_index: 1,
-      user_text: "Second question",
+      prompt: "Second question",
       fingerprint: "turn-2",
       missing: false,
       imported_at: now,
@@ -66,7 +66,11 @@ const question: ConversationQuestionDetail = {
       role: "assistant",
       kind: "text",
       text: "First answer",
-      metadata_json: JSON.stringify({ content_card: { type: "answer" } }),
+      content_card: {
+        schema_version: 1,
+        kind: "answer",
+        renderer: "markdown",
+      },
     },
     {
       id: "part-2",
@@ -75,7 +79,11 @@ const question: ConversationQuestionDetail = {
       role: "tool",
       kind: "tool",
       text: "legacy tool output",
-      metadata_json: JSON.stringify({ content_card: { type: "tool" } }),
+      content_card: {
+        schema_version: 1,
+        kind: "tool",
+        renderer: "plain",
+      },
     },
   ],
   question_turns: [

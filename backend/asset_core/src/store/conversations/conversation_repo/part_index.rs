@@ -1,27 +1,6 @@
 use super::*;
 use sqlx::Row;
 
-/// 零件级全文索引的状态取值。`ready` 之外的状态意味着正文匹配不可用，列表搜索降级为标题级。
-pub(crate) const PART_INDEX_READY: &str = "ready";
-pub(crate) const PART_INDEX_BUILDING: &str = "building";
-pub(crate) const PART_INDEX_STALE: &str = "stale";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConversationPartIndexState {
-    pub tenant_id: String,
-    pub status: String,
-    pub part_count: i64,
-    pub last_error: Option<String>,
-    pub rebuilt_at: Option<String>,
-    pub updated_at: Option<String>,
-}
-
-impl ConversationPartIndexState {
-    pub fn is_ready(&self) -> bool {
-        self.status == PART_INDEX_READY
-    }
-}
-
 /// 把一张零件投影成它的索引正文。
 ///
 /// 只取投影出来的正文，不对语义角色做任何判断——工具输出、执行结果、文件变更、子代理
@@ -92,28 +71,90 @@ async fn load_session_adapter_card_kinds_sqlx_tx(
     Ok((adapter_id, card_kinds))
 }
 
-const PART_COLUMNS: &str = "p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language, \
-     p.command, p.cwd, p.status, p.exit_code, p.metadata_json, p.content_card_json, \
-     p.translated_text, p.source_execution_id, p.command_label";
-
 async fn load_turn_parts_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     turn_id: &str,
     record_kind: ConversationRecordKind,
 ) -> StoreResult<Vec<ConversationPart>> {
-    let query = format!(
-        "SELECT {PART_COLUMNS} FROM {parts} p \
-         WHERE p.tenant_id = ?1 AND p.turn_id = ?2 ORDER BY p.part_index ASC",
-        parts = record_kind.tables().parts,
-    );
-    let rows = sqlx::query(AssertSqlSafe(query))
+    let tables = record_kind.tables();
+    let turn_row = sqlx::query_as::<_, (String, Option<String>, Option<String>, String)>(
+        AssertSqlSafe(format!(
+            "SELECT t.prompt, t.process, t.response, s.adapter_id \
+             FROM {turns} t \
+             JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id \
+             WHERE t.tenant_id = ?1 AND t.id = ?2",
+            turns = tables.turns,
+            sessions = tables.sessions,
+        )),
+    )
+    .bind(tenant_id)
+    .bind(turn_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+
+    let Some((prompt, process_json, response, adapter_id)) = turn_row else {
+        return Ok(Vec::new());
+    };
+
+    let part_columns = match record_kind {
+        ConversationRecordKind::Session => {
+            "p.part_index, p.kind, p.content, p.attrs_json, p.translated_text"
+        }
+        ConversationRecordKind::Web => {
+            "p.part_index, p.kind, p.content, NULL AS attrs_json, p.translated_text"
+        }
+    };
+
+    let part_rows: Vec<(i64, String, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as(AssertSqlSafe(format!(
+            "SELECT {part_columns} \
+             FROM {parts} p \
+             WHERE p.tenant_id = ?1 AND p.turn_id = ?2 \
+             ORDER BY p.part_index ASC",
+            parts = tables.parts,
+            part_columns = part_columns,
+        )))
         .bind(tenant_id)
         .bind(turn_id)
         .fetch_all(&mut **tx)
         .await
         .map_err(StoreError::external)?;
-    rows.iter().map(map_sqlx_conversation_part).collect()
+
+    let triad_parts: Vec<crate::backend::domain::conversations::triad::TriadPart> = part_rows
+        .into_iter()
+        .map(|(part_index, kind, content, attrs_json, translated_text)| {
+            crate::backend::domain::conversations::triad::TriadPart {
+                part_index,
+                kind,
+                content,
+                attrs_json,
+                translated_text,
+            }
+        })
+        .collect();
+
+    let process: Option<crate::backend::domain::conversations::triad::TurnProcess> = process_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok());
+
+    let prefix = match record_kind {
+        ConversationRecordKind::Session => "conversation-part",
+        ConversationRecordKind::Web => "web-record-part",
+    };
+
+    Ok(
+        crate::backend::domain::conversations::triad::merge_turn_triad(
+            &adapter_id,
+            prefix,
+            turn_id,
+            &prompt,
+            process.as_ref(),
+            response.as_deref(),
+            &triad_parts,
+        ),
+    )
 }
 
 async fn load_session_parts_sqlx_tx(
@@ -123,21 +164,86 @@ async fn load_session_parts_sqlx_tx(
     record_kind: ConversationRecordKind,
 ) -> StoreResult<Vec<ConversationPart>> {
     let tables = record_kind.tables();
-    let query = format!(
-        "SELECT {PART_COLUMNS} FROM {parts} p \
-         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
-         WHERE p.tenant_id = ?1 AND t.session_id = ?2 \
-         ORDER BY p.turn_id ASC, p.part_index ASC",
-        parts = tables.parts,
-        turns = tables.turns,
-    );
-    let rows = sqlx::query(AssertSqlSafe(query))
+    let turn_rows: Vec<(String, String, Option<String>, Option<String>, String)> =
+        sqlx::query_as(AssertSqlSafe(format!(
+            "SELECT t.id, t.prompt, t.process, t.response, s.adapter_id \
+             FROM {turns} t \
+             JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id \
+             WHERE t.tenant_id = ?1 AND t.session_id = ?2 \
+             ORDER BY t.turn_index ASC, t.id ASC",
+            turns = tables.turns,
+            sessions = tables.sessions,
+        )))
         .bind(tenant_id)
         .bind(session_id)
         .fetch_all(&mut **tx)
         .await
         .map_err(StoreError::external)?;
-    rows.iter().map(map_sqlx_conversation_part).collect()
+
+    let part_rows: Vec<(
+        String,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT {part_columns} \
+             FROM {parts} p \
+             JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+             WHERE p.tenant_id = ?1 AND t.session_id = ?2 \
+             ORDER BY p.turn_id ASC, p.part_index ASC",
+        parts = tables.parts,
+        turns = tables.turns,
+        part_columns = tables.part_columns,
+    )))
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+
+    let mut triad_parts_by_turn: BTreeMap<
+        String,
+        Vec<crate::backend::domain::conversations::triad::TriadPart>,
+    > = BTreeMap::new();
+    for (turn_id, part_index, kind, content, attrs_json, translated_text) in part_rows {
+        triad_parts_by_turn.entry(turn_id).or_default().push(
+            crate::backend::domain::conversations::triad::TriadPart {
+                part_index,
+                kind,
+                content,
+                attrs_json,
+                translated_text,
+            },
+        );
+    }
+
+    let prefix = match record_kind {
+        ConversationRecordKind::Session => "conversation-part",
+        ConversationRecordKind::Web => "web-record-part",
+    };
+
+    let mut all_parts = Vec::new();
+    for (turn_id, prompt, process_json, response, adapter_id) in turn_rows {
+        let empty = Vec::new();
+        let turn_parts = triad_parts_by_turn.get(&turn_id).unwrap_or(&empty);
+        let process: Option<crate::backend::domain::conversations::triad::TurnProcess> =
+            process_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok());
+        let restored = crate::backend::domain::conversations::triad::merge_turn_triad(
+            &adapter_id,
+            prefix,
+            &turn_id,
+            &prompt,
+            process.as_ref(),
+            response.as_deref(),
+            turn_parts,
+        );
+        all_parts.extend(restored);
+    }
+    Ok(all_parts)
 }
 
 async fn insert_part_index_row_sqlx_tx(
@@ -345,87 +451,6 @@ pub(crate) async fn resolve_record_kind_sqlx(
         "web" => Some(ConversationRecordKind::Web),
         _ => None,
     }))
-}
-
-#[derive(Debug, FromRow)]
-struct PartIndexStateRow {
-    tenant_id: String,
-    status: String,
-    part_count: i64,
-    last_error: Option<String>,
-    rebuilt_at: Option<String>,
-    updated_at: Option<String>,
-}
-
-pub async fn load_conversation_part_index_state_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-) -> StoreResult<Option<ConversationPartIndexState>> {
-    let row = sqlx::query_as::<_, PartIndexStateRow>(
-        r#"
-        SELECT tenant_id, status, part_count, last_error, rebuilt_at, updated_at
-        FROM conversation_part_index_state
-        WHERE tenant_id = ?1
-        "#,
-    )
-    .bind(tenant_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(StoreError::external)?;
-    Ok(row.map(|row| ConversationPartIndexState {
-        tenant_id: row.tenant_id,
-        status: row.status,
-        part_count: row.part_count,
-        last_error: row.last_error,
-        rebuilt_at: row.rebuilt_at,
-        updated_at: row.updated_at,
-    }))
-}
-
-/// 索引是否可用于正文匹配。缺行即视为就绪：没有任何写入的租户不需要初始化。
-pub async fn conversation_part_index_ready_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-) -> StoreResult<bool> {
-    Ok(load_conversation_part_index_state_sqlx(pool, tenant_id)
-        .await?
-        .map(|state| state.is_ready())
-        .unwrap_or(true))
-}
-
-pub async fn set_conversation_part_index_status_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    status: &str,
-    part_count: i64,
-    last_error: Option<&str>,
-) -> StoreResult<()> {
-    let now = Utc::now().to_rfc3339();
-    let rebuilt_at = (status == PART_INDEX_READY).then(|| now.clone());
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_part_index_state (
-            tenant_id, status, part_count, last_error, rebuilt_at, updated_at
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-        ON CONFLICT(tenant_id) DO UPDATE SET
-            status = excluded.status,
-            part_count = excluded.part_count,
-            last_error = excluded.last_error,
-            rebuilt_at = COALESCE(excluded.rebuilt_at, conversation_part_index_state.rebuilt_at),
-            updated_at = excluded.updated_at
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(status)
-    .bind(part_count)
-    .bind(last_error)
-    .bind(rebuilt_at)
-    .bind(now)
-    .execute(pool)
-    .await
-    .map_err(StoreError::external)?;
-    Ok(())
 }
 
 #[cfg(test)]

@@ -18,7 +18,7 @@ export function conversationQuestionTitle(
   if (title) return title;
 
   for (const turn of detail.turns) {
-    const firstLine = firstNonEmptyLine(turn.user_text);
+    const firstLine = firstNonEmptyLine(turn.prompt);
     if (firstLine) return firstLine;
   }
 
@@ -40,7 +40,7 @@ export function conversationQuestionPreview(
 
   if (node) return firstNonEmptyLine(node.content);
   for (const turn of detail.turns) {
-    const firstLine = firstNonEmptyLine(turn.user_text);
+    const firstLine = firstNonEmptyLine(turn.prompt);
     if (firstLine) return firstLine;
   }
   return null;

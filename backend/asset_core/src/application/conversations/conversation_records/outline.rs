@@ -138,48 +138,47 @@ fn collect_turn_cards(question: &ConversationQuestionDetail, turn_id: &str) -> V
         .collect();
     turn_nodes.sort_by_key(|node| (node.part_order, node.node_order));
 
-    if !turn_nodes.is_empty() {
-        turn_nodes
-            .into_iter()
-            .map(|node| SimpleCardNode {
-                node_id: node.node_id.clone(),
-                part_id: node.part_id.clone(),
-                node_type: node.node_type.clone(),
-                command_label: node.command_label.clone(),
-                status: node.status.clone(),
-                role: node.role,
-                content_chars: node.content.chars().count(),
-            })
-            .collect()
-    } else {
-        let mut turn_parts: Vec<_> = question
-            .parts
-            .iter()
-            .filter(|p| p.turn_id == turn_id && p.role != ConversationPartRole::User)
-            .collect();
-        turn_parts.sort_by_key(|p| p.part_index);
-        turn_parts
-            .into_iter()
-            .map(|part| {
-                let chars = part
-                    .text
-                    .as_deref()
-                    .or(part.command.as_deref())
-                    .unwrap_or_default()
-                    .chars()
-                    .count();
-                SimpleCardNode {
-                    node_id: part.id.clone(),
-                    part_id: part.id.clone(),
-                    node_type: part.kind.as_str().to_string(),
-                    command_label: part.command_label.clone(),
-                    status: part.status.clone(),
-                    role: part.role,
-                    content_chars: chars,
-                }
-            })
-            .collect()
+    let mut cards: Vec<SimpleCardNode> = turn_nodes
+        .into_iter()
+        .map(|node| SimpleCardNode {
+            node_id: node.node_id.clone(),
+            part_id: node.part_id.clone(),
+            node_type: node.node_type.clone(),
+            command_label: node.command_label.clone(),
+            status: node.status.clone(),
+            role: node.role,
+            content_chars: node.content.chars().count(),
+        })
+        .collect();
+
+    let mut unprojected_parts: Vec<_> = question
+        .parts
+        .iter()
+        .filter(|p| p.turn_id == turn_id && p.role != ConversationPartRole::User)
+        .filter(|p| !cards.iter().any(|c| c.part_id == p.id))
+        .collect();
+    unprojected_parts.sort_by_key(|p| p.part_index);
+
+    for part in unprojected_parts {
+        let chars = part
+            .text
+            .as_deref()
+            .or(part.command.as_deref())
+            .unwrap_or_default()
+            .chars()
+            .count();
+        cards.push(SimpleCardNode {
+            node_id: part.id.clone(),
+            part_id: part.id.clone(),
+            node_type: part.kind.as_str().to_string(),
+            command_label: part.command_label.clone(),
+            status: part.status.clone(),
+            role: part.role,
+            content_chars: chars,
+        });
     }
+
+    cards
 }
 
 fn build_session_outline(detail: ConversationSessionDetail) -> AppResult<ConversationOutline> {
@@ -215,8 +214,8 @@ fn build_session_outline(detail: ConversationSessionDetail) -> AppResult<Convers
                 .or_else(|| cards.last())
                 .map(|n| crate::backend::domain::conversation_id_fragment(&n.node_id));
 
-            let question_text = if !turn.user_text.trim().is_empty() {
-                turn.user_text.clone()
+            let question_text = if !turn.prompt.trim().is_empty() {
+                turn.prompt.clone()
             } else if let Some(ref title) = question.question.title {
                 title.clone()
             } else {
@@ -313,8 +312,8 @@ fn build_turn_outline(
         })
         .collect();
 
-    let user_question = if !turn.user_text.trim().is_empty() {
-        turn.user_text.clone()
+    let user_question = if !turn.prompt.trim().is_empty() {
+        turn.prompt.clone()
     } else if let Some(ref title) = question.question.title {
         title.clone()
     } else {
@@ -411,8 +410,8 @@ fn build_card_outline(
         })
         .collect();
 
-    let user_question = if !turn.user_text.trim().is_empty() {
-        turn.user_text.clone()
+    let user_question = if !turn.prompt.trim().is_empty() {
+        turn.prompt.clone()
     } else if let Some(ref title) = question.question.title {
         title.clone()
     } else {

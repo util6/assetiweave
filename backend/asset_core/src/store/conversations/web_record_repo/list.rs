@@ -49,7 +49,7 @@ pub async fn list_web_record_sessions_sqlx(
                   FROM web_record_turns t
                   WHERE t.tenant_id = s.tenant_id
                     AND t.session_id = s.id
-                    AND instr(lower(t.user_text), ?4) > 0
+                    AND instr(lower(t.prompt), ?4) > 0
               ))
           )
         ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
@@ -102,6 +102,7 @@ pub async fn list_web_record_sessions_sqlx(
                     execution_origin: "user".to_string(),
                     execution_purpose: None,
                     user_visible: true,
+                    last_cwd: None,
                 },
                 question_count,
                 turn_count,
@@ -124,7 +125,7 @@ pub async fn resolve_web_record_session_id_prefix_sqlx(
     tenant_id: &str,
     input: &str,
 ) -> StoreResult<String> {
-    if input.len() >= 36 {
+    if input.len() >= 83 && input.starts_with("web-record-session-") {
         return Ok(input.to_string());
     }
     let clean_prefix = input.strip_prefix("web-record-session-").unwrap_or(input);
@@ -165,26 +166,82 @@ pub async fn resolve_web_record_part_id_prefix_sqlx(
     tenant_id: &str,
     input: &str,
 ) -> StoreResult<String> {
-    if input.len() >= 36 {
+    if input.len() >= 80 && input.starts_with("web-record-part-") {
         return Ok(input.to_string());
     }
     let clean_prefix = input.strip_prefix("web-record-part-").unwrap_or(input);
-    let like_pattern_verbatim = format!("{}%", input);
-    let like_pattern_domain = format!("web-record-part-{}%", clean_prefix);
 
-    let rows: Vec<String> = sqlx::query_scalar(
-        r#"
-        SELECT id FROM web_record_parts
-        WHERE tenant_id = ?1 AND (id LIKE ?2 OR id LIKE ?3)
-        LIMIT 11
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(&like_pattern_verbatim)
-    .bind(&like_pattern_domain)
-    .fetch_all(pool)
-    .await
-    .map_err(StoreError::external)?;
+    let mut rows: Vec<String> = Vec::new();
+    if let Some(parsed) = crate::backend::domain::parse_id_key_prefix(clean_prefix) {
+        let part_rows: Vec<(String, i64)> = match parsed.lookup {
+            crate::backend::domain::IdKeyLookup::Exact(key) => {
+                sqlx::query_as(
+                    "SELECT turn_id, part_index FROM web_record_parts WHERE tenant_id = ?1 AND id_key = ?2 LIMIT 11",
+                )
+                .bind(tenant_id)
+                .bind(key.to_vec())
+                .fetch_all(pool)
+                .await
+                .map_err(StoreError::external)?
+            }
+            crate::backend::domain::IdKeyLookup::Range {
+                low,
+                high: Some(high),
+            } => {
+                sqlx::query_as(
+                    "SELECT turn_id, part_index FROM web_record_parts WHERE tenant_id = ?1 AND id_key >= ?2 AND id_key < ?3 LIMIT 11",
+                )
+                .bind(tenant_id)
+                .bind(low.to_vec())
+                .bind(high.to_vec())
+                .fetch_all(pool)
+                .await
+                .map_err(StoreError::external)?
+            }
+            crate::backend::domain::IdKeyLookup::Range { low, high: None } => {
+                sqlx::query_as(
+                    "SELECT turn_id, part_index FROM web_record_parts WHERE tenant_id = ?1 AND id_key >= ?2 LIMIT 11",
+                )
+                .bind(tenant_id)
+                .bind(low.to_vec())
+                .fetch_all(pool)
+                .await
+                .map_err(StoreError::external)?
+            }
+        };
+
+        for (turn_id, part_index) in part_rows {
+            let full_id = crate::backend::domain::derive_standard_part_id(
+                "web-record-part",
+                &turn_id,
+                part_index,
+            );
+            let hash_part = full_id.strip_prefix("web-record-part-").unwrap_or(&full_id);
+            if hash_part.starts_with(&parsed.normalized_hex)
+                || full_id.starts_with(input)
+                || full_id == input
+            {
+                if !rows.contains(&full_id) {
+                    rows.push(full_id);
+                }
+            }
+        }
+
+        let triad_candidates =
+            crate::backend::store::conversations::conversation_repo::triad_locator::query_triad_parts_by_prefix(
+                pool,
+                tenant_id,
+                &parsed.normalized_hex,
+                false,
+                true,
+            )
+            .await?;
+        for cand in triad_candidates {
+            if !rows.contains(&cand.full_id) {
+                rows.push(cand.full_id);
+            }
+        }
+    }
 
     match rows.len() {
         0 => Err(StoreError::NotFound(format!(
@@ -225,7 +282,7 @@ pub async fn load_web_record_session_detail_sqlx(
 
     let turn_rows = sqlx::query_as::<_, ConversationTurnQuestionRow>(
         r#"
-        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
+        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.prompt, t.process, t.response, t.title,
                t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
                t.question_id, t.question_origin
         FROM web_record_turns t
@@ -243,11 +300,9 @@ pub async fn load_web_record_session_detail_sqlx(
         .map(ConversationTurnQuestionRow::into_grouped_turn)
         .collect::<Vec<_>>();
 
-    let part_rows = sqlx::query(
+    let part_rows = sqlx::query_as::<_, (String, i64, String, Option<String>, Option<String>)>(
         r#"
-        SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-               p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-               p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
+        SELECT p.turn_id, p.part_index, p.kind, p.content, p.translated_text
         FROM web_record_parts p
         JOIN web_record_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
@@ -259,13 +314,41 @@ pub async fn load_web_record_session_detail_sqlx(
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
+
+    let mut triad_parts_by_turn: BTreeMap<
+        String,
+        Vec<crate::backend::domain::conversations::triad::TriadPart>,
+    > = BTreeMap::new();
+    for (turn_id, part_index, kind, content, translated_text) in part_rows {
+        triad_parts_by_turn.entry(turn_id).or_default().push(
+            crate::backend::domain::conversations::triad::TriadPart {
+                part_index,
+                kind,
+                content,
+                attrs_json: None,
+                translated_text,
+            },
+        );
+    }
+
     let mut parts_by_turn = BTreeMap::<String, Vec<ConversationPart>>::new();
-    for row in &part_rows {
-        let part = map_sqlx_conversation_part(row).map_err(StoreError::external)?;
-        parts_by_turn
-            .entry(part.turn_id.clone())
-            .or_default()
-            .push(part);
+    for (_, _, turn) in &turns {
+        let empty_vec = Vec::new();
+        let turn_parts = triad_parts_by_turn.get(&turn.id).unwrap_or(&empty_vec);
+        let process: Option<crate::backend::domain::conversations::triad::TurnProcess> = turn
+            .process
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok());
+        let restored = crate::backend::domain::conversations::triad::merge_turn_triad(
+            &session.adapter_id,
+            "web-record-part",
+            &turn.id,
+            &turn.prompt,
+            process.as_ref(),
+            turn.response.as_deref(),
+            turn_parts,
+        );
+        parts_by_turn.insert(turn.id.clone(), restored);
     }
 
     let card_kinds_json = sqlx::query_scalar::<_, String>(
@@ -297,24 +380,36 @@ pub async fn update_web_record_part_translation_sqlx(
     part_id: &str,
     translated_text: &str,
 ) -> StoreResult<()> {
+    let id_key = crate::backend::domain::derive_part_id_key(part_id)
+        .ok_or_else(|| StoreError::NotFound(format!("invalid web record part id: {part_id}")))?;
     let result = sqlx::query(
         r#"
         UPDATE web_record_parts
         SET translated_text = ?1
-        WHERE tenant_id = ?2 AND id = ?3
+        WHERE tenant_id = ?2 AND id_key = ?3
         "#,
     )
     .bind(translated_text)
     .bind(tenant_id)
-    .bind(part_id)
+    .bind(id_key.to_vec())
     .execute(pool)
     .await
     .map_err(StoreError::external)?;
 
     if result.rows_affected() == 0 {
-        return Err(StoreError::NotFound(format!(
-            "web record part not found: {part_id}"
-        )));
+        let updated = crate::backend::store::conversations::conversation_repo::triad_locator::update_triad_part_translation(
+            pool,
+            tenant_id,
+            crate::backend::domain::ConversationRecordKind::Web,
+            part_id,
+            translated_text,
+        )
+        .await?;
+        if !updated {
+            return Err(StoreError::NotFound(format!(
+                "web record part not found: {part_id}"
+            )));
+        }
     }
 
     Ok(())

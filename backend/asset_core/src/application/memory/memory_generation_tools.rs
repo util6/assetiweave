@@ -304,7 +304,7 @@ fn resolve_source_reference(
     } else {
         let turn_id = reference.turn_id.as_deref()?;
         let turn = question.turns.iter().find(|turn| turn.id == turn_id)?;
-        ("user".to_string(), turn.user_text.as_str())
+        ("user".to_string(), turn.prompt.as_str())
     };
     let content = redact_memory_text(raw.1).text;
     if content.trim().is_empty() {

@@ -307,9 +307,6 @@ impl From<crate::backend::domain::conversations::projection::ProjectionError> fo
     fn from(error: crate::backend::domain::conversations::projection::ProjectionError) -> Self {
         use crate::backend::domain::conversations::projection::ProjectionError;
         match error {
-            ProjectionError::InvalidPersistedCardJson(source) => {
-                Self::Codec(crate::backend::store::CodecError::Decode(source))
-            }
             ProjectionError::UnsupportedSchemaVersion { .. }
             | ProjectionError::MissingCardKind
             | ProjectionError::InvalidCardKind { .. }

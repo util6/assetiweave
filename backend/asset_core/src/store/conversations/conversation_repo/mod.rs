@@ -28,21 +28,26 @@ use crate::backend::store::codec::{decode_enum, decode_json, encode_enum, encode
 pub use super::search_index_repo::bump_conversation_search_source_revision_sqlx_tx;
 
 pub mod adapters;
+pub mod block_details;
 pub mod common;
 pub mod content_details;
 pub mod import;
 pub mod import_advanced;
 pub mod import_groups;
 pub mod import_groups_aggregates;
+pub mod import_parts;
 pub mod import_prune;
 pub mod import_records;
+pub mod import_single;
 pub mod merge_split;
 pub mod observations;
 pub mod outline;
 pub mod package_releases;
 pub mod packages;
 pub mod part_index;
+pub mod part_index_state;
 pub mod prefixes;
+pub mod prefixes_any;
 pub mod projection;
 pub mod reproject;
 pub mod row_mappers;
@@ -52,23 +57,30 @@ pub mod search_snippets;
 pub mod sessions;
 pub mod sources;
 pub mod sql_constants;
+pub mod triad_locator;
+pub mod triad_update;
 
 pub use adapters::*;
+pub use block_details::*;
 pub use common::*;
 pub use content_details::*;
 pub use import::*;
 pub use import_advanced::*;
 pub use import_groups::*;
 pub use import_groups_aggregates::*;
+pub use import_parts::*;
 pub use import_prune::*;
 pub use import_records::*;
+pub use import_single::*;
 pub use merge_split::*;
 pub use observations::*;
 pub use outline::*;
 pub use package_releases::*;
 pub use packages::*;
 pub use part_index::*;
+pub use part_index_state::*;
 pub use prefixes::*;
+pub use prefixes_any::*;
 pub use projection::*;
 pub use reproject::*;
 pub use row_mappers::*;
@@ -78,7 +90,11 @@ pub use search_snippets::*;
 pub use sessions::*;
 pub use sources::*;
 pub use sql_constants::*;
+pub use triad_locator::*;
 
 #[cfg(test)]
 #[path = "../conversation_repo_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod adversarial_tests;

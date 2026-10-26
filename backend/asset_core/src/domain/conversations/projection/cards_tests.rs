@@ -211,11 +211,16 @@ fn persisted_row_projection_matches_part_projection() {
         allowed_renderers: vec!["markdown".to_string()],
         icon_hint: Some("brain".to_string()),
     }];
-    let descriptor = r#"{"schema_version":1,"kind":"claude-code.reasoning","renderer":"markdown"}"#;
+    let descriptor = ConversationContentCardDescriptor {
+        schema_version: 1,
+        kind: "claude-code.reasoning".to_string(),
+        semantic_role: None,
+        renderer: Some("markdown".to_string()),
+    };
 
-    let projected = project_persisted_content_card(
-        PersistedConversationCardProjectionSource {
-            content_card_json: Some(descriptor),
+    let projected = project_resolved_content_card(
+        ConversationCardProjectionSource {
+            content_card: Some(&descriptor),
             metadata_json: Some(r#"{"source_type":"thinking"}"#),
             text: Some("Compare both paths"),
             language: None,
@@ -408,6 +413,9 @@ fn part_with_metadata(metadata: &str) -> ConversationPart {
         content_card: None,
         metadata_json: Some(metadata.to_string()),
         translated_text: None,
+        signal: None,
+        tool_name: None,
+        file_path: None,
     }
 }
 

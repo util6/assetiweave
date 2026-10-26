@@ -41,7 +41,7 @@ pub async fn load_memory_recall_turn_sqlx(
         r#"
         SELECT r.id, r.session_id, r.sequence, r.conversation_session_id,
                r.conversation_turn_id, r.status, r.structured_output_json,
-               r.last_error, r.created_at, r.updated_at, COALESCE(t.user_text, '') AS user_text
+               r.last_error, r.created_at, r.updated_at, COALESCE(t.prompt, '') AS user_text
         FROM memory_recall_turns r
         LEFT JOIN conversation_turns t
           ON t.tenant_id = r.tenant_id AND t.id = r.conversation_turn_id
@@ -68,7 +68,7 @@ pub async fn load_memory_recall_turns_sqlx(
         r#"
         SELECT r.id, r.session_id, r.sequence, r.conversation_session_id,
                r.conversation_turn_id, r.status, r.structured_output_json,
-               r.last_error, r.created_at, r.updated_at, COALESCE(t.user_text, '') AS user_text
+               r.last_error, r.created_at, r.updated_at, COALESCE(t.prompt, '') AS user_text
         FROM memory_recall_turns r
         LEFT JOIN conversation_turns t
           ON t.tenant_id = r.tenant_id AND t.id = r.conversation_turn_id

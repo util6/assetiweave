@@ -88,6 +88,7 @@ fn unix_activity_timestamps_reach_the_idle_gate() {
                 execution_origin: "user".to_string(),
                 execution_purpose: None,
                 user_visible: true,
+                last_cwd: None,
             },
             questions: Vec::new(),
         };

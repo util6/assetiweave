@@ -88,22 +88,6 @@ impl<'a> ExternalAdapterSourceReader<'a> {
         self
     }
 
-    pub(super) async fn read_usage(
-        &self,
-        mode: &str,
-        cursor: Option<&str>,
-    ) -> InfraResult<ExternalAdapterRunResult> {
-        self.run(
-            "read_usage",
-            json!({
-                "mode": mode,
-                "cursor": cursor,
-            }),
-            DEFAULT_READ_TIMEOUT_MS,
-        )
-        .await
-    }
-
     pub(super) async fn discover(&self) -> InfraResult<Option<ExternalAdapterRunResult>> {
         if !self
             .adapter

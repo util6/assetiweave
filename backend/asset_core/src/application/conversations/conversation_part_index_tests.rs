@@ -4,7 +4,6 @@ use crate::backend::infrastructure::tasks::{stages, StageStatus, TaskState};
 async fn seed_indexed_session(service: &AppService, session_id: &str, body: &str) {
     let tenant_id = service.tenant_id();
     let turn_id = format!("{session_id}-turn");
-    let part_id = format!("{session_id}-part");
     sqlx::query(
         r#"
         INSERT INTO conversation_sessions (
@@ -24,7 +23,7 @@ async fn seed_indexed_session(service: &AppService, session_id: &str, body: &str
     sqlx::query(
         r#"
         INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, user_text, title,
+            tenant_id, id, session_id, external_id, turn_index, prompt, title,
             started_at, ended_at, fingerprint, missing, imported_at
         ) VALUES (?1, ?2, ?3, ?2, 0, 'index rebuild probe', NULL, NULL, NULL,
                   'fixture-fingerprint', 0, '2026-10-23T00:00:00Z')
@@ -36,19 +35,19 @@ async fn seed_indexed_session(service: &AppService, session_id: &str, body: &str
     .execute(service.pool())
     .await
     .expect("seed turn");
+    let part_id = crate::backend::domain::derive_conversation_part_id(&turn_id, 0);
+    let id_key = crate::backend::domain::derive_part_id_key(&part_id).unwrap_or([0u8; 8]);
     sqlx::query(
         r#"
         INSERT INTO conversation_parts (
-            tenant_id, id, turn_id, part_index, role, kind, text, language, command,
-            cwd, status, exit_code, metadata_json, content_card_json, translated_text,
-            source_execution_id, command_label
-        ) VALUES (?1, ?2, ?3, 0, 'tool', 'text', ?4, NULL, NULL, NULL, NULL, NULL,
-                  '{"content_card":{"type":"tool_result"}}', NULL, NULL, NULL, NULL)
+            tenant_id, turn_id, part_index, id_key, kind, content,
+            attrs_json, translated_text
+        ) VALUES (?1, ?2, 0, ?3, 'tool_result', ?4, NULL, NULL)
         "#,
     )
     .bind(tenant_id)
-    .bind(&part_id)
     .bind(&turn_id)
+    .bind(id_key.to_vec())
     .bind(body)
     .execute(service.pool())
     .await

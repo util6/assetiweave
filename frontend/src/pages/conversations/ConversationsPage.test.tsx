@@ -298,7 +298,7 @@ describe("MarkdownContent", () => {
         {
           ...questionDetail.turns[0],
           id: "empty-turn",
-          user_text: "Imported context without assistant content",
+          prompt: "Imported context without assistant content",
         },
       ],
       question_turns: [],
@@ -1899,7 +1899,7 @@ const questionDetail: ConversationQuestionDetail = {
       session_id: "session-1",
       external_id: "turn-1",
       turn_index: 0,
-      user_text: "AssetIWeave 如何同步对话记录？",
+      prompt: "AssetIWeave 如何同步对话记录？",
       fingerprint: "turn-1",
       missing: false,
       imported_at: now,
@@ -1909,7 +1909,7 @@ const questionDetail: ConversationQuestionDetail = {
       session_id: "session-1",
       external_id: "turn-2",
       turn_index: 1,
-      user_text: "继续",
+      prompt: "继续",
       fingerprint: "turn-2",
       missing: false,
       imported_at: now,
@@ -1925,9 +1925,11 @@ const questionDetail: ConversationQuestionDetail = {
       text: ["# 同步流程", "", "- 按 Session 导入", "- 按用户问题预览"].join(
         "\n",
       ),
-      metadata_json: JSON.stringify({
-        content_card: { type: "answer", format: "markdown" },
-      }),
+      content_card: {
+        schema_version: 1,
+        kind: "answer",
+        renderer: "markdown",
+      },
     },
     {
       id: "part-2",
@@ -1938,9 +1940,11 @@ const questionDetail: ConversationQuestionDetail = {
       command: "assetiweave-cli conversation sync --dry-run",
       status: "completed",
       exit_code: 0,
-      metadata_json: JSON.stringify({
-        content_card: { type: "command" },
-      }),
+      content_card: {
+        schema_version: 1,
+        kind: "command",
+        renderer: "command",
+      },
     },
     {
       id: "part-2-result",
@@ -1949,9 +1953,11 @@ const questionDetail: ConversationQuestionDetail = {
       role: "tool",
       kind: "tool",
       text: "tests passed",
-      metadata_json: JSON.stringify({
-        content_card: { type: "result", format: "plain", suffix: "result" },
-      }),
+      content_card: {
+        schema_version: 1,
+        kind: "result",
+        renderer: "plain",
+      },
     },
   ],
   question_turns: [
@@ -2014,9 +2020,11 @@ const richQuestionDetail: ConversationQuestionDetail = {
       kind: "code_block",
       language: "ts",
       text: "const synced = true;",
-      metadata_json: JSON.stringify({
-        content_card: { type: "code", language: "ts" },
-      }),
+      content_card: {
+        schema_version: 1,
+        kind: "code",
+        renderer: "code",
+      },
     },
     {
       id: "part-4",
@@ -2025,9 +2033,11 @@ const richQuestionDetail: ConversationQuestionDetail = {
       role: "tool",
       kind: "tool",
       text: "Read project files",
-      metadata_json: JSON.stringify({
-        content_card: { type: "tool" },
-      }),
+      content_card: {
+        schema_version: 1,
+        kind: "tool",
+        renderer: "plain",
+      },
     },
   ],
   projected_content_nodes: [

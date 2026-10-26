@@ -82,6 +82,9 @@ impl AppService {
                 .await
                 {
                     Ok((kind, _)) => kind,
+                    Err(crate::backend::store::StoreError::Conflict(e)) => {
+                        return Err(crate::backend::application::AppError::Conflict(e));
+                    }
                     Err(_) => {
                         crate::backend::domain::conversations::ConversationRecordKind::Session
                     }
@@ -178,8 +181,7 @@ impl AppService {
                     tenant_id,
                     &params.part_id,
                 )
-                .await
-                .map_err(AppError::external)?;
+                .await?;
                 Ok(
                     crate::backend::store::update_conversation_part_translation_sqlx(
                         pool,

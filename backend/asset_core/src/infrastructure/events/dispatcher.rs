@@ -64,7 +64,6 @@ pub struct EventDispatcher {
     db_path: PathBuf,
     consumers: Vec<Arc<dyn DomainEventConsumer>>,
     notify: Arc<tokio::sync::Notify>,
-    cancellation: CancellationToken,
     retry_states: Mutex<HashMap<RetryKey, ConsumerRetryState>>,
 }
 
@@ -79,7 +78,6 @@ impl EventDispatcher {
             db_path,
             consumers,
             notify: Arc::new(tokio::sync::Notify::new()),
-            cancellation: CancellationToken::new(),
             retry_states: Mutex::new(HashMap::new()),
         }
     }

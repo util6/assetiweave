@@ -19,6 +19,9 @@ fn test_part(id: &str, turn_id: &str, part_index: i64) -> ConversationPart {
         content_card: None,
         metadata_json: None,
         translated_text: None,
+        signal: None,
+        tool_name: None,
+        file_path: None,
     }
 }
 
@@ -37,6 +40,9 @@ fn candidate(node_type: &str, content: &str) -> ConversationContentNodeCandidate
         command_label: None,
         translated_content: None,
         legacy_anchor_ids: vec![format!("part-1-{node_type}")],
+        signal: None,
+        tool_name: None,
+        file_path: None,
     }
 }
 

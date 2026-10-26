@@ -404,6 +404,7 @@ export interface ConversationSession {
   execution_origin?: string;
   execution_purpose?: string | null;
   user_visible?: boolean;
+  last_cwd?: string | null;
 }
 
 export interface ConversationSessionListItem extends ConversationSession {
@@ -416,7 +417,9 @@ export interface ConversationTurn {
   session_id: string;
   external_id: string;
   turn_index: number;
-  user_text: string;
+  prompt: string;
+  process?: string | null;
+  response?: string | null;
   title?: string | null;
   started_at?: string | null;
   ended_at?: string | null;
@@ -440,9 +443,13 @@ export interface ConversationPart {
   exit_code?: number | null;
   command_label?: string | null;
   content_card?: ConversationContentCardDescriptor | null;
+  /** Raw event archive only. Not used for UI presentation or card rendering. */
   metadata_json?: string | null;
   translated_text?: string | null;
   source_execution_id?: string | null;
+  signal?: string | null;
+  tool_name?: string | null;
+  file_path?: string | null;
 }
 
 export interface ConversationContentCardDescriptor {
@@ -494,6 +501,9 @@ export interface ConversationContentNode {
   command_label?: string | null;
   translated_content?: string | null;
   legacy_anchor_ids: string[];
+  signal?: string | null;
+  tool_name?: string | null;
+  file_path?: string | null;
 }
 
 export interface ConversationQuestion {

@@ -1909,7 +1909,7 @@ function fallbackConversationSearch(
           questionIndex,
           questionTitle,
           session,
-          text: turn.user_text,
+          text: turn.prompt,
           turnId: turn.id,
         });
 
@@ -2603,7 +2603,7 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           session_id: "preview-session",
           external_id: "turn-1",
           turn_index: 0,
-          user_text: "How does conversation sync work?",
+          prompt: "How does conversation sync work?",
           fingerprint: "preview",
           missing: false,
           imported_at: now,
@@ -2613,7 +2613,7 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           session_id: "preview-session",
           external_id: "turn-2",
           turn_index: 1,
-          user_text: "继续",
+          prompt: "继续",
           fingerprint: "preview",
           missing: false,
           imported_at: now,
@@ -2645,9 +2645,11 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           role: "assistant",
           kind: "text",
           text: "AssetIWeave imports source sessions into normalized turns, then groups adjacent turns into question records.",
-          metadata_json: JSON.stringify({
-            content_card: { type: "answer", format: "markdown" },
-          }),
+          content_card: {
+            schema_version: 1,
+            kind: "answer",
+            renderer: "markdown",
+          },
         },
         {
           id: "preview-part-2",
@@ -2656,9 +2658,11 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           role: "tool",
           kind: "command",
           command: "assetiweave-cli conversation sync --source codex-live",
-          metadata_json: JSON.stringify({
-            content_card: { type: "command" },
-          }),
+          content_card: {
+            schema_version: 1,
+            kind: "command",
+            renderer: "command",
+          },
         },
       ],
       projected_content_nodes: [
@@ -2701,7 +2705,7 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           session_id: "preview-session",
           external_id: "turn-3",
           turn_index: 2,
-          user_text: "Export this session",
+          prompt: "Export this session",
           fingerprint: "preview",
           missing: false,
           imported_at: now,
@@ -2725,9 +2729,11 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           role: "assistant",
           kind: "text",
           text: "Use session export to write one Markdown file per session.",
-          metadata_json: JSON.stringify({
-            content_card: { type: "answer", format: "markdown" },
-          }),
+          content_card: {
+            schema_version: 1,
+            kind: "answer",
+            renderer: "markdown",
+          },
         },
       ],
       projected_content_nodes: [

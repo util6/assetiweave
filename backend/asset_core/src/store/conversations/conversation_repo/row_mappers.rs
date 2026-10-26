@@ -1,4 +1,8 @@
 use super::*;
+use crate::domain::conversations::{
+    derive_part_id, ConversationContentCardDescriptor, ConversationPartKind, ConversationPartRole,
+};
+use serde::Deserialize;
 
 #[derive(Debug, FromRow)]
 pub(super) struct ConversationAdapterRow {
@@ -205,6 +209,8 @@ pub(super) struct ConversationSessionRow {
     execution_purpose: Option<String>,
     #[sqlx(default)]
     user_visible: Option<i64>,
+    #[sqlx(default)]
+    last_cwd: Option<String>,
 }
 
 impl ConversationSessionRow {
@@ -226,6 +232,7 @@ impl ConversationSessionRow {
             execution_origin: self.execution_origin.unwrap_or_else(|| "user".to_string()),
             execution_purpose: self.execution_purpose,
             user_visible: self.user_visible.map(|v| v != 0).unwrap_or(true),
+            last_cwd: self.last_cwd,
         }
     }
 }
@@ -242,7 +249,9 @@ pub(super) struct ConversationTurnRow {
     session_id: String,
     external_id: String,
     turn_index: i64,
-    user_text: String,
+    prompt: String,
+    process: Option<String>,
+    response: Option<String>,
     title: Option<String>,
     started_at: Option<String>,
     ended_at: Option<String>,
@@ -259,7 +268,7 @@ impl ConversationTurnRow {
             session_id: self.session_id,
             external_id: self.external_id,
             turn_index: self.turn_index,
-            user_text: self.user_text,
+            prompt: self.prompt,
             title: self.title,
             started_at: self.started_at,
             ended_at: self.ended_at,
@@ -267,6 +276,8 @@ impl ConversationTurnRow {
             missing: self.missing == 1,
             imported_at: self.imported_at,
             model: self.model,
+            process: self.process,
+            response: self.response,
         }
     }
 }
@@ -279,44 +290,41 @@ pub fn map_sqlx_conversation_turn(row: &SqliteRow) -> StoreResult<ConversationTu
 
 #[derive(Debug, FromRow)]
 pub(super) struct ConversationPartRow {
-    id: String,
-    turn_id: String,
-    part_index: i64,
-    role: String,
-    kind: String,
-    text: Option<String>,
-    language: Option<String>,
-    command: Option<String>,
-    cwd: Option<String>,
-    status: Option<String>,
-    exit_code: Option<i64>,
-    metadata_json: Option<String>,
-    command_label: Option<String>,
-    source_execution_id: Option<String>,
-    content_card_json: Option<String>,
-    translated_text: Option<String>,
+    pub(super) turn_id: String,
+    pub(super) part_index: i64,
+    pub(super) kind: String,
+    pub(super) content: Option<String>,
+    pub(super) attrs_json: Option<String>,
+    pub(super) translated_text: Option<String>,
 }
 
 impl ConversationPartRow {
-    fn into_domain(self) -> StoreResult<ConversationPart> {
-        Ok(ConversationPart {
-            id: self.id,
-            turn_id: self.turn_id,
+    pub(super) fn into_domain(self) -> StoreResult<ConversationPart> {
+        let triad_part = crate::backend::domain::conversations::triad::TriadPart {
             part_index: self.part_index,
-            role: decode_enum(self.role)?,
-            kind: decode_enum(self.kind)?,
-            text: self.text,
-            language: self.language,
-            command: self.command,
-            cwd: self.cwd,
-            status: self.status,
-            exit_code: self.exit_code.map(|v| v as i32),
-            command_label: self.command_label,
-            source_execution_id: self.source_execution_id,
-            content_card: self.content_card_json.map(decode_json).transpose()?,
-            metadata_json: self.metadata_json,
+            kind: self.kind,
+            content: self.content,
+            attrs_json: self.attrs_json,
             translated_text: self.translated_text,
-        })
+        };
+        let prefix = if self.turn_id.starts_with("web-record-") {
+            "web-record-part"
+        } else {
+            "conversation-part"
+        };
+        let restored = crate::backend::domain::conversations::triad::merge_turn_triad(
+            "codex",
+            prefix,
+            &self.turn_id,
+            "",
+            None,
+            None,
+            &[triad_part],
+        );
+        restored
+            .into_iter()
+            .next()
+            .ok_or_else(|| StoreError::external("failed to restore conversation part from row"))
     }
 }
 

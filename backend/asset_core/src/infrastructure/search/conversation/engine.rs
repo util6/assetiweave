@@ -14,8 +14,8 @@ use std::path::Path;
 use tantivy::{
     collector::{Count, TopDocs},
     doc,
-    query::{BooleanQuery, BoostQuery, Occur, Query, TermQuery},
-    schema::{IndexRecordOption, TantivyDocument, Value},
+    query::{BooleanQuery, BoostQuery, Occur, TermQuery},
+    schema::{IndexRecordOption, TantivyDocument},
     tokenizer::TokenStream,
     Index, Term,
 };
@@ -111,6 +111,7 @@ impl InMemoryConversationIndex {
         Ok(Self { index, fields })
     }
 
+    #[cfg(test)]
     pub(super) fn replace_documents(
         &self,
         documents: &[ConversationSearchDocument],
@@ -152,6 +153,7 @@ impl DiskConversationIndex {
         Ok(Self { index, fields })
     }
 
+    #[cfg(test)]
     pub(super) fn replace_documents(
         &self,
         documents: &[ConversationSearchDocument],

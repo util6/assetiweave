@@ -7,7 +7,6 @@ use crate::backend::store;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::Row;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
@@ -310,9 +309,26 @@ pub fn session_has_completion_signal(detail: &ConversationSessionDetail) -> bool
         .questions
         .iter()
         .flat_map(|question| question.parts.iter())
-        .filter_map(|part| part.metadata_json.as_deref())
-        .filter_map(|metadata| serde_json::from_str::<Value>(metadata).ok())
-        .any(|metadata| value_marks_completion(&metadata))
+        .any(|part| {
+            if let Some(ref signal) = part.signal {
+                if is_completion_word(signal) || signal == "completed" {
+                    return true;
+                }
+            }
+            if let Some(ref status) = part.status {
+                if is_completion_word(status) {
+                    return true;
+                }
+            }
+            if let Some(ref metadata) = part.metadata_json {
+                if let Ok(value) = serde_json::from_str::<Value>(metadata) {
+                    if value_marks_completion(&value) {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
 }
 
 pub fn session_project_path(

@@ -83,8 +83,7 @@ pub fn build_evidence_references(detail: &ConversationSessionDetail) -> Vec<Evid
                     node_order: 0,
                 };
                 let content =
-                    crate::backend::domain::memory::evidence::redact_memory_text(&turn.user_text)
-                        .text;
+                    crate::backend::domain::memory::evidence::redact_memory_text(&turn.prompt).text;
                 references.push(EvidenceReference {
                     key,
                     locator,
@@ -128,7 +127,7 @@ pub fn session_detail_to_normalized(
             turns.push(NormalizedConversationTurn {
                 external_id: turn.external_id.clone(),
                 turn_index: turn.turn_index,
-                user_text: turn.user_text.clone(),
+                user_text: turn.prompt.clone(),
                 title: turn.title.clone(),
                 started_at: turn.started_at.clone(),
                 ended_at: turn.ended_at.clone(),
@@ -232,7 +231,7 @@ pub fn build_bounded_evidence_references(
                         part_id: String::new(),
                         node_order: 0,
                     });
-                    matched_content = turn.user_text.clone();
+                    matched_content = turn.prompt.clone();
                     if let Some(node) = question
                         .projected_content_nodes
                         .iter()

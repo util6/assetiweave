@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use validator::Validate;
 
 use crate::backend::{
     domain::agents::{

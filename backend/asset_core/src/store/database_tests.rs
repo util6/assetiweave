@@ -276,6 +276,8 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
                 PRIMARY KEY (tenant_id, id),
                 UNIQUE (tenant_id, session_id, question_index)
             );
+            ALTER TABLE conversation_turns ADD COLUMN user_text TEXT DEFAULT '';
+            ALTER TABLE web_record_turns ADD COLUMN user_text TEXT DEFAULT '';
             INSERT INTO conversation_questions (
                 tenant_id, id, session_id, question_index, title, question_text,
                 answer_text, code_text, command_text, grouping_origin, created_at, updated_at
@@ -294,11 +296,11 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
                 '2026-08-25T00:00:00Z'
             );
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text,
+                tenant_id, id, session_id, external_id, turn_index, prompt, user_text,
                 title, started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 'default', 'legacy-turn', 'legacy-session', 'legacy-turn-external', 0,
-                'Legacy question snapshot', NULL, NULL, NULL, 'legacy-turn-fingerprint', 0,
+                'Legacy question snapshot', 'Legacy question snapshot', NULL, NULL, NULL, 'legacy-turn-fingerprint', 0,
                 '2026-08-25T00:00:00Z'
             );
             INSERT INTO conversation_question_turns (
@@ -309,11 +311,11 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
                 '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
             );
             INSERT INTO web_record_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text,
+                tenant_id, id, session_id, external_id, turn_index, prompt, user_text,
                 title, started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 'default', 'legacy-web-turn', 'legacy-web-session',
-                'legacy-web-turn-external', 0, 'Legacy web question snapshot', NULL,
+                'legacy-web-turn-external', 0, 'Legacy web question snapshot', 'Legacy web question snapshot', NULL,
                 NULL, NULL, 'legacy-web-turn-fingerprint', 0,
                 '2026-08-25T00:00:00Z'
             );
@@ -551,6 +553,8 @@ async fn migrations_repair_the_known_modified_question_contract_checksum() {
             r#"
             DROP INDEX IF EXISTS idx_memory_recall_questions_created;
             DROP INDEX IF EXISTS idx_memory_recall_web_questions_created;
+            ALTER TABLE conversation_turns ADD COLUMN user_text TEXT DEFAULT '';
+            ALTER TABLE web_record_turns ADD COLUMN user_text TEXT DEFAULT '';
             CREATE TABLE IF NOT EXISTS conversation_questions (
                 tenant_id TEXT NOT NULL DEFAULT 'default',
                 id TEXT NOT NULL PRIMARY KEY,
@@ -1080,7 +1084,7 @@ async fn migrations_backfill_turn_question_columns_from_membership() {
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text,
+                tenant_id, id, session_id, external_id, turn_index, prompt,
                 title, started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES
                 ('default', 'conversation-turn-1111', 'question-column-session',
@@ -1114,7 +1118,7 @@ async fn migrations_backfill_turn_question_columns_from_membership() {
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO web_record_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text,
+                tenant_id, id, session_id, external_id, turn_index, prompt,
                 title, started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES
                 ('default', 'web-record-turn-4444', 'question-column-web-session',
@@ -1252,6 +1256,7 @@ const LEGACY_TURN_QUESTION_ROLLBACK: &str = r#"
     DROP INDEX IF EXISTS idx_conversation_turns_tenant_session_question;
     DROP INDEX IF EXISTS idx_conversation_turns_tenant_question;
     DROP INDEX IF EXISTS idx_web_record_turns_tenant_session_question;
+    DROP INDEX IF EXISTS idx_web_record_turns_tenant_question;
     ALTER TABLE conversation_turns DROP COLUMN question_id;
     ALTER TABLE conversation_turns DROP COLUMN question_origin;
     ALTER TABLE web_record_turns DROP COLUMN question_id;
@@ -1334,19 +1339,70 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text, title,
+                tenant_id, id, session_id, external_id, turn_index, prompt, title,
                 started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 'default', 'part-index-turn', 'part-index-session', 'part-index-turn-external',
                 0, 'Part index question', NULL, NULL, NULL, 'part-index-fingerprint', 0,
                 '2026-10-23T00:00:00Z'
             );
+            CREATE TABLE conversation_parts_old (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                part_index INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                text TEXT,
+                language TEXT,
+                command TEXT,
+                cwd TEXT,
+                status TEXT,
+                exit_code INTEGER,
+                metadata_json TEXT,
+                content_card_json TEXT,
+                translated_text TEXT,
+                source_execution_id TEXT,
+                command_label TEXT,
+                PRIMARY KEY (tenant_id, id)
+            );
+            DROP TABLE conversation_parts;
+            ALTER TABLE conversation_parts_old RENAME TO conversation_parts;
+            ALTER TABLE conversation_sessions DROP COLUMN last_cwd;
+            ALTER TABLE conversation_turns ADD COLUMN user_text TEXT DEFAULT '';
+            ALTER TABLE web_record_turns ADD COLUMN user_text TEXT DEFAULT '';
+            UPDATE conversation_turns SET user_text = prompt;
+            UPDATE web_record_turns SET user_text = prompt;
+
+            CREATE TABLE web_record_parts_old (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                part_index INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                text TEXT,
+                language TEXT,
+                command TEXT,
+                cwd TEXT,
+                status TEXT,
+                exit_code INTEGER,
+                metadata_json TEXT,
+                content_card_json TEXT,
+                translated_text TEXT,
+                source_execution_id TEXT,
+                command_label TEXT,
+                PRIMARY KEY (tenant_id, id)
+            );
+            DROP TABLE web_record_parts;
+            ALTER TABLE web_record_parts_old RENAME TO web_record_parts;
+
             INSERT INTO conversation_parts (
                 tenant_id, id, turn_id, part_index, role, kind, text
             ) VALUES
-                ('default', 'conversation-part-answer', 'part-index-turn', 0,
+                ('default', 'part-1', 'part-index-turn', 0,
                  'assistant', 'text', 'answer body that used to be indexed'),
-                ('default', 'conversation-part-tool', 'part-index-turn', 1,
+                ('default', 'part-2', 'part-index-turn', 1,
                  'tool', 'tool', 'fatal: unable to access remote repository');
 
             INSERT INTO web_record_sessions (
@@ -1359,7 +1415,7 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO web_record_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text, title,
+                tenant_id, id, session_id, external_id, turn_index, prompt, title,
                 started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 'default', 'part-index-web-turn', 'part-index-web-session',
@@ -1384,7 +1440,7 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 code_text,
                 command_text
             );
-            DELETE FROM _sqlx_migrations WHERE version = 202610230006;
+            DELETE FROM _sqlx_migrations WHERE CAST(version AS TEXT) >= '202610230006';
             "#,
     )
     .expect("seed pre-migration question-level index");
@@ -1497,7 +1553,7 @@ const LEGACY_QUESTION_TABLES_ROLLBACK: &str = r#"
         PRIMARY KEY (tenant_id, question_id, turn_id)
     );
     INSERT INTO conversation_questions (tenant_id, id, session_id, title, created_at, updated_at)
-    SELECT tenant_id, question_id, session_id, user_text, imported_at, imported_at
+    SELECT tenant_id, question_id, session_id, prompt, imported_at, imported_at
     FROM conversation_turns
     WHERE question_id <> ''
     GROUP BY tenant_id, session_id, question_id;
@@ -1508,7 +1564,7 @@ const LEGACY_QUESTION_TABLES_ROLLBACK: &str = r#"
     WHERE question_id <> '';
 
     INSERT INTO web_record_questions (tenant_id, id, session_id, title, created_at, updated_at)
-    SELECT tenant_id, question_id, session_id, user_text, imported_at, imported_at
+    SELECT tenant_id, question_id, session_id, prompt, imported_at, imported_at
     FROM web_record_turns
     WHERE question_id <> ''
     GROUP BY tenant_id, session_id, question_id;
@@ -1553,7 +1609,7 @@ async fn migrations_drop_and_rollback_conversation_question_tables() {
             tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at
         ) VALUES ('default', 's-rb-1', 'src-1', 'adp-1', 'ext-rb-1', 'Session RB', 0, '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z');
         INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, imported_at, question_id, question_origin
+            tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin
         ) VALUES
             ('default', 't-rb-1', 's-rb-1', 'ext-t-1', 0, 'First prompt', 'fp-1', 0, '2026-10-23T00:00:00Z', 'q-rb-1', 'imported'),
             ('default', 't-rb-2', 's-rb-1', 'ext-t-2', 1, 'Second prompt', 'fp-2', 0, '2026-10-23T00:00:00Z', 'q-rb-1', 'auto_merged');
@@ -1762,7 +1818,7 @@ async fn acceptance_spec_104_search_recalls_extended_part_categories() {
     ).expect("insert session");
 
     conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, imported_at, question_id, question_origin) 
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) 
          VALUES (?1, ?2, ?3, 'ext-t-1', 0, 'first prompt', 'fp-1', 0, '2026-10-24T00:00:00Z', 'q-1', 'imported')",
         [tenant_id, turn_id, session_id],
     ).expect("insert turn");
@@ -1772,20 +1828,20 @@ async fn acceptance_spec_104_search_recalls_extended_part_categories() {
     // 2. 执行结果
     // 3. 既有答复文本
     conn.execute(
-        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text) 
-         VALUES (?1, 'part-tool-output', ?2, 0, 'tool', 'tool_output', 'SocketTimeoutException: Connection timed out while reading upstream payload')",
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content) 
+         VALUES (?1, ?2, 0, x'0000000000000000', 'tool_output', 'SocketTimeoutException: Connection timed out while reading upstream payload')",
         [tenant_id, turn_id],
     ).expect("insert tool part");
 
     conn.execute(
-        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text) 
-         VALUES (?1, 'part-exec-result', ?2, 1, 'system', 'execution_result', 'Pipeline stage COMPLETED with exit_status=0 in 432ms')",
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content) 
+         VALUES (?1, ?2, 1, x'0000000000000001', 'execution_result', 'Pipeline stage COMPLETED with exit_status=0 in 432ms')",
         [tenant_id, turn_id],
     ).expect("insert exec part");
 
     conn.execute(
-        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text) 
-         VALUES (?1, 'part-assistant-answer', ?2, 2, 'assistant', 'text', 'Here is the comprehensive migration report for the project')",
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content) 
+         VALUES (?1, ?2, 2, x'0000000000000002', 'text', 'Here is the comprehensive migration report for the project')",
         [tenant_id, turn_id],
     ).expect("insert assistant part");
 
@@ -1877,17 +1933,16 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
             let turn_id = format!("bench-turn-{s:03}-{t:02}");
             let q_id = format!("bench-q-{s:03}-{}", t / 2);
             conn.execute(
-                "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, missing, imported_at, question_id, question_origin) 
+                "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at, question_id, question_origin) 
                  VALUES (?1, ?2, ?3, ?4, ?5, 'user prompt', 'fp', 0, '2026-10-24T00:00:00Z', ?6, 'imported')",
                 rusqlite::params![tenant_id, &turn_id, &session_id, &turn_id, t as i64, &q_id],
             ).expect("insert turn");
 
             for p in 0..parts_per_turn {
-                let part_id = format!("bench-part-{s:03}-{t:02}-{p}");
                 conn.execute(
-                    "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text) 
-                     VALUES (?1, ?2, ?3, ?4, 'assistant', 'text', 'Benchmark text content for performance baseline verification')",
-                    rusqlite::params![tenant_id, &part_id, &turn_id, p as i64],
+                    "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content) 
+                     VALUES (?1, ?2, ?3, x'0000000000000000', 'text', 'Benchmark text content for performance baseline verification')",
+                    rusqlite::params![tenant_id, &turn_id, p as i64],
                 ).expect("insert part");
             }
         }
@@ -1902,7 +1957,7 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
     for _ in 0..query_iterations {
         let mut stmt = conn
             .prepare(
-                "SELECT t.id, t.turn_index, t.question_id, p.id, p.part_index, p.text
+                "SELECT t.id, t.turn_index, t.question_id, p.part_index, p.content
                  FROM conversation_turns t
                  JOIN conversation_parts p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
                  WHERE t.tenant_id = ?1 AND t.session_id = ?2
@@ -1915,9 +1970,8 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
                     r.get::<_, String>(0)?,
                     r.get::<_, i64>(1)?,
                     r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, i64>(4)?,
-                    r.get::<_, String>(5)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, String>(4)?,
                 ))
             })
             .expect("query map")
@@ -1946,8 +2000,687 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
     cleanup_database(&db_path);
 }
 
+#[tokio::test]
+async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
+    let db_path = temp_database_path("spec-118-cleanup-normalize");
+    migrate_database(&db_path).await.expect("initial migration");
+
+    let conn = Connection::open(&db_path).expect("open database");
+
+    // 1. 设置活跃租户为 default，并插入遗留租户 util6
+    conn.execute(
+        "INSERT OR REPLACE INTO tenant_state (principal_id, active_tenant_id, updated_at) VALUES ('local', 'default', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert tenant state");
+
+    conn.execute(
+        "INSERT OR IGNORE INTO tenants (id, name, created_at, updated_at) VALUES ('util6', 'util6', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert util6 tenant");
+
+    // 2. 插入 default 与 util6 的会话、轮次、零件
+    conn.execute(
+        "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at)
+         VALUES ('default', 'sess-default-1', 'src-1', 'adp-1', 'ext-1', 'Default Session', 0, '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert default session");
+
+    conn.execute(
+        "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at)
+         VALUES ('util6', 'sess-util6-1', 'src-1', 'adp-1', 'ext-2', 'Util6 Duplicate Session', 0, '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert util6 session");
+
+    conn.execute(
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at)
+         VALUES ('default', 'turn-default-1', 'sess-default-1', 'ext-t1', 0, 'prompt', 'fp', 0, '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert default turn");
+
+    conn.execute(
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at)
+         VALUES ('util6', 'turn-util6-1', 'sess-util6-1', 'ext-t2', 0, 'prompt', 'fp', 0, '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert util6 turn");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE conversation_parts_old (
+            tenant_id TEXT NOT NULL DEFAULT 'default',
+            id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            part_index INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            text TEXT,
+            language TEXT,
+            command TEXT,
+            cwd TEXT,
+            status TEXT,
+            exit_code INTEGER,
+            metadata_json TEXT,
+            content_card_json TEXT,
+            translated_text TEXT,
+            source_execution_id TEXT,
+            command_label TEXT,
+            PRIMARY KEY (tenant_id, id)
+        );
+        DROP TABLE conversation_parts;
+        ALTER TABLE conversation_parts_old RENAME TO conversation_parts;
+        ALTER TABLE conversation_sessions DROP COLUMN last_cwd;
+        ALTER TABLE conversation_turns ADD COLUMN user_text TEXT DEFAULT '';
+        ALTER TABLE web_record_turns ADD COLUMN user_text TEXT DEFAULT '';
+        UPDATE conversation_turns SET user_text = prompt;
+        UPDATE web_record_turns SET user_text = prompt;
+
+        CREATE TABLE web_record_parts_old (
+            tenant_id TEXT NOT NULL DEFAULT 'default',
+            id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            part_index INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            text TEXT,
+            language TEXT,
+            command TEXT,
+            cwd TEXT,
+            status TEXT,
+            exit_code INTEGER,
+            metadata_json TEXT,
+            content_card_json TEXT,
+            translated_text TEXT,
+            source_execution_id TEXT,
+            command_label TEXT,
+            PRIMARY KEY (tenant_id, id)
+        );
+        DROP TABLE web_record_parts;
+        ALTER TABLE web_record_parts_old RENAME TO web_record_parts;
+        "#,
+    )
+    .expect("recreate old parts table");
+
+    // 插入非标 part-<16hex> 零件，分别在 default 和 util6 下
+    let default_old_part_id = "part-3db7391334d54cac";
+    let util6_old_part_id = "part-7cf12c209dd94ed1";
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text)
+         VALUES ('default', ?1, 'turn-default-1', 0, 'assistant', 'text', 'Default content needing normalize')",
+        [default_old_part_id],
+    ).expect("insert default part with legacy id");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text)
+         VALUES ('util6', ?1, 'turn-util6-1', 0, 'assistant', 'text', 'Util6 content to be deleted')",
+        [util6_old_part_id],
+    ).expect("insert util6 part with legacy id");
+
+    // 插入对应全文索引
+    conn.execute(
+        "INSERT INTO conversation_part_fts (tenant_id, part_id, session_id, turn_id, text)
+         VALUES ('default', ?1, 'sess-default-1', 'turn-default-1', 'Default content needing normalize')",
+        [default_old_part_id],
+    ).expect("insert default fts");
+
+    conn.execute(
+        "INSERT INTO conversation_part_fts (tenant_id, part_id, session_id, turn_id, text)
+         VALUES ('util6', ?1, 'sess-util6-1', 'turn-util6-1', 'Util6 content to be deleted')",
+        [util6_old_part_id],
+    )
+    .expect("insert util6 fts");
+
+    // 插入 util6 的衍生记录（如 session_memory_jobs、conversation_session_observations 等）
+    conn.execute(
+        "INSERT INTO conversation_session_observations (tenant_id, source_id, record_kind, external_id, observed_version, last_seen_at)
+         VALUES ('util6', 'src-1', 'session', 'ext-2', '1', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert util6 observation");
+
+    // 3. 回退 202610240001 及后续迁移记录，模拟从旧版本升级触发迁移
+    conn.execute(
+        "DELETE FROM _sqlx_migrations WHERE CAST(version AS TEXT) >= '202610240001'",
+        [],
+    )
+    .expect("rollback migration version");
+    drop(conn);
+
+    // 4. 运行迁移升级
+    migrate_database(&db_path).await.expect("run migration");
+
+    // 5. 校验断言
+    let conn = Connection::open(&db_path).expect("reopen migrated db");
+
+    // A. util6 租户及其数据被干净清理
+    let util6_tenant_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM tenants WHERE id = 'util6'", [], |r| {
+            r.get(0)
+        })
+        .expect("count util6 tenant");
+    assert_eq!(util6_tenant_count, 0, "util6 租户记录必须已被删除");
+
+    let util6_sessions_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_sessions WHERE tenant_id = 'util6'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count util6 sessions");
+    assert_eq!(util6_sessions_count, 0, "util6 会话必须已被删除");
+
+    let util6_parts_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_parts WHERE tenant_id = 'util6'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count util6 parts");
+    assert_eq!(util6_parts_count, 0, "util6 零件必须已被删除");
+
+    let util6_fts_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_part_fts WHERE tenant_id = 'util6'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count util6 fts");
+    assert_eq!(util6_fts_count, 0, "util6 全文索引项必须已被删除");
+
+    // B. default 租户数据完整保留
+    let default_sessions_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_sessions WHERE tenant_id = 'default'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count default sessions");
+    assert_eq!(default_sessions_count, 1, "default 会话必须完整保留");
+
+    // C. conversation_parts 已升级为 11 列新表，且无 id 列
+    let id_column_exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('conversation_parts') WHERE name = 'id'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("check id column dropped");
+    assert_eq!(id_column_exists, 0, "conversation_parts 必须无 id 列");
+
+    // D. 全文索引 part_id 同步对齐
+    let expected_new_id =
+        crate::backend::domain::derive_standard_part_id("conversation-part", "turn-default-1", 0);
+    let fts_part_id: String = conn
+        .query_row(
+            "SELECT part_id FROM conversation_part_fts WHERE tenant_id = 'default'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query fts part id");
+    assert_eq!(
+        fts_part_id, expected_new_id,
+        "conversation_part_fts.part_id 必须同步对齐"
+    );
+
+    // E. 幂等性断言：再次运行 migrate_database 零副作用
+    drop(conn);
+    migrate_database(&db_path)
+        .await
+        .expect("idempotent migration");
+
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn acceptance_spec_119_last_cwd_materialization_and_redundant_index_removal() {
+    let db_path = temp_database_path("spec-119-last-cwd");
+    migrate_database(&db_path).await.expect("initial migration");
+
+    let conn = Connection::open(&db_path).expect("open database");
+
+    // 1. 验证 idx_conversation_parts_tenant_turn 已被删除
+    let index_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_conversation_parts_tenant_turn'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("check index dropped");
+    assert_eq!(
+        index_count, 0,
+        "idx_conversation_parts_tenant_turn 必须已被删除"
+    );
+
+    // 2. 验证 conversation_sessions 已包含 last_cwd 列
+    let has_last_cwd: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('conversation_sessions') WHERE name = 'last_cwd'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("check last_cwd column");
+    assert_eq!(
+        has_last_cwd, 1,
+        "conversation_sessions 必须包含 last_cwd 列"
+    );
+
+    // 3. 插入一个会话、两个轮次、若干零件（带有不同工作目录 cwd）
+    conn.execute_batch(
+        r#"
+        CREATE TABLE conversation_parts_old (
+            tenant_id TEXT NOT NULL DEFAULT 'default',
+            id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            part_index INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            text TEXT,
+            cwd TEXT,
+            PRIMARY KEY (tenant_id, id)
+        );
+        DROP TABLE conversation_parts;
+        ALTER TABLE conversation_parts_old RENAME TO conversation_parts;
+        "#,
+    )
+    .expect("recreate parts with cwd");
+
+    conn.execute(
+        "INSERT OR IGNORE INTO tenants (id, name, created_at, updated_at) VALUES ('default', 'default', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert default tenant");
+
+    conn.execute(
+        "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at)
+         VALUES ('default', 'sess-119', 'src-1', 'adp-1', 'ext-119', 'Spec 119 Session', 0, '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert session");
+
+    // 早期轮次：cwd 为 /path/old
+    conn.execute(
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, started_at, ended_at, imported_at)
+         VALUES ('default', 'turn-119-1', 'sess-119', 'ext-t1', 0, 'first question', 'fp1', 0, '2026-10-24T00:00:00Z', '2026-10-24T00:01:00Z', '2026-10-24T00:00:00Z')",
+        [],
+    ).expect("insert turn 1");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, cwd, text)
+         VALUES ('default', 'part-119-1-0', 'turn-119-1', 0, 'tool', 'tool', '/path/old', 'running')",
+        [],
+    ).expect("insert part 1-0");
+
+    // 最新轮次：包含两个零件，最后一个有效 cwd 为 /path/latest
+    conn.execute(
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, started_at, ended_at, imported_at)
+         VALUES ('default', 'turn-119-2', 'sess-119', 'ext-t2', 1, 'second question', 'fp2', 0, '2026-10-24T00:02:00Z', '2026-10-24T00:03:00Z', '2026-10-24T00:02:00Z')",
+        [],
+    ).expect("insert turn 2");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, cwd, text)
+         VALUES ('default', 'part-119-2-0', 'turn-119-2', 0, 'assistant', 'text', NULL, 'thinking')",
+        [],
+    ).expect("insert part 2-0");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, cwd, text)
+         VALUES ('default', 'part-119-2-1', 'turn-119-2', 1, 'tool', 'command', '/path/latest', 'cargo test')",
+        [],
+    ).expect("insert part 2-1");
+
+    // 4. 执行回填逻辑（与迁移 202610240002 一致的 CTE UPDATE FROM）
+    conn.execute_batch(
+        r#"
+        WITH latest_cwds AS (
+            SELECT session_id, tenant_id, cwd
+            FROM (
+                SELECT t.session_id,
+                       t.tenant_id,
+                       p.cwd,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY t.tenant_id, t.session_id
+                           ORDER BY COALESCE(t.ended_at, t.started_at) DESC,
+                                    t.turn_index DESC,
+                                    p.part_index DESC,
+                                    p.id DESC
+                       ) as rn
+                FROM conversation_turns t
+                JOIN conversation_parts p
+                  ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
+                WHERE p.cwd IS NOT NULL AND trim(p.cwd) <> ''
+            )
+            WHERE rn = 1
+        )
+        UPDATE conversation_sessions
+        SET last_cwd = latest_cwds.cwd
+        FROM latest_cwds
+        WHERE conversation_sessions.tenant_id = latest_cwds.tenant_id
+          AND conversation_sessions.id = latest_cwds.session_id;
+        "#,
+    )
+    .expect("execute backfill statement");
+
+    // 5. 校验断言
+    let last_cwd: Option<String> = conn
+        .query_row(
+            "SELECT last_cwd FROM conversation_sessions WHERE tenant_id = 'default' AND id = 'sess-119'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query last_cwd");
+    assert_eq!(
+        last_cwd.as_deref(),
+        Some("/path/latest"),
+        "last_cwd 必须正确回填为最新非空工作目录"
+    );
+
+    // 6. 幂等性断言：再次运行 migrate_database 零副作用
+    drop(conn);
+    migrate_database(&db_path)
+        .await
+        .expect("idempotent migration 119");
+
+    cleanup_database(&db_path);
+}
+
 fn cleanup_database(db_path: &std::path::Path) {
     let _ = std::fs::remove_file(db_path);
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+}
+
+#[tokio::test]
+async fn acceptance_spec_126_turn_triad_schema_and_parts_slimming() {
+    let db_path = temp_database_path("spec-126-turn-triad");
+    migrate_database(&db_path).await.expect("initial migration");
+
+    let conn = Connection::open(&db_path).expect("open database");
+
+    // 1. 验证 PRAGMA table_info
+    let turn_cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(conversation_turns)")
+            .expect("prepare pragma");
+        let rows = stmt
+            .query_map([], |row| row.get(1))
+            .expect("query map")
+            .collect::<Result<Vec<String>, _>>()
+            .expect("collect cols");
+        rows
+    };
+    assert_eq!(turn_cols.len(), 17, "conversation_turns 必须严格为 17 列");
+    assert!(turn_cols.contains(&"prompt".to_string()));
+    assert!(turn_cols.contains(&"process".to_string()));
+    assert!(turn_cols.contains(&"response".to_string()));
+    assert!(!turn_cols.contains(&"user_text".to_string()));
+
+    let web_turn_cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(web_record_turns)")
+            .expect("prepare pragma");
+        let rows = stmt
+            .query_map([], |row| row.get(1))
+            .expect("query map")
+            .collect::<Result<Vec<String>, _>>()
+            .expect("collect cols");
+        rows
+    };
+    assert_eq!(
+        turn_cols, web_turn_cols,
+        "conversation_turns 与 web_record_turns 列结构必须 100% 同构对齐"
+    );
+
+    let part_cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(conversation_parts)")
+            .expect("prepare pragma");
+        let rows = stmt
+            .query_map([], |row| row.get(1))
+            .expect("query map")
+            .collect::<Result<Vec<String>, _>>()
+            .expect("collect cols");
+        rows
+    };
+    assert_eq!(
+        part_cols,
+        vec![
+            "tenant_id",
+            "turn_id",
+            "part_index",
+            "id_key",
+            "kind",
+            "content",
+            "attrs_json",
+            "translated_text"
+        ],
+        "conversation_parts 必须严格为 8 列且不包含 role, card_kind, metadata_json"
+    );
+
+    // 2. 构造历史脏数据并执行迁移自愈测试
+    conn.execute(
+        "DELETE FROM _sqlx_migrations WHERE CAST(version AS TEXT) >= '202610250001'",
+        [],
+    )
+    .expect("delete migration version");
+
+    conn.execute_batch(
+        r#"
+        DROP TABLE conversation_parts;
+        CREATE TABLE conversation_parts (
+            tenant_id       TEXT NOT NULL DEFAULT 'default',
+            turn_id         TEXT NOT NULL,
+            part_index      INTEGER NOT NULL,
+            id_key          BLOB NOT NULL,
+            role            TEXT NOT NULL,
+            kind            TEXT NOT NULL,
+            card_kind       TEXT,
+            content         TEXT,
+            attrs_json      TEXT,
+            metadata_json   TEXT,
+            translated_text TEXT,
+            UNIQUE (tenant_id, turn_id, part_index)
+        );
+
+        DROP TABLE conversation_turns;
+        CREATE TABLE conversation_turns (
+            tenant_id       TEXT NOT NULL DEFAULT 'default',
+            id              TEXT NOT NULL,
+            session_id      TEXT NOT NULL,
+            external_id     TEXT NOT NULL,
+            turn_index      INTEGER NOT NULL,
+            user_text       TEXT NOT NULL,
+            title           TEXT,
+            started_at      TEXT,
+            ended_at        TEXT,
+            model           TEXT,
+            fingerprint     TEXT NOT NULL,
+            missing         INTEGER NOT NULL DEFAULT 0,
+            imported_at     TEXT NOT NULL,
+            question_id     TEXT NOT NULL DEFAULT '',
+            question_origin TEXT NOT NULL DEFAULT 'imported',
+            PRIMARY KEY (tenant_id, id),
+            UNIQUE (tenant_id, session_id, external_id)
+        );
+
+        DROP TABLE web_record_turns;
+        CREATE TABLE web_record_turns (
+            tenant_id       TEXT NOT NULL DEFAULT 'default',
+            id              TEXT NOT NULL,
+            session_id      TEXT NOT NULL,
+            external_id     TEXT NOT NULL,
+            turn_index      INTEGER NOT NULL,
+            user_text       TEXT NOT NULL,
+            title           TEXT,
+            started_at      TEXT,
+            ended_at        TEXT,
+            model           TEXT,
+            fingerprint     TEXT NOT NULL,
+            missing         INTEGER NOT NULL DEFAULT 0,
+            imported_at     TEXT NOT NULL,
+            question_id     TEXT NOT NULL DEFAULT '',
+            question_origin TEXT NOT NULL DEFAULT 'imported',
+            PRIMARY KEY (tenant_id, id),
+            UNIQUE (tenant_id, session_id, external_id)
+        );
+        "#,
+    )
+    .expect("create pre-migration schema");
+
+    conn.execute(
+        "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at)
+         VALUES ('default', 'sess-126', 'src-1', 'codex', 'ext-126', 'Test Session', 0, '2026-10-25T00:00:00Z', '2026-10-25T00:00:00Z')",
+        [],
+    ).expect("insert session");
+
+    conn.execute(
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, user_text, fingerprint, imported_at)
+         VALUES ('default', 'turn-126', 'sess-126', 't-126', 0, '用户历史提问', 'fp-1', '2026-10-25T00:00:00Z')",
+        [],
+    ).expect("insert turn");
+
+    let dummy_id_key = [1u8; 8];
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 0, ?1, 'assistant', 'text', 'codex.answer', '我正在分析环境...', NULL, NULL, NULL)",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p0");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 1, ?1, 'tool', 'command', 'codex.command', 'npm test', '{\"exec_id\":\"exec_cmd1\",\"exit_code\":0,\"cwd\":\"/app\"}', NULL, NULL)",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p1");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 2, ?1, 'tool', 'tool', 'codex.result', NULL, '{\"exec_id\":\"exec_cmd1\",\"exit_code\":1,\"status\":\"failed\"}', NULL, NULL)",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p2");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 3, ?1, 'user', 'text', 'codex.user', '用户历史提问', NULL, NULL, NULL)",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p3");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 4, ?1, 'tool', 'tool', 'codex.result', '3 tests failed', '{\"exec_id\":\"exec_cmd1\",\"renderer\":\"cmd\",\"semantic_role\":\"error\",\"call_id\":\"c1\"}', NULL, NULL)",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p4");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 5, ?1, 'assistant', 'code_block', NULL, 'console.log(1)', NULL, '{\"content_card\":{\"kind\":\"codex.code\"}}', NULL)",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p5");
+
+    conn.execute(
+        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, role, kind, card_kind, content, attrs_json, metadata_json, translated_text)
+         VALUES ('default', 'turn-126', 6, ?1, 'assistant', 'text', 'codex.answer', '测试已修复。', NULL, NULL, 'Tests fixed.')",
+        [&dummy_id_key as &[u8]],
+    ).expect("insert p6");
+
+    drop(conn);
+
+    // 3. 执行迁移
+    migrate_database(&db_path).await.expect("run migration 126");
+
+    let conn = Connection::open(&db_path).expect("reopen database");
+
+    // 4. 断言 conversation_turns
+    let (prompt, process_str, response): (String, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT prompt, process, response FROM conversation_turns WHERE id = 'turn-126'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .expect("query turn");
+
+    assert_eq!(prompt, "用户历史提问");
+    assert_eq!(response.as_deref(), Some("测试已修复。"));
+
+    let process_val: serde_json::Value =
+        serde_json::from_str(&process_str.expect("process must exist")).unwrap();
+    assert_eq!(
+        process_val.get("cwd").and_then(|v| v.as_str()),
+        Some("/app")
+    );
+    assert_eq!(
+        process_val.get("response_seq").and_then(|v| v.as_i64()),
+        Some(6)
+    );
+    assert_eq!(
+        process_val
+            .get("response_translated_text")
+            .and_then(|v| v.as_str()),
+        Some("Tests fixed.")
+    );
+
+    let items = process_val
+        .get("items")
+        .and_then(|v| v.as_array())
+        .expect("items array");
+    assert_eq!(items.len(), 1);
+    let cmd1 = &items[0];
+    assert_eq!(cmd1.get("seq").and_then(|v| v.as_i64()), Some(1));
+    assert_eq!(
+        cmd1.get("content").and_then(|v| v.as_str()),
+        Some("npm test")
+    );
+    // 空壳 .result 的 exit_code 1 与 status failed 回填至命令
+    assert_eq!(cmd1.get("exit_code").and_then(|v| v.as_i64()), Some(1));
+    assert_eq!(cmd1.get("status").and_then(|v| v.as_str()), Some("failed"));
+
+    // 5. 断言 conversation_parts：命令行(1)、空壳行(2)、user行(3)、尾回答(6) 已全部剔除
+    let remaining_indices: Vec<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT part_index FROM conversation_parts WHERE turn_id = 'turn-126' ORDER BY part_index ASC")
+            .expect("prepare stmt");
+        stmt.query_map([], |r| r.get(0))
+            .expect("query map")
+            .collect::<Result<Vec<i64>, _>>()
+            .expect("collect indices")
+    };
+    assert_eq!(remaining_indices, vec![0, 4, 5]);
+
+    // Part 0: 中途 answer 归位为 reasoning
+    let p0_kind: String = conn
+        .query_row(
+            "SELECT kind FROM conversation_parts WHERE turn_id = 'turn-126' AND part_index = 0",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query p0 kind");
+    assert_eq!(p0_kind, "codex.reasoning");
+
+    // Part 4: 非空报错 result 带有 cmd_seq: 1，且无 exec_id, renderer, semantic_role
+    let p4_attrs_str: String = conn
+        .query_row(
+            "SELECT attrs_json FROM conversation_parts WHERE turn_id = 'turn-126' AND part_index = 4",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query p4 attrs");
+    let p4_attrs: serde_json::Value = serde_json::from_str(&p4_attrs_str).unwrap();
+    assert_eq!(p4_attrs.get("cmd_seq").and_then(|v| v.as_i64()), Some(1));
+    assert!(p4_attrs.get("exec_id").is_none());
+    assert!(p4_attrs.get("call_id").is_none());
+    assert!(p4_attrs.get("renderer").is_none());
+    assert!(p4_attrs.get("semantic_role").is_none());
+
+    // Part 5: card_kind IS NULL 自愈为 codex.code
+    let p5_kind: String = conn
+        .query_row(
+            "SELECT kind FROM conversation_parts WHERE turn_id = 'turn-126' AND part_index = 5",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query p5 kind");
+    assert_eq!(p5_kind, "codex.code");
+
+    // 6. 幂等性断言：再次运行 migrate_database 零副作用
+    drop(conn);
+    migrate_database(&db_path)
+        .await
+        .expect("idempotent migration");
+
+    cleanup_database(&db_path);
 }

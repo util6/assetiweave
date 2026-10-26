@@ -1,4 +1,5 @@
 use super::*;
+use crate::backend::domain::{derive_part_id, derive_part_id_key};
 use std::path::PathBuf;
 
 const TENANT_ID: &str = "default";
@@ -67,7 +68,7 @@ async fn seed_turn(
     let turn_sql = format!(
         r#"
         INSERT INTO {turns} (
-            tenant_id, id, session_id, external_id, turn_index, user_text,
+            tenant_id, id, session_id, external_id, turn_index, prompt,
             title, started_at, ended_at, fingerprint, missing, imported_at
         ) VALUES (?1, ?2, ?3, ?2, ?4, 'how does indexing work', NULL, NULL, NULL,
                   'fixture-fingerprint', 0, '2026-10-23T00:00:00Z')
@@ -89,7 +90,6 @@ struct SeedPart<'a> {
     command: Option<&'a str>,
     role: &'a str,
     kind: &'a str,
-    content_card_json: Option<&'a str>,
 }
 
 impl<'a> SeedPart<'a> {
@@ -100,7 +100,6 @@ impl<'a> SeedPart<'a> {
             command: None,
             role: "tool",
             kind: "text",
-            content_card_json: None,
         }
     }
 
@@ -111,9 +110,6 @@ impl<'a> SeedPart<'a> {
             command: Some(command),
             role: "tool",
             kind: "command",
-            content_card_json: Some(
-                r#"{"schema_version":1,"kind":"fixture.command","renderer":"command"}"#,
-            ),
         }
     }
 }
@@ -125,40 +121,58 @@ async fn seed_part(
     index: i64,
     part: SeedPart<'_>,
 ) -> String {
-    let parts_table = match record_kind {
-        ConversationRecordKind::Session => "conversation_parts",
-        ConversationRecordKind::Web => "web_record_parts",
-    };
     let part_prefix = match record_kind {
         ConversationRecordKind::Session => "conversation-part",
         ConversationRecordKind::Web => "web-record-part",
     };
-    let part_id = format!("{part_prefix}-fixture-{turn_id}-{index}");
-    let metadata_json = format!(r#"{{"content_card":{{"type":"{}"}}}}"#, part.card_kind);
-    let part_sql = format!(
-        r#"
-        INSERT INTO {parts_table} (
-            tenant_id, id, turn_id, part_index, role, kind, text, language, command,
-            cwd, status, exit_code, metadata_json, content_card_json, translated_text,
-            source_execution_id, command_label
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, NULL, NULL, NULL, ?9, ?10, NULL,
-                  NULL, NULL)
-        "#
-    );
-    sqlx::query(AssertSqlSafe(part_sql))
-        .bind(TENANT_ID)
-        .bind(&part_id)
-        .bind(turn_id)
-        .bind(index)
-        .bind(part.role)
-        .bind(part.kind)
-        .bind(part.text)
-        .bind(part.command)
-        .bind(metadata_json)
-        .bind(part.content_card_json)
-        .execute(pool)
-        .await
-        .expect("seed part");
+    let part_id = derive_part_id(part_prefix, turn_id, index);
+    match record_kind {
+        ConversationRecordKind::Session => {
+            let id_key = derive_part_id_key(&part_id).expect("derive id_key");
+            let content = part.text.or(part.command);
+            let kind = part.card_kind;
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_parts (
+                    tenant_id, turn_id, part_index, id_key, kind, content,
+                    attrs_json, translated_text
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL)
+                "#,
+            )
+            .bind(TENANT_ID)
+            .bind(turn_id)
+            .bind(index)
+            .bind(id_key.as_slice())
+            .bind(kind)
+            .bind(content)
+            .execute(pool)
+            .await
+            .expect("seed part");
+        }
+        ConversationRecordKind::Web => {
+            let id_key = derive_part_id_key(&part_id).unwrap_or([0u8; 8]);
+            let is_answer =
+                part.kind == "text" || part.kind == "code_block" || part.role == "assistant";
+            let kind = if is_answer { "answer" } else { "process" };
+            let content = part.text.or(part.command).unwrap_or_default();
+            sqlx::query(
+                r#"
+                INSERT INTO web_record_parts (
+                    tenant_id, turn_id, part_index, id_key, kind, content, translated_text
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)
+                "#,
+            )
+            .bind(TENANT_ID)
+            .bind(turn_id)
+            .bind(index)
+            .bind(id_key.to_vec())
+            .bind(kind)
+            .bind(content)
+            .execute(pool)
+            .await
+            .expect("seed part");
+        }
+    }
     part_id
 }
 
@@ -332,11 +346,12 @@ async fn reindexing_one_turn_leaves_other_turns_and_drops_stale_rows() {
     }
 
     // 只改第一轮并重建该轮索引：第二轮索引行必须原样保留，第一轮不得留重复行。
+    let first_part_key = derive_part_id_key(&first_part_id).expect("derive id_key");
     sqlx::query(
-        "UPDATE conversation_parts SET text = 'first turn rewritten' WHERE tenant_id = ?1 AND id = ?2",
+        "UPDATE conversation_parts SET content = 'first turn rewritten' WHERE tenant_id = ?1 AND id_key = ?2",
     )
     .bind(TENANT_ID)
-    .bind(&first_part_id)
+    .bind(first_part_key.as_slice())
     .execute(&fixture.pool)
     .await
     .expect("rewrite part body");

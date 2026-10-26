@@ -168,20 +168,24 @@ async fn test_reproject_conversation_session_materializes_parts_and_derives_exec
             .collect::<Vec<_>>(),
         vec![0, 1, 2]
     );
+    let expected_exec_id = format!("exec-{}-0", question.turns[0].id);
     for part in &question.parts[..2] {
-        assert_eq!(part.source_execution_id.as_deref(), Some("exec-10"));
+        assert_eq!(
+            part.source_execution_id.as_deref(),
+            Some(expected_exec_id.as_str())
+        );
     }
     let execution_nodes = question
         .projected_content_nodes
         .iter()
-        .filter(|node| node.source_execution_id.as_deref() == Some("exec-10"))
+        .filter(|node| node.source_execution_id.as_deref() == Some(expected_exec_id.as_str()))
         .collect::<Vec<_>>();
     assert_eq!(execution_nodes.len(), 2);
     assert_eq!(execution_nodes[0].semantic_role.as_deref(), Some("command"));
     assert_eq!(execution_nodes[1].semantic_role.as_deref(), Some("result"));
     assert!(execution_nodes[0].part_order < execution_nodes[1].part_order);
-    assert_eq!(execution_nodes[1].status.as_deref(), Some("success"));
-    assert_eq!(execution_nodes[1].exit_code, Some(0));
+    assert_eq!(execution_nodes[1].status.as_deref(), None);
+    assert_eq!(execution_nodes[1].exit_code, None);
 
     // 子代理卡片显示的子会话标识来自卡片正文，不来自关系边表。
     let subagent_node = question
@@ -233,14 +237,14 @@ async fn test_reproject_conversation_session_materializes_parts_and_derives_exec
         Some("v1")
     );
 
-    // 重复同步不再放大写入：零件行数仍等于本轮的零件数量，且不再产生关系边行。
+    // 重复同步不再放大写入：在瘦身后命令收纳进 process.items，零件表仅留存 2 个中间零件
     let part_row_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM conversation_parts WHERE tenant_id = ?1")
             .bind(tenant_id)
             .fetch_one(pool)
             .await
             .unwrap();
-    assert_eq!(part_row_count, 3);
+    assert_eq!(part_row_count, 2);
 
     drop(database);
     let _ = std::fs::remove_file(&db_path);

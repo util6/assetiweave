@@ -19,10 +19,6 @@ pub struct WebRecordSessionListItemRow {
     pub turn_count: i64,
 }
 
-pub struct QuestionAggregate {
-    pub question_text: String,
-}
-
 #[derive(Debug, FromRow)]
 pub struct ExistingWebRecordSessionRow {
     pub title: String,
@@ -38,14 +34,6 @@ pub struct ExistingWebRecordTurnRow {
     pub external_id: String,
     pub fingerprint: String,
     pub missing: i64,
-}
-
-#[derive(Debug, FromRow)]
-pub struct WebRecordPartTranslationRow {
-    pub id: String,
-    pub text: Option<String>,
-    pub command: Option<String>,
-    pub translated_text: Option<String>,
 }
 
 pub fn web_record_session_from_normalized(
@@ -76,6 +64,7 @@ pub fn web_record_session_from_normalized(
         execution_origin: "user".to_string(),
         execution_purpose: None,
         user_visible: true,
+        last_cwd: None,
     }
 }
 
@@ -89,7 +78,7 @@ pub fn web_record_turn_from_normalized(
         session_id: session_id.to_string(),
         external_id: normalized.external_id.clone(),
         turn_index: normalized.turn_index,
-        user_text: normalized.user_text.trim().to_string(),
+        prompt: normalized.user_text.trim().to_string(),
         title: normalized.title.clone(),
         started_at: normalized.started_at.clone(),
         ended_at: normalized.ended_at.clone(),
@@ -97,7 +86,102 @@ pub fn web_record_turn_from_normalized(
         missing: false,
         imported_at: now.to_string(),
         model: normalized.model.clone(),
+        process: None,
+        response: None,
     }
+}
+
+pub async fn prepare_web_record_turn_for_import_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    session_id: &str,
+    normalized: &crate::backend::domain::NormalizedConversationTurn,
+    now: &str,
+    translation_state: &BTreeMap<String, (Option<String>, Option<String>, Option<String>)>,
+) -> StoreResult<(
+    ConversationTurn,
+    Vec<crate::backend::domain::conversations::triad::TriadPart>,
+)> {
+    let mut triad = crate::backend::domain::conversations::triad::split_normalized_turn(
+        "web",
+        &normalized.user_text,
+        &normalized.parts,
+    );
+
+    let old_row = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT process, response FROM web_record_turns WHERE tenant_id = ?1 AND session_id = ?2 AND external_id = ?3",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .bind(&normalized.external_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+
+    if let Some((Some(old_process_json), old_response)) = old_row {
+        if let Ok(old_process) = serde_json::from_str::<
+            crate::backend::domain::conversations::triad::TurnProcess,
+        >(&old_process_json)
+        {
+            if old_response.as_deref() == triad.response.as_deref() {
+                if let Some(ref mut new_p) = triad.process {
+                    if new_p.response_translated_text.is_none() {
+                        new_p.response_translated_text = old_process.response_translated_text;
+                    }
+                }
+            }
+        }
+    }
+
+    let turn_id = stable_id("web-record-turn", &[session_id, &normalized.external_id]);
+    if let Some(ref resp_text) = triad.response {
+        let resp_seq = triad
+            .process
+            .as_ref()
+            .and_then(|p| p.response_seq)
+            .unwrap_or(0);
+        let resp_part_id =
+            crate::backend::domain::derive_standard_part_id("web-record-part", &turn_id, resp_seq);
+        if let Some((old_content, _, translated_text)) = translation_state.get(&resp_part_id) {
+            if old_content.as_deref() == Some(resp_text.as_str()) {
+                if let Some(ref mut p) = triad.process {
+                    if p.response_translated_text.is_none() {
+                        p.response_translated_text = translated_text.clone();
+                    }
+                } else {
+                    triad.process =
+                        Some(crate::backend::domain::conversations::triad::TurnProcess {
+                            response_seq: Some(resp_seq),
+                            response_translated_text: translated_text.clone(),
+                            ..Default::default()
+                        });
+                }
+            }
+        }
+    }
+
+    let process_json = triad
+        .process
+        .as_ref()
+        .map(|p| serde_json::to_string(p).unwrap_or_default());
+    let turn = ConversationTurn {
+        id: turn_id,
+        session_id: session_id.to_string(),
+        external_id: normalized.external_id.clone(),
+        turn_index: normalized.turn_index,
+        prompt: triad.prompt,
+        title: normalized.title.clone(),
+        started_at: normalized.started_at.clone(),
+        ended_at: normalized.ended_at.clone(),
+        fingerprint: conversation_turn_fingerprint(normalized),
+        missing: false,
+        imported_at: now.to_string(),
+        model: normalized.model.clone(),
+        process: process_json,
+        response: triad.response,
+    };
+
+    Ok((turn, triad.parts))
 }
 
 pub fn normalize_query(query: Option<&str>) -> Option<String> {

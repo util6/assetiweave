@@ -34,7 +34,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
-               s.execution_origin, s.execution_purpose, s.user_visible,
+               s.execution_origin, s.execution_purpose, s.user_visible, s.last_cwd,
                (
                    SELECT COUNT(DISTINCT t.question_id)
                    FROM conversation_turns t
@@ -46,7 +46,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
                    WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                ) AS turn_count,
                (
-                   SELECT t.user_text
+                   SELECT t.prompt
                    FROM conversation_turns t
                    WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                    ORDER BY t.turn_index DESC
@@ -71,7 +71,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
                    LIMIT 1
                ) ELSE NULL END AS window_start_turn_index,
                CASE WHEN ?8 IS NOT NULL OR ?9 IS NOT NULL THEN (
-                   SELECT t.user_text
+                   SELECT t.prompt
                    FROM conversation_turns t
                    WHERE t.tenant_id = s.tenant_id
                      AND t.session_id = s.id
@@ -91,7 +91,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
                    LIMIT 1
                ) ELSE NULL END AS window_end_turn_index,
                CASE WHEN ?8 IS NOT NULL OR ?9 IS NOT NULL THEN (
-                   SELECT t.user_text
+                   SELECT t.prompt
                    FROM conversation_turns t
                    WHERE t.tenant_id = s.tenant_id
                      AND t.session_id = s.id
@@ -124,7 +124,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
                   FROM conversation_turns t
                   WHERE t.tenant_id = s.tenant_id
                     AND t.session_id = s.id
-                    AND instr(lower(t.user_text), ?4) > 0
+                    AND instr(lower(t.prompt), ?4) > 0
               ))
           )
           AND (
@@ -217,22 +217,7 @@ pub(super) const LIST_RECENT_CONVERSATION_SESSIONS_SQL: &str = r#"
                    WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
                ) AS turn_count,
                s.updated_at AS last_activity_at,
-               (
-                   SELECT p.cwd
-                   FROM conversation_turns t
-                   CROSS JOIN conversation_parts p INDEXED BY idx_conversation_parts_tenant_turn
-                   WHERE t.tenant_id = s.tenant_id
-                     AND t.session_id = s.id
-                     AND p.tenant_id = t.tenant_id
-                     AND p.turn_id = t.id
-                     AND p.cwd IS NOT NULL
-                     AND trim(p.cwd) <> ''
-                   ORDER BY COALESCE(t.ended_at, t.started_at) DESC,
-                            t.turn_index DESC,
-                            p.part_index DESC,
-                            p.id DESC
-                   LIMIT 1
-               ) AS cwd,
+               s.last_cwd AS cwd,
                COALESCE(NULLIF(trim(a.name), ''), s.adapter_id) AS source_agent
         FROM conversation_sessions s
         JOIN conversation_sources source
@@ -325,7 +310,7 @@ pub async fn load_conversation_session_detail_sqlx(
         SELECT id, source_id, adapter_id, external_id, title, project_path,
                started_at, updated_at, source_locator, source_fingerprint,
                missing, created_at, imported_at,
-               execution_origin, execution_purpose, user_visible
+               execution_origin, execution_purpose, user_visible, last_cwd
         FROM conversation_sessions
         WHERE tenant_id = ?1 AND id = ?2
         "#,

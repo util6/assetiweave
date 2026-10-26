@@ -17,9 +17,6 @@ use crate::backend::{
 
 const RECALL_SOURCE_ID: &str = "assetiweave-memory-recall";
 const RECALL_ADAPTER_ID: &str = "assetiweave-memory-recall";
-const MAX_RECALL_QUERY_CHARS: usize = 4_000;
-const MAX_RECALL_ANSWER_CHARS: usize = 100_000;
-const MAX_RECALL_REFERENCES: usize = 64;
 
 impl AppService {
     pub async fn schedule_memory_recall_turn_for_tenant(

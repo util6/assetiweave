@@ -43,6 +43,13 @@ where
         let sessions = format!("{table_prefix}_sessions");
         let turns = format!("{table_prefix}_turns");
         let parts = format!("{table_prefix}_parts");
+        let legacy_split_query = if family_kind == "session" {
+            format!(
+                "SELECT COUNT(*) FROM (SELECT p.turn_id, json_extract(p.attrs_json, '$.exec_id') AS exec_id FROM {parts} p JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id WHERE p.tenant_id = ?1 AND json_extract(p.attrs_json, '$.exec_id') IS NOT NULL AND (?2 IS NULL OR s.source_id = ?2) GROUP BY p.turn_id, exec_id HAVING COUNT(*) > 1)"
+            )
+        } else {
+            "SELECT 0 WHERE 1 = 1 OR (?1 IS NULL AND ?2 IS NULL)".to_string()
+        };
         let checks = [
             (
                 "orphan_turns",
@@ -64,9 +71,7 @@ where
             ),
             (
                 "legacy_split_shell_parts",
-                format!(
-                    "SELECT COUNT(*) FROM (SELECT p.turn_id, p.source_execution_id FROM {parts} p JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id WHERE p.tenant_id = ?1 AND p.source_execution_id IS NOT NULL AND (?2 IS NULL OR s.source_id = ?2) GROUP BY p.turn_id, p.source_execution_id HAVING COUNT(*) > 1)"
-                ),
+                legacy_split_query,
                 "warning",
                 false,
                 "one historical execution identifier is stored by multiple Parts",

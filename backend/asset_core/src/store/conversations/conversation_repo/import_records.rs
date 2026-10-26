@@ -35,6 +35,8 @@ pub(super) struct ConversationSessionListItemRow {
     execution_purpose: Option<String>,
     #[sqlx(default)]
     user_visible: Option<i64>,
+    #[sqlx(default)]
+    last_cwd: Option<String>,
 }
 
 impl ConversationSessionListItemRow {
@@ -60,6 +62,7 @@ impl ConversationSessionListItemRow {
             execution_origin: self.execution_origin.unwrap_or_else(|| "user".to_string()),
             execution_purpose: self.execution_purpose,
             user_visible: self.user_visible.map(|v| v != 0).unwrap_or(true),
+            last_cwd: self.last_cwd,
         };
         let window_turn_count = self.window_turn_count.and_then(|c| usize::try_from(c).ok());
         let window_start_turn_index = self
@@ -133,6 +136,7 @@ impl RecentConversationSessionRecordRow {
             execution_origin: self.execution_origin.unwrap_or_else(|| "user".to_string()),
             execution_purpose: self.execution_purpose,
             user_visible: self.user_visible.map(|v| v != 0).unwrap_or(true),
+            last_cwd: self.cwd.clone(),
         };
         Ok(RecentConversationSessionRecord {
             session: ConversationSessionListItem {
@@ -318,13 +322,15 @@ pub(super) async fn upsert_conversation_turn_sqlx_tx(
     sqlx::query(
         r#"
         INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, user_text, title, started_at,
-            ended_at, fingerprint, missing, imported_at, model
+            tenant_id, id, session_id, external_id, turn_index, prompt, process, response,
+            title, started_at, ended_at, fingerprint, missing, imported_at, model
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
         ON CONFLICT(tenant_id, session_id, external_id) DO UPDATE SET
             turn_index = excluded.turn_index,
-            user_text = excluded.user_text,
+            prompt = excluded.prompt,
+            process = excluded.process,
+            response = excluded.response,
             title = excluded.title,
             started_at = excluded.started_at,
             ended_at = excluded.ended_at,
@@ -339,7 +345,9 @@ pub(super) async fn upsert_conversation_turn_sqlx_tx(
     .bind(&turn.session_id)
     .bind(&turn.external_id)
     .bind(turn.turn_index)
-    .bind(&turn.user_text)
+    .bind(&turn.prompt)
+    .bind(&turn.process)
+    .bind(&turn.response)
     .bind(&turn.title)
     .bind(&turn.started_at)
     .bind(&turn.ended_at)
@@ -353,88 +361,4 @@ pub(super) async fn upsert_conversation_turn_sqlx_tx(
     Ok(())
 }
 
-pub(super) async fn replace_conversation_parts_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    turn_id: &str,
-    parts: &[crate::backend::domain::NormalizedConversationPart],
-) -> StoreResult<()> {
-    let existing_ids = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM conversation_parts WHERE tenant_id = ?1 AND turn_id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(turn_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    let mut incoming_ids = BTreeSet::new();
-    for (index, part) in parts.iter().enumerate() {
-        let part_id = stable_id("conversation-part", &[turn_id, &index.to_string()]);
-        incoming_ids.insert(part_id.clone());
-        let content_card_json = part.content_card.as_ref().map(encode_json).transpose()?;
-        sqlx::query(
-            r#"
-            INSERT INTO conversation_parts (
-                tenant_id, id, turn_id, part_index, role, kind, text, language, command,
-                cwd, status, exit_code, command_label, metadata_json, content_card_json, source_execution_id
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
-            ON CONFLICT(tenant_id, id) DO UPDATE SET
-                turn_id = excluded.turn_id,
-                part_index = excluded.part_index,
-                role = excluded.role,
-                kind = excluded.kind,
-                text = excluded.text,
-                language = excluded.language,
-                command = excluded.command,
-                cwd = excluded.cwd,
-                status = excluded.status,
-                exit_code = excluded.exit_code,
-                command_label = excluded.command_label,
-                metadata_json = excluded.metadata_json,
-                content_card_json = excluded.content_card_json,
-                source_execution_id = excluded.source_execution_id,
-                translated_text = CASE
-                    WHEN COALESCE(conversation_parts.text, '') = COALESCE(excluded.text, '')
-                     AND COALESCE(conversation_parts.command, '') = COALESCE(excluded.command, '')
-                    THEN conversation_parts.translated_text
-                    ELSE NULL
-                END
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(part_id)
-        .bind(turn_id)
-        .bind(index as i64)
-        .bind(encode_enum(part.role)?)
-        .bind(encode_enum(part.kind)?)
-        .bind(&part.text)
-        .bind(&part.language)
-        .bind(&part.command)
-        .bind(&part.cwd)
-        .bind(&part.status)
-        .bind(part.exit_code)
-        .bind(&part.command_label)
-        .bind(&part.metadata_json)
-        .bind(content_card_json)
-        .bind(&part.source_execution_id)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-    }
-    for stale_id in existing_ids
-        .into_iter()
-        .filter(|id| !incoming_ids.contains(id))
-    {
-        sqlx::query("DELETE FROM conversation_parts WHERE tenant_id = ?1 AND id = ?2")
-            .bind(tenant_id)
-            .bind(stale_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(StoreError::external)?;
-    }
-    // 索引随零件写入增量维护：只重建这个轮次的索引行，不触碰其它轮次。
-    replace_turn_part_index_sqlx_tx(tx, tenant_id, turn_id, ConversationRecordKind::Session)
-        .await?;
-    Ok(())
-}
+pub(super) use super::import_parts::replace_conversation_parts_sqlx_tx;

@@ -1,9 +1,10 @@
 use super::*;
 use crate::backend::domain::{
-    ConversationAdapterPackageOrigin, ConversationAdapterPackageRecordKind,
-    ConversationAdapterRuntimeGateStatus, ConversationCardKindDefinition,
-    ConversationContentCardDescriptor, ConversationPackageUpdatePolicy, ConversationPartKind,
-    ConversationPartRole, NormalizedConversationPart, NormalizedConversationTurn,
+    derive_conversation_part_id, ConversationAdapterPackageOrigin,
+    ConversationAdapterPackageRecordKind, ConversationAdapterRuntimeGateStatus,
+    ConversationCardKindDefinition, ConversationContentCardDescriptor,
+    ConversationPackageUpdatePolicy, ConversationPartKind, ConversationPartRole,
+    NormalizedConversationPart, NormalizedConversationTurn,
 };
 use crate::backend::store::Database;
 use uuid::Uuid;
@@ -134,8 +135,8 @@ async fn recent_session_cwd_lookup_uses_session_and_turn_indexes() {
         "{plan}"
     );
     assert!(
-        plan.contains("idx_conversation_parts_tenant_turn"),
-        "{plan}"
+        !plan.contains("conversation_parts"),
+        "recent query must not scan conversation_parts after last_cwd materialization: {plan}"
     );
 
     drop(database);
@@ -1192,7 +1193,7 @@ async fn sqlx_question_detail_projects_from_question_turn_membership_and_turn_fa
         first_question
             .turns
             .iter()
-            .map(|turn| turn.user_text.as_str())
+            .map(|turn| turn.prompt.as_str())
             .collect::<Vec<_>>(),
         vec!["How does sync work?", "继续"]
     );
@@ -1298,13 +1299,12 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
     let source = test_conversation_source(&adapter.id);
     let mut old_session = fixture_session("v1");
     old_session.source_fingerprint = Some("same-source".to_string());
-    old_session.turns[0].parts[0].metadata_json = None;
+    old_session.turns[0].parts[0].text = Some("old answer".to_string());
     let mut refreshed_session = fixture_session("v1");
     refreshed_session.source_fingerprint = Some("same-source".to_string());
-    refreshed_session.turns[0].parts[0].metadata_json =
-        Some(r#"{"content_card":{"type":"answer","format":"markdown"}}"#.to_string());
+    refreshed_session.turns[0].parts[0].text = Some("refreshed answer".to_string());
 
-    let (result, imported_at, metadata_json, part_ids_before, part_ids_after) = async {
+    let (result, imported_at, refreshed_response, part_ids_before, part_ids_after) = async {
         upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
         upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
         import_conversation_sessions_sqlx(
@@ -1315,9 +1315,9 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
             false,
         )
         .await?;
-        let part_ids_before = sqlx::query_as::<_, (String, i64)>(
+        let part_ids_before: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(
             r#"
-                    SELECT p.id, p.part_index
+                    SELECT p.turn_id, p.part_index
                     FROM conversation_parts p
                     JOIN conversation_turns t ON t.id = p.turn_id
                     JOIN conversation_sessions s ON s.id = t.session_id
@@ -1328,7 +1328,15 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
         .bind(&source.id)
         .fetch_all(database.pool())
         .await
-        .map_err(StoreError::external)?;
+        .map_err(StoreError::external)?
+        .into_iter()
+        .map(|(turn_id, part_index)| {
+            (
+                derive_conversation_part_id(&turn_id, part_index),
+                part_index,
+            )
+        })
+        .collect();
         sqlx::query(
             "UPDATE conversation_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
         )
@@ -1351,14 +1359,13 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
         .fetch_one(database.pool())
         .await
         .map_err(StoreError::external)?;
-        let metadata_json = sqlx::query_scalar::<_, Option<String>>(
+        let refreshed_response = sqlx::query_scalar::<_, Option<String>>(
             r#"
-                    SELECT p.metadata_json
-                    FROM conversation_parts p
-                    JOIN conversation_turns t ON t.id = p.turn_id
+                    SELECT t.response
+                    FROM conversation_turns t
                     JOIN conversation_sessions s ON s.id = t.session_id
                     WHERE s.source_id = ?1
-                    ORDER BY p.part_index ASC
+                    ORDER BY t.turn_index ASC
                     LIMIT 1
                     "#,
         )
@@ -1366,9 +1373,9 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
         .fetch_one(database.pool())
         .await
         .map_err(StoreError::external)?;
-        let part_ids_after = sqlx::query_as::<_, (String, i64)>(
+        let part_ids_after: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(
             r#"
-                    SELECT p.id, p.part_index
+                    SELECT p.turn_id, p.part_index
                     FROM conversation_parts p
                     JOIN conversation_turns t ON t.id = p.turn_id
                     JOIN conversation_sessions s ON s.id = t.session_id
@@ -1379,11 +1386,19 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
         .bind(&source.id)
         .fetch_all(database.pool())
         .await
-        .map_err(StoreError::external)?;
+        .map_err(StoreError::external)?
+        .into_iter()
+        .map(|(turn_id, part_index)| {
+            (
+                derive_conversation_part_id(&turn_id, part_index),
+                part_index,
+            )
+        })
+        .collect();
         Ok::<_, StoreError>((
             result,
             imported_at,
-            metadata_json,
+            refreshed_response,
             part_ids_before,
             part_ids_after,
         ))
@@ -1394,11 +1409,7 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
     assert_eq!(result.skipped_session_count, 0);
     assert_ne!(imported_at, "preserved");
     assert_eq!(part_ids_after, part_ids_before);
-    assert!(!part_ids_after.is_empty());
-    assert!(metadata_json
-        .as_deref()
-        .unwrap_or("")
-        .contains(r#""content_card""#));
+    assert_eq!(refreshed_response.as_deref(), Some("refreshed answer"));
 
     drop(database);
     cleanup_database(&db_path);
@@ -1708,13 +1719,14 @@ async fn sqlx_conversation_reads_and_filters_questions() {
     );
     assert_eq!(question.turns.len(), 1);
     assert_eq!(question.parts.len(), 3);
+    let expected_exec_id = format!("exec-{}-1", question.turns[0].id);
     assert_eq!(
         question.parts[1].source_execution_id.as_deref(),
-        Some("call-export")
+        Some(expected_exec_id.as_str())
     );
     assert_eq!(
         question.parts[2].source_execution_id.as_deref(),
-        Some("call-export")
+        Some(expected_exec_id.as_str())
     );
     let serialized = serde_json::to_value(&question).expect("serialize question detail");
     let projected_nodes = serialized["projected_content_nodes"]
@@ -1729,8 +1741,14 @@ async fn sqlx_conversation_reads_and_filters_questions() {
         projected_nodes[0]["locator"]["part_id"],
         question.parts[0].id
     );
-    assert_eq!(projected_nodes[1]["source_execution_id"], "call-export");
-    assert_eq!(projected_nodes[2]["source_execution_id"], "call-export");
+    assert_eq!(
+        projected_nodes[1]["source_execution_id"],
+        expected_exec_id.as_str()
+    );
+    assert_eq!(
+        projected_nodes[2]["source_execution_id"],
+        expected_exec_id.as_str()
+    );
 
     drop(database);
     cleanup_database(&db_path);
@@ -2475,7 +2493,7 @@ async fn sqlx_searches_session_and_web_conversation_cards() {
     assert_eq!(web_page.hits[0].session.session.source_id, web_source.id);
     assert_eq!(
         web_page.hits[0].card_type,
-        ConversationSearchCardType::answer()
+        ConversationSearchCardType::new("search-web-external.answer")
     );
     assert!(fragment_page.total_count > 0);
     assert_eq!(fragment_session_ids.len(), 1);
@@ -3417,11 +3435,10 @@ async fn test_explain_query_plan_for_session_parts_uses_efficient_indexes() {
     let explain_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(
         r#"
             EXPLAIN QUERY PLAN
-            SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
-                   p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
-                   p.content_card_json, p.translated_text, p.source_execution_id, p.command_label
+            SELECT p.turn_id, p.part_index, p.kind, p.content,
+                   p.attrs_json, p.translated_text
             FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session
-            JOIN conversation_parts p INDEXED BY idx_conversation_parts_tenant_turn
+            JOIN conversation_parts p
               ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
             WHERE t.tenant_id = ?1 AND t.session_id = ?2
             ORDER BY t.turn_index ASC, p.part_index ASC
@@ -3443,10 +3460,10 @@ async fn test_explain_query_plan_for_session_parts_uses_efficient_indexes() {
         plan_text
     );
 
-    // 验证 parts 表使用 idx_conversation_parts_tenant_turn 进行 SEARCH
+    // 验证 parts 表使用 UNIQUE 自动索引进行 SEARCH
     assert!(
-        plan_text.contains("idx_conversation_parts_tenant_turn"),
-        "Expected plan to search parts using idx_conversation_parts_tenant_turn, got: {}",
+        plan_text.contains("SEARCH") && plan_text.contains("conversation_parts"),
+        "Expected plan to search parts using unique index, got: {}",
         plan_text
     );
 
@@ -3921,7 +3938,7 @@ async fn seed_grouped_turns_without_question_rows(pool: &SqlitePool, source_id: 
         sqlx::query(
             r#"
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, user_text, title,
+                tenant_id, id, session_id, external_id, turn_index, prompt, title,
                 started_at, ended_at, fingerprint, missing, imported_at,
                 question_id, question_origin
             ) VALUES (

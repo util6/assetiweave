@@ -936,3 +936,166 @@ fn test_conversation_sync_pipeline_clean_in_non_tty() {
         "stderr should not contain ANSI escape codes in non-tty mode: {stderr_str}"
     );
 }
+
+#[test]
+fn test_conversation_search_command_keyword_vfox() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().join("vfox_test.db");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let pool = asset_core::store::open_migrated_pool(&db_path)
+            .await
+            .expect("open migrated pool");
+        let tenant_id = "default";
+        let now = "2026-10-25T00:00:00Z".to_string();
+
+        let adapter = asset_core::domain::ConversationAdapter {
+            id: "codex".to_string(),
+            name: "Codex Adapter".to_string(),
+            kind: asset_core::domain::ConversationAdapterKind::External,
+            version: "0.1.0".to_string(),
+            enabled: true,
+            manifest_path: None,
+            executable_path: None,
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: asset_core::domain::ConversationAdapterTrustState::Trusted,
+            protocol_version: Some(1),
+            capabilities: vec!["list".to_string()],
+            input_kinds: vec![asset_core::domain::ConversationSourceKind::Directory],
+            card_contract_version: Some(1),
+            card_kinds: Vec::new(),
+            projection_version: Some(1),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        let source = asset_core::domain::ConversationSource {
+            id: "codex-source".to_string(),
+            adapter_id: "codex".to_string(),
+            name: "Codex Source".to_string(),
+            kind: asset_core::domain::ConversationSourceKind::Directory,
+            location: temp_dir.path().to_string_lossy().to_string(),
+            config_json: None,
+            enabled: true,
+            last_synced_at: None,
+            last_sync_status: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+
+        asset_core::store::upsert_conversation_adapter_sqlx(&pool, tenant_id, &adapter)
+            .await
+            .expect("upsert adapter");
+        asset_core::store::upsert_conversation_source_sqlx(&pool, tenant_id, &source)
+            .await
+            .expect("upsert source");
+
+        // 构造会话：prompt 与 response 均不含 'vfox'，仅命令包含 'vfox use nodejs@22'
+        let session = asset_core::domain::NormalizedConversationSession {
+            external_id: "vfox-session-ext".to_string(),
+            title: Some("环境准备测试".to_string()),
+            project_path: None,
+            started_at: None,
+            updated_at: None,
+            source_locator: None,
+            source_fingerprint: None,
+            turns: vec![asset_core::domain::NormalizedConversationTurn {
+                external_id: "turn-vfox".to_string(),
+                turn_index: 0,
+                user_text: "请帮我检查并准备 Node.js 运行环境".to_string(),
+                title: None,
+                started_at: None,
+                ended_at: None,
+                model: None,
+                parts: vec![
+                    asset_core::domain::NormalizedConversationPart {
+                        role: asset_core::domain::ConversationPartRole::Tool,
+                        kind: asset_core::domain::ConversationPartKind::Command,
+                        text: None,
+                        language: None,
+                        command: Some("vfox use nodejs@22".to_string()),
+                        cwd: Some("/workspace/app".to_string()),
+                        status: Some("success".to_string()),
+                        exit_code: Some(0),
+                        command_label: Some("切换 Node.js 版本".to_string()),
+                        source_execution_id: None,
+                        content_card: None,
+                        metadata_json: None,
+                    },
+                    asset_core::domain::NormalizedConversationPart {
+                        role: asset_core::domain::ConversationPartRole::Assistant,
+                        kind: asset_core::domain::ConversationPartKind::Text,
+                        text: Some("已为您成功配置运行环境，可以开始开发调试。".to_string()),
+                        language: None,
+                        command: None,
+                        cwd: None,
+                        status: None,
+                        exit_code: None,
+                        command_label: None,
+                        source_execution_id: None,
+                        content_card: None,
+                        metadata_json: None,
+                    },
+                ],
+            }],
+            ..Default::default()
+        };
+
+        asset_core::store::import_conversation_sessions_sqlx(
+            &pool,
+            tenant_id,
+            &source,
+            &[session],
+            false,
+        )
+        .await
+        .expect("import session");
+    });
+
+    // 1. JSON 格式搜索验证：aiwc conversation search --query vfox --format json
+    let mut cmd_json = aiwc_command();
+    let assert_json = cmd_json
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args([
+            "conversation",
+            "search",
+            "--query",
+            "vfox",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let output_json =
+        String::from_utf8(assert_json.get_output().stdout.clone()).expect("valid utf8");
+    let res_json: Value = serde_json::from_str(&output_json).expect("valid json search result");
+    assert_eq!(res_json["ok"], true);
+    let hits = res_json["data"]["hits"].as_array().expect("hits is array");
+    assert_eq!(
+        hits.len(),
+        1,
+        "应精确命中 1 条包含 vfox 的卡片，实际结果: {output_json}"
+    );
+    let hit = &hits[0];
+    assert!(
+        hit["snippet"].as_str().unwrap().contains("vfox"),
+        "命中卡片的 snippet 必须包含关键字 'vfox'"
+    );
+
+    // 2. 文本格式搜索验证：aiwc conversation search --query vfox
+    let mut cmd_text = aiwc_command();
+    let assert_text = cmd_text
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "search", "--query", "vfox"])
+        .assert()
+        .success();
+
+    let output_text =
+        String::from_utf8(assert_text.get_output().stdout.clone()).expect("valid utf8");
+    assert!(
+        output_text.contains("vfox"),
+        "文本输出必须包含命中命令关键字 'vfox'"
+    );
+}

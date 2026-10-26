@@ -86,20 +86,18 @@ describe("ConversationContentCards", () => {
         role: "tool",
         kind: "tool",
         text: "## Declared result\n\nAdapter controls this card.",
-        metadata_json: JSON.stringify({
-          content_card: {
-            type: "result",
-            format: "markdown",
-            suffix: "declared-result",
-          },
-        }),
+        content_card: {
+          schema_version: 1,
+          kind: "result",
+          renderer: "markdown",
+        },
       },
     ]);
 
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toMatchObject({
       format: "markdown",
-      id: "part-declared-declared-result",
+      id: "part-declared-result",
       type: "result",
     });
 
@@ -117,8 +115,40 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    expect(html).toContain('data-result-format="markdown"');
+    expect(html).toContain('data-content-type="result"');
     expect(html).toContain("Declared result");
+  });
+
+  it("renders identical cards regardless of whether metadata_json is provided or stripped", () => {
+    const partWithMeta: ConversationPart = {
+      id: "part-test",
+      turn_id: "turn-1",
+      part_index: 0,
+      role: "assistant",
+      kind: "text",
+      text: "Hello world",
+      command_label: "test-label",
+      content_card: {
+        schema_version: 1,
+        kind: "answer",
+        renderer: "markdown",
+      },
+      metadata_json: JSON.stringify({
+        signal: "ambient",
+        file_path: "/tmp/a.txt",
+        tool_name: "edit",
+      }),
+    };
+
+    const partWithoutMeta: ConversationPart = {
+      ...partWithMeta,
+      metadata_json: null,
+    };
+
+    const blocksWithMeta = buildConversationContentBlocks([partWithMeta]);
+    const blocksWithoutMeta = buildConversationContentBlocks([partWithoutMeta]);
+
+    expect(blocksWithMeta).toEqual(blocksWithoutMeta);
   });
 
   it("hides a standalone status-only successful result part", () => {
@@ -132,12 +162,11 @@ describe("ConversationContentCards", () => {
         text: null,
         status: "completed",
         exit_code: 0,
-        metadata_json: JSON.stringify({
-          content_card: {
-            type: "result",
-            format: "plain",
-          },
-        }),
+        content_card: {
+          schema_version: 1,
+          kind: "result",
+          renderer: "plain",
+        },
       },
     ]);
 
@@ -1491,11 +1520,11 @@ describe("ConversationContentCards", () => {
         kind: "text",
         text: "Run `pnpm test`.",
         translated_text: "运行 `pnpm test`。",
-        metadata_json: JSON.stringify({
-          content_card: {
-            type: "answer",
-          },
-        }),
+        content_card: {
+          schema_version: 1,
+          kind: "answer",
+          renderer: "markdown",
+        },
       },
     ]);
 
@@ -1752,11 +1781,11 @@ function commandPart(): ConversationPart {
     command: "sed -n '1,120p' frontend/src/services/conversations.ts",
     status: "completed",
     exit_code: 0,
-    metadata_json: JSON.stringify({
-      content_card: {
-        type: "command",
-      },
-    }),
+    content_card: {
+      schema_version: 1,
+      kind: "command",
+      renderer: "command",
+    },
   };
 }
 
@@ -1768,13 +1797,11 @@ function resultPart(text: string): ConversationPart {
     role: "tool",
     kind: "tool",
     text,
-    metadata_json: JSON.stringify({
-      content_card: {
-        type: "result",
-        format: "plain",
-        suffix: "result",
-      },
-    }),
+    content_card: {
+      schema_version: 1,
+      kind: "result",
+      renderer: "plain",
+    },
   };
 }
 
@@ -1790,12 +1817,11 @@ function declaredPart(
     role: type === "answer" || type === "code" ? "assistant" : "tool",
     kind: type === "code" ? "code_block" : "text",
     text,
-    metadata_json: JSON.stringify({
-      content_card: {
-        type,
-        format: type === "answer" || type === "code" ? "markdown" : "plain",
-      },
-    }),
+    content_card: {
+      schema_version: 1,
+      kind: type,
+      renderer: type === "answer" || type === "code" ? "markdown" : "plain",
+    },
   };
 }
 
