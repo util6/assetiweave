@@ -13,8 +13,6 @@ pub use service::AppService;
 pub use error::{AppError, AppResult};
 
 #[cfg(test)]
-mod bounded_evidence_baseline_tests;
-#[cfg(test)]
 mod tests;
 
 pub use agents::agent_market::{

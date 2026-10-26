@@ -1,14 +1,11 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde_json::{json, Value};
-use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::backend::application::prelude::*;
 use crate::backend::application::AppService;
-use crate::backend::domain::memory::work_order::MemoryJobPurpose;
 use crate::backend::infrastructure::tasks::{
     stages, ConflictPolicy, InfraError, PipelineDescriptor, StageStatus, TaskAdmission,
-    TaskCapabilities, TaskContext, TaskHandle, TaskKind, TaskOutput, TaskSpec,
+    TaskCapabilities, TaskHandle, TaskKind, TaskOutput, TaskSpec,
 };
 use crate::backend::store;
 
@@ -25,7 +22,7 @@ impl AppService {
             .unwrap_or(false)
     }
 
-    /// 启动单一租户级 Memory 知识流水线 (Issue #85 / ADR-0017)
+    /// 启动单一租户级 Memory 知识流水线 (Issue #85 / ADR-0017 / Issue #135)
     pub async fn start_memory_pipeline(
         &self,
         params: MemoryPipelineParams,
@@ -41,7 +38,6 @@ impl AppService {
             .stage(stages::SESSION_FACTS, "提取会话事实")
             .stage(stages::RECENT_SNAPSHOT, "近期记忆快照")
             .stage(stages::GLOBAL_CONSOLIDATION, "全局长期记忆维护")
-            .stage(stages::MARKDOWN_PROJECTION, "Markdown 记忆投影")
             .build();
 
         let task_id = format!("memory-pipeline:{}", self.tenant_id());
@@ -66,7 +62,8 @@ impl AppService {
         .with_pipeline(pipeline);
 
         spec.detail = json!({
-            "domain": "memory_pipeline", "tenant_id": self.tenant_id(),
+            "domain": "memory_pipeline",
+            "tenant_id": self.tenant_id(),
             "force_rebuild": params.force_rebuild,
             "target": params.target.as_ref().map(|t| format!("{:?}", t)),
             "reason": params.reason.as_ref().map(|r| format!("{:?}", r)),
@@ -74,401 +71,121 @@ impl AppService {
 
         let service = self.clone();
         self.spawn_pipeline_task(spec, move |cx| async move {
-            let now = Utc::now();
-            let now_text = now.to_rfc3339();
             let tenant_id = service.tenant_id().to_string();
             let pool = service.db.pool().clone();
+            let storage = crate::backend::domain::memory::storage::MemoryStorage::new(&tenant_id);
+            let default_extractor =
+                super::session_branch_workflow::HeuristicSessionBranchExtractorAgent;
+
+            if params.force_rebuild {
+                let _ = store::clear_watermarks_sqlx(&pool, &tenant_id).await;
+            }
 
             // 阶段 1: SESSION_FACTS
-            let (s1_ok, s1_fail) = {
+            let session_report = {
                 let mut guard = cx.enter_stage(stages::SESSION_FACTS);
                 if cx.is_cancelled() {
                     return Err(InfraError::Cancelled("memory pipeline cancelled".into()));
                 }
-                service
-                    .run_session_facts_pipeline_stage(&mut guard, now, params.force_rebuild, &cx)
-                    .await?
+                guard.progress(
+                    0,
+                    Some(1),
+                    Some("正在扫描未处理会话并提取思维分叉...".into()),
+                );
+                let report = service
+                    .run_session_branch_workflow(&default_extractor, Some(&storage))
+                    .await
+                    .map_err(|e| InfraError::External(format!("会话思维分叉提取失败: {e}")))?;
+                guard.record_metric("sessions_scanned", report.scanned_count as u64);
+                guard.record_metric("sessions_processed", report.processed_count as u64);
+                guard.record_step(
+                    "session_facts_extracted",
+                    Some(format!(
+                        "扫描 {} 个会话，提取 {} 个分支，跳过 {} 个会话",
+                        report.scanned_count, report.processed_count, report.skipped_count
+                    )),
+                    Some(1),
+                    Some(1),
+                );
+                guard.progress(1, Some(1), Some("会话思维分叉提取完成".into()));
+                guard.finish_with_status(StageStatus::Succeeded);
+                report
             };
 
             // 阶段 2: RECENT_SNAPSHOT
-            let mut snapshot_updated = false;
-            {
+            let recent_report = {
                 let mut guard = cx.enter_stage(stages::RECENT_SNAPSHOT);
                 if cx.is_cancelled() {
                     return Err(InfraError::Cancelled("memory pipeline cancelled".into()));
                 }
-                let _ = store::recover_expired_recent_memory_leases_sqlx(
-                    &pool, &tenant_id, &now_text,
-                )
-                .await;
-
-                match service
-                    .prepare_recent_snapshot_generation_for_pipeline(
-                        Some(now),
-                        params.force_rebuild,
-                    )
+                guard.progress(
+                    0,
+                    Some(1),
+                    Some("正在生成近期工作快照并消融项目叶子...".into()),
+                );
+                let report = service
+                    .run_recent_and_project_workflow(&storage)
                     .await
-                {
-                    Ok(Some(prep)) => match service
-                        .enqueue_recent_snapshot_generation(&prep, now)
-                        .await
-                    {
-                        Ok(jid) => {
-                            let owner = format!("memory-pipeline-owner-{}", Uuid::new_v4());
-                            let mut claimed = store::claim_recent_memory_job_with_lease_sqlx(
-                                &pool, &tenant_id, &jid, &owner, &now_text,
-                            )
-                            .await
-                            .unwrap_or(false);
-
-                            if !claimed {
-                                if let Ok(Some(existing_job)) =
-                                    store::load_recent_memory_job_sqlx(&pool, &tenant_id, &jid).await
-                                {
-                                    if existing_job.status == "failed" {
-                                        guard.record_step(
-                                            "reopen_job",
-                                            Some(format!("发现处于失败终态的快照任务 [{}], 自动重置并重新执行", jid)),
-                                            None,
-                                            None,
-                                        );
-                                        let _ = store::restart_recent_memory_job_for_rebuild_sqlx(
-                                            &pool, &tenant_id, &jid, &now_text,
-                                        ).await;
-                                        claimed = store::claim_recent_memory_job_with_lease_sqlx(
-                                            &pool, &tenant_id, &jid, &owner, &now_text,
-                                        )
-                                        .await
-                                        .unwrap_or(false);
-                                    } else if existing_job.status == "running" {
-                                        guard.record_step(
-                                            "recover_orphaned_job",
-                                            Some(format!("接管遗留的运行态孤儿快照任务 [{}], 重置并重新执行", jid)),
-                                            None,
-                                            None,
-                                        );
-                                        let _ = store::restart_recent_memory_job_for_rebuild_sqlx(
-                                            &pool, &tenant_id, &jid, &now_text,
-                                        ).await;
-                                        claimed = store::claim_recent_memory_job_with_lease_sqlx(
-                                            &pool, &tenant_id, &jid, &owner, &now_text,
-                                        )
-                                        .await
-                                        .unwrap_or(false);
-                                    }
-                                }
-                            }
-
-                            if claimed {
-                                if let Ok(Some(job)) =
-                                    store::load_recent_memory_job_sqlx(&pool, &tenant_id, &jid)
-                                        .await
-                                {
-                                    guard.activity("recent_snapshot", "生成近期工作快照", Some(job.id.clone()));
-                                    guard.progress(1, Some(2), Some("正在生成近期快照...".into()));
-
-                                    let (agent_id, model) = service
-                                        .resolve_available_agent_for(
-                                            &crate::backend::domain::agents::ActionId::new("memory.generation"),
-                                        )
-                                        .map(|(id, m)| (id.to_string(), m))
-                                        .unwrap_or_else(|_| ("builtin:assistant".to_string(), None));
-
-                                    let memory_session = crate::backend::application::memory::memory_agent_session::ActiveMemoryAgentSession::start(
-                                        &service.runtime,
-                                        crate::backend::application::memory::memory_agent_session::MemoryAgentSessionParams {
-                                            tenant_id: &tenant_id,
-                                            scope: "recent",
-                                            job_id: &job.id,
-                                            task_id: Some(cx.task_id()),
-                                            agent_id: &agent_id,
-                                            display_name: Some("Recent Memory Snapshot Agent".to_string()),
-                                            model,
-                                            prompt_summary: "生成近期工作快照",
-                                            custom_session_ref: Some(crate::backend::domain::agents::AgentSessionRef::new(
-                                                format!("recent-snapshot-{}", job.id),
-                                            )),
-                                            persistent: false,
-                                        },
-                                    );
-                                    guard.set_agent_session_ref(Some(memory_session.session_ref.clone()));
-
-                                    let watchdog_res = super::activity_watchdog::run_with_activity_watchdog(
-                                        service.run_recent_snapshot_generation_job(
-                                            &job,
-                                            cx.cancellation().clone(),
-                                            Some(memory_session.sink.clone()),
-                                            None,
-                                        ),
-                                        cx.cancellation().clone(),
-                                        {
-                                            let s = memory_session.clone();
-                                            move || s.elapsed_since_active()
-                                        },
-                                        super::activity_watchdog::ActivityWatchdogConfig::default(),
-                                    )
-                                    .await;
-
-                                    match watchdog_res {
-                                        Ok(Ok(_)) => {
-                                            memory_session.finish_succeeded(&service.runtime);
-                                            snapshot_updated = true;
-                                            guard.remove_activity("recent_snapshot");
-                                            guard.record_metric("recent_snapshot_updated", 1);
-                                            guard.record_step("snapshot_generated", Some("近期记忆快照已成功更新".into()), Some(2), Some(2));
-                                            guard.progress(2, Some(2), Some("近期快照生成完成".into()));
-                                            guard.finish_with_status(StageStatus::Succeeded);
-                                        }
-                                        Ok(Err(e)) => {
-                                            guard.remove_activity("recent_snapshot");
-                                            let err_msg = e.to_string();
-                                            let (err_code, retryable) = match &e {
-                                                AppError::Domain {
-                                                    code, retryable, ..
-                                                } => (code.as_str(), *retryable),
-                                                _ => ("recent_snapshot_failed", false),
-                                            };
-                                            memory_session.finish_failed(&service.runtime, err_code, &err_msg, retryable);
-                                            let _ = store::finish_recent_memory_job_sqlx(
-                                                &pool,
-                                                &tenant_id,
-                                                &jid,
-                                                &owner,
-                                                "failed",
-                                                Some(err_code),
-                                                Some(&err_msg),
-                                                retryable,
-                                                &now_text,
-                                            )
-                                            .await;
-                                            guard.record_failure(err_code, &err_msg, retryable);
-                                            guard.record_step("snapshot_failed", Some(format!("近期记忆快照失败: {err_msg}")), None, None);
-                                            guard.finish_with_status(StageStatus::Failed);
-                                            return Err(InfraError::External(format!(
-                                                "Memory 流水线阶段 2 (近期快照) 失败: {err_msg}"
-                                            )));
-                                        }
-                                        Err(timeout_kind) => {
-                                            let err_code = timeout_kind.error_code();
-                                            let err_msg = timeout_kind.display_message("生成近期快照");
-                                            memory_session.finish_failed(&service.runtime, err_code, &err_msg, true);
-                                            guard.remove_activity("recent_snapshot");
-                                            let _ = store::finish_recent_memory_job_sqlx(
-                                                &pool,
-                                                &tenant_id,
-                                                &jid,
-                                                &owner,
-                                                "failed",
-                                                Some(err_code),
-                                                Some(&err_msg),
-                                                true,
-                                                &now_text,
-                                            )
-                                            .await;
-                                            guard.record_failure(err_code, &err_msg, true);
-                                            guard.record_step("snapshot_timeout", Some(err_msg.clone()), None, None);
-                                            guard.finish_with_status(StageStatus::Failed);
-                                            return Err(InfraError::External(format!(
-                                                "Memory 流水线阶段 2 (近期快照) 超时: {err_msg}"
-                                            )));
-                                        }
-                                    }
-                                } else {
-                                    guard.record_failure(
-                                        "recent_job_not_found",
-                                        "Missing job record",
-                                        false,
-                                    );
-                                    guard.record_step("snapshot_job_missing", Some(format!("找不到快照任务记录 [{jid}]")), None, None);
-                                    guard.finish_with_status(StageStatus::Failed);
-                                    return Err(InfraError::External(format!("Memory 快照任务记录不存在: {jid}")));
-                                }
-                            } else {
-                                if let Ok(Some(existing_job)) =
-                                    store::load_recent_memory_job_sqlx(&pool, &tenant_id, &jid).await
-                                {
-                                    if matches!(existing_job.status.as_str(), "succeeded" | "reused") {
-                                        snapshot_updated = true;
-                                        guard.record_metric("recent_snapshot_reused", 1);
-                                        guard.record_step("snapshot_reused", Some("近期快照内容无变动，复用现有结果".into()), Some(1), Some(1));
-                                        guard.finish_with_status(StageStatus::Succeeded);
-                                    } else {
-                                        guard.record_failure(
-                                            "recent_job_claim_failed",
-                                            format!("Job status '{}' cannot be claimed", existing_job.status),
-                                            false,
-                                        );
-                                        guard.record_step(
-                                            "claim_failed",
-                                            Some(format!("无法认领快照任务 [{}]: 状态为 '{}'", jid, existing_job.status)),
-                                            None,
-                                            None,
-                                        );
-                                        guard.finish_with_status(StageStatus::Failed);
-                                        return Err(InfraError::External(format!(
-                                            "Memory 阶段 2 快照认领失败: 状态为 '{}'",
-                                            existing_job.status
-                                        )));
-                                    }
-                                } else {
-                                    guard.record_failure(
-                                        "recent_job_claim_failed",
-                                        "Claim conflict",
-                                        false,
-                                    );
-                                    guard.record_step("claim_conflict", Some(format!("认领快照任务 [{jid}] 发生并发冲突")), None, None);
-                                    guard.finish_with_status(StageStatus::Failed);
-                                    return Err(InfraError::External("Memory 阶段 2 快照认领并发冲突".into()));
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            guard.record_failure(
-                                "recent_snapshot_enqueue_failed",
-                                e.to_string(),
-                                true,
-                            );
-                            guard.record_step("enqueue_failed", Some(format!("快照工单入队失败: {e}")), None, None);
-                            guard.finish_with_status(StageStatus::Failed);
-                            return Err(InfraError::External(format!("Memory 阶段 2 快照工单入队失败: {e}")));
-                        }
-                    },
-                    Ok(None) => {
-                        let _ = sqlx::query("UPDATE recent_memory_jobs SET status = 'reused', finished_at = ?1, updated_at = ?1 WHERE tenant_id = ?2 AND status = 'queued'")
-                            .bind(&now_text).bind(&tenant_id).execute(&pool).await;
-                        guard.record_metric("skipped", 1);
-                        guard.record_skipped("no_change", "近期记忆内容无变动，复用现有快照");
-                        guard.record_step("snapshot_skipped", Some("近期记忆内容无变动，复用现有快照".into()), Some(1), Some(1));
-                        guard.finish_with_status(StageStatus::Succeeded);
-                    }
-                    Err(e) => {
-                        guard.record_failure("recent_snapshot_prep_failed", e.to_string(), true);
-                        guard.record_step("prep_failed", Some(format!("准备快照工单失败: {e}")), None, None);
-                        guard.finish_with_status(StageStatus::Failed);
-                        return Err(InfraError::External(format!("Memory 阶段 2 准备快照失败: {e}")));
-                    }
-                }
-            }
+                    .map_err(|e| {
+                        InfraError::External(format!("近期快照与项目叶子消融失败: {e}"))
+                    })?;
+                guard.record_metric("recent_sessions", report.session_count as u64);
+                guard.record_metric("projects_updated", report.project_count as u64);
+                guard.record_step(
+                    "recent_snapshot_consolidated",
+                    Some(format!(
+                        "近期快照已更新（覆盖 {} 个会话），同步更新 {} 个项目记忆",
+                        report.session_count, report.project_count
+                    )),
+                    Some(1),
+                    Some(1),
+                );
+                guard.progress(1, Some(1), Some("近期快照与项目消融完成".into()));
+                guard.finish_with_status(StageStatus::Succeeded);
+                report
+            };
 
             // 阶段 3: GLOBAL_CONSOLIDATION
-            {
+            let global_report = {
                 let mut guard = cx.enter_stage(stages::GLOBAL_CONSOLIDATION);
                 if cx.is_cancelled() {
                     return Err(InfraError::Cancelled("memory pipeline cancelled".into()));
                 }
-                let _ = store::recover_expired_memory_maintenance_leases_sqlx(
-                    &pool, &tenant_id, &now_text,
-                )
-                .await;
-
-                let is_global = matches!(
-                    params.target,
-                    Some(MemoryRebuildTarget::Global) | Some(MemoryRebuildTarget::All)
+                guard.progress(
+                    0,
+                    Some(1),
+                    Some("正在沉淀全局长期经验至 MEMORY.md...".into()),
                 );
-                let pending_maint = store::list_memory_maintenance_job_ids_for_scheduler_sqlx(
-                    &pool, &tenant_id, &now_text, 1,
-                )
-                .await
-                .unwrap_or_default();
-
-                if !is_global && pending_maint.is_empty() {
-                    guard.skip("not_needed", "无新增全局长期记忆整理需求");
-                    guard.record_step("global_skipped", Some("无新增全局长期记忆整理需求，跳过维护".into()), Some(0), Some(0));
-                } else {
-                    let jid = if let Some(first_id) = pending_maint.into_iter().next() {
-                        first_id
-                    } else {
-                        service
-                            .enqueue_memory_maintenance_job(
-                                MemoryJobPurpose::GlobalConsolidation,
-                                None,
-                                None,
-                                now,
-                            )
-                            .await
-                            .unwrap_or_default()
-                    };
-
-                    if !jid.is_empty() {
-                        let owner = format!("memory-pipeline-owner-{}", Uuid::new_v4());
-                        if store::claim_memory_maintenance_job_with_lease_sqlx(
-                            &pool, &tenant_id, &jid, &owner, &now_text,
-                        )
-                        .await
-                        .unwrap_or(false)
-                        {
-                            guard.activity("global_consolidation", "维护全局长期记忆", Some(jid.clone()));
-                            match tokio::time::timeout(
-                                std::time::Duration::from_secs(600),
-                                super::memory_maintenance_runner::run_memory_maintenance_task(
-                                    &service.runtime,
-                                    &tenant_id,
-                                    &jid,
-                                    &owner,
-                                    "global_consolidation",
-                                    &cx,
-                                ),
-                            )
-                            .await
-                            {
-                                Ok(Ok(_)) => {
-                                    guard.remove_activity("global_consolidation");
-                                    guard.record_metric("global_consolidated", 1);
-                                    guard.record_step("global_consolidated", Some("全局长期记忆已整理完成".into()), Some(1), Some(1));
-                                    guard.finish_with_status(StageStatus::Succeeded);
-                                }
-                                Ok(Err(e)) => {
-                                    guard.remove_activity("global_consolidation");
-                                    guard.record_failure("global_consolidation_failed", e.to_string(), false);
-                                    guard.record_step("global_failed", Some(format!("全局维护失败: {e}")), None, None);
-                                    guard.finish_with_status(StageStatus::Failed);
-                                }
-                                Err(_) => {
-                                    guard.remove_activity("global_consolidation");
-                                    guard.record_failure("global_consolidation_timeout", "全局维护超时(180s)", false);
-                                    guard.record_step("global_timeout", Some("全局维护超时".into()), None, None);
-                                    guard.finish_with_status(StageStatus::Failed);
-                                }
-                            }
-                        } else {
-                            guard.record_skipped("lease_not_acquired", "全局维护任务已被占用");
-                            guard.finish_with_status(StageStatus::Succeeded);
-                        }
-                    }
-                }
-            }
-
-            // 阶段 4: MARKDOWN_PROJECTION
-            {
-                let mut guard = cx.enter_stage(stages::MARKDOWN_PROJECTION);
-                if cx.is_cancelled() {
-                    return Err(InfraError::Cancelled("memory pipeline cancelled".into()));
-                }
-                match service.rebuild_markdown_projections().await {
-                    Ok(_) => {
-                        guard.record_metric("projections_written", 1);
-                        guard.record_step("markdown_projected", Some("Markdown 记忆投影已更新".into()), Some(1), Some(1));
-                        guard.progress(1, Some(1), Some("Markdown 投影更新完成".into()));
-                        guard.finish_with_status(StageStatus::Succeeded);
-                    }
-                    Err(e) => {
-                        let err_msg = e.to_string();
-                        guard.record_failure("markdown_projection_failed", &err_msg, false);
-                        guard.finish_with_status(StageStatus::Failed);
-                        return Err(InfraError::External(format!("Markdown 记忆投影更新失败: {err_msg}")));
-                    }
-                }
-            }
+                let report = service
+                    .run_global_memory_workflow(&storage)
+                    .await
+                    .map_err(|e| InfraError::External(format!("全局记忆沉淀失败: {e}")))?;
+                guard.record_metric("global_updated", if report.updated { 1 } else { 0 });
+                guard.record_step(
+                    "global_consolidated",
+                    Some("全局长期记忆沉淀完成".into()),
+                    Some(1),
+                    Some(1),
+                );
+                guard.progress(1, Some(1), Some("全局长期记忆维护完成".into()));
+                guard.finish_with_status(StageStatus::Succeeded);
+                report
+            };
 
             let summary = format!(
-                "Memory 流水线执行完毕 (会话成功: {s1_ok}, 失败: {s1_fail}, 快照已更新: {snapshot_updated})"
+                "Memory 流水线执行完毕 (扫描会话: {}, 近期会话: {}, 更新项目: {})",
+                session_report.scanned_count,
+                recent_report.session_count,
+                recent_report.project_count
             );
             Ok(TaskOutput::with_summary(
                 json!({
                     "domain": "memory_pipeline",
-                    "sessions_succeeded": s1_ok,
-                    "sessions_failed": s1_fail,
-                    "recent_snapshot_updated": snapshot_updated,
+                    "sessions_scanned": session_report.scanned_count,
+                    "sessions_processed": session_report.processed_count,
+                    "recent_sessions": recent_report.session_count,
+                    "projects_updated": recent_report.project_count,
+                    "global_updated": global_report.updated,
                 }),
                 summary,
             ))

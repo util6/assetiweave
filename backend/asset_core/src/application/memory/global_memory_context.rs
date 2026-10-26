@@ -74,99 +74,33 @@ impl AppService {
             }
         }
 
-        if !sections.is_empty() {
-            let full_text = sections.join("\n\n");
-            let char_budget = token_budget * 4;
-            let text = if full_text.len() > char_budget {
-                format!(
-                    "{}\n\n...[truncated due to token budget]",
-                    &full_text[..char_budget]
-                )
-            } else {
-                full_text
-            };
-            let estimated_tokens = (text.len() + 3) / 4;
-            let mut hasher = Sha256::new();
-            Digest::update(&mut hasher, text.as_bytes());
-            let revision = format!("{:x}", Digest::finalize(hasher));
-
-            let compiled = MemoryContextResult {
-                text,
-                revision,
-                generated_at: Some(chrono::Utc::now().to_rfc3339()),
-                estimated_tokens,
-                token_budget,
-                references,
-                global_version: None,
-                project_version: None,
-                project_sources: Vec::new(),
-            };
-
-            if self.backend_settings()?.is_memory_usage_enabled() {
-                let used_at = Utc::now().to_rfc3339();
-                for reference in &compiled.references {
-                    store::record_memory_usage_event_sqlx(
-                        self.db.pool(),
-                        &tenant_id,
-                        &reference.kind,
-                        &reference.id,
-                        "context",
-                        &compiled.revision,
-                        &used_at,
-                    )
-                    .await?;
-                }
-            }
-            return Ok(compiled);
-        }
-
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let query = params.query.unwrap_or_default();
-        let global_version =
-            store::load_global_memory_latest_version_sqlx(&pool, &tenant_id).await?;
-        let project = if let Some(path) = project_path.as_deref() {
-            store::load_project_memory_sqlx(&pool, &tenant_id, path).await?
-        } else {
-            None
-        };
-        let project_version = match project.as_ref() {
-            Some(project) => {
-                store::load_project_memory_latest_version_sqlx(&pool, &tenant_id, &project.id)
-                    .await?
-            }
-            None => None,
-        };
-        let project_sources = match project_version.as_ref() {
-            Some(version) => {
-                store::load_project_memory_sources_sqlx(&pool, &tenant_id, &version.id).await?
-            }
-            None => Vec::new(),
-        };
-        let sessions = match project_path.as_deref() {
-            Some(path) => {
-                store::list_session_memories_for_project_sqlx(&pool, &tenant_id, path).await?
-            }
-            None => Vec::new(),
-        };
-        let l3_items =
-            crate::backend::application::memory::global_consolidation_pipeline::get_global_memory_l3_view(
-                &pool, &tenant_id,
+        let full_text = sections.join("\n\n");
+        let char_budget = token_budget * 4;
+        let text = if full_text.len() > char_budget {
+            format!(
+                "{}\n\n...[truncated due to token budget]",
+                &full_text[..char_budget]
             )
-            .await?
-            .map(|v| v.items)
-            .unwrap_or_default();
-        let compiled = compile_memory_context(
-            &tenant_id,
-            project_path.as_deref(),
-            &query,
+        } else {
+            full_text
+        };
+        let estimated_tokens = (text.len() + 3) / 4;
+        let mut hasher = Sha256::new();
+        hasher.update(text.as_bytes());
+        let revision = format!("{:x}", hasher.finalize());
+
+        let compiled = MemoryContextResult {
+            text,
+            revision,
+            generated_at: Some(chrono::Utc::now().to_rfc3339()),
+            estimated_tokens,
             token_budget,
-            global_version.as_ref(),
-            project_version.as_ref(),
-            &project_sources,
-            &sessions,
-            &l3_items,
-        );
+            references,
+            global_version: None,
+            project_version: None,
+            project_sources: Vec::new(),
+        };
+
         if self.backend_settings()?.is_memory_usage_enabled() {
             let used_at = Utc::now().to_rfc3339();
             for reference in &compiled.references {
@@ -202,168 +136,6 @@ impl AppService {
         )
         .map(Some)
         .ok_or_else(|| AppError::Validation("project_path cannot be normalized".to_string()))
-    }
-}
-
-pub fn compile_memory_context(
-    tenant_id: &str,
-    project_path: Option<&str>,
-    query: &str,
-    token_budget: usize,
-    global_version: Option<&crate::backend::domain::GlobalMemoryVersion>,
-    project_version: Option<&crate::backend::domain::ProjectMemoryVersion>,
-    project_sources: &[crate::backend::domain::ProjectMemorySource],
-    sessions: &[crate::backend::domain::SessionMemory],
-    l3_items: &[crate::backend::domain::L3MemoryItemView],
-) -> MemoryContextResult {
-    let mut sections = Vec::new();
-    if !l3_items.is_empty() {
-        for item in l3_items {
-            sections.push(ContextSection::new(
-                "global_memory_l3",
-                item.revision_id.clone(),
-                Some(item.revision_number),
-                format!(
-                    "## [Global] {}\n{}\n{}",
-                    item.title, item.summary, item.rationale
-                ),
-            ));
-        }
-    } else if let Some(version) = global_version {
-        let summary = version.summary_markdown.as_deref().unwrap_or_default();
-        let memory = version.memory_markdown.as_deref().unwrap_or_default();
-        if !summary.is_empty() || !memory.is_empty() {
-            sections.push(ContextSection::new(
-                "global_memory",
-                version.id.clone(),
-                Some(version.source_watermark),
-                format!(
-                    "## Global Memory\n{}\n\n## Project Index\n{}",
-                    summary, memory
-                ),
-            ));
-        }
-    }
-    let mut selected_sessions = sessions
-        .iter()
-        .filter(|session| session.status == crate::backend::domain::SessionMemoryStatus::Active)
-        .collect::<Vec<_>>();
-    selected_sessions.sort_by(|left, right| {
-        right
-            .source_revision
-            .cmp(&left.source_revision)
-            .then_with(|| left.id.cmp(&right.id))
-    });
-    let terms = query
-        .split_whitespace()
-        .map(str::to_lowercase)
-        .filter(|term| term.len() > 1)
-        .collect::<Vec<_>>();
-    if !terms.is_empty() {
-        selected_sessions.sort_by_key(|session| {
-            let haystack = format!(
-                "{} {} {} {}",
-                session.summary,
-                session.goal,
-                session.result,
-                session.topics.join(" ")
-            )
-            .to_lowercase();
-            std::cmp::Reverse(terms.iter().filter(|term| haystack.contains(*term)).count())
-        });
-    }
-    for session in selected_sessions.into_iter().take(3) {
-        let short_id = session_short_id(&session.session_id);
-        sections.push(
-            ContextSection::new(
-                "session_memory",
-                session.id.clone(),
-                Some(session.source_revision),
-                format!(
-                    "## Session Memory [Session: {}]\n### Summary\n{}\n\n### Goal\n{}\n\n### Result\n{}\n\n### Decisions\n{}\n\n### Verification\n{}\n\n### Follow-up\n{}",
-                    short_id,
-                    session.summary,
-                    session.goal,
-                    session.result,
-                    bullet_lines(&session.decisions),
-                    bullet_lines(&session.verification),
-                    bullet_lines(&session.follow_up),
-                ),
-            )
-            .with_session_id(session.session_id.clone()),
-        );
-    }
-
-    let mut used_tokens = 0usize;
-    let mut text = String::new();
-    let mut references = Vec::new();
-    for section in sections {
-        let Some(content) = fit_context_section(&section.content, token_budget, used_tokens) else {
-            continue;
-        };
-        let section_tokens = estimate_context_tokens(&content);
-        if !text.is_empty() {
-            text.push_str("\n\n");
-        }
-        text.push_str(&content);
-        used_tokens = used_tokens.saturating_add(section_tokens);
-        references.push(MemoryContextReference {
-            kind: section.kind,
-            id: section.id,
-            source_revision: section.source_revision,
-            session_id: section.session_id,
-        });
-        if used_tokens >= token_budget {
-            break;
-        }
-    }
-    let revision = context_revision(tenant_id, project_path, query, token_budget, &references);
-    let estimated_tokens = estimate_context_tokens(&text);
-    MemoryContextResult {
-        text,
-        revision,
-        generated_at: l3_items
-            .iter()
-            .map(|i| i.updated_at.clone())
-            .max()
-            .or_else(|| global_version.map(|version| version.updated_at.clone()))
-            .or_else(|| project_version.map(|version| version.updated_at.clone())),
-        estimated_tokens,
-        token_budget,
-        references,
-        global_version: global_version.cloned(),
-        project_version: project_version.cloned(),
-        project_sources: project_sources.to_vec(),
-    }
-}
-
-pub struct ContextSection {
-    kind: String,
-    id: String,
-    source_revision: Option<i64>,
-    session_id: Option<String>,
-    content: String,
-}
-
-impl ContextSection {
-    fn new(
-        kind: impl Into<String>,
-        id: impl Into<String>,
-        source_revision: Option<i64>,
-        content: String,
-    ) -> Self {
-        Self {
-            kind: kind.into(),
-            id: id.into(),
-            source_revision,
-            session_id: None,
-            content,
-        }
-    }
-
-    fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
-        self.session_id = Some(session_id.into());
-        self
     }
 }
 

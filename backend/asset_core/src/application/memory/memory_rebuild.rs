@@ -1,7 +1,6 @@
 use super::types::MemoryRebuildResult;
 use crate::backend::application::prelude::*;
-use crate::backend::store;
-use chrono::Utc;
+use crate::backend::application::AppService;
 
 impl AppService {
     pub async fn rebuild_memory_scope(
@@ -16,7 +15,6 @@ impl AppService {
                 reused: false,
             });
         }
-        let now = Utc::now();
         let project_path = params
             .project_path
             .as_deref()
@@ -36,52 +34,23 @@ impl AppService {
                 "Memory rebuild does not support app/source/session scopes".to_string(),
             ));
         }
-        if matches!(params.reason, Some(MemoryRebuildReason::ProjectionRepair)) {
-            let scheduled_task_ids = self.schedule_memory_projection_rebuild().await?;
-            return Ok(MemoryRebuildResult {
-                accepted: true,
-                scheduled_task_ids,
-                target_watermark: None,
-                reused: false,
-            });
+
+        if self.is_memory_pipeline_active() {
+            return Err(AppError::Conflict("Memory 流水线已在运行中".to_string()));
         }
 
-        let (scheduled_task_ids, target_watermark) = match target {
-            MemoryRebuildTarget::Project => {
-                let path = project_path.ok_or_else(|| {
-                    AppError::Validation("Project rebuild requires project_path".to_string())
-                })?;
-                (self.schedule_project_memory_rebuild(path, now).await?, None)
-            }
-            MemoryRebuildTarget::Recent
-            | MemoryRebuildTarget::Global
-            | MemoryRebuildTarget::All => {
-                if project_path.is_some() {
-                    return Err(AppError::Validation(format!(
-                        "{:?} rebuild does not accept project_path",
-                        target
-                    )));
-                }
-                if self.is_memory_pipeline_active() {
-                    return Err(AppError::Conflict("Memory 流水线已在运行中".to_string()));
-                }
-                let pipeline_handle = self
-                    .start_memory_pipeline(super::memory_pipeline::MemoryPipelineParams::rebuild(
-                        target,
-                        None,
-                        params.reason,
-                    ))
-                    .await?;
-                (vec![pipeline_handle.task_id], None)
-            }
-        };
-        let mut scheduled_task_ids = scheduled_task_ids;
-        scheduled_task_ids.sort();
-        scheduled_task_ids.dedup();
+        let pipeline_handle = self
+            .start_memory_pipeline(super::memory_pipeline::MemoryPipelineParams::rebuild(
+                target,
+                None,
+                params.reason,
+            ))
+            .await?;
+
         Ok(MemoryRebuildResult {
             accepted: true,
-            scheduled_task_ids,
-            target_watermark,
+            scheduled_task_ids: vec![pipeline_handle.task_id],
+            target_watermark: None,
             reused: false,
         })
     }

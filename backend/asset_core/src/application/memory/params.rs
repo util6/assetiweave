@@ -131,6 +131,14 @@ impl MemoryPipelineParams {
         Self::default()
     }
 
+    pub fn manual(force_rebuild: bool) -> Self {
+        Self {
+            force_rebuild,
+            reason: Some(MemoryRebuildReason::Manual),
+            ..Default::default()
+        }
+    }
+
     pub fn rebuild(
         target: MemoryRebuildTarget,
         project_path: Option<String>,

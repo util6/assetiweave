@@ -16,15 +16,6 @@ pub fn start_session_memory_coordinator(runtime: &Arc<AppRuntime>) {
     let task_cancellation = cancellation.clone();
     let runtime_clone = runtime.clone();
     let runner = async move {
-        if let Err(error) =
-            store::reset_orphaned_running_memory_jobs_sqlx(runtime_clone.pool()).await
-        {
-            tracing::warn!(
-                action = "memory.coordinator.cold_start_reset",
-                error = %error,
-                "Failed to reset orphaned running memory jobs at cold start"
-            );
-        }
         const BASE_COORDINATOR_INTERVAL_SECS: u64 = 15;
         const MAX_COORDINATOR_BACKOFF_SECS: u64 = 60;
         let mut current_interval_secs = BASE_COORDINATOR_INTERVAL_SECS;
