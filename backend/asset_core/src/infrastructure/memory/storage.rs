@@ -88,11 +88,6 @@ impl MemoryStorage {
         Ok(())
     }
 
-    /// 重置磁盘记忆目录（同 `clear_all`）
-    pub fn reset(&self) -> std::io::Result<()> {
-        self.clear_all()
-    }
-
     pub fn write_markdown_atomic(
         &self,
         rel_path: impl AsRef<Path>,

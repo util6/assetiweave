@@ -96,8 +96,8 @@ fn test_memory_storage_clear_all_and_reset() {
     );
     assert_eq!(std::fs::read_dir(storage.recent_dir()).unwrap().count(), 0);
 
-    // reset() also works idempotently on clean structure
-    storage.reset().expect("reset");
+    // clear_all() also works idempotently on clean structure
+    storage.clear_all().expect("clear_all");
     assert!(storage.sessions_dir().exists());
     assert!(storage.recent_dir().exists());
     assert!(storage.projects_dir().exists());

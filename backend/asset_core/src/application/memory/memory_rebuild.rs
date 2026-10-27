@@ -55,13 +55,6 @@ impl AppService {
             reused: false,
         })
     }
-
-    /// 清理当前租户的磁盘记忆目录并初始化干净的分层结构
-    pub fn clear_memory_storage(&self) -> std::io::Result<()> {
-        let storage =
-            crate::backend::infrastructure::memory::storage::MemoryStorage::new(self.tenant_id());
-        storage.clear_all()
-    }
 }
 
 #[cfg(test)]

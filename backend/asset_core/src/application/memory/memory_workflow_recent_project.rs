@@ -57,7 +57,7 @@ pub struct ParsedSessionMarkdown {
 /// 3. 必须包含完整的 Markdown 锚点结构: - [anchor](target)；
 /// 4. anchor、target 与 target 之后的描述内容必须非空；
 /// 5. 过滤占位符（如 "无待探索"、"无已完成"、"暂无待探索" 等）。
-pub fn is_valid_anchor_item(line: &str) -> bool {
+fn is_valid_anchor_item(line: &str) -> bool {
     // 忽略缩进的二级子列表或普通缩进解释行
     if line.starts_with("  ") || line.starts_with('\t') {
         return false;
@@ -205,7 +205,7 @@ fn extract_semantic_tokens(text: &str) -> HashSet<String> {
     tokens
 }
 
-pub fn ablate_and_merge_leaves(
+fn ablate_and_merge_leaves(
     existing_leaves: &[String],
     new_leaves: &[String],
     completed_tasks: &[String],
@@ -263,10 +263,27 @@ impl AppService {
         &self,
         storage: &MemoryStorage,
     ) -> AppResult<RecentAndProjectWorkflowReport> {
+        self.run_recent_and_project_workflow_at(storage, chrono::Utc::now())
+            .await
+    }
+
+    pub async fn run_recent_and_project_workflow_at(
+        &self,
+        storage: &MemoryStorage,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> AppResult<RecentAndProjectWorkflowReport> {
         let sessions_dir = storage.sessions_dir();
         if !sessions_dir.exists() {
             return Ok(RecentAndProjectWorkflowReport::default());
         }
+
+        let settings = self.backend_settings()?;
+        let window_hours = if settings.memory.recent_window_hours > 0 {
+            settings.memory.recent_window_hours as i64
+        } else {
+            48
+        };
+        let cutoff = now - chrono::Duration::hours(window_hours);
 
         let mut project_leaves_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut project_completed_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -280,6 +297,17 @@ impl AppService {
         for entry in entries {
             let content = fs::read_to_string(entry.path()).map_err(AppError::from)?;
             let parsed = parse_session_markdown(&content);
+
+            // 【Spec 硬性红线】解析 Frontmatter 中的 updated_at。
+            // 若早于当前时间减去窗口时间 (now - window_hours)，跳过该会话，严禁将超期历史会话纳入近期聚合。
+            let Some(dt) = crate::backend::domain::parse_conversation_timestamp(&parsed.updated_at)
+            else {
+                continue;
+            };
+            if dt < cutoff {
+                continue;
+            }
+
             session_count += 1;
 
             let proj = parsed
@@ -332,7 +360,7 @@ impl AppService {
             .write_markdown_atomic("recent/latest.md", &recent_md)
             .map_err(AppError::from)?;
 
-        let today_str = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let today_str = now.format("%Y-%m-%d").to_string();
         storage
             .write_markdown_atomic(format!("recent/{}.md", today_str), &recent_md)
             .map_err(AppError::from)?;
@@ -358,10 +386,7 @@ impl AppService {
             let mut proj_md = String::new();
             proj_md.push_str("---\n");
             proj_md.push_str(&format!("project_path: {}\n", proj));
-            proj_md.push_str(&format!(
-                "updated_at: {}\n",
-                chrono::Utc::now().to_rfc3339()
-            ));
+            proj_md.push_str(&format!("updated_at: {}\n", now.to_rfc3339()));
             proj_md.push_str("---\n\n");
             proj_md.push_str(&format!("# 项目记忆: {}\n\n", proj));
 

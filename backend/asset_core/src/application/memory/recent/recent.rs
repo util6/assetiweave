@@ -95,24 +95,15 @@ impl AppService {
         let mut sessions = records
             .into_iter()
             .filter_map(|record| {
-                if excluded_sessions
-                    .iter()
-                    .any(|id| id == &record.session.session.id)
-                {
+                let session_record = record.session;
+                let session = session_record.session;
+                if excluded_sessions.iter().any(|id| id == &session.id) {
                     return None;
                 }
-                if excluded_sources
-                    .iter()
-                    .any(|id| id == &record.session.session.source_id)
-                {
+                if excluded_sources.iter().any(|id| id == &session.source_id) {
                     return None;
                 }
-                if record
-                    .session
-                    .session
-                    .execution_origin
-                    .starts_with("internal_")
-                {
+                if session.execution_origin.starts_with("internal_") {
                     return None;
                 }
                 if let Some(cwd) = record.cwd.as_deref() {
@@ -128,20 +119,16 @@ impl AppService {
                 if last_activity_at < cutoff_dt || last_activity_at > now {
                     return None;
                 }
-                let raw_project_path = record.cwd.as_deref().or(record
-                    .session
-                    .session
-                    .project_path
-                    .as_deref());
+                let raw_project_path = record.cwd.as_deref().or(session.project_path.as_deref());
                 let project_path = raw_project_path
                     .and_then(|path| resolve_project_directory(path, &registered_roots));
                 Some(RecentConversationSession {
-                    session: record.session.session,
+                    session,
                     project_path,
                     last_activity_at: last_activity_at.to_rfc3339(),
                     source_agent: record.source_agent,
-                    question_count: record.session.question_count,
-                    turn_count: record.session.turn_count,
+                    question_count: session_record.question_count,
+                    turn_count: session_record.turn_count,
                     recent_events: record.recent_events,
                 })
             })

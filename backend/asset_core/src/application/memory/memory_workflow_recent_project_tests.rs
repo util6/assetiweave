@@ -170,6 +170,10 @@ updated_at: 2026-10-23T10:00:00Z
         .write_markdown_atomic(format!("projects/{proj_slug}.md"), &initial_project_md)
         .unwrap();
 
+    let now = chrono::Utc::now();
+    let sess1_updated_at = (now - chrono::Duration::hours(2)).to_rfc3339();
+    let sess2_updated_at = (now - chrono::Duration::hours(12)).to_rfc3339();
+
     // 2. 模拟由节点 1 提炼并写入的真实会话产物 sessions/2026-10-26_5ab333d1.md
     //    包含合法的锚点条目，同时混入自由多行文本和说明子列表进行解析防御压力测试
     let sess1_md = format!(
@@ -177,7 +181,7 @@ updated_at: 2026-10-23T10:00:00Z
 session_id: conversation-session-5ab333d1
 short_id: 5ab333d1
 project_path: {proj_path}
-updated_at: 2026-10-26T00:54:15Z
+updated_at: {sess1_updated_at}
 turn_count: 15
 has_signal: true
 ---
@@ -207,7 +211,7 @@ has_signal: true
 session_id: conversation-session-b75930a3
 short_id: b75930a3
 project_path: {proj_path}
-updated_at: 2026-10-24T12:32:28Z
+updated_at: {sess2_updated_at}
 turn_count: 2
 has_signal: true
 ---
@@ -227,7 +231,7 @@ has_signal: true
 
     // 4. 执行节点 2 工作流：Recent 窗口聚合与 Project 悬空叶子消融
     let node2_report = service
-        .run_recent_and_project_workflow(&storage)
+        .run_recent_and_project_workflow_at(&storage, now)
         .await
         .expect("run node 2 workflow");
 
@@ -305,4 +309,103 @@ has_signal: true
 
     drop(service);
     std::fs::remove_dir_all(base).ok();
+}
+
+#[tokio::test]
+async fn test_recent_window_hours_skips_expired_sessions() {
+    let tmp = std::env::temp_dir().join(format!("aiwc_test_window_{}", uuid::Uuid::new_v4()));
+    let db_dir = tmp.join("db");
+    let mem_dir = tmp.join("memories/default");
+    std::fs::create_dir_all(&db_dir).unwrap();
+    std::fs::create_dir_all(&mem_dir).unwrap();
+
+    let service = AppService::open_with_db_path(db_dir.join("app.db"))
+        .await
+        .unwrap();
+    let storage = MemoryStorage::new_with_root(mem_dir.clone(), "default");
+
+    let now = chrono::Utc::now();
+    let proj_path = "/Users/util6/code-space/assetiweave";
+
+    // 1. 窗口内的活跃会话 (2小时前，符合 48h 窗口)
+    let recent_time = (now - chrono::Duration::hours(2)).to_rfc3339();
+    let recent_sess = format!(
+        r#"---
+session_id: sess-recent
+short_id: recent01
+project_path: {proj_path}
+updated_at: {recent_time}
+turn_count: 5
+has_signal: true
+---
+
+# 最近活跃会话
+
+## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
+- [recent01#T1](aiwc://session/recent01/turn/1): 探索流式传输背压机制
+
+## ✅ 已完成的闭环任务 (Completed Tasks)
+- [recent01#T2](aiwc://session/recent01/turn/2): 实现基础流水线事件通道
+"#
+    );
+    storage
+        .write_markdown_atomic("sessions/2026-10-27_recent01.md", &recent_sess)
+        .unwrap();
+
+    // 2. 超期历史会话 (120小时前，远超 48h / 72h 窗口)
+    let expired_time = (now - chrono::Duration::hours(120)).to_rfc3339();
+    let expired_sess = format!(
+        r#"---
+session_id: sess-expired
+short_id: expire01
+project_path: {proj_path}
+updated_at: {expired_time}
+turn_count: 3
+has_signal: true
+---
+
+# 远古过期历史会话
+
+## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
+- [expire01#T1](aiwc://session/expire01/turn/1): 远古时代遗留的待探索分支
+
+## ✅ 已完成的闭环任务 (Completed Tasks)
+- [expire01#T2](aiwc://session/expire01/turn/2): 远古时代已完成的任务
+"#
+    );
+    storage
+        .write_markdown_atomic("sessions/2026-10-20_expire01.md", &expired_sess)
+        .unwrap();
+
+    // 3. 执行 Recent 聚合
+    let report = service
+        .run_recent_and_project_workflow_at(&storage, now)
+        .await
+        .expect("run recent workflow");
+
+    // 验证：超期会话被跳过，只有 1 个会话被纳入统计
+    assert_eq!(report.session_count, 1);
+
+    // 验证 recent/latest.md 产物
+    let recent_latest = storage
+        .read_markdown("recent/latest.md")
+        .unwrap()
+        .expect("recent/latest.md must exist");
+
+    // 窗口内的会话内容必须存在
+    assert!(recent_latest.contains("探索流式传输背压机制"));
+    assert!(recent_latest.contains("实现基础流水线事件通道"));
+
+    // 窗口外的超期会话内容严禁混入！
+    assert!(
+        !recent_latest.contains("远古时代遗留的待探索分支"),
+        "Expired session unexplored branch must NOT be in recent/latest.md"
+    );
+    assert!(
+        !recent_latest.contains("远古时代已完成的任务"),
+        "Expired session completed task must NOT be in recent/latest.md"
+    );
+
+    drop(service);
+    std::fs::remove_dir_all(tmp).ok();
 }
