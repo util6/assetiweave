@@ -49,6 +49,62 @@ pub struct ParsedSessionMarkdown {
     pub completed_tasks: Vec<String>,
 }
 
+/// 严格判断一行是否为合法的单行 Markdown 锚点列表项。
+///
+/// 防御与过滤规则：
+/// 1. 忽略缩进的二级子列表或普通缩进解释行（避免子列表 "- 说明:" 等污染）；
+/// 2. 行首严格以 "- [" 开头；
+/// 3. 必须包含完整的 Markdown 锚点结构: - [anchor](target)；
+/// 4. anchor、target 与 target 之后的描述内容必须非空；
+/// 5. 过滤占位符（如 "无待探索"、"无已完成"、"暂无待探索" 等）。
+pub fn is_valid_anchor_item(line: &str) -> bool {
+    // 忽略缩进的二级子列表或普通缩进解释行
+    if line.starts_with("  ") || line.starts_with('\t') {
+        return false;
+    }
+
+    let trimmed = line.trim();
+    if !trimmed.starts_with("- [") {
+        return false;
+    }
+
+    // 检查是否包含闭合的链接结构: - [anchor](target)
+    let Some(bracket_end) = trimmed.find("](") else {
+        return false;
+    };
+    let anchor = &trimmed[3..bracket_end];
+    if anchor.trim().is_empty() {
+        return false;
+    }
+
+    let after_bracket = &trimmed[bracket_end + 2..];
+    let Some(paren_close) = after_bracket.find(')') else {
+        return false;
+    };
+    let target = &after_bracket[..paren_close];
+    if target.trim().is_empty() {
+        return false;
+    }
+
+    // 链接之后必须有技术描述内容
+    let after_link = after_bracket[paren_close + 1..].trim();
+    let description = after_link.strip_prefix(':').unwrap_or(after_link).trim();
+    if description.is_empty() {
+        return false;
+    }
+
+    // 过滤无信号占位符
+    if description.contains("无待探索")
+        || description.contains("无已完成")
+        || description.contains("暂无待探索")
+        || description.contains("暂无已完成")
+    {
+        return false;
+    }
+
+    true
+}
+
 pub fn parse_session_markdown(content: &str) -> ParsedSessionMarkdown {
     let mut parsed = ParsedSessionMarkdown::default();
     let mut in_frontmatter = false;
@@ -75,28 +131,23 @@ pub fn parse_session_markdown(content: &str) -> ParsedSessionMarkdown {
             continue;
         }
 
-        if trimmed.starts_with("## 🍂")
-            || trimmed.contains("待探索")
-            || trimmed.contains("Unexplored")
-        {
-            current_section = 1;
-            continue;
-        } else if trimmed.starts_with("## ✅")
-            || trimmed.contains("已完成")
-            || trimmed.contains("Completed")
-        {
-            current_section = 2;
-            continue;
-        } else if trimmed.starts_with("## ") {
+        if trimmed.contains("待探索") || trimmed.contains("Unexplored") {
+            if trimmed.starts_with('#') {
+                current_section = 1;
+                continue;
+            }
+        } else if trimmed.contains("已完成") || trimmed.contains("Completed") {
+            if trimmed.starts_with('#') {
+                current_section = 2;
+                continue;
+            }
+        } else if trimmed.starts_with('#') {
             current_section = 0;
             continue;
         }
 
-        if trimmed.starts_with("- ") {
-            let item = trimmed.to_string();
-            if item.contains("无待探索分支") || item.contains("无已完成任务") {
-                continue;
-            }
+        if is_valid_anchor_item(line) {
+            let item = line.trim().to_string();
             if current_section == 1 {
                 parsed.unexplored_branches.push(item);
             } else if current_section == 2 {
@@ -122,11 +173,36 @@ fn extract_semantic_tokens(text: &str) -> HashSet<String> {
         }
     }
 
-    clean
-        .split_whitespace()
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| s.len() >= 3 && *s != "the" && *s != "and" && *s != "for" && *s != "turn")
-        .collect()
+    let stop_words: HashSet<&str> = [
+        "the", "and", "for", "with", "from", "that", "this", "turn", "cli", "gui", "api", "app",
+        "code", "session", "test", "task",
+    ]
+    .into_iter()
+    .collect();
+
+    let mut tokens = HashSet::new();
+
+    // 1. 英文与数字单词
+    for word in clean.split_whitespace() {
+        let w = word.trim().to_lowercase();
+        if w.len() >= 3 && !stop_words.contains(w.as_str()) && w.is_ascii() {
+            tokens.insert(w);
+        }
+    }
+
+    // 2. 中文提取 2-gram 语义片段（确保中文技术词汇如 "缓存", "重构", "分发" 参与相似度计算）
+    let chars: Vec<char> = clean
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace() && !c.is_ascii_punctuation())
+        .collect();
+    for window in chars.windows(2) {
+        let s: String = window.iter().collect();
+        if !s.chars().all(|c| c.is_ascii()) {
+            tokens.insert(s);
+        }
+    }
+
+    tokens
 }
 
 pub fn ablate_and_merge_leaves(
@@ -146,7 +222,11 @@ pub fn ablate_and_merge_leaves(
         }
         for comp_tokens in &completed_token_sets {
             let intersection = tokens.intersection(comp_tokens).count();
-            if intersection >= 2 || (tokens.len() == 1 && intersection == 1) {
+            let coverage = intersection as f64 / tokens.len() as f64;
+            // 语义重合标准：交集至少 2 项且覆盖率达到 40%，或短叶子完全覆盖
+            if (intersection >= 2 && coverage >= 0.4)
+                || (tokens.len() <= 2 && intersection == tokens.len())
+            {
                 return true;
             }
         }
