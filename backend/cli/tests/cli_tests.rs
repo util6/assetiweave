@@ -380,6 +380,74 @@ fn test_memory_context_resolve() {
 }
 
 #[test]
+fn test_memory_cli_read_path_rendered_markdown() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("default");
+    let recent_dir = root.join("recent");
+    let projects_dir = root.join("projects");
+    std::fs::create_dir_all(&recent_dir).unwrap();
+    std::fs::create_dir_all(&projects_dir).unwrap();
+
+    let recent_md = "# Recent Work\n\n### 🍂 待探索的悬空叶子节点 (Unexplored Branches)\n- [s1#T1](aiwc://session/s1/turn/1): 探索新特性\n\n### ✅ 已完成的闭环任务 (Completed Tasks)\n- [s1#T2](aiwc://session/s1/turn/2): 完成架构升级\n";
+    std::fs::write(recent_dir.join("latest.md"), recent_md).unwrap();
+
+    let project_md = "# 项目记忆: /test-proj\n\n## 🍂 待探索的悬空叶子节点 (Unexplored Branches)\n- [s1#T1](aiwc://session/s1/turn/1): 探索新特性\n";
+    std::fs::write(projects_dir.join("test-proj.md"), project_md).unwrap();
+
+    let memory_md = "# 全局长期记忆与工程准则 (Global Memory)\n\n## 📐 通用工程规范与架构准则\n- 本地优先与 Markdown 优先\n";
+    std::fs::write(root.join("MEMORY.md"), memory_md).unwrap();
+
+    // 1. aiwc memory recent get (text)
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", tmp.path())
+        .args(["memory", "recent", "get"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(output.contains("Recent Work"));
+    assert!(output.contains("[s1#T1](aiwc://session/s1/turn/1)"));
+
+    // 2. aiwc memory project get <project_path>
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", tmp.path())
+        .args(["memory", "project", "get", "/test-proj"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(output.contains("项目记忆: /test-proj"));
+    assert!(output.contains("[s1#T1](aiwc://session/s1/turn/1)"));
+
+    // 3. aiwc memory context resolve
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", tmp.path())
+        .args([
+            "memory",
+            "context",
+            "resolve",
+            "--project",
+            "/test-proj",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert!(json["data"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Global Memory"));
+    assert!(json["data"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Recent Work"));
+}
+
+#[test]
 fn test_completion() {
     let mut cmd = aiwc_command();
     let assert = cmd.args(["completion", "bash"]).assert().success();
