@@ -1,5 +1,5 @@
 use crate::backend::application::{AppResult, AppService};
-use crate::backend::domain::memory::storage::MemoryStorage;
+use crate::backend::infrastructure::memory::storage::MemoryStorage;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

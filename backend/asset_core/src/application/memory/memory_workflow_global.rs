@@ -1,5 +1,5 @@
 use crate::backend::application::{AppError, AppResult, AppService};
-use crate::backend::domain::memory::storage::MemoryStorage;
+use crate::backend::infrastructure::memory::storage::MemoryStorage;
 
 pub fn generate_global_memory_markdown(storage: &MemoryStorage) -> AppResult<String> {
     let recent_content = storage

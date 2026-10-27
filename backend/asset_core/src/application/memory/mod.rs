@@ -32,8 +32,7 @@ pub use memory_workflow_recent_project::{
     RecentAndProjectWorkflowReport,
 };
 pub use session_branch_workflow::{
-    BranchItem, ExtractedSessionBranches, HeuristicSessionBranchExtractorAgent,
-    SessionBranchExtractorAgent, SessionBranchWorkflowReport,
+    BranchItem, ExtractedSessionBranches, SessionBranchExtractorAgent, SessionBranchWorkflowReport,
 };
 
 pub use activity_watchdog::{

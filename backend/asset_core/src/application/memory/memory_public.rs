@@ -19,7 +19,8 @@ impl AppService {
         &self,
         project_path: &str,
     ) -> AppResult<Option<crate::backend::domain::L2ProjectMemoryView>> {
-        let storage = crate::backend::domain::memory::storage::MemoryStorage::new(self.tenant_id());
+        let storage =
+            crate::backend::infrastructure::memory::storage::MemoryStorage::new(self.tenant_id());
         let slug = crate::backend::application::memory::project_path_to_slug(project_path);
         let rel_path = format!("projects/{}.md", slug);
         let full_path = storage.root_dir().join(&rel_path);

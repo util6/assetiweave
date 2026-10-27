@@ -182,3 +182,217 @@ async fn test_force_rebuild_resets_watermarks() {
         .unwrap();
     assert_eq!(watermarks_after.len(), 0);
 }
+
+#[tokio::test]
+async fn test_unattended_pipeline_does_not_write_junk_to_disk() {
+    let temp_mem_root =
+        std::env::temp_dir().join(format!("test-mem-root-{}", uuid::Uuid::new_v4()));
+    std::env::set_var("ASSETIWEAVE_MEMORY_ROOT", &temp_mem_root);
+
+    let db_path = std::env::temp_dir().join(format!(
+        "memory-pipeline-test-nojunk-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let service = AppService::open_with_db_path(db_path).await.unwrap();
+    let tenant_id = service.tenant_id();
+
+    // 运行无人值守流水线
+    let handle = service
+        .start_memory_pipeline(MemoryPipelineParams::background())
+        .await
+        .unwrap();
+
+    let _ = handle
+        .wait_until_finished(service.runtime.task_runtime())
+        .await
+        .expect("pipeline snapshot");
+
+    let storage = crate::backend::infrastructure::memory::storage::MemoryStorage::new(tenant_id);
+    let sessions_dir = storage.sessions_dir();
+    if sessions_dir.exists() {
+        let entries: Vec<_> = std::fs::read_dir(&sessions_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(
+            entries.len(),
+            0,
+            "Unattended pipeline must NOT write sessions/*.md"
+        );
+    }
+
+    assert!(
+        !storage.recent_dir().join("latest.md").exists(),
+        "Unattended pipeline must NOT write recent/latest.md"
+    );
+    assert!(
+        !storage.global_file().exists(),
+        "Unattended pipeline must NOT write MEMORY.md"
+    );
+
+    std::env::remove_var("ASSETIWEAVE_MEMORY_ROOT");
+    std::fs::remove_dir_all(&temp_mem_root).ok();
+}
+
+#[tokio::test]
+async fn test_has_pending_memory_work_respects_window_and_internal_filter() {
+    let db_path = std::env::temp_dir().join(format!(
+        "memory-pipeline-test-pending-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let service = AppService::open_with_db_path(db_path).await.unwrap();
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id();
+
+    let adapter = crate::backend::domain::ConversationAdapter {
+        id: "adapter-pending".to_string(),
+        name: "Test Adapter".to_string(),
+        kind: crate::backend::domain::ConversationAdapterKind::External,
+        version: "1.0.0".to_string(),
+        enabled: true,
+        manifest_path: None,
+        executable_path: None,
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: crate::backend::domain::ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(1),
+        capabilities: vec!["read_session".to_string()],
+        input_kinds: vec![crate::backend::domain::ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        projection_version: Some(1),
+        created_at: "2026-10-21T10:00:00Z".to_string(),
+        updated_at: "2026-10-21T10:00:00Z".to_string(),
+    };
+    let source = crate::backend::domain::ConversationSource {
+        id: "source-pending".to_string(),
+        adapter_id: "adapter-pending".to_string(),
+        name: "Test Source".to_string(),
+        kind: crate::backend::domain::ConversationSourceKind::Directory,
+        location: "/fixture/path".to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: "2026-10-21T10:00:00Z".to_string(),
+        updated_at: "2026-10-21T10:00:00Z".to_string(),
+    };
+
+    crate::backend::store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter)
+        .await
+        .unwrap();
+    crate::backend::store::upsert_conversation_source_sqlx(pool, tenant_id, &source)
+        .await
+        .unwrap();
+
+    let now = chrono::Utc::now();
+    // 1. Expired session (100h ago, outside 48h/72h window)
+    let ts_expired = (now - chrono::Duration::hours(100)).to_rfc3339();
+    let expired_session = crate::backend::domain::NormalizedConversationSession {
+        external_id: "s-pending-expired".to_string(),
+        title: Some("Expired".to_string()),
+        project_path: Some("/code/expired".to_string()),
+        started_at: Some(ts_expired.clone()),
+        updated_at: Some(ts_expired.clone()),
+        source_locator: None,
+        source_fingerprint: None,
+        turns: vec![crate::backend::domain::NormalizedConversationTurn {
+            external_id: "t1".to_string(),
+            turn_index: 0,
+            user_text: "old work".to_string(),
+            title: None,
+            started_at: Some(ts_expired.clone()),
+            ended_at: Some(ts_expired.clone()),
+            model: None,
+            parts: vec![],
+        }],
+        execution_origin: None,
+        execution_purpose: None,
+        user_visible: Some(true),
+    };
+
+    // 2. Internal agent session
+    let internal_root =
+        crate::backend::infrastructure::agent_execution::agent_execution_workspace_root(
+            &service.db_path,
+        );
+    let internal_session = crate::backend::domain::NormalizedConversationSession {
+        external_id: "s-pending-internal".to_string(),
+        title: Some("Internal".to_string()),
+        project_path: Some(format!("{internal_root}/agent-run-1")),
+        started_at: Some((now - chrono::Duration::hours(1)).to_rfc3339()),
+        updated_at: Some((now - chrono::Duration::hours(1)).to_rfc3339()),
+        source_locator: None,
+        source_fingerprint: None,
+        turns: vec![crate::backend::domain::NormalizedConversationTurn {
+            external_id: "t2".to_string(),
+            turn_index: 0,
+            user_text: "internal run".to_string(),
+            title: None,
+            started_at: Some((now - chrono::Duration::hours(1)).to_rfc3339()),
+            ended_at: Some((now - chrono::Duration::hours(1)).to_rfc3339()),
+            model: None,
+            parts: vec![],
+        }],
+        execution_origin: Some("internal_agent".to_string()),
+        execution_purpose: None,
+        user_visible: Some(false),
+    };
+
+    crate::backend::store::import_conversation_sessions_sqlx(
+        pool,
+        tenant_id,
+        &source,
+        &[expired_session, internal_session],
+        false,
+    )
+    .await
+    .unwrap();
+
+    // Expired and internal sessions must be ignored -> has_pending_memory_work is FALSE
+    assert!(
+        !service.has_pending_memory_work(now).await.unwrap(),
+        "Expired and internal sessions must not trigger pending memory work"
+    );
+
+    // 3. Add an active session within recent window
+    let ts_active = (now - chrono::Duration::hours(2)).to_rfc3339();
+    let active_session = crate::backend::domain::NormalizedConversationSession {
+        external_id: "s-pending-active".to_string(),
+        title: Some("Active".to_string()),
+        project_path: Some("/code/active".to_string()),
+        started_at: Some(ts_active.clone()),
+        updated_at: Some(ts_active.clone()),
+        source_locator: None,
+        source_fingerprint: None,
+        turns: vec![crate::backend::domain::NormalizedConversationTurn {
+            external_id: "t3".to_string(),
+            turn_index: 0,
+            user_text: "active recent work".to_string(),
+            title: None,
+            started_at: Some(ts_active.clone()),
+            ended_at: Some(ts_active.clone()),
+            model: None,
+            parts: vec![],
+        }],
+        execution_origin: None,
+        execution_purpose: None,
+        user_visible: Some(true),
+    };
+
+    crate::backend::store::import_conversation_sessions_sqlx(
+        pool,
+        tenant_id,
+        &source,
+        &[active_session],
+        false,
+    )
+    .await
+    .unwrap();
+
+    // Now has_pending_memory_work should be TRUE
+    assert!(
+        service.has_pending_memory_work(now).await.unwrap(),
+        "Active session within recent window must trigger pending memory work"
+    );
+}

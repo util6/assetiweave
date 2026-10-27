@@ -14,7 +14,8 @@ impl AppService {
             .await?
             .or(params.project_path);
         let tenant_id = self.tenant_id().to_string();
-        let storage = crate::backend::domain::memory::storage::MemoryStorage::new(&tenant_id);
+        let storage =
+            crate::backend::infrastructure::memory::storage::MemoryStorage::new(&tenant_id);
 
         let mut sections = Vec::new();
         let mut references = Vec::new();

@@ -14,13 +14,15 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 fn make_text_turn(ext_id: &str, user_text: &str, bot_text: &str) -> NormalizedConversationTurn {
+    let now = chrono::Utc::now();
+    let ts = (now - chrono::Duration::hours(2)).to_rfc3339();
     NormalizedConversationTurn {
         external_id: ext_id.to_string(),
         turn_index: 0,
         user_text: user_text.to_string(),
         title: None,
-        started_at: Some("2026-10-21T10:00:00Z".to_string()),
-        ended_at: Some("2026-10-21T10:01:00Z".to_string()),
+        started_at: Some(ts.clone()),
+        ended_at: Some(ts),
         model: None,
         parts: vec![NormalizedConversationPart {
             role: ConversationPartRole::Assistant,
@@ -45,12 +47,14 @@ fn make_session(
     project_path: Option<&str>,
     turns: Vec<NormalizedConversationTurn>,
 ) -> NormalizedConversationSession {
+    let now = chrono::Utc::now();
+    let ts = (now - chrono::Duration::hours(2)).to_rfc3339();
     NormalizedConversationSession {
         external_id: ext_id.to_string(),
         title: Some(title.to_string()),
         project_path: project_path.map(|p| p.to_string()),
-        started_at: Some("2026-10-21T10:00:00Z".to_string()),
-        updated_at: Some("2026-10-21T10:00:00Z".to_string()),
+        started_at: Some(ts.clone()),
+        updated_at: Some(ts),
         source_locator: None,
         source_fingerprint: None,
         turns,
@@ -245,7 +249,7 @@ async fn test_end_to_end_full_memory_pipeline_and_leaf_ablation() {
     assert!(global_mem.contains("全局长期记忆"));
 
     // --- Phase 2: Add Session 2 which resolves Branch A ---
-    let sess2 = make_session(
+    let mut sess2 = make_session(
         "sess-2",
         "Session 2",
         Some(project_path),
@@ -255,6 +259,8 @@ async fn test_end_to_end_full_memory_pipeline_and_leaf_ablation() {
             "Redis integration complete",
         )],
     );
+    let ts_sess2 = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+    sess2.updated_at = Some(ts_sess2);
 
     crate::backend::store::import_conversation_sessions_sqlx(
         pool,
