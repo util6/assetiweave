@@ -165,6 +165,20 @@ async fn test_force_rebuild_resets_watermarks() {
         .unwrap();
     assert_eq!(watermarks.len(), 1);
 
+    let temp_mem_root =
+        std::env::temp_dir().join(format!("test-mem-root-fb-{}", uuid::Uuid::new_v4()));
+    std::env::set_var("ASSETIWEAVE_MEMORY_ROOT", &temp_mem_root);
+
+    let storage =
+        crate::backend::infrastructure::memory::storage::MemoryStorage::new(service.tenant_id());
+    storage
+        .write_markdown_atomic("sessions/fake-sess-1.md", "# Fake session")
+        .unwrap();
+    storage
+        .write_markdown_atomic("recent/latest.md", "# Fake recent")
+        .unwrap();
+    assert!(storage.root_dir().join("sessions/fake-sess-1.md").exists());
+
     // 启动带 force_rebuild 的流水线
     let handle = service
         .start_memory_pipeline(MemoryPipelineParams::manual(true))
@@ -181,6 +195,24 @@ async fn test_force_rebuild_resets_watermarks() {
         .await
         .unwrap();
     assert_eq!(watermarks_after.len(), 0);
+
+    // 磁盘存储目录必须已被清理并重新初始化干净分层结构
+    assert!(!storage.root_dir().join("sessions/fake-sess-1.md").exists());
+    assert!(!storage.root_dir().join("recent/latest.md").exists());
+    assert!(storage.sessions_dir().exists());
+    assert!(storage.recent_dir().exists());
+    assert!(storage.projects_dir().exists());
+    assert_eq!(
+        std::fs::read_dir(storage.sessions_dir()).unwrap().count(),
+        0
+    );
+    assert_eq!(std::fs::read_dir(storage.recent_dir()).unwrap().count(), 0);
+    assert_eq!(
+        std::fs::read_dir(storage.projects_dir()).unwrap().count(),
+        0
+    );
+
+    std::fs::remove_dir_all(temp_mem_root).ok();
 }
 
 #[tokio::test]

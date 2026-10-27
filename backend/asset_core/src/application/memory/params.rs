@@ -70,6 +70,8 @@ pub struct MemoryScopeRebuildParams {
     pub project_path: Option<String>,
     #[serde(default)]
     pub reason: Option<MemoryRebuildReason>,
+    #[serde(default, alias = "forceRebuild")]
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]

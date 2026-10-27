@@ -40,11 +40,12 @@ impl AppService {
         }
 
         let pipeline_handle = self
-            .start_memory_pipeline(super::memory_pipeline::MemoryPipelineParams::rebuild(
-                target,
-                None,
-                params.reason,
-            ))
+            .start_memory_pipeline(super::memory_pipeline::MemoryPipelineParams {
+                force_rebuild: params.force,
+                target: Some(target),
+                project_path: project_path.map(str::to_string),
+                reason: params.reason,
+            })
             .await?;
 
         Ok(MemoryRebuildResult {
@@ -53,6 +54,13 @@ impl AppService {
             target_watermark: None,
             reused: false,
         })
+    }
+
+    /// 清理当前租户的磁盘记忆目录并初始化干净的分层结构
+    pub fn clear_memory_storage(&self) -> std::io::Result<()> {
+        let storage =
+            crate::backend::infrastructure::memory::storage::MemoryStorage::new(self.tenant_id());
+        storage.clear_all()
     }
 }
 
