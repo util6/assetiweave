@@ -60,6 +60,11 @@ impl<'a> MemoryOperations<'a> {
             .rebuild_memory_scope(params)
             .await
             .context("failed to rebuild memory")?;
+
+        for task_id in &result.scheduled_task_ids {
+            let _ = self.app_service.wait_for_memory_task(task_id).await;
+        }
+
         Ok(serde_json::to_value(result)?)
     }
 

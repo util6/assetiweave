@@ -118,6 +118,24 @@ impl AppService {
         )))
     }
 
+    pub async fn wait_for_memory_task(&self, task_id: &str) -> AppResult<Option<MemoryTaskView>> {
+        let task_runtime = self.runtime.task_runtime();
+        let mut rx = task_runtime.subscribe();
+        if let Some(snap) = task_runtime.get_for_tenant(self.tenant_id(), task_id) {
+            if snap.state.is_terminal() {
+                return Ok(Some(memory_task_view(snap)?));
+            }
+        }
+        while let Ok(snap) = rx.recv().await {
+            if snap.task_id == task_id && snap.state.is_terminal() {
+                return Ok(Some(memory_task_view(snap)?));
+            }
+        }
+        self.get_memory_task_view(MemoryTaskGetParams {
+            task_id: task_id.to_string(),
+        })
+    }
+
     fn find_memory_task_by_durable_job(
         &self,
         tenant_id: &str,
