@@ -123,6 +123,9 @@ pub struct MemoryRebuildArgs {
         help = "rebuild reason: manual, migration, or projection_repair"
     )]
     pub reason: String,
+
+    #[arg(long, help = "force rebuild and clean all storage / watermarks")]
+    pub force: bool,
 }
 
 #[derive(Args, Debug)]

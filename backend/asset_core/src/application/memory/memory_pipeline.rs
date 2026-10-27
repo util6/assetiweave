@@ -78,6 +78,9 @@ impl AppService {
 
             if params.force_rebuild {
                 let _ = store::clear_watermarks_sqlx(&pool, &tenant_id).await;
+                if let Err(e) = storage.clear_all() {
+                    tracing::warn!(tenant = %tenant_id, error = %e, "Failed to clear memory storage during force rebuild");
+                }
             }
 
             // 阶段 1: SESSION_FACTS

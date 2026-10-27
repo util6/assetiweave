@@ -304,6 +304,19 @@ fn test_memory_recent_get() {
 }
 
 #[test]
+fn test_memory_recent_get_empty_state_text() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", tmp.path())
+        .args(["memory", "recent", "get"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert_eq!(output.trim(), "暂无记录");
+}
+
+#[test]
 fn test_memory_project_get() {
     let mut cmd = aiwc_command();
     let assert = cmd
@@ -315,6 +328,31 @@ fn test_memory_project_get() {
             "--format",
             "json",
         ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+}
+
+#[test]
+fn test_memory_project_get_empty_state_text() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", tmp.path())
+        .args(["memory", "project", "get", "--current-project"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert_eq!(output.trim(), "暂无记录");
+}
+
+#[test]
+fn test_memory_rebuild_force_args() {
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .args(["memory", "rebuild", "--force", "--format", "json"])
         .assert()
         .success();
     let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();

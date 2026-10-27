@@ -53,6 +53,46 @@ impl MemoryStorage {
         self.root_dir.join("MEMORY.md")
     }
 
+    pub fn init_dirs(&self) -> std::io::Result<()> {
+        fs::create_dir_all(self.sessions_dir())?;
+        fs::create_dir_all(self.recent_dir())?;
+        fs::create_dir_all(self.projects_dir())?;
+        Ok(())
+    }
+
+    /// 清理磁盘记忆目录中的所有生成产物，并重新初始化干净的基础分层目录结构
+    pub fn clear_all(&self) -> std::io::Result<()> {
+        if self.root_dir.exists() {
+            for entry in fs::read_dir(&self.root_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                let file_type = entry.file_type()?;
+                if file_type.is_dir() {
+                    fs::remove_dir_all(&path)?;
+                } else {
+                    #[cfg(windows)]
+                    {
+                        if let Ok(metadata) = fs::metadata(&path) {
+                            let mut perms = metadata.permissions();
+                            if perms.readonly() {
+                                perms.set_readonly(false);
+                                let _ = fs::set_permissions(&path, perms);
+                            }
+                        }
+                    }
+                    fs::remove_file(&path)?;
+                }
+            }
+        }
+        self.init_dirs()?;
+        Ok(())
+    }
+
+    /// 重置磁盘记忆目录（同 `clear_all`）
+    pub fn reset(&self) -> std::io::Result<()> {
+        self.clear_all()
+    }
+
     pub fn write_markdown_atomic(
         &self,
         rel_path: impl AsRef<Path>,
