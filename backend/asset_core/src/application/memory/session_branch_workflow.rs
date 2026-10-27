@@ -1,7 +1,10 @@
+use crate::backend::application::memory::recent::{
+    RecentConversationSessionListParams, RecentConversationView,
+};
 use crate::backend::application::{AppError, AppResult, AppService, ConversationOutlineParams};
 use crate::backend::domain::conversations::outline::ConversationOutlineDetailLevel;
 use crate::backend::domain::conversations::ConversationOutline;
-use crate::backend::domain::memory::storage::MemoryStorage;
+use crate::backend::infrastructure::memory::storage::MemoryStorage;
 use crate::backend::store::memory::watermark_repo::{
     load_watermarks_sqlx, upsert_watermark_sqlx, MemorySessionWatermarkRecord,
 };
@@ -39,69 +42,21 @@ pub trait SessionBranchExtractorAgent: Send + Sync {
     ) -> AppResult<ExtractedSessionBranches>;
 }
 
-/// 默认内置启发式分支提取器，供无外部 AI Agent 参与或离线工作流使用
-#[derive(Debug, Clone, Default)]
-pub struct HeuristicSessionBranchExtractorAgent;
-
-#[async_trait::async_trait]
-impl SessionBranchExtractorAgent for HeuristicSessionBranchExtractorAgent {
-    async fn extract_branches(
-        &self,
-        _session_id: &str,
-        short_id: &str,
-        _project_path: Option<&str>,
-        qa_turns: &[(usize, String, String, Option<String>)],
-    ) -> AppResult<ExtractedSessionBranches> {
-        let mut unexplored_branches = Vec::new();
-        let mut completed_tasks = Vec::new();
-
-        for (idx, _turn_id, question, answer) in qa_turns {
-            let q_trimmed = question.trim();
-            if q_trimmed.is_empty() {
-                continue;
-            }
-
-            let ans_text = answer.as_deref().unwrap_or("").trim();
-            // 简单启发式识别：如果回答包含备选、方案讨论、待办等词汇，沉淀为待探索分支
-            let has_options = ans_text.contains("1.")
-                || ans_text.contains("2.")
-                || ans_text.contains("A.")
-                || ans_text.contains("B.")
-                || ans_text.contains("建议")
-                || ans_text.contains("待探索")
-                || ans_text.contains("或者");
-
-            if has_options {
-                unexplored_branches.push(BranchItem {
-                    turn_index: *idx,
-                    short_id: short_id.to_string(),
-                    title: format!("待探索分支: {q_trimmed}"),
-                    detail: format!("在问答中提出的备选分支或延伸方案: {q_trimmed}"),
-                });
-            }
-
-            completed_tasks.push(BranchItem {
-                turn_index: *idx,
-                short_id: short_id.to_string(),
-                title: format!("已完成: {q_trimmed}"),
-                detail: format!("完成了本轮目标: {q_trimmed}"),
-            });
-        }
-
-        let has_signal = !unexplored_branches.is_empty() || !completed_tasks.is_empty();
-        Ok(ExtractedSessionBranches {
-            unexplored_branches,
-            completed_tasks,
-            has_signal,
-        })
-    }
-}
-
 impl AppService {
     pub async fn run_session_branch_workflow(
         &self,
-        extractor: &dyn SessionBranchExtractorAgent,
+        extractor: Option<&dyn SessionBranchExtractorAgent>,
         storage_override: Option<&MemoryStorage>,
+    ) -> AppResult<SessionBranchWorkflowReport> {
+        self.run_session_branch_workflow_at(extractor, storage_override, chrono::Utc::now())
+            .await
+    }
+
+    pub async fn run_session_branch_workflow_at(
+        &self,
+        extractor: Option<&dyn SessionBranchExtractorAgent>,
+        storage_override: Option<&MemoryStorage>,
+        now: chrono::DateTime<chrono::Utc>,
     ) -> AppResult<SessionBranchWorkflowReport> {
         let pool = self.pool();
         let tenant_id = self.tenant_id();
@@ -116,19 +71,33 @@ impl AppService {
         };
 
         let watermarks = load_watermarks_sqlx(pool, tenant_id).await?;
-        let sessions = crate::backend::store::list_conversation_sessions_sqlx(
-            pool, tenant_id, None, None, None, 1000, 0,
-        )
-        .await
-        .map_err(AppError::from)?;
+        let recent_sessions = self
+            .list_recent_conversation_sessions_at(
+                RecentConversationSessionListParams {
+                    view: RecentConversationView::Time,
+                    limit: Some(1000),
+                    offset: Some(0),
+                },
+                now,
+            )
+            .await?;
 
         let mut report = SessionBranchWorkflowReport {
-            scanned_count: sessions.len(),
+            scanned_count: recent_sessions.len(),
             processed_count: 0,
             skipped_count: 0,
         };
 
-        for item in sessions {
+        let extractor = match extractor {
+            Some(e) => e,
+            None => {
+                // 无提取器注入时，止血关停机械复读，不向磁盘写入任何会话产物
+                report.skipped_count = recent_sessions.len();
+                return Ok(report);
+            }
+        };
+
+        for item in recent_sessions {
             let session = item.session;
             let session_updated_at = session.updated_at.clone().unwrap_or_default();
             let short_id = crate::backend::domain::conversation_id_fragment(&session.id);
@@ -173,7 +142,7 @@ impl AppService {
                     &MemorySessionWatermarkRecord {
                         tenant_id: tenant_id.to_string(),
                         session_id: session.id.clone(),
-                        project_path: session.project_path.clone(),
+                        project_path: item.project_path.clone(),
                         source_updated_at: session_updated_at,
                         summary_rel_path: String::new(),
                         has_signal: false,
@@ -189,7 +158,7 @@ impl AppService {
                 .extract_branches(
                     &session.id,
                     &short_id,
-                    session.project_path.as_deref(),
+                    item.project_path.as_deref(),
                     &qa_turns,
                 )
                 .await?;
@@ -206,7 +175,7 @@ impl AppService {
             let mut md = String::new();
             md.push_str("---\n");
             md.push_str(&format!("session_id: {}\n", session.id));
-            if let Some(ref proj) = session.project_path {
+            if let Some(ref proj) = item.project_path {
                 md.push_str(&format!("project_path: {}\n", proj));
             }
             md.push_str(&format!("updated_at: {}\n", session_updated_at));
@@ -247,7 +216,7 @@ impl AppService {
                 &MemorySessionWatermarkRecord {
                     tenant_id: tenant_id.to_string(),
                     session_id: session.id.clone(),
-                    project_path: session.project_path.clone(),
+                    project_path: item.project_path.clone(),
                     source_updated_at: session_updated_at,
                     summary_rel_path: rel_path,
                     has_signal: extracted.has_signal,

@@ -1,4 +1,3 @@
-use crate::backend::application::{AppError, AppResult};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
@@ -16,7 +15,7 @@ pub struct MemorySessionWatermarkRecord {
 pub async fn load_watermarks_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<HashMap<String, MemorySessionWatermarkRecord>> {
+) -> sqlx::Result<HashMap<String, MemorySessionWatermarkRecord>> {
     let rows = sqlx::query(
         r#"
         SELECT tenant_id, session_id, project_path, source_updated_at, summary_rel_path, has_signal, updated_at
@@ -26,8 +25,7 @@ pub async fn load_watermarks_sqlx(
     )
     .bind(tenant_id)
     .fetch_all(pool)
-    .await
-    .map_err(AppError::from)?;
+    .await?;
 
     let mut map = HashMap::new();
     for row in rows {
@@ -49,7 +47,7 @@ pub async fn load_watermarks_sqlx(
 pub async fn upsert_watermark_sqlx(
     pool: &SqlitePool,
     record: &MemorySessionWatermarkRecord,
-) -> AppResult<()> {
+) -> sqlx::Result<()> {
     sqlx::query(
         r#"
         INSERT INTO memory_session_watermarks (
@@ -71,18 +69,16 @@ pub async fn upsert_watermark_sqlx(
     .bind(if record.has_signal { 1i64 } else { 0i64 })
     .bind(&record.updated_at)
     .execute(pool)
-    .await
-    .map_err(AppError::from)?;
+    .await?;
 
     Ok(())
 }
 
-pub async fn clear_watermarks_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+pub async fn clear_watermarks_sqlx(pool: &SqlitePool, tenant_id: &str) -> sqlx::Result<()> {
     sqlx::query("DELETE FROM memory_session_watermarks WHERE tenant_id = ?1")
         .bind(tenant_id)
         .execute(pool)
-        .await
-        .map_err(AppError::from)?;
+        .await?;
     Ok(())
 }
 

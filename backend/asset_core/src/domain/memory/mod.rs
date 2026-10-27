@@ -11,7 +11,6 @@ pub mod project;
 pub mod project_consolidation;
 pub mod recent_snapshot;
 pub mod session;
-pub mod storage;
 pub mod work_order;
 
 pub use coverage::*;
@@ -23,7 +22,6 @@ pub use project::*;
 pub use project_consolidation::*;
 pub use recent_snapshot::*;
 pub use session::*;
-pub use storage::*;
 pub use work_order::*;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

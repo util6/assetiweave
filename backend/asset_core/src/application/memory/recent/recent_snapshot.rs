@@ -113,7 +113,8 @@ impl AppService {
     pub async fn get_recent_memory_snapshot(&self) -> AppResult<RecentMemoryStateView> {
         let tenant_id = self.tenant_id().to_string();
 
-        let storage = crate::backend::domain::memory::storage::MemoryStorage::new(&tenant_id);
+        let storage =
+            crate::backend::infrastructure::memory::storage::MemoryStorage::new(&tenant_id);
         if let Ok(Some(content)) = storage.read_markdown("recent/latest.md") {
             if !content.trim().is_empty() {
                 return Ok(parse_recent_markdown_to_state_view(&content));

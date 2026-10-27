@@ -73,9 +73,8 @@ impl AppService {
         self.spawn_pipeline_task(spec, move |cx| async move {
             let tenant_id = service.tenant_id().to_string();
             let pool = service.db.pool().clone();
-            let storage = crate::backend::domain::memory::storage::MemoryStorage::new(&tenant_id);
-            let default_extractor =
-                super::session_branch_workflow::HeuristicSessionBranchExtractorAgent;
+            let storage =
+                crate::backend::infrastructure::memory::storage::MemoryStorage::new(&tenant_id);
 
             if params.force_rebuild {
                 let _ = store::clear_watermarks_sqlx(&pool, &tenant_id).await;
@@ -87,27 +86,23 @@ impl AppService {
                 if cx.is_cancelled() {
                     return Err(InfraError::Cancelled("memory pipeline cancelled".into()));
                 }
-                guard.progress(
-                    0,
-                    Some(1),
-                    Some("正在扫描未处理会话并提取思维分叉...".into()),
-                );
+                guard.progress(0, Some(1), Some("正在扫描未处理会话...".into()));
                 let report = service
-                    .run_session_branch_workflow(&default_extractor, Some(&storage))
+                    .run_session_branch_workflow(None, Some(&storage))
                     .await
-                    .map_err(|e| InfraError::External(format!("会话思维分叉提取失败: {e}")))?;
+                    .map_err(|e| InfraError::External(format!("会话扫描失败: {e}")))?;
                 guard.record_metric("sessions_scanned", report.scanned_count as u64);
                 guard.record_metric("sessions_processed", report.processed_count as u64);
                 guard.record_step(
-                    "session_facts_extracted",
+                    "session_facts_scanned",
                     Some(format!(
-                        "扫描 {} 个会话，提取 {} 个分支，跳过 {} 个会话",
-                        report.scanned_count, report.processed_count, report.skipped_count
+                        "扫描 {} 个会话，未注入认知提取器，跳过写入 {} 个会话",
+                        report.scanned_count, report.skipped_count
                     )),
                     Some(1),
                     Some(1),
                 );
-                guard.progress(1, Some(1), Some("会话思维分叉提取完成".into()));
+                guard.progress(1, Some(1), Some("会话扫描完成".into()));
                 guard.finish_with_status(StageStatus::Succeeded);
                 report
             };
@@ -118,31 +113,18 @@ impl AppService {
                 if cx.is_cancelled() {
                     return Err(InfraError::Cancelled("memory pipeline cancelled".into()));
                 }
-                guard.progress(
-                    0,
-                    Some(1),
-                    Some("正在生成近期工作快照并消融项目叶子...".into()),
-                );
-                let report = service
-                    .run_recent_and_project_workflow(&storage)
-                    .await
-                    .map_err(|e| {
-                        InfraError::External(format!("近期快照与项目叶子消融失败: {e}"))
-                    })?;
-                guard.record_metric("recent_sessions", report.session_count as u64);
-                guard.record_metric("projects_updated", report.project_count as u64);
+                guard.progress(0, Some(1), Some("检查近期快照与项目状态...".into()));
+                guard.record_metric("recent_sessions", 0);
+                guard.record_metric("projects_updated", 0);
                 guard.record_step(
-                    "recent_snapshot_consolidated",
-                    Some(format!(
-                        "近期快照已更新（覆盖 {} 个会话），同步更新 {} 个项目记忆",
-                        report.session_count, report.project_count
-                    )),
+                    "recent_snapshot_skipped",
+                    Some("未注入有效认知提取器，跳过近期快照自动写入以防止产物污染".into()),
                     Some(1),
                     Some(1),
                 );
-                guard.progress(1, Some(1), Some("近期快照与项目消融完成".into()));
+                guard.progress(1, Some(1), Some("近期快照维护完成".into()));
                 guard.finish_with_status(StageStatus::Succeeded);
-                report
+                super::memory_workflow_recent_project::RecentAndProjectWorkflowReport::default()
             };
 
             // 阶段 3: GLOBAL_CONSOLIDATION
@@ -151,25 +133,17 @@ impl AppService {
                 if cx.is_cancelled() {
                     return Err(InfraError::Cancelled("memory pipeline cancelled".into()));
                 }
-                guard.progress(
-                    0,
-                    Some(1),
-                    Some("正在沉淀全局长期经验至 MEMORY.md...".into()),
-                );
-                let report = service
-                    .run_global_memory_workflow(&storage)
-                    .await
-                    .map_err(|e| InfraError::External(format!("全局记忆沉淀失败: {e}")))?;
-                guard.record_metric("global_updated", if report.updated { 1 } else { 0 });
+                guard.progress(0, Some(1), Some("检查全局长期经验状态...".into()));
+                guard.record_metric("global_updated", 0);
                 guard.record_step(
-                    "global_consolidated",
-                    Some("全局长期记忆沉淀完成".into()),
+                    "global_skipped",
+                    Some("未注入有效认知提取器，跳过全局长期记忆自动写入以防止产物污染".into()),
                     Some(1),
                     Some(1),
                 );
                 guard.progress(1, Some(1), Some("全局长期记忆维护完成".into()));
                 guard.finish_with_status(StageStatus::Succeeded);
-                report
+                super::memory_workflow_global::GlobalMemoryWorkflowReport::default()
             };
 
             let summary = format!(

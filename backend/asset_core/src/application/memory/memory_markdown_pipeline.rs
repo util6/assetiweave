@@ -1,11 +1,9 @@
 use super::memory_workflow_global::GlobalMemoryWorkflowReport;
 use super::memory_workflow_recent_project::RecentAndProjectWorkflowReport;
-use super::session_branch_workflow::{
-    HeuristicSessionBranchExtractorAgent, SessionBranchExtractorAgent, SessionBranchWorkflowReport,
-};
+use super::session_branch_workflow::{SessionBranchExtractorAgent, SessionBranchWorkflowReport};
 use crate::backend::application::AppResult;
 use crate::backend::application::AppService;
-use crate::backend::domain::memory::storage::MemoryStorage;
+use crate::backend::infrastructure::memory::storage::MemoryStorage;
 
 #[derive(Debug, Clone, Default)]
 pub struct MemoryMarkdownPipelineReport {
@@ -30,11 +28,25 @@ impl AppService {
             }
         };
 
-        let default_extractor = HeuristicSessionBranchExtractorAgent;
-        let ext = extractor.unwrap_or(&default_extractor);
+        let ext = match extractor {
+            Some(e) => e,
+            None => {
+                // 无提取器注入时，不覆写磁盘产物，防止机械复读垃圾污染
+                let session_report = self
+                    .run_session_branch_workflow(None, Some(storage))
+                    .await?;
+                return Ok(MemoryMarkdownPipelineReport {
+                    session_report,
+                    recent_project_report: RecentAndProjectWorkflowReport::default(),
+                    global_report: GlobalMemoryWorkflowReport::default(),
+                });
+            }
+        };
 
         // 节点 1：单会话思维分叉提取
-        let session_report = self.run_session_branch_workflow(ext, Some(storage)).await?;
+        let session_report = self
+            .run_session_branch_workflow(Some(ext), Some(storage))
+            .await?;
 
         // 节点 2：Recent 汇总与 Project 悬空叶子池动态消融
         let recent_project_report = self.run_recent_and_project_workflow(storage).await?;
