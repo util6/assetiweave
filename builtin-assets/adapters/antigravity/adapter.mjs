@@ -1009,7 +1009,11 @@ function subagentItemsFromCall(call) {
   return items;
 }
 
-function resolveSubagentPrompt(item) {
+/**
+ * 派发参数里没有可读提示词时的占位文本；这里只负责告警与兜底，
+ * 不再假装"解析"入参，命名需如实反映行为。
+ */
+function subagentPromptPlaceholder(item) {
   emitWarning(
     `Antigravity subagent ${item?.role ?? item?.typeName ?? "unknown"} has no dispatch prompt; using placeholder text`,
   );
@@ -1417,7 +1421,7 @@ function buildTurnsFromSteps(steps, options = {}) {
         const subagentItems = subagentCalls.flatMap((call) => subagentItemsFromCall(call));
         for (let sIdx = 0; sIdx < subagentItems.length; sIdx++) {
           const item = subagentItems[sIdx];
-          const prompt = item.prompt ?? resolveSubagentPrompt(item);
+          const prompt = item.prompt ?? subagentPromptPlaceholder(item);
           const subTurn = {
             external_id: `${parentAnchorTurnId}-subagent-${++subagentCount}`,
             turn_index: turns.length,

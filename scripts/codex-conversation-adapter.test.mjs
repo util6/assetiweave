@@ -1728,3 +1728,200 @@ test("Codex adapter lists and reads zstd-compressed .jsonl.zst session rollouts"
   }
 });
 
+
+test("Codex adapter inlines nested subagent threads recursively under their dispatching turn", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-subagent-nested-"));
+  try {
+    const mainRollout = path.join(fixtureRoot, "rollout-main.jsonl");
+    const midRollout = path.join(fixtureRoot, "rollout-mid.jsonl");
+    const deepRollout = path.join(fixtureRoot, "rollout-deep.jsonl");
+
+    writeFileSync(
+      mainRollout,
+      [
+        event("2026-09-12T00:00:00Z", "user", "Main question"),
+        event("2026-09-12T00:00:01Z", "assistant", "Main answer"),
+      ].join("\n")
+    );
+    writeFileSync(
+      midRollout,
+      [
+        event("2026-09-12T00:00:10Z", "user", "协调子任务"),
+        event("2026-09-12T00:00:11Z", "assistant", "协调者已派发下一层。"),
+      ].join("\n")
+    );
+    writeFileSync(
+      deepRollout,
+      [
+        event("2026-09-12T00:00:20Z", "user", "执行底层审查"),
+        event("2026-09-12T00:00:21Z", "assistant", "底层审查完成：无问题。"),
+      ].join("\n")
+    );
+
+    runSqlite(
+      fixtureRoot,
+      [
+        "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT, thread_source TEXT, source TEXT);",
+        `INSERT INTO threads VALUES ('main-nested', '${sqlString(mainRollout)}', 'Main', '2026-09-12T00:00:01Z', 'user', 'vscode');`,
+        `INSERT INTO threads VALUES ('child-mid', '${sqlString(midRollout)}', '', '2026-09-12T00:00:11Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"main-nested","depth":1,"agent_path":"/root/orchestrator"}}}');`,
+        `INSERT INTO threads VALUES ('child-deep', '${sqlString(deepRollout)}', '', '2026-09-12T00:00:21Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"child-mid","depth":2,"agent_path":"/root/reviewer"}}}');`,
+      ].join("\n")
+    );
+
+    const read = readSessionMessages(fixtureRoot, "main-nested");
+    const session = read.find((m) => m.type === "item")?.item?.session;
+    assert.ok(session);
+    assert.equal(session.turns.length, 3, "主 Turn + 两层子代理 Turn");
+
+    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurns.length, 2, "每个子线程只产出一个 Turn");
+
+    const mid = subagentTurns.find((turn) => turn.agent_role === "orchestrator");
+    const deep = subagentTurns.find((turn) => turn.agent_role === "reviewer");
+    assert.ok(mid, "第一层子代理必须存在");
+    assert.ok(deep, "第二层子代理必须存在");
+    assert.equal(mid.parent_turn_id, session.turns[0].external_id);
+    assert.equal(deep.parent_turn_id, mid.external_id, "第二层必须挂在其派发 Turn 之下");
+    assert.ok(
+      deep.parts.some((part) => /底层审查完成/.test(part.text ?? "")),
+      "第二层必须带自己的执行内容"
+    );
+    assert.ok(
+      mid.external_id.startsWith(`${session.turns[0].external_id}-subagent-`),
+      "子代理 Turn ID 必须由父 Turn 派生"
+    );
+    assert.ok(
+      deep.external_id.startsWith(`${mid.external_id}-subagent-`),
+      "嵌套 Turn ID 沿父链稳定派生"
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter stops expanding subagent threads beyond the depth limit", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-subagent-depth-"));
+  try {
+    const mainRollout = path.join(fixtureRoot, "rollout-main.jsonl");
+    writeFileSync(
+      mainRollout,
+      [
+        event("2026-09-12T00:00:00Z", "user", "Main question"),
+        event("2026-09-12T00:00:01Z", "assistant", "Main answer"),
+      ].join("\n")
+    );
+
+    const sql = [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT, thread_source TEXT, source TEXT);",
+      `INSERT INTO threads VALUES ('main-depth', '${sqlString(mainRollout)}', 'Main', '2026-09-12T00:00:01Z', 'user', 'vscode');`,
+    ];
+    // 6 层链式派发，超过深度上限 4
+    for (let level = 1; level <= 6; level += 1) {
+      const rollout = path.join(fixtureRoot, `rollout-depth-${level}.jsonl`);
+      writeFileSync(
+        rollout,
+        [
+          event(`2026-09-12T00:01:${String(level).padStart(2, "0")}Z`, "user", `第 ${level} 层任务`),
+          event(`2026-09-12T00:01:${String(level).padStart(2, "0")}Z`, "assistant", `第 ${level} 层汇报`),
+        ].join("\n")
+      );
+      const parent = level === 1 ? "main-depth" : `child-depth-${level - 1}`;
+      sql.push(
+        `INSERT INTO threads VALUES ('child-depth-${level}', '${sqlString(rollout)}', '', '2026-09-12T00:01:00Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"${parent}","depth":${level},"agent_path":"/root/level_${level}"}}}');`
+      );
+    }
+    runSqlite(fixtureRoot, sql.join("\n"));
+
+    const read = readSessionMessages(fixtureRoot, "main-depth");
+    const session = read.find((m) => m.type === "item")?.item?.session;
+    assert.ok(session);
+
+    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
+    assert.equal(
+      subagentTurns.length,
+      5,
+      "深度上限 4 时只能展开 5 层子代理 Turn（超限层降级为叶子）"
+    );
+    assert.ok(
+      !subagentTurns.some((turn) => /第 6 层/.test(turn.user_text ?? "")),
+      "超限的更深层不得继续展开"
+    );
+    assert.ok(
+      read.some(
+        (message) =>
+          message.type === "warning" &&
+          /exceeds the depth limit of 4/.test(message.message ?? "")
+      ),
+      "超过深度上限必须发出告警"
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter degrades cyclic subagent thread references to leaf turns", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-subagent-cycle-"));
+  try {
+    const mainRollout = path.join(fixtureRoot, "rollout-main.jsonl");
+    writeFileSync(
+      mainRollout,
+      [
+        event("2026-09-12T00:00:00Z", "user", "Main question"),
+        event("2026-09-12T00:00:01Z", "assistant", "Main answer"),
+      ].join("\n")
+    );
+
+    const cycleARollout = path.join(fixtureRoot, "rollout-cycle-a.jsonl");
+    const cycleBRollout = path.join(fixtureRoot, "rollout-cycle-b.jsonl");
+    writeFileSync(
+      cycleARollout,
+      [
+        event("2026-09-12T00:00:10Z", "user", "A 层任务"),
+        event("2026-09-12T00:00:11Z", "assistant", "A 层汇报"),
+      ].join("\n")
+    );
+    writeFileSync(
+      cycleBRollout,
+      [
+        event("2026-09-12T00:00:20Z", "user", "B 层任务"),
+        event("2026-09-12T00:00:21Z", "assistant", "B 层汇报"),
+      ].join("\n")
+    );
+
+    runSqlite(
+      fixtureRoot,
+      [
+        "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT, thread_source TEXT, source TEXT);",
+        `INSERT INTO threads VALUES ('main-cycle', '${sqlString(mainRollout)}', 'Main', '2026-09-12T00:00:01Z', 'user', 'vscode');`,
+        // A 的 spawn 元数据里出现 B 的线程 ID，B 又登记 A 为子代理，形成 A -> B -> A 的引用环
+        `INSERT INTO threads VALUES ('child-cycle-a', '${sqlString(cycleARollout)}', '', '2026-09-12T00:00:11Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"main-cycle","depth":1,"agent_path":"/root/cycle_a","agent_nickname":"child-cycle-b"}}}');`,
+        `INSERT INTO threads VALUES ('child-cycle-b', '${sqlString(cycleBRollout)}', '', '2026-09-12T00:00:21Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"child-cycle-a","depth":2,"agent_path":"/root/cycle_b"}}}');`,
+      ].join("\n")
+    );
+
+    const read = readSessionMessages(fixtureRoot, "main-cycle");
+    const session = read.find((m) => m.type === "item")?.item?.session;
+    assert.ok(session);
+
+    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurns.length, 3, "环上的重复引用只降级为叶子 Turn，不得无限展开");
+    assert.equal(
+      new Set(subagentTurns.map((turn) => turn.parent_turn_id)).size,
+      3,
+      "每个叶子挂在各自的派发 Turn 之下"
+    );
+    assert.ok(
+      read.some(
+        (message) =>
+          message.type === "warning" && /already expanded \(cycle\)/.test(message.message ?? "")
+      ),
+      "成环必须发出告警"
+    );
+    assert.ok(
+      subagentTurns.some((turn) => turn.parent_turn_id?.includes("child-cycle-b")),
+      "环上的重复节点必须以叶子形式挂在再次引用它的 Turn 之下"
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});

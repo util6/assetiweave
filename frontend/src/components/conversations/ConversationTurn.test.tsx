@@ -430,6 +430,79 @@ describe("ConversationTurn subagent tree", () => {
     ]);
   });
 
+  it("collects blocks only from the visible presentation models", () => {
+    const turns: ConversationTurnRecord[] = [
+      conversationTurnRecord("turn-visible-root", { turn_index: 0 }),
+      conversationTurnRecord("turn-visible-child", {
+        parent_turn_id: "turn-visible-root",
+        turn_index: 1,
+        turn_kind: "subagent",
+      }),
+      conversationTurnRecord("turn-hidden-grandchild", {
+        parent_turn_id: "turn-visible-child",
+        turn_index: 2,
+        turn_kind: "subagent",
+      }),
+    ];
+    const question: ConversationQuestionDetail = {
+      question: {
+        id: "question-visible",
+        session_id: "session-1",
+        title: "Visible blocks",
+        created_at: now,
+        updated_at: now,
+      },
+      turns,
+      parts: [],
+      question_turns: [],
+      projected_content_nodes: [
+        projectedNode(
+          "part-visible-root",
+          "turn-visible-root",
+          "answer",
+          "Root",
+        ),
+        projectedNode(
+          "part-visible-child",
+          "turn-visible-child",
+          "answer",
+          "Child",
+        ),
+        projectedNode(
+          "part-hidden-grandchild",
+          "turn-hidden-grandchild",
+          "answer",
+          "Grandchild",
+        ),
+      ],
+    };
+
+    const models = buildConversationTurnPresentations(question);
+    const collapsedVisible = visibleConversationTurnPresentations(
+      models,
+      new Set(),
+    );
+    const collapsedBlocks = collectConversationTurnBlocks(collapsedVisible);
+
+    expect(collapsedBlocks.map((block) => block.id)).toEqual([
+      "part-visible-root",
+      "part-visible-child",
+    ]);
+    expect(
+      collapsedBlocks.some((block) => block.id === "part-hidden-grandchild"),
+    ).toBe(false);
+
+    const expandedBlocks = collectConversationTurnBlocks(
+      visibleConversationTurnPresentations(
+        models,
+        new Set(["turn-visible-child"]),
+      ),
+    );
+    expect(
+      expandedBlocks.some((block) => block.id === "part-hidden-grandchild"),
+    ).toBe(true);
+  });
+
   it("resolves the ancestor chain of a deep turn for deep-link expansion", () => {
     const models = buildConversationTurnPresentations(subagentTreeQuestion());
 

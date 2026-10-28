@@ -293,6 +293,32 @@ function resolvePrompt(...candidates) {
   return "Subagent execution";
 }
 
+/**
+ * 子代理 Turn 的外部 ID：由派发 Turn 与子代理标识派生，重复同步保持幂等
+ * @param {string} anchorTurnId - 派发该子代理的父 Turn
+ * @param {string} childId - 子代理会话或派发调用 ID
+ * @returns {string} 稳定的子代理 Turn ID
+ */
+function subagentTurnId(anchorTurnId, childId) {
+  return `${anchorTurnId}-subagent-${childId}`;
+}
+
+/**
+ * 子代理语义角色只取派发参数里的 `subagent_type`；
+ * 取不到时留空并告警，绝不再伪造 Explore 之类的常量角色。
+ * @param {object|null} args - Agent 工具调用参数
+ * @param {string} childId - 子代理标识，用于告警定位
+ * @returns {string|undefined} 语义角色，缺失时为 undefined
+ */
+function subagentRoleFromArgs(args, childId) {
+  const role = typeof args?.subagent_type === "string" ? args.subagent_type.trim() : "";
+  if (role) return role;
+  emit("warning", {
+    message: `CodeBuddy subagent ${childId} has no subagent_type; agent_role left empty`,
+  });
+  return undefined;
+}
+
 function extractToolOutputText(rawOutput) {
   if (rawOutput == null) return "";
   if (typeof rawOutput === "string") return rawOutput;
@@ -628,18 +654,29 @@ function parseJsonl(text, sessionIdFallback, filePath) {
           try {
             const childContent = readFileSync(matchedCall.matchedChildPath, "utf8");
             const childParsed = parseJsonl(childContent, matchedCall.matchedChildId, matchedCall.matchedChildPath);
-            if (childParsed.turns && childParsed.turns.length > 0) {
-              for (const childTurn of childParsed.turns) {
-                turns.push({
-                  ...childTurn,
-                  external_id: childTurn.external_id || `${anchorTurnId}-sub-${turns.length}`,
-                  turn_index: turns.length,
-                  turn_kind: "subagent",
-                  agent_role: matchedCall.args?.subagent_type || "Explore",
-                  parent_turn_id: anchorTurnId,
-                  user_text: resolvePrompt(childTurn.user_text, matchedCall.args?.prompt, matchedCall.args?.description, "Subagent execution"),
-                });
-              }
+            const childTurns = Array.isArray(childParsed.turns) ? childParsed.turns : [];
+            if (childTurns.length > 0) {
+              // 一个子代理严格合并为一个 Turn：逐轮内容按原顺序串成该 Turn 的 parts
+              const firstTurn = childTurns[0];
+              const lastTurn = childTurns.at(-1);
+              turns.push({
+                external_id: subagentTurnId(anchorTurnId, matchedCall.matchedChildId ?? callId),
+                turn_index: turns.length,
+                turn_kind: "subagent",
+                agent_role: subagentRoleFromArgs(matchedCall.args, matchedCall.matchedChildId ?? callId),
+                parent_turn_id: anchorTurnId,
+                user_text: resolvePrompt(
+                  childTurns.map((turn) => turn.user_text).find((text) => text && text.trim()),
+                  matchedCall.args?.prompt,
+                  matchedCall.args?.description,
+                  "Subagent execution",
+                ),
+                title: firstTurn.title ?? null,
+                started_at: firstTurn.started_at ?? null,
+                ended_at: lastTurn?.ended_at ?? lastTurn?.started_at ?? null,
+                model: childTurns.map((turn) => turn.model).find(Boolean) ?? null,
+                parts: childTurns.flatMap((turn) => (Array.isArray(turn.parts) ? turn.parts : [])),
+              });
               childInlined = true;
             }
           } catch {}
@@ -648,10 +685,10 @@ function parseJsonl(text, sessionIdFallback, filePath) {
         if (!childInlined) {
           const outputText = extractToolOutputText(entry.output);
           turns.push({
-            external_id: `${anchorTurnId}-sub-${turns.length}`,
+            external_id: subagentTurnId(anchorTurnId, matchedCall.matchedChildId ?? callId),
             turn_index: turns.length,
             turn_kind: "subagent",
-            agent_role: matchedCall.args?.subagent_type || "Explore",
+            agent_role: subagentRoleFromArgs(matchedCall.args, matchedCall.matchedChildId ?? callId),
             parent_turn_id: anchorTurnId,
             user_text: resolvePrompt(matchedCall.args?.prompt, matchedCall.args?.description, "Subagent execution"),
             title: null,

@@ -56,6 +56,7 @@ import {
 } from "../../components/conversations/ConversationContentCards";
 import {
   buildConversationBlockTurnIndex,
+  buildConversationTurnIndex,
   buildConversationTurnPresentations,
   collectConversationTurnBlocks,
   conversationTurnAncestorIds,
@@ -2884,9 +2885,18 @@ export function QuestionPreview({
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
   );
+  const turnIndex = useMemo(
+    () => buildConversationTurnIndex(turnModels),
+    [turnModels],
+  );
   const visibleTurnModels = useMemo(
-    () => visibleConversationTurnPresentations(turnModels, expandedTurnIds),
-    [expandedTurnIds, turnModels],
+    () =>
+      visibleConversationTurnPresentations(
+        turnModels,
+        expandedTurnIds,
+        turnIndex,
+      ),
+    [expandedTurnIds, turnIndex, turnModels],
   );
   const toggleTurnExpanded = useCallback((turnId: string) => {
     setExpandedTurnIds((current) => {
@@ -2897,7 +2907,8 @@ export function QuestionPreview({
     });
   }, []);
   const contentController = useConversationContentController({
-    blocks: collectConversationTurnBlocks(turnModels),
+    // 只收集可见 Turn 的 block：折叠隐藏的子 Turn 不得进入 block 索引
+    blocks: collectConversationTurnBlocks(visibleTurnModels),
     onCopyError,
     onTranslationError: onCopyError,
     recordKind,
@@ -2978,7 +2989,7 @@ export function QuestionPreview({
     if (!activeTurnId) return;
     const branch = [
       activeTurnId,
-      ...conversationTurnAncestorIds(turnModels, activeTurnId),
+      ...conversationTurnAncestorIds(turnModels, activeTurnId, turnIndex),
     ];
     setExpandedTurnIds((current) => {
       if (branch.every((turnId) => current.has(turnId))) return current;
@@ -2986,7 +2997,7 @@ export function QuestionPreview({
       branch.forEach((turnId) => next.add(turnId));
       return next;
     });
-  }, [activeTurnId, turnModels]);
+  }, [activeTurnId, turnIndex, turnModels]);
 
   const scrolledTurnIdRef = useRef<string | null>(null);
   useEffect(() => {

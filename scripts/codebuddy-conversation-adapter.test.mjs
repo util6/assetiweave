@@ -731,3 +731,163 @@ test("CodeBuddy falls back to valid string when subagent prompt is whitespace-on
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
+
+test("CodeBuddy folds every child round into one subagent Turn", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codebuddy-merge-"));
+  try {
+    const parentSessionId = "session-merge-main";
+    const subagentId = "agent-merge-child";
+    const mainSessionFile = path.join(fixtureRoot, `${parentSessionId}.jsonl`);
+    const subagentsDir = path.join(fixtureRoot, parentSessionId, "subagents");
+    mkdirSync(subagentsDir, { recursive: true });
+    const subagentFile = path.join(subagentsDir, `${subagentId}.jsonl`);
+
+    writeFileSync(subagentFile, [
+      JSON.stringify({
+        id: "child-1",
+        timestamp: 1791000001100,
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "先核对索引" }],
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "child-2",
+        timestamp: 1791000001200,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "索引核对完成。" }],
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "child-3",
+        timestamp: 1791000001300,
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "再核对外键" }],
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "child-4",
+        timestamp: 1791000001400,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "外键核对完成：无违规。" }],
+        cwd: "/project",
+      }),
+    ].join("\n"));
+
+    writeFileSync(mainSessionFile, [
+      JSON.stringify({
+        id: "main-1",
+        timestamp: 1791000000000,
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "审查数据库迁移" }],
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "main-call-agent",
+        timestamp: 1791000001000,
+        type: "function_call",
+        name: "Agent",
+        callId: "call_merge_agent",
+        arguments: {
+          description: "审查数据库迁移",
+          prompt: "先核对索引，再核对外键",
+          subagent_type: "DatabaseReviewer",
+        },
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "main-res-agent",
+        timestamp: 1791000002000,
+        type: "function_call_result",
+        name: "Agent",
+        callId: "call_merge_agent",
+        status: "completed",
+        output: { type: "text", text: "子代理审查完成" },
+        cwd: "/project",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(mainSessionFile);
+    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurns.length, 1, "一个子代理只能产出一个 Turn");
+
+    const subTurn = subagentTurns[0];
+    assert.equal(subTurn.agent_role, "DatabaseReviewer");
+    assert.equal(subTurn.parent_turn_id, session.turns[0].external_id);
+    assert.equal(subTurn.user_text, "先核对索引");
+    assert.deepEqual(
+      subTurn.parts.filter((part) => part.role === "assistant").map((part) => part.text),
+      ["索引核对完成。", "外键核对完成：无违规。"],
+      "子代理逐轮内容按顺序合并进同一个 Turn 的 parts"
+    );
+    assert.equal(
+      subagentTurns.length,
+      1,
+      "子代理的多轮内容不得拆成多个 Turn"
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("CodeBuddy leaves agent_role empty when the dispatch declares no subagent_type", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codebuddy-roleless-"));
+  try {
+    const sessionFile = path.join(fixtureRoot, "session-roleless.jsonl");
+    writeFileSync(sessionFile, [
+      JSON.stringify({
+        id: "msg-1",
+        timestamp: 1791000000000,
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "派发一个未声明类型的子代理" }],
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "call-agent-roleless",
+        timestamp: 1791000001000,
+        type: "function_call",
+        name: "Agent",
+        callId: "call_agent_roleless",
+        arguments: { prompt: "未声明类型的任务" },
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "res-agent-roleless",
+        timestamp: 1791000002000,
+        type: "function_call_result",
+        name: "Agent",
+        callId: "call_agent_roleless",
+        status: "completed",
+        output: { type: "text", text: "任务完成" },
+        cwd: "/project",
+      }),
+    ].join("\n"));
+
+    const result = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({ method: "read_session", source: { location: sessionFile }, params: {} }),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const messages = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
+    const session = messages.find((message) => message.type === "item")?.item?.session;
+    assert.ok(session);
+
+    const subTurn = session.turns.find((turn) => turn.turn_kind === "subagent");
+    assert.ok(subTurn, "Subagent turn must exist");
+    assert.ok(!subTurn.agent_role, "缺少 subagent_type 时角色必须留空，不得伪造 Explore");
+    assert.ok(
+      messages.some(
+        (message) =>
+          message.type === "warning" && /has no subagent_type/.test(message.message ?? "")
+      ),
+      "角色缺失必须发出告警"
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});

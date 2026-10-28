@@ -432,6 +432,45 @@ test("OpenCode leaves agent role empty when subagent title carries no type suffi
   }
 });
 
+test("OpenCode folds every child round into one subagent Turn", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-merge-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode-merge.db");
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT, parent_id TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
+      "INSERT INTO session VALUES ('session-merge-parent', '主任务', '/tmp/project', '2026-08-06T00:10:00Z', NULL);",
+      "INSERT INTO session VALUES ('session-merge-child', '核对迁移脚本 (@reviewer subagent)', '/tmp/project', '2026-08-06T00:05:00Z', 'session-merge-parent');",
+      `INSERT INTO message VALUES ('msg-p1', 'session-merge-parent', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-p1', 'msg-p1', 'session-merge-parent', '${sqlString(JSON.stringify({ type: "text", text: "派发子代理核对迁移脚本" }))}');`,
+      `INSERT INTO message VALUES ('msg-c1', 'session-merge-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:01:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-c1', 'msg-c1', 'session-merge-child', '${sqlString(JSON.stringify({ type: "text", text: "先核对索引" }))}');`,
+      `INSERT INTO message VALUES ('msg-c2', 'session-merge-child', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:02:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-c2', 'msg-c2', 'session-merge-child', '${sqlString(JSON.stringify({ type: "text", text: "索引核对完成。" }))}');`,
+      `INSERT INTO message VALUES ('msg-c3', 'session-merge-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:03:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-c3', 'msg-c3', 'session-merge-child', '${sqlString(JSON.stringify({ type: "text", text: "再核对外键" }))}');`,
+      `INSERT INTO message VALUES ('msg-c4', 'session-merge-child', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:04:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-c4', 'msg-c4', 'session-merge-child', '${sqlString(JSON.stringify({ type: "text", text: "外键核对完成：无违规。" }))}');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(dbPath);
+    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurns.length, 1, "一个子会话只能产出一个 subagent Turn");
+
+    const subTurn = subagentTurns[0];
+    assert.equal(subTurn.agent_role, "reviewer");
+    assert.equal(subTurn.user_text, "先核对索引");
+    assert.deepEqual(
+      subTurn.parts.map((part) => part.text),
+      ["索引核对完成。", "外键核对完成：无违规。"],
+      "子会话逐轮内容按顺序合并进同一个 Turn 的 parts"
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 function readFixtureSession(dbPath) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",

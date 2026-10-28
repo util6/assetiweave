@@ -2112,6 +2112,86 @@ function findChildThreadsForParent(dbPath, parentId) {
   return sqliteJson(dbPath, sql).map((row) => ({ ...row, rollout_path: expandPath(row.rollout_path) }));
 }
 
+/** 子代理线程树的最大展开层数，超过后降级为叶子 Turn */
+const MAX_SUBAGENT_DEPTH = 4;
+
+/**
+ * 递归内联子代理线程树：一个子线程严格合并为一个 subagent Turn。
+ * 沿 thread_spawn 的 parent 关系向下展开，已访问 thread id 集合做环检测，
+ * 超出深度上限或再次遇到已展开线程时保留该 Turn 作为叶子并发出告警。
+ * @param {object} options
+ * @param {string} options.dbPath - state_5.sqlite 路径
+ * @param {string} options.parentThreadId - 当前展开层的父线程 ID
+ * @param {(startedAt: string|null) => string} options.parentTurnIdFor - 解析父 Turn 的外部 ID
+ * @param {number} options.depth - 当前层深，主会话为 0
+ * @param {Set<string>} options.visited - 已展开的 thread id
+ * @param {Array<object>} options.out - 收集到的 subagent Turn 列表
+ */
+function collectSubagentTurns({ dbPath, parentThreadId, parentTurnIdFor, depth, visited, out }) {
+  for (const childRow of findChildThreadsForParent(dbPath, parentThreadId)) {
+    const childThreadId = String(childRow.id);
+    const childRollout = resolveRolloutPath(childRow.rollout_path);
+    if (!childRollout || !existsSync(childRollout)) continue;
+    const childFiles = rolloutFilesForSession(childRollout, childThreadId);
+    if (!childFiles.length) continue;
+    const { text: childText } = readStableRollout(childFiles, childRow.updated_at);
+    const parsedChild = normalizeTurns(childText);
+    if (!parsedChild.turns.length) continue;
+    const childTurns = displayTurns(parsedChild.turns);
+
+    const childStart = childTurns[0]?.started_at
+      ?? parsedChild.turns[0]?.started_at
+      ?? childRow.updated_at
+      ?? null;
+    const parentTurnId = parentTurnIdFor(childStart);
+    const subagentTurnId = `${parentTurnId}-subagent-${childThreadId}`;
+    const spawn = parseSubagentSpawn(childRow.source);
+    const taskPrompt = subagentTaskPrompt(parsedChild.turns);
+    if (!taskPrompt) {
+      emit("warning", {
+        message: `subagent ${childThreadId} has no readable task prompt in its rollout; placeholder text used`,
+      });
+    }
+    const lastChildTurn = childTurns.at(-1) ?? parsedChild.turns.at(-1) ?? null;
+    out.push({
+      external_id: subagentTurnId,
+      turn_index: 0,
+      user_text: taskPrompt ?? SUBAGENT_PLACEHOLDER_PROMPT,
+      title: subagentNicknameFromSpawn(spawn),
+      started_at: childStart,
+      ended_at: lastChildTurn?.ended_at ?? lastChildTurn?.started_at ?? childStart,
+      model: childTurns.map((turn) => turn.model).find(Boolean) ?? null,
+      parts: childTurns.flatMap((turn) => (Array.isArray(turn.parts) ? turn.parts : [])),
+      turn_kind: "subagent",
+      agent_role: subagentRoleFromSpawn(spawn),
+      parent_turn_id: parentTurnId,
+    });
+
+    const childDepth = depth + 1;
+    if (childDepth > MAX_SUBAGENT_DEPTH) {
+      emit("warning", {
+        message: `subagent ${childThreadId} exceeds the depth limit of ${MAX_SUBAGENT_DEPTH}; kept as a leaf turn`,
+      });
+      continue;
+    }
+    if (visited.has(childThreadId)) {
+      emit("warning", {
+        message: `subagent ${childThreadId} is already expanded (cycle); kept as a leaf turn`,
+      });
+      continue;
+    }
+    visited.add(childThreadId);
+    collectSubagentTurns({
+      dbPath,
+      parentThreadId: childThreadId,
+      parentTurnIdFor: () => subagentTurnId,
+      depth: childDepth,
+      visited,
+      out,
+    });
+  }
+}
+
 function readSession() {
   // 1. 获取 Rust 入参中指定的 session_id (若为 null，则代表需要读取全量会话)
   const requestedSessionId = input.params?.session_id ?? null;
@@ -2167,53 +2247,28 @@ function readSession() {
     // 7. 组装 Session 基础元数据结构对象
     const isSubagent = Boolean(row.is_subagent === 1 || row.is_subagent === true || row.is_subagent === "1");
 
-    // Inline child threads if parent session: 一个子代理线程严格合并为一个 subagent Turn
+    // Inline child threads if parent session: 一个子代理线程严格合并为一个 subagent Turn，
+    // 并沿 thread_spawn 的 parent 关系递归展开（深度上限 + 环检测）。
     if (dbPath && !isSubagent) {
-      const childRows = findChildThreadsForParent(dbPath, String(row.id));
       const subagentTurns = [];
-      for (const childRow of childRows) {
-        const childRollout = resolveRolloutPath(childRow.rollout_path);
-        if (!childRollout || !existsSync(childRollout)) continue;
-        const childFiles = rolloutFilesForSession(childRollout, String(childRow.id));
-        if (!childFiles.length) continue;
-        const { text: childText } = readStableRollout(childFiles, childRow.updated_at);
-        const parsedChild = normalizeTurns(childText);
-        if (!parsedChild.turns.length) continue;
-        const childTurns = displayTurns(parsedChild.turns);
-        const childStart = childTurns[0]?.started_at
-          ?? parsedChild.turns[0]?.started_at
-          ?? childRow.updated_at
-          ?? null;
-        const targetTime = childStart ? new Date(childStart).getTime() : 0;
-        let anchorTurn = turns[0];
-        for (const t of turns) {
-          if (t.started_at && new Date(t.started_at).getTime() <= targetTime) {
-            anchorTurn = t;
+      const anchorTurnFor = (startedAt) => {
+        const targetTime = startedAt ? new Date(startedAt).getTime() : 0;
+        let anchor = turns[0];
+        for (const candidate of turns) {
+          if (candidate.started_at && new Date(candidate.started_at).getTime() <= targetTime) {
+            anchor = candidate;
           }
         }
-        const anchorId = anchorTurn ? anchorTurn.external_id : parentAnchorTurnId;
-        const spawn = parseSubagentSpawn(childRow.source);
-        const taskPrompt = subagentTaskPrompt(parsedChild.turns);
-        if (!taskPrompt) {
-          emit("warning", {
-            message: `subagent ${childRow.id} has no readable task prompt in its rollout; placeholder text used`,
-          });
-        }
-        const lastChildTurn = childTurns.at(-1) ?? parsedChild.turns.at(-1) ?? null;
-        subagentTurns.push({
-          external_id: `${anchorId}-subagent-${childRow.id}`,
-          turn_index: 0,
-          user_text: taskPrompt ?? SUBAGENT_PLACEHOLDER_PROMPT,
-          title: subagentNicknameFromSpawn(spawn),
-          started_at: childStart,
-          ended_at: lastChildTurn?.ended_at ?? lastChildTurn?.started_at ?? childStart,
-          model: childTurns.map((t) => t.model).find(Boolean) ?? null,
-          parts: childTurns.flatMap((turn) => (Array.isArray(turn.parts) ? turn.parts : [])),
-          turn_kind: "subagent",
-          agent_role: subagentRoleFromSpawn(spawn),
-          parent_turn_id: anchorId,
-        });
-      }
+        return anchor ?? null;
+      };
+      collectSubagentTurns({
+        dbPath,
+        parentThreadId: String(row.id),
+        parentTurnIdFor: (startedAt) => anchorTurnFor(startedAt)?.external_id ?? parentAnchorTurnId,
+        depth: 0,
+        visited: new Set([String(row.id)]),
+        out: subagentTurns,
+      });
 
       if (subagentTurns.length > 0) {
         const allTurns = [...turns, ...subagentTurns];

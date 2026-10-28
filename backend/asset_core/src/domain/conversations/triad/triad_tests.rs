@@ -767,3 +767,130 @@ fn test_subagent_triad_roundtrip_with_commands_cards_and_response() {
     assert_eq!(all_nodes[3].node_type, "codex.file-change");
     assert_eq!(all_nodes[4].node_type, "codex.answer");
 }
+
+#[test]
+fn test_promote_trailing_assistant_output_recovers_subagent_report() {
+    let text_part = |role: ConversationPartRole, kind: ConversationPartKind, text: &str| {
+        NormalizedConversationPart {
+            role,
+            kind,
+            text: Some(text.to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: None,
+            content_card: None,
+            metadata_json: None,
+        }
+    };
+    let command_part = NormalizedConversationPart {
+        role: ConversationPartRole::Tool,
+        kind: ConversationPartKind::Command,
+        text: None,
+        language: None,
+        command: Some("cargo test -p asset_core".to_string()),
+        cwd: None,
+        status: Some("success".to_string()),
+        exit_code: Some(0),
+        command_label: Some("Run tests".to_string()),
+        source_execution_id: Some("exec-1".to_string()),
+        content_card: None,
+        metadata_json: None,
+    };
+
+    // 汇报落在尾随工具执行之前，三段式规则取不到最终回答
+    let parts = vec![
+        text_part(
+            ConversationPartRole::Assistant,
+            ConversationPartKind::Text,
+            "正在核对锁顺序",
+        ),
+        text_part(
+            ConversationPartRole::Assistant,
+            ConversationPartKind::Text,
+            "子代理汇报：未发现锁顺序反转。",
+        ),
+        command_part,
+    ];
+    let mut triad = split_normalized_turn("codex", "审计并发", &parts);
+    assert_eq!(triad.response, None, "尾随工具执行时三段式不会产出最终回答");
+
+    triad.promote_trailing_assistant_output(&parts);
+    assert_eq!(
+        triad.response.as_deref(),
+        Some("子代理汇报：未发现锁顺序反转。"),
+        "兜底必须取最后一段助手输出"
+    );
+    assert!(
+        triad
+            .parts
+            .iter()
+            .all(|part| part.content.as_deref() != Some("子代理汇报：未发现锁顺序反转。")),
+        "提升为 response 的内容不能同时残留在 parts 中"
+    );
+
+    // 纯 reasoning 片段不是汇报，不得被提升为 response
+    let reasoning_only = NormalizedConversationPart {
+        role: ConversationPartRole::Assistant,
+        kind: ConversationPartKind::Text,
+        text: Some("只是推理过程".to_string()),
+        language: None,
+        command: None,
+        cwd: None,
+        status: None,
+        exit_code: None,
+        command_label: None,
+        source_execution_id: None,
+        content_card: Some(ConversationContentCardDescriptor {
+            schema_version: 1,
+            kind: "codex.reasoning".to_string(),
+            renderer: None,
+            semantic_role: None,
+        }),
+        metadata_json: None,
+    };
+    let reasoning_parts = vec![
+        reasoning_only,
+        NormalizedConversationPart {
+            role: ConversationPartRole::Tool,
+            kind: ConversationPartKind::Command,
+            text: None,
+            language: None,
+            command: Some("ls".to_string()),
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: Some("exec-2".to_string()),
+            content_card: None,
+            metadata_json: None,
+        },
+    ];
+    let mut reasoning_triad = split_normalized_turn("codex", "审计并发", &reasoning_parts);
+    reasoning_triad.promote_trailing_assistant_output(&reasoning_parts);
+    assert_eq!(
+        reasoning_triad.response, None,
+        "reasoning 片段不能冒充子代理汇报"
+    );
+
+    // 已经取到最终回答时不得改写
+    let mut direct = split_normalized_turn(
+        "codex",
+        "审计并发",
+        &[text_part(
+            ConversationPartRole::Assistant,
+            ConversationPartKind::Text,
+            "子代理汇报",
+        )],
+    );
+    assert_eq!(direct.response.as_deref(), Some("子代理汇报"));
+    direct.promote_trailing_assistant_output(&[text_part(
+        ConversationPartRole::Assistant,
+        ConversationPartKind::Text,
+        "别的输出",
+    )]);
+    assert_eq!(direct.response.as_deref(), Some("子代理汇报"));
+}

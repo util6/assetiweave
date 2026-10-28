@@ -8,6 +8,7 @@ import type {
 } from "../../types";
 import type { Translator } from "../../i18n/I18nProvider";
 import { Badge } from "../foundation/Badge";
+import { Button } from "../ui/button";
 import type {
   ConversationContentBlock,
   ConversationContentVisibility,
@@ -140,6 +141,13 @@ function orderTurnTree(
   return ordered;
 }
 
+/** 一次构建的 Turn 索引：可见性计算与祖先链解析共用同一份 byId。 */
+export function buildConversationTurnIndex(
+  models: readonly ConversationTurnPresentation[],
+): Map<string, ConversationTurnPresentation> {
+  return new Map(models.map((model) => [model.turn.id, model]));
+}
+
 /**
  * Flattens the tree into the virtual list order. Only collapsed subagent
  * branches hide their children, so main turns keep their delegated work one
@@ -148,8 +156,12 @@ function orderTurnTree(
 export function visibleConversationTurnPresentations(
   models: readonly ConversationTurnPresentation[],
   expandedTurnIds: ReadonlySet<string>,
+  turnIndex: ReadonlyMap<
+    string,
+    ConversationTurnPresentation
+  > = buildConversationTurnIndex(models),
 ): ConversationTurnPresentation[] {
-  const byId = new Map(models.map((model) => [model.turn.id, model]));
+  const byId = turnIndex;
   const visibleIds = new Set<string>();
   const visible: ConversationTurnPresentation[] = [];
   for (const model of models) {
@@ -168,8 +180,12 @@ export function visibleConversationTurnPresentations(
 export function conversationTurnAncestorIds(
   models: readonly ConversationTurnPresentation[],
   turnId: string,
+  turnIndex: ReadonlyMap<
+    string,
+    ConversationTurnPresentation
+  > = buildConversationTurnIndex(models),
 ): string[] {
-  const byId = new Map(models.map((model) => [model.turn.id, model]));
+  const byId = turnIndex;
   const seen = new Set<string>([turnId]);
   const ancestors: string[] = [];
   let current = byId.get(turnId)?.parentTurnId ?? null;
@@ -359,11 +375,6 @@ export const ConversationTurn = memo(function ConversationTurn({
       data-conversation-turn-depth={model.depth}
       data-conversation-turn-expanded={isSubagent ? expanded : undefined}
       data-conversation-turn-id={model.turn.id}
-      style={
-        isSubagent && model.depth > 0
-          ? { marginLeft: `${Math.min(model.depth, 5) * 0.75}rem` }
-          : undefined
-      }
     >
       <div
         className={`conversation-prompt-block scroll-mt-32 rounded-xl border px-4 py-3 transition-shadow ${
@@ -385,20 +396,22 @@ export const ConversationTurn = memo(function ConversationTurn({
             }`}
           >
             {isSubagent ? (
-              <button
+              <Button
                 aria-expanded={expanded}
                 aria-label={toggleLabel}
-                className="grid size-6 shrink-0 place-items-center rounded-full border border-primary/30 bg-theme-card/60 text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+                className="shrink-0 rounded-full border border-primary/30 bg-theme-card/60 text-primary hover:bg-primary/10"
                 onClick={() => onToggleExpanded?.(model.turn.id)}
+                size="icon-sm"
                 title={toggleLabel}
                 type="button"
+                variant="ghost"
               >
                 <ChevronRight
                   className={`size-3.5 transition-transform ${
                     expanded ? "rotate-90" : ""
                   }`}
                 />
-              </button>
+              </Button>
             ) : null}
             {isSubagent ? (
               <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">

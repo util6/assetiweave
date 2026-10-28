@@ -4329,6 +4329,11 @@ async fn test_subagent_turns_save_and_load_persistence_intact() {
     );
     assert!(subagent_loaded.is_subagent());
     assert!(!parent_loaded.is_subagent());
+    assert_eq!(
+        subagent_loaded.response.as_deref(),
+        Some("Concurrency audit complete: All locks adhere to ADR-0017."),
+        "子代理 Turn 的汇报必须落进 response"
+    );
 
     // 3. Question grouping verification: Subagent turn MUST merge under active question
     let questions =
@@ -4350,6 +4355,115 @@ async fn test_subagent_turns_save_and_load_persistence_intact() {
         questions[0].question.title.as_deref(),
         Some("Can you analyze the concurrency model of AssetIWeave?"),
         "Question title must prioritize the user turn over subagent delegation prompt"
+    );
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn test_subagent_turn_response_survives_trailing_command() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-subagent-response-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.unwrap();
+    let adapter = test_conversation_adapter(
+        "subagent-response-adapter",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let pool = database.pool();
+
+    upsert_conversation_adapter_sqlx(pool, TEST_TENANT_ID, &adapter)
+        .await
+        .unwrap();
+    upsert_conversation_source_sqlx(pool, TEST_TENANT_ID, &source)
+        .await
+        .unwrap();
+
+    let assistant_text = |text: &str| NormalizedConversationPart {
+        role: ConversationPartRole::Assistant,
+        kind: ConversationPartKind::Text,
+        text: Some(text.to_string()),
+        language: None,
+        command: None,
+        cwd: None,
+        status: None,
+        exit_code: None,
+        command_label: None,
+        source_execution_id: None,
+        content_card: None,
+        metadata_json: None,
+    };
+
+    let session = NormalizedConversationSession {
+        external_id: "session-subagent-response".to_string(),
+        title: Some("子代理汇报".to_string()),
+        turns: vec![
+            NormalizedConversationTurn {
+                external_id: "turn-main".to_string(),
+                turn_index: 0,
+                user_text: "审计 TaskRuntime 锁顺序".to_string(),
+                turn_kind: Some("user".to_string()),
+                parts: vec![assistant_text("已派发子代理。")],
+                ..Default::default()
+            },
+            NormalizedConversationTurn {
+                external_id: "turn-subagent-trailing".to_string(),
+                turn_index: 1,
+                user_text: "审计 TaskRuntime 锁顺序".to_string(),
+                turn_kind: Some("subagent".to_string()),
+                agent_role: Some("concurrency_audit".to_string()),
+                parent_external_id: Some("turn-main".to_string()),
+                parts: vec![
+                    assistant_text("开始核对锁获取顺序。"),
+                    // 汇报之后还有一次工具执行，三段式规则取不到最终回答
+                    assistant_text("子代理汇报：未发现锁顺序反转。"),
+                    NormalizedConversationPart {
+                        role: ConversationPartRole::Tool,
+                        kind: ConversationPartKind::Command,
+                        text: None,
+                        language: None,
+                        command: Some("cargo test -p asset_core".to_string()),
+                        cwd: None,
+                        status: Some("success".to_string()),
+                        exit_code: Some(0),
+                        command_label: Some("Run asset_core tests".to_string()),
+                        source_execution_id: Some("exec-trailing".to_string()),
+                        content_card: None,
+                        metadata_json: None,
+                    },
+                ],
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+
+    import_conversation_sessions_sqlx(pool, TEST_TENANT_ID, &source, &[session], false)
+        .await
+        .unwrap();
+
+    let sessions =
+        list_conversation_sessions_sqlx(pool, TEST_TENANT_ID, None, Some(&source.id), None, 10, 0)
+            .await
+            .unwrap();
+    let detail =
+        load_conversation_session_detail_sqlx(pool, TEST_TENANT_ID, &sessions[0].session.id)
+            .await
+            .unwrap();
+
+    let subagent_turn = detail.questions[0]
+        .turns
+        .iter()
+        .find(|turn| turn.turn_kind.as_deref() == Some("subagent"))
+        .expect("subagent turn must exist");
+    assert_eq!(
+        subagent_turn.response.as_deref(),
+        Some("子代理汇报：未发现锁顺序反转。"),
+        "尾随工具执行时子代理汇报仍必须写入 response"
     );
 
     drop(database);

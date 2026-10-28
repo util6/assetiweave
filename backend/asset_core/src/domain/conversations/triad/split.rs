@@ -390,3 +390,42 @@ pub fn split_normalized_turn(
     let raw_parts: Vec<TriadRawPart<'_>> = parts.iter().map(TriadRawPart::from).collect();
     split_turn_triad(adapter_id, prompt, &raw_parts)
 }
+
+/// 汇报候选项：未标注卡片类型，或明确标注为 `*.answer`；纯 reasoning 片段不参与兜底。
+fn is_answer_like(part: &NormalizedConversationPart) -> bool {
+    match part.content_card.as_ref().map(|card| card.kind.as_str()) {
+        None => true,
+        Some(kind) => kind == "answer" || kind.ends_with(".answer"),
+    }
+}
+
+impl SplitTurnTriad {
+    /// 子代理 Turn 的汇报兜底：子代理的逐轮内容被合并进同一个 Turn，
+    /// 汇报之后可能还跟着一次工具执行，按三段式规则会取不到最终回答。
+    /// 此处按 Triad 约定把最后一段助手输出提升为 `response`，
+    /// 并从 parts 中摘除同一条，避免重建时与 response 重复。
+    pub fn promote_trailing_assistant_output(&mut self, parts: &[NormalizedConversationPart]) {
+        if self.response.is_some() {
+            return;
+        }
+        let candidate = parts.iter().enumerate().rev().find(|(_, part)| {
+            part.role == ConversationPartRole::Assistant
+                && matches!(
+                    part.kind,
+                    ConversationPartKind::Text | ConversationPartKind::CodeBlock
+                )
+                && part.command.is_none()
+                && is_answer_like(part)
+                && part
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| !text.trim().is_empty())
+        });
+        let Some((index, part)) = candidate else {
+            return;
+        };
+        self.response = part.text.clone();
+        self.parts
+            .retain(|retained| retained.part_index != index as i64);
+    }
+}

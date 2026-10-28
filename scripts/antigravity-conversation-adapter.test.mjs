@@ -1481,6 +1481,12 @@ test("Antigravity inlines every registered subagent as its own turn with a resol
     const lastPart = deepest.parts.at(-1);
     assert.equal(lastPart.role, "assistant");
     assert.match(lastPart.text, /Module 1 review complete/);
+    // 最后一段助手输出必须是 answer 卡片，Triad 据此把子代理汇报提升为 response
+    assert.equal(
+      lastPart.content_card?.kind,
+      "antigravity.answer",
+      "子代理汇报必须以 answer 卡片收尾，才能落进该 Turn 的 response",
+    );
 
     const repeated = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
     assert.deepEqual(
