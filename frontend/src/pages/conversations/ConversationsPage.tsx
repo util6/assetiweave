@@ -58,7 +58,9 @@ import {
   buildConversationBlockTurnIndex,
   buildConversationTurnPresentations,
   collectConversationTurnBlocks,
+  conversationTurnAncestorIds,
   ConversationTurn,
+  visibleConversationTurnPresentations,
 } from "../../components/conversations/ConversationTurn";
 import {
   DEFAULT_TRANSLATION_SETTINGS,
@@ -2879,6 +2881,21 @@ export function QuestionPreview({
     () => buildConversationTurnPresentations(question, commandProjections),
     [commandProjections, question],
   );
+  const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  const visibleTurnModels = useMemo(
+    () => visibleConversationTurnPresentations(turnModels, expandedTurnIds),
+    [expandedTurnIds, turnModels],
+  );
+  const toggleTurnExpanded = useCallback((turnId: string) => {
+    setExpandedTurnIds((current) => {
+      const next = new Set(current);
+      if (next.has(turnId)) next.delete(turnId);
+      else next.add(turnId);
+      return next;
+    });
+  }, []);
   const contentController = useConversationContentController({
     blocks: collectConversationTurnBlocks(turnModels),
     onCopyError,
@@ -2959,11 +2976,33 @@ export function QuestionPreview({
 
   useEffect(() => {
     if (!activeTurnId) return;
+    const branch = [
+      activeTurnId,
+      ...conversationTurnAncestorIds(turnModels, activeTurnId),
+    ];
+    setExpandedTurnIds((current) => {
+      if (branch.every((turnId) => current.has(turnId))) return current;
+      const next = new Set(current);
+      branch.forEach((turnId) => next.add(turnId));
+      return next;
+    });
+  }, [activeTurnId, turnModels]);
+
+  const scrolledTurnIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeTurnId) {
+      scrolledTurnIdRef.current = null;
+      return;
+    }
+    if (scrolledTurnIdRef.current === activeTurnId) return;
+    if (!visibleTurnModels.some((model) => model.turn.id === activeTurnId))
+      return;
+    scrolledTurnIdRef.current = activeTurnId;
     virtualizedCollectionRef.current?.scrollToKey(activeTurnId, {
       align: "center",
       behavior: "auto",
     });
-  }, [activeTurnId]);
+  }, [activeTurnId, visibleTurnModels]);
 
   const handleTurnReady = useCallback(
     (turnId: string) => {
@@ -3034,7 +3073,7 @@ export function QuestionPreview({
               }
               deferredRenderingEnabled={
                 renderingFlags.deferredSkeletonRendering &&
-                turnModels.length >= 12
+                visibleTurnModels.length >= 12
               }
               eagerKeys={eagerKeys}
               enabled={renderingFlags.conversationTurnVirtualization}
@@ -3042,7 +3081,7 @@ export function QuestionPreview({
               fallback={() => <ConversationTurnSkeleton />}
               getItemKey={(model) => model.turn.id}
               gap={0}
-              items={turnModels}
+              items={visibleTurnModels}
               minItems={12}
               onItemReady={handleTurnReady}
               pinnedKeys={pinnedKeys}
@@ -3052,10 +3091,12 @@ export function QuestionPreview({
                   activeBlockId={activeBlockId}
                   colors={contentCardColors}
                   controller={contentController}
+                  expanded={expandedTurnIds.has(model.turn.id)}
                   index={index}
                   model={model}
                   onCopyError={onCopyError}
                   onCommandPartsVisible={handleCommandPartsVisible}
+                  onToggleExpanded={toggleTurnExpanded}
                   recordKind={recordKind}
                   resultPreviewLineLimit={resultPreviewLineLimit}
                   t={t}
