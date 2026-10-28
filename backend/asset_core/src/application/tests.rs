@@ -378,6 +378,7 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
                     content_card: None,
                     metadata_json: None,
                 }],
+                ..Default::default()
             }],
             ..Default::default()
         }
@@ -1577,6 +1578,7 @@ async fn upsert_conversation_export_fixture(
                     r#"{"content_card":{"type":"answer","format":"markdown"}}"#.to_string(),
                 ),
             }],
+            ..Default::default()
         }],
         ..Default::default()
     };
@@ -2276,25 +2278,25 @@ esac
     .unwrap();
     assert_eq!(session_count, 2);
 
-    let s2_dirty: i64 = sqlx::query_scalar(
-        "SELECT dirty FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
+    let s2_observed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
     )
     .bind(tenant_id)
     .bind(&source_id)
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(s2_dirty, 1);
+    assert_eq!(s2_observed, 0);
 
-    let s1_dirty: i64 = sqlx::query_scalar(
-        "SELECT dirty FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-1'",
+    let s1_observed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-1'",
     )
     .bind(tenant_id)
     .bind(&source_id)
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(s1_dirty, 0);
+    assert_eq!(s1_observed, 1);
 
     // Round 2: fix session-2, perform incremental sync
     fs::remove_file(&marker_path).unwrap();
@@ -2323,15 +2325,15 @@ esac
     .unwrap();
     assert_eq!(session_count_r2, 3);
 
-    let s2_r2_dirty: i64 = sqlx::query_scalar(
-        "SELECT dirty FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
+    let s2_r2_observed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
     )
     .bind(tenant_id)
     .bind(&source_id)
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(s2_r2_dirty, 0);
+    assert_eq!(s2_r2_observed, 1);
 
     // Round 3: incremental sync again, all clean, zero active sessions
     let result3 = service
@@ -2503,6 +2505,190 @@ esac
     );
     assert_eq!(sync_stage.failures[0].code, "adapter_process_error");
     assert_eq!(sync_stage.failures[0].identity.as_deref(), Some("s-bad"));
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_sync_empty_sessions_and_contract_change_converge() {
+    let root =
+        std::env::temp_dir().join(format!("assetiweave-empty-and-contract-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .unwrap();
+
+    let script_content = r#"#!/bin/sh
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"session-normal","version_token":"v1"}}'
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"session-empty","version_token":"v1"}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":2,"snapshot_complete":true}}'
+    ;;
+  *session-normal*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"session-normal","source_fingerprint":"v1","turns":[{"external_id":"t-1","turn_index":0,"user_text":"Hi","parts":[]}]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+    ;;
+  *session-empty*)
+    printf '%s\n' '{"type":"complete","item":{"session_count":0}}'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+"#;
+    let script = write_executable_script(&root, "adapter.sh", script_content);
+
+    let adapter_id = format!("fixture-empty-{}", Uuid::new_v4());
+    let source_id = format!("{adapter_id}-source");
+    let manifest_path = root.join(format!("{adapter_id}.json"));
+    fs::write(
+        &manifest_path,
+        serde_json::json!({
+            "schema_version": 1,
+            "id": &adapter_id,
+            "name": "Fixture empty adapter",
+            "version": "0.1.0",
+            "protocol_version": 1,
+            "command": [adapter_manifest_entry(&root, &script)],
+            "capabilities": ["list_sessions", "read_session"],
+            "input_kinds": ["directory"]
+        })
+        .to_string(),
+    )
+    .expect("write adapter manifest");
+
+    let now = "2026-01-01T00:00:00Z".to_string();
+    let mut adapter = ConversationAdapter {
+        id: adapter_id.clone(),
+        name: "Fixture empty adapter".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest_path.to_string_lossy().to_string()),
+        executable_path: Some(script.to_string_lossy().to_string()),
+        content_hash: Some("hash-v1".to_string()),
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(1),
+        capabilities: vec!["list_sessions".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: Some(1),
+        card_kinds: Vec::new(),
+        projection_version: Some(1),
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+    let source = ConversationSource {
+        id: source_id.clone(),
+        adapter_id: adapter_id.clone(),
+        name: "Fixture empty source".to_string(),
+        kind: ConversationSourceKind::Directory,
+        location: root.to_string_lossy().to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id();
+    crate::backend::store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter)
+        .await
+        .unwrap();
+    crate::backend::store::upsert_conversation_source_sqlx(pool, tenant_id, &source)
+        .await
+        .unwrap();
+
+    // Round 1: Initial full sync
+    let res1 = service
+        .sync_conversations(ConversationSyncParams {
+            source_id: Some(source_id.clone()),
+            adapter_id: None,
+            record_kind: Some("session".to_string()),
+            mode: ConversationSyncMode::Full,
+            dry_run: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(res1["results"][0]["status"], "completed");
+    assert_eq!(res1["results"][0]["active_session_count"], 1);
+
+    let obs_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(&source_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        obs_count, 2,
+        "both normal and empty sessions must be recorded in watermarks"
+    );
+
+    let synced_hash: Option<String> = sqlx::query_scalar(
+        "SELECT synced_adapter_hash FROM conversation_sources WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(&source_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(synced_hash.as_deref(), Some("hash-v1"));
+
+    // Round 2: Incremental sync skips both sessions
+    let res2 = service
+        .sync_conversations(ConversationSyncParams {
+            source_id: Some(source_id.clone()),
+            adapter_id: None,
+            record_kind: Some("session".to_string()),
+            mode: ConversationSyncMode::Incremental,
+            dry_run: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(res2["results"][0]["status"], "completed");
+    assert_eq!(
+        res2["results"][0]["active_session_count"], 0,
+        "incremental sync skips both sessions"
+    );
+
+    // Round 3: Update adapter content hash (contract change on source)
+    adapter.content_hash = Some("hash-v2".to_string());
+    crate::backend::store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter)
+        .await
+        .unwrap();
+
+    let res3 = service
+        .sync_conversations(ConversationSyncParams {
+            source_id: Some(source_id.clone()),
+            adapter_id: None,
+            record_kind: Some("session".to_string()),
+            mode: ConversationSyncMode::Incremental,
+            dry_run: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(res3["results"][0]["status"], "completed");
+    assert_eq!(
+        res3["results"][0]["active_session_count"], 1,
+        "contract change invalidates watermarks and triggers full re-sync"
+    );
+
+    let updated_hash: Option<String> = sqlx::query_scalar(
+        "SELECT synced_adapter_hash FROM conversation_sources WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(&source_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(updated_hash.as_deref(), Some("hash-v2"));
 
     drop(service);
     fs::remove_dir_all(root).ok();
@@ -5704,6 +5890,7 @@ async fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_
                         r#"{"content_card":{"type":"answer","format":"markdown"}}"#.to_string(),
                     ),
                 }],
+                ..Default::default()
             }],
             ..Default::default()
         };

@@ -160,6 +160,7 @@ export interface MemoryContextResult {
 export interface MemoryProjectView {
   projectKey: string;
   projectPath: string | null;
+  content?: string | null;
   items: Record<string, unknown>[];
   lastSuccessfulConsolidationAt: string | null;
   revisionHash: string;

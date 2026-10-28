@@ -4,7 +4,7 @@ use crate::backend::infrastructure::tasks::stages;
 use chrono::Utc;
 
 #[tokio::test]
-async fn test_start_memory_pipeline_creates_single_task_with_four_stages() {
+async fn test_start_memory_pipeline_creates_single_task_with_three_stages() {
     let db_path = std::env::temp_dir().join(format!(
         "memory-pipeline-test-1-{}.sqlite",
         uuid::Uuid::new_v4()
@@ -26,11 +26,14 @@ async fn test_start_memory_pipeline_creates_single_task_with_four_stages() {
         .await
         .expect("pipeline snapshot");
 
-    assert_eq!(snapshot.stages.len(), 4);
+    assert_eq!(snapshot.stages.len(), 3);
     assert_eq!(snapshot.stages[0].id, stages::SESSION_FACTS);
     assert_eq!(snapshot.stages[1].id, stages::RECENT_SNAPSHOT);
     assert_eq!(snapshot.stages[2].id, stages::GLOBAL_CONSOLIDATION);
-    assert_eq!(snapshot.stages[3].id, stages::MARKDOWN_PROJECTION);
+    assert_eq!(
+        snapshot.state,
+        crate::backend::infrastructure::tasks::TaskState::Succeeded
+    );
 }
 
 #[tokio::test]
@@ -42,7 +45,7 @@ async fn test_concurrency_rejection_returns_conflict() {
     let service = AppService::open_with_db_path(db_path).await.unwrap();
 
     let task_id = format!("memory-pipeline:{}", service.tenant_id());
-    // Manually register an active task to simulate running pipeline
+    // 手动注册一个活跃任务模拟并发
     let spec = crate::backend::infrastructure::tasks::TaskSpec::new(
         crate::backend::infrastructure::tasks::TaskKind::Memory,
         Some(task_id.clone()),
@@ -65,104 +68,13 @@ async fn test_concurrency_rejection_returns_conflict() {
 
     assert!(service.is_memory_pipeline_active());
 
-    // Second spawn must return Conflict
+    // 第二次调用必须返回 Conflict
     let conflict_res = service
         .start_memory_pipeline(MemoryPipelineParams::background())
         .await;
 
     assert!(conflict_res.is_err());
     assert!(matches!(conflict_res.unwrap_err(), AppError::Conflict(_)));
-
-    // Rebuild scope must also return Conflict
-    let rebuild_conflict = service
-        .rebuild_memory_scope(MemoryScopeRebuildParams {
-            scope: MemoryScope::default(),
-            target: Some(MemoryRebuildTarget::Recent),
-            project_path: None,
-            reason: None,
-        })
-        .await;
-
-    assert!(rebuild_conflict.is_err());
-    assert!(matches!(
-        rebuild_conflict.unwrap_err(),
-        AppError::Conflict(_)
-    ));
-}
-
-#[tokio::test]
-async fn test_stage3_skipped_when_not_requested() {
-    let db_path = std::env::temp_dir().join(format!(
-        "memory-pipeline-test-3-{}.sqlite",
-        uuid::Uuid::new_v4()
-    ));
-    let service = AppService::open_with_db_path(db_path).await.unwrap();
-
-    let handle = service
-        .start_memory_pipeline(MemoryPipelineParams::rebuild(
-            MemoryRebuildTarget::Recent,
-            None,
-            None,
-        ))
-        .await
-        .unwrap();
-
-    let snapshot = handle
-        .wait_until_finished(service.runtime.task_runtime())
-        .await
-        .expect("pipeline snapshot");
-
-    let stage3 = snapshot
-        .stages
-        .iter()
-        .find(|s| s.id == stages::GLOBAL_CONSOLIDATION)
-        .expect("stage 3");
-
-    assert_eq!(stage3.status, StageStatus::Skipped);
-}
-
-#[tokio::test]
-async fn test_cold_start_reset_orphaned_running_jobs() {
-    let db_path = std::env::temp_dir().join(format!(
-        "memory-pipeline-test-4-{}.sqlite",
-        uuid::Uuid::new_v4()
-    ));
-    let service = AppService::open_with_db_path(db_path).await.unwrap();
-    let pool = service.db.pool();
-
-    // Insert orphaned running jobs
-    let now = Utc::now().to_rfc3339();
-    sqlx::query(
-        "INSERT INTO session_memory_jobs (
-            tenant_id, id, session_id, source_id, source_revision,
-            source_fingerprint, contract_version, prompt_version,
-            source_event_id, source_sync_run_id, status, not_before,
-            attempt_count, created_at, updated_at
-        ) VALUES (
-            'default', 'sm-orphan', 'session-1', 'source-1', 1,
-            'fp-1', 'cv-1', 'pv-1',
-            'ev-1', 'sync-1', 'running', ?1,
-            1, ?1, ?1
-        )",
-    )
-    .bind(&now)
-    .execute(pool)
-    .await
-    .unwrap();
-
-    let reset_count = store::reset_orphaned_running_memory_jobs_sqlx(pool)
-        .await
-        .unwrap();
-
-    assert!(reset_count >= 1);
-
-    let status: String =
-        sqlx::query_scalar("SELECT status FROM session_memory_jobs WHERE id = 'sm-orphan'")
-            .fetch_one(pool)
-            .await
-            .unwrap();
-
-    assert_eq!(status, "queued");
 }
 
 #[tokio::test]
@@ -199,438 +111,323 @@ async fn test_pipeline_records_steps_for_all_executed_stages() {
         .await
         .expect("pipeline snapshot");
 
-    // 阶段 1: 必须有步骤记录（即使会话为0，也记录了 check_session_facts）
+    // 阶段 1: SESSION_FACTS
     let stage1 = snapshot
         .stages
         .iter()
         .find(|s| s.id == stages::SESSION_FACTS)
         .expect("stage 1");
-    assert!(
-        !stage1.steps.is_empty(),
-        "stage 1 must record steps even when 0 sessions"
-    );
-    assert_eq!(stage1.steps[0].operation, "check_session_facts");
+    assert_eq!(stage1.status, StageStatus::Succeeded);
+    assert!(!stage1.steps.is_empty(), "stage 1 must record steps");
 
-    // 阶段 3: 跳过时记录 skipped
+    // 阶段 2: RECENT_SNAPSHOT
+    let stage2 = snapshot
+        .stages
+        .iter()
+        .find(|s| s.id == stages::RECENT_SNAPSHOT)
+        .expect("stage 2");
+    assert_eq!(stage2.status, StageStatus::Succeeded);
+    assert!(!stage2.steps.is_empty(), "stage 2 must record steps");
+
+    // 阶段 3: GLOBAL_CONSOLIDATION
     let stage3 = snapshot
         .stages
         .iter()
         .find(|s| s.id == stages::GLOBAL_CONSOLIDATION)
         .expect("stage 3");
-    assert_eq!(stage3.status, StageStatus::Skipped);
-
-    // 阶段 4: 投影记录步骤
-    let stage4 = snapshot
-        .stages
-        .iter()
-        .find(|s| s.id == stages::MARKDOWN_PROJECTION)
-        .expect("stage 4");
-    assert_eq!(stage4.status, StageStatus::Succeeded);
-    assert!(
-        !stage4.steps.is_empty(),
-        "stage 4 must record markdown_projected step"
-    );
+    assert_eq!(stage3.status, StageStatus::Succeeded);
+    assert!(!stage3.steps.is_empty(), "stage 3 must record steps");
 }
 
 #[tokio::test]
-async fn test_orphaned_queued_jobs_marked_stale() {
+async fn test_force_rebuild_resets_watermarks() {
     let db_path = std::env::temp_dir().join(format!(
-        "memory-pipeline-test-7-{}.sqlite",
+        "memory-pipeline-test-rebuild-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let service = AppService::open_with_db_path(db_path).await.unwrap();
     let pool = service.db.pool();
 
-    // 插入一个 >48h 的孤儿 queued job
-    let old_date = "2026-10-10T10:00:00Z";
-    sqlx::query(
-        "INSERT INTO recent_memory_jobs (
-            tenant_id, id, target_watermark_utc, window_hours,
-            target_fingerprint, content_fingerprint, status, retry_count,
-            work_order_json, created_at, updated_at
-        ) VALUES (
-            'default', 'job-stale-1', ?1, 24,
-            'fp-2', 'cp-2', 'queued', 0,
-            '{}', ?2, ?2
-        )",
-    )
-    .bind(old_date)
-    .bind(old_date)
-    .execute(pool)
-    .await
-    .unwrap();
+    // 插入假水位记录
+    let fake_rec = store::MemorySessionWatermarkRecord {
+        tenant_id: service.tenant_id().to_string(),
+        session_id: "fake-sess-1".to_string(),
+        project_path: None,
+        source_updated_at: "2026-10-26T12:00:00Z".to_string(),
+        summary_rel_path: "sessions/fake-sess-1.md".to_string(),
+        has_signal: true,
+        updated_at: "2026-10-26T12:00:00Z".to_string(),
+    };
+    store::upsert_watermark_sqlx(pool, &fake_rec).await.unwrap();
 
-    let has_work = service.has_pending_memory_work(Utc::now()).await.unwrap();
-    assert!(
-        !has_work,
-        "stale orphaned jobs must not trigger pending memory work"
-    );
-
-    let stale_status: String =
-        sqlx::query_scalar("SELECT status FROM recent_memory_jobs WHERE id = 'job-stale-1'")
-            .fetch_one(pool)
-            .await
-            .unwrap();
-    assert_eq!(stale_status, "stale");
-}
-
-#[tokio::test]
-async fn test_restart_recent_memory_job_resets_running_status() {
-    let db_path = std::env::temp_dir().join(format!(
-        "memory-pipeline-test-8-{}.sqlite",
-        uuid::Uuid::new_v4()
-    ));
-    let service = AppService::open_with_db_path(db_path).await.unwrap();
-    let pool = service.db.pool();
-
-    let now = Utc::now().to_rfc3339();
-    sqlx::query(
-        "INSERT INTO recent_memory_jobs (
-            tenant_id, id, target_watermark_utc, window_hours,
-            target_fingerprint, content_fingerprint, status, retry_count,
-            ownership_token, lease_expires_at, work_order_json, created_at, updated_at
-        ) VALUES (
-            'default', 'job-running-1', '2026-10-14T02:00:00Z', 24,
-            'fp-run', 'cp-run', 'running', 2,
-            'owner-ghost', '2026-10-14T10:00:00Z', '{}', ?1, ?1
-        )",
-    )
-    .bind(&now)
-    .execute(pool)
-    .await
-    .unwrap();
-
-    let restarted = store::restart_recent_memory_job_for_rebuild_sqlx(
-        pool,
-        service.tenant_id(),
-        "job-running-1",
-        &now,
-    )
-    .await
-    .unwrap();
-    assert!(restarted, "must successfully restart running orphaned job");
-
-    let row: (String, Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT status, ownership_token, lease_expires_at FROM recent_memory_jobs WHERE id = 'job-running-1'",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap();
-
-    assert_eq!(row.0, "queued");
-    assert!(row.1.is_none(), "ownership_token must be cleared");
-    assert!(row.2.is_none(), "lease_expires_at must be cleared");
-}
-
-#[tokio::test]
-async fn test_pipeline_recovers_orphaned_running_job_without_claim_failure() {
-    let db_path = std::env::temp_dir().join(format!(
-        "memory-pipeline-test-9-{}.sqlite",
-        uuid::Uuid::new_v4()
-    ));
-    let service = AppService::open_with_db_path(db_path).await.unwrap();
-
-    // 预先运行一次提取
-    let now = Utc::now();
-    let prep = service
-        .prepare_recent_snapshot_generation_for_pipeline(Some(now), false)
+    let watermarks = store::load_watermarks_sqlx(pool, service.tenant_id())
         .await
         .unwrap();
+    assert_eq!(watermarks.len(), 1);
 
-    if let Some(prep) = prep {
-        let pool = service.db.pool();
-        let jid = service
-            .enqueue_recent_snapshot_generation(&prep, now)
-            .await
-            .unwrap();
+    let temp_mem_root =
+        std::env::temp_dir().join(format!("test-mem-root-fb-{}", uuid::Uuid::new_v4()));
+    std::env::set_var("ASSETIWEAVE_MEMORY_ROOT", &temp_mem_root);
 
-        // 模拟上一次流水线中断，将状态人工置为带有有效租约的 running
-        let future_lease = (now + chrono::Duration::minutes(5)).to_rfc3339();
-        let now_text = now.to_rfc3339();
-        sqlx::query(
-            "UPDATE recent_memory_jobs SET status = 'running', ownership_token = 'ghost-owner', \
-             lease_expires_at = ?1, updated_at = ?2 WHERE id = ?3",
-        )
-        .bind(&future_lease)
-        .bind(&now_text)
-        .bind(&jid)
-        .execute(pool)
-        .await
+    let storage =
+        crate::backend::infrastructure::memory::storage::MemoryStorage::new(service.tenant_id());
+    storage
+        .write_markdown_atomic("sessions/fake-sess-1.md", "# Fake session")
         .unwrap();
+    storage
+        .write_markdown_atomic("recent/latest.md", "# Fake recent")
+        .unwrap();
+    assert!(storage.root_dir().join("sessions/fake-sess-1.md").exists());
 
-        // 启动流水线，阶段 2 必须自动接管该 running job，记录 recover_orphaned_job 步骤，绝不报错 'Job status running cannot be claimed'
-        let handle = service
-            .start_memory_pipeline(MemoryPipelineParams::background())
-            .await
-            .unwrap();
-
-        let snapshot = handle
-            .wait_until_finished(service.runtime.task_runtime())
-            .await
-            .expect("pipeline snapshot");
-
-        let stage2 = snapshot
-            .stages
-            .iter()
-            .find(|s| s.id == stages::RECENT_SNAPSHOT)
-            .expect("stage 2");
-
-        // 验证步骤中记录了 recover_orphaned_job
-        let recovered_step = stage2
-            .steps
-            .iter()
-            .find(|step| step.operation == "recover_orphaned_job");
-        assert!(
-            recovered_step.is_some(),
-            "stage 2 must record recover_orphaned_job step when encountering running job"
-        );
-
-        // 绝不可出现 recent_job_claim_failed 报错
-        let claim_failed = stage2
-            .failures
-            .iter()
-            .any(|f| f.code == "recent_job_claim_failed");
-        assert!(
-            !claim_failed,
-            "stage 2 must NOT fail with recent_job_claim_failed"
-        );
-    }
-}
-
-#[tokio::test]
-async fn test_memory_pipeline_stage1_attaches_agent_session_ref() {
-    let db_path = std::env::temp_dir().join(format!(
-        "memory-pipeline-test-session-ref-{}.sqlite",
-        uuid::Uuid::new_v4()
-    ));
-    let service = AppService::open_with_db_path(db_path).await.unwrap();
-    let pool = service.db.pool();
-
-    let now = Utc::now().to_rfc3339();
-    sqlx::query(
-        "INSERT INTO session_memory_jobs (
-                tenant_id, id, session_id, source_id, source_revision,
-                source_fingerprint, contract_version, prompt_version,
-                source_event_id, source_sync_run_id, status, not_before,
-                attempt_count, created_at, updated_at
-            ) VALUES (
-                'default', 'job-sample-1', 'session-1', 'source-1', 1,
-                'fp-1', 'cv-1', 'pv-1',
-                'ev-1', 'sync-1', 'queued', ?1,
-                0, ?1, ?1
-            )",
-    )
-    .bind(&now)
-    .execute(pool)
-    .await
-    .unwrap();
-
+    // 启动带 force_rebuild 的流水线
     let handle = service
-        .start_memory_pipeline(MemoryPipelineParams::background())
+        .start_memory_pipeline(MemoryPipelineParams::manual(true))
         .await
         .unwrap();
 
-    let snapshot = handle
+    let _ = handle
         .wait_until_finished(service.runtime.task_runtime())
         .await
         .expect("pipeline snapshot");
 
-    let stage1 = snapshot
-        .stages
-        .iter()
-        .find(|s| s.id == stages::SESSION_FACTS)
-        .expect("stage 1");
+    // 水位表必须已被清空
+    let watermarks_after = store::load_watermarks_sqlx(pool, service.tenant_id())
+        .await
+        .unwrap();
+    assert_eq!(watermarks_after.len(), 0);
 
+    // 磁盘存储目录必须已被清理并重新初始化干净分层结构
+    assert!(!storage.root_dir().join("sessions/fake-sess-1.md").exists());
+    assert!(!storage.root_dir().join("recent/latest.md").exists());
+    assert!(storage.sessions_dir().exists());
+    assert!(storage.recent_dir().exists());
+    assert!(storage.projects_dir().exists());
     assert_eq!(
-        stage1.agent_session_ref.as_ref().map(|r| r.value.as_str()),
-        Some("sm-job-sample-1")
+        std::fs::read_dir(storage.sessions_dir()).unwrap().count(),
+        0
     );
+    assert_eq!(std::fs::read_dir(storage.recent_dir()).unwrap().count(), 0);
+    assert_eq!(
+        std::fs::read_dir(storage.projects_dir()).unwrap().count(),
+        0
+    );
+
+    std::fs::remove_dir_all(temp_mem_root).ok();
 }
 
 #[tokio::test]
-async fn test_memory_pipeline_watchdog_activity_tracking() {
+async fn test_unattended_pipeline_does_not_write_junk_to_disk() {
+    let temp_mem_root =
+        std::env::temp_dir().join(format!("test-mem-root-{}", uuid::Uuid::new_v4()));
+    std::env::set_var("ASSETIWEAVE_MEMORY_ROOT", &temp_mem_root);
+
     let db_path = std::env::temp_dir().join(format!(
-        "memory-pipeline-test-watchdog-{}.sqlite",
+        "memory-pipeline-test-nojunk-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let service = AppService::open_with_db_path(db_path).await.unwrap();
+    let tenant_id = service.tenant_id();
 
-    // Verify session_streams elapsed_since_active_by_ref returns None for nonexistent session
-    assert!(service
-        .runtime
-        .session_streams()
-        .elapsed_since_active_by_ref("sm-nonexistent")
-        .is_none());
-
-    // Register a session stream and verify elapsed_since_active_by_ref works
-    let key = crate::backend::infrastructure::runtime::session_streams::SessionStreamKey {
-        tenant_id: "default".to_string(),
-        scope_id: "test".to_string(),
-        execution_id: "exec-1".to_string(),
-    };
-    let meta = crate::backend::infrastructure::runtime::session_streams::AgentSessionMetadata {
-        session_ref: crate::backend::domain::agents::AgentSessionRef::new("sm-test-job-1"),
-        execution_id: "exec-1".to_string(),
-        purpose: "test".to_string(),
-        mode: "oneshot".to_string(),
-        tenant_id: Some("default".to_string()),
-        agent: crate::backend::domain::agents::AgentInfoView {
-            id: "test".to_string(),
-            display_name: None,
-            model: None,
-            protocol: "builtin".to_string(),
-        },
-        context: crate::backend::domain::agents::AgentSessionContextView {
-            memory_scope: None,
-            memory_job_id: None,
-            task_id: None,
-        },
-        allow_stop: true,
-    };
-    let _projection = service
-        .runtime
-        .session_streams()
-        .register_with_metadata(key, meta);
-    assert!(service
-        .runtime
-        .session_streams()
-        .elapsed_since_active_by_ref("sm-test-job-1")
-        .is_some());
-    assert!(
-        service
-            .runtime
-            .session_streams()
-            .elapsed_since_active_by_ref("sm-test-job-1")
-            .unwrap()
-            .as_secs()
-            < 5
-    );
-}
-
-#[tokio::test]
-async fn test_stage1_failure_sampling_caps_error_cards_and_adds_summary() {
-    let db_path = std::env::temp_dir().join(format!(
-        "memory-pipeline-test-sampling-{}.sqlite",
-        uuid::Uuid::new_v4()
-    ));
-    let service = AppService::open_with_db_path(db_path).await.unwrap();
-    let pool = service.db.pool();
-
-    // 插入 5 个必然失败的 session_memory_jobs
-    let now = Utc::now();
-    let now_text = now.to_rfc3339();
-    for i in 1..=5 {
-        sqlx::query(
-            "INSERT INTO session_memory_jobs (
-                tenant_id, id, session_id, source_id, source_revision,
-                source_fingerprint, contract_version, prompt_version,
-                source_event_id, source_sync_run_id,
-                status, not_before, attempt_count, retry_count,
-                created_at, updated_at
-            ) VALUES (
-                $1, $2, $3, 'test-source', 1,
-                'fp', '1.0', '1.0',
-                'event-1', 'sync-1',
-                'queued', $4, 0, 0,
-                $4, $4
-            )",
-        )
-        .bind(service.tenant_id())
-        .bind(format!("sample-job-{}", i))
-        .bind(format!("sample-session-{}", i))
-        .bind(&now_text)
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-
+    // 运行无人值守流水线
     let handle = service
         .start_memory_pipeline(MemoryPipelineParams::background())
         .await
         .unwrap();
 
-    let snapshot = handle
+    let _ = handle
         .wait_until_finished(service.runtime.task_runtime())
         .await
         .expect("pipeline snapshot");
 
-    let stage1 = snapshot
-        .stages
-        .iter()
-        .find(|s| s.id == stages::SESSION_FACTS)
-        .expect("stage 1");
+    let storage = crate::backend::infrastructure::memory::storage::MemoryStorage::new(tenant_id);
+    let sessions_dir = storage.sessions_dir();
+    if sessions_dir.exists() {
+        let entries: Vec<_> = std::fs::read_dir(&sessions_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(
+            entries.len(),
+            0,
+            "Unattended pipeline must NOT write sessions/*.md"
+        );
+    }
 
-    // 验证失败卡片数量：最多 3 条采样 + 1 条汇总 = 4 条，绝不膨胀至 5 条或以上
     assert!(
-        stage1.failures.len() <= 4,
-        "failures count should be capped, got {}",
-        stage1.failures.len()
+        !storage.recent_dir().join("latest.md").exists(),
+        "Unattended pipeline must NOT write recent/latest.md"
     );
     assert!(
-        stage1
-            .failures
-            .iter()
-            .any(|f| f.code == "session_facts_partial_failed"),
-        "must contain aggregate summary failure"
+        !storage.global_file().exists(),
+        "Unattended pipeline must NOT write MEMORY.md"
     );
+
+    std::env::remove_var("ASSETIWEAVE_MEMORY_ROOT");
+    std::fs::remove_dir_all(&temp_mem_root).ok();
 }
 
 #[tokio::test]
-async fn test_queue_heartbeat_keeps_memory_agent_session_active_during_permit_wait() {
-    use crate::backend::infrastructure::agent_execution::AiExecutionProgressSink;
-
+async fn test_has_pending_memory_work_respects_window_and_internal_filter() {
     let db_path = std::env::temp_dir().join(format!(
-        "memory-pipeline-test-queue-{}.sqlite",
+        "memory-pipeline-test-pending-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let service = AppService::open_with_db_path(db_path).await.unwrap();
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id();
 
-    let session =
-        crate::backend::application::memory::memory_agent_session::ActiveMemoryAgentSession::start(
-            &service.runtime,
-            crate::backend::application::memory::memory_agent_session::MemoryAgentSessionParams {
-                tenant_id: "default",
-                scope: "session",
-                job_id: "job-queue-test-1",
-                task_id: Some("task-1"),
-                agent_id: "builtin:assistant",
-                display_name: Some("Test Agent".to_string()),
-                model: None,
-                prompt_summary: "测试排队心跳保活",
-                custom_session_ref: Some(crate::backend::domain::agents::AgentSessionRef::new(
-                    "sm-job-queue-test-1",
-                )),
-                persistent: false,
-            },
+    let adapter = crate::backend::domain::ConversationAdapter {
+        id: "adapter-pending".to_string(),
+        name: "Test Adapter".to_string(),
+        kind: crate::backend::domain::ConversationAdapterKind::External,
+        version: "1.0.0".to_string(),
+        enabled: true,
+        manifest_path: None,
+        executable_path: None,
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: crate::backend::domain::ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(1),
+        capabilities: vec!["read_session".to_string()],
+        input_kinds: vec![crate::backend::domain::ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        projection_version: Some(1),
+        created_at: "2026-10-21T10:00:00Z".to_string(),
+        updated_at: "2026-10-21T10:00:00Z".to_string(),
+    };
+    let source = crate::backend::domain::ConversationSource {
+        id: "source-pending".to_string(),
+        adapter_id: "adapter-pending".to_string(),
+        name: "Test Source".to_string(),
+        kind: crate::backend::domain::ConversationSourceKind::Directory,
+        location: "/fixture/path".to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: "2026-10-21T10:00:00Z".to_string(),
+        updated_at: "2026-10-21T10:00:00Z".to_string(),
+    };
+
+    crate::backend::store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter)
+        .await
+        .unwrap();
+    crate::backend::store::upsert_conversation_source_sqlx(pool, tenant_id, &source)
+        .await
+        .unwrap();
+
+    let now = chrono::Utc::now();
+    // 1. Expired session (100h ago, outside 48h/72h window)
+    let ts_expired = (now - chrono::Duration::hours(100)).to_rfc3339();
+    let expired_session = crate::backend::domain::NormalizedConversationSession {
+        external_id: "s-pending-expired".to_string(),
+        title: Some("Expired".to_string()),
+        project_path: Some("/code/expired".to_string()),
+        started_at: Some(ts_expired.clone()),
+        updated_at: Some(ts_expired.clone()),
+        source_locator: None,
+        source_fingerprint: None,
+        turns: vec![crate::backend::domain::NormalizedConversationTurn {
+            external_id: "t1".to_string(),
+            turn_index: 0,
+            user_text: "old work".to_string(),
+            title: None,
+            started_at: Some(ts_expired.clone()),
+            ended_at: Some(ts_expired.clone()),
+            model: None,
+            parts: vec![],
+            ..Default::default()
+        }],
+        execution_origin: None,
+        execution_purpose: None,
+        user_visible: Some(true),
+    };
+
+    // 2. Internal agent session
+    let internal_root =
+        crate::backend::infrastructure::agent_execution::agent_execution_workspace_root(
+            &service.db_path,
         );
+    let internal_session = crate::backend::domain::NormalizedConversationSession {
+        external_id: "s-pending-internal".to_string(),
+        title: Some("Internal".to_string()),
+        project_path: Some(format!("{internal_root}/agent-run-1")),
+        started_at: Some((now - chrono::Duration::hours(1)).to_rfc3339()),
+        updated_at: Some((now - chrono::Duration::hours(1)).to_rfc3339()),
+        source_locator: None,
+        source_fingerprint: None,
+        turns: vec![crate::backend::domain::NormalizedConversationTurn {
+            external_id: "t2".to_string(),
+            turn_index: 0,
+            user_text: "internal run".to_string(),
+            title: None,
+            started_at: Some((now - chrono::Duration::hours(1)).to_rfc3339()),
+            ended_at: Some((now - chrono::Duration::hours(1)).to_rfc3339()),
+            model: None,
+            parts: vec![],
+            ..Default::default()
+        }],
+        execution_origin: Some("internal_agent".to_string()),
+        execution_purpose: None,
+        user_visible: Some(false),
+    };
 
-    // 初始活跃时间差应在极小范围内 (< 1s)
-    let initial_elapsed = session.elapsed_since_active();
-    assert!(initial_elapsed.as_millis() < 1000);
+    crate::backend::store::import_conversation_sessions_sqlx(
+        pool,
+        tenant_id,
+        &source,
+        &[expired_session, internal_session],
+        false,
+    )
+    .await
+    .unwrap();
 
-    // 模拟在队列中排队，阶段心跳 Queued 触发
-    session
-        .sink
-        .set_phase(crate::backend::infrastructure::agent_execution::AiExecutionPhase::Queued);
-    let after_queued = session.elapsed_since_active();
-    assert!(after_queued.as_millis() < 500);
+    // Expired and internal sessions must be ignored -> has_pending_memory_work is FALSE
+    assert!(
+        !service.has_pending_memory_work(now).await.unwrap(),
+        "Expired and internal sessions must not trigger pending memory work"
+    );
 
-    // 模拟拿到许可证，进入 Resolving 阶段触发 touch
-    session
-        .sink
-        .set_phase(crate::backend::infrastructure::agent_execution::AiExecutionPhase::Resolving);
-    let after_resolving = session.elapsed_since_active();
-    assert!(after_resolving.as_millis() < 500);
+    // 3. Add an active session within recent window
+    let ts_active = (now - chrono::Duration::hours(2)).to_rfc3339();
+    let active_session = crate::backend::domain::NormalizedConversationSession {
+        external_id: "s-pending-active".to_string(),
+        title: Some("Active".to_string()),
+        project_path: Some("/code/active".to_string()),
+        started_at: Some(ts_active.clone()),
+        updated_at: Some(ts_active.clone()),
+        source_locator: None,
+        source_fingerprint: None,
+        turns: vec![crate::backend::domain::NormalizedConversationTurn {
+            external_id: "t3".to_string(),
+            turn_index: 0,
+            user_text: "active recent work".to_string(),
+            title: None,
+            started_at: Some(ts_active.clone()),
+            ended_at: Some(ts_active.clone()),
+            model: None,
+            parts: vec![],
+            ..Default::default()
+        }],
+        execution_origin: None,
+        execution_purpose: None,
+        user_visible: Some(true),
+    };
 
-    // 验证 session_streams 的 touch_by_ref
-    service
-        .runtime
-        .session_streams()
-        .touch_by_ref("sm-job-queue-test-1");
-    let after_touch = service
-        .runtime
-        .session_streams()
-        .elapsed_since_active_by_ref("sm-job-queue-test-1")
-        .expect("session stream exists");
-    assert!(after_touch.as_millis() < 500);
+    crate::backend::store::import_conversation_sessions_sqlx(
+        pool,
+        tenant_id,
+        &source,
+        &[active_session],
+        false,
+    )
+    .await
+    .unwrap();
+
+    // Now has_pending_memory_work should be TRUE
+    assert!(
+        service.has_pending_memory_work(now).await.unwrap(),
+        "Active session within recent window must trigger pending memory work"
+    );
 }

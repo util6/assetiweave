@@ -447,7 +447,10 @@ export function MemoryRecentWorkspace({
                                     {t("memory.recent.whatChanged")}
                                   </span>
                                   <div className="text-body-sm text-on-surface leading-relaxed">
-                                    <MarkdownContent value={project.summary} />
+                                    <MarkdownContent
+                                      onNavigateSession={onNavigateSession}
+                                      value={project.summary}
+                                    />
                                   </div>
                                 </div>
                               )}
@@ -518,7 +521,10 @@ export function MemoryRecentWorkspace({
                       {t("memory.recent.whatChanged")}
                     </span>
                     <div className="text-body-sm text-on-surface leading-relaxed">
-                      <MarkdownContent value={project.summary} />
+                      <MarkdownContent
+                        onNavigateSession={onNavigateSession}
+                        value={project.summary}
+                      />
                     </div>
                   </div>
                 )}
@@ -664,7 +670,10 @@ function RecentItemCard({
 
             {item.summary && (
               <div className="text-body-sm text-on-surface-variant leading-relaxed">
-                <MarkdownContent value={item.summary} />
+                <MarkdownContent
+                  onNavigateSession={onNavigateSession}
+                  value={item.summary}
+                />
               </div>
             )}
           </div>

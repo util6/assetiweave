@@ -75,68 +75,20 @@ impl DomainEventConsumer for SessionMemoryConsumer {
         InitialPosition::BackfillThenCutoff
     }
 
-    fn backfill<'a>(&'a self, cx: &'a ConsumerCx) -> ConsumerFuture<'a> {
-        let internal_agent_workspace =
-            crate::backend::infrastructure::agent_execution::agent_execution_workspace_root(
-                &cx.db_path,
-            );
-        let pool = cx.pool.clone();
-        let tenant_id = cx.tenant_id.clone();
-        Box::pin(async move {
-            crate::backend::store::backfill_session_memory_jobs_sqlx(
-                &pool,
-                &tenant_id,
-                &internal_agent_workspace,
-                &chrono::Utc::now().to_rfc3339(),
-            )
-            .await?;
-            Ok(())
-        })
+    fn backfill<'a>(&'a self, _cx: &'a ConsumerCx) -> ConsumerFuture<'a> {
+        Box::pin(async move { Ok(()) })
     }
 
     fn interested(&self, event: &DomainEvent) -> bool {
         matches!(event, DomainEvent::ConversationSourceCommitted { .. })
     }
 
-    fn handle<'a>(&'a self, batch: &'a [SequencedEvent], cx: &'a ConsumerCx) -> ConsumerFuture<'a> {
-        let internal_agent_workspace =
-            crate::backend::infrastructure::agent_execution::agent_execution_workspace_root(
-                &cx.db_path,
-            );
-        let pool = cx.pool.clone();
-        let cx_tenant_id = cx.tenant_id.clone();
-        let events = batch.to_vec();
-        Box::pin(async move {
-            for item in events {
-                let DomainEvent::ConversationSourceCommitted {
-                    event_id,
-                    tenant_id,
-                    sync_run_id,
-                    source_id,
-                    revision_end,
-                    changed_session_ids,
-                    ..
-                } = &item.event;
-                if tenant_id != &cx_tenant_id {
-                    return Err(InfraError::Conflict(
-                        "领域事件租户与消费者租户不一致".to_string(),
-                    ));
-                }
-                crate::backend::store::enqueue_session_memory_jobs_sqlx(
-                    &pool,
-                    &cx_tenant_id,
-                    source_id,
-                    sync_run_id,
-                    *revision_end,
-                    event_id,
-                    changed_session_ids.as_deref(),
-                    &internal_agent_workspace,
-                    &chrono::Utc::now().to_rfc3339(),
-                )
-                .await?;
-            }
-            Ok(())
-        })
+    fn handle<'a>(
+        &'a self,
+        _batch: &'a [SequencedEvent],
+        _cx: &'a ConsumerCx,
+    ) -> ConsumerFuture<'a> {
+        Box::pin(async move { Ok(()) })
     }
 }
 

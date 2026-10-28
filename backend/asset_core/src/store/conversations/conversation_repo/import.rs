@@ -130,15 +130,6 @@ pub async fn import_conversation_sessions_with_control_sqlx(
                 on_progress(completed_session_count, sessions.len());
                 continue;
             }
-            sqlx::query(
-                "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND session_id = ?3 AND status = 'active'",
-            )
-            .bind(&now)
-            .bind(tenant_id)
-            .bind(&session.id)
-            .execute(&mut *tx)
-            .await
-            .map_err(StoreError::external)?;
             upsert_conversation_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
             for turn in &normalized.turns {
                 ensure_sync_import_active(cancellation)?;
@@ -173,16 +164,7 @@ pub async fn import_conversation_sessions_with_control_sqlx(
             )
             .await?;
             prune_conversation_turns_sqlx_tx(&mut tx, tenant_id, &session.id, normalized).await?;
-            insert_conversation_sync_delta_sqlx_tx(
-                &mut tx,
-                tenant_id,
-                &sync_run_id,
-                "session",
-                &session.id,
-                change_kind,
-                &now,
-            )
-            .await?;
+
             changed_session_count += 1;
             batch_changed_session_ids.push(session.id);
             completed_session_count += 1;
@@ -230,23 +212,6 @@ pub async fn import_conversation_sessions_with_control_sqlx(
     .execute(&mut *tx)
     .await
     .map_err(StoreError::external)?;
-    insert_sync_run_sqlx_tx(
-        &mut tx,
-        tenant_id,
-        &ConversationSyncRun {
-            id: sync_run_id.clone(),
-            source_id: Some(source.id.clone()),
-            adapter_id: Some(source.adapter_id.clone()),
-            status: ConversationSyncStatus::Completed,
-            started_at: now.clone(),
-            finished_at: Some(now.clone()),
-            session_count: sessions.len() as i64,
-            turn_count: turn_count as i64,
-            warning_count: warning_count as i64,
-            error_message: None,
-        },
-    )
-    .await?;
     let revision =
         super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
     crate::backend::store::append_outbox_event_sqlx_tx(

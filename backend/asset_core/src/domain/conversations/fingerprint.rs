@@ -60,6 +60,18 @@ pub fn conversation_turn_fingerprint(turn: &NormalizedConversationTurn) -> Strin
         hasher.update(b"\0");
         hasher.update(value.as_bytes());
     }
+    if let Some(value) = &turn.turn_kind {
+        hasher.update(b"\0");
+        hasher.update(value.as_bytes());
+    }
+    if let Some(value) = &turn.agent_role {
+        hasher.update(b"\0");
+        hasher.update(value.as_bytes());
+    }
+    if let Some(value) = &turn.parent_external_id {
+        hasher.update(b"\0");
+        hasher.update(value.as_bytes());
+    }
     for part in &turn.parts {
         hasher.update(b"\0");
         hasher.update(format!("{:?}:{:?}", part.role, part.kind).as_bytes());

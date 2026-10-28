@@ -195,6 +195,10 @@ pub(super) async fn prepare_turn_for_import_sqlx_tx(
         .process
         .as_ref()
         .map(|p| serde_json::to_string(p).unwrap_or_default());
+    let parent_turn_id = normalized
+        .parent_external_id
+        .as_deref()
+        .map(|parent_ext_id| stable_id("conversation-turn", &[session_id, parent_ext_id]));
     let turn = ConversationTurn {
         id: stable_id("conversation-turn", &[session_id, &normalized.external_id]),
         session_id: session_id.to_string(),
@@ -210,6 +214,9 @@ pub(super) async fn prepare_turn_for_import_sqlx_tx(
         model: normalized.model.clone(),
         process: process_json,
         response: triad.response,
+        turn_kind: normalized.turn_kind.clone(),
+        agent_role: normalized.agent_role.clone(),
+        parent_turn_id,
     };
 
     Ok((turn, triad.parts))

@@ -181,6 +181,9 @@ async fn conversation_question_contract_contains_only_stable_metadata() {
         "fingerprint",
         "missing",
         "imported_at",
+        "turn_kind",
+        "agent_role",
+        "parent_turn_id",
     ];
     for table in ["conversation_turns", "web_record_turns"] {
         let columns = conn
@@ -192,10 +195,10 @@ async fn conversation_question_contract_contains_only_stable_metadata() {
             .expect("query turn columns")
             .collect::<Result<Vec<_>, _>>()
             .expect("collect turn columns");
-        assert_eq!(columns.len(), 15, "{table} 必须严格为 15 列终态结构");
+        assert_eq!(columns.len(), 18, "{table} 必须严格为 18 列终态结构");
         assert_eq!(
             columns, expected_turn_cols,
-            "{table} 列名与顺序必须严格与 15 列终态一致"
+            "{table} 列名与顺序必须严格与 18 列终态一致"
         );
         assert!(!columns.contains(&"question_id".to_string()));
         assert!(!columns.contains(&"question_origin".to_string()));
@@ -693,7 +696,7 @@ async fn conversation_session_observations_keeps_only_incremental_sync_columns()
             |row| row.get(0),
         )
         .expect("query observation dirty index");
-    assert_eq!(dirty_index_count, 1);
+    assert_eq!(dirty_index_count, 0);
     cleanup_database(&db_path);
 }
 
@@ -707,6 +710,14 @@ async fn migrations_rebuild_legacy_observation_table_preserving_incremental_stat
     let conn = Connection::open(&db_path).expect("open current database");
     conn.execute_batch(
         r#"
+            INSERT INTO conversation_adapters (tenant_id, id, name, kind, version, enabled, trust_state, capabilities, input_kinds, created_at, updated_at) 
+            VALUES ('default', 'legacy-adp', 'Test', 'cli', '1.0.0', 1, 'trusted', '[]', '[]', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z');
+            INSERT INTO conversation_sources (tenant_id, id, adapter_id, name, kind, location, enabled, created_at, updated_at)
+            VALUES ('default', 'legacy-source', 'legacy-adp', 'Test Source', 'cli', '/path', 1, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z');
+            ALTER TABLE conversation_sources DROP COLUMN synced_adapter_hash;
+            ALTER TABLE conversation_sources DROP COLUMN synced_card_contract_version;
+            ALTER TABLE conversation_sources DROP COLUMN synced_payload_policy_version;
+            ALTER TABLE conversation_sources DROP COLUMN synced_projection_version;
             DROP TABLE conversation_session_observations;
             CREATE TABLE conversation_session_observations (
                 tenant_id TEXT NOT NULL,
@@ -716,38 +727,24 @@ async fn migrations_rebuild_legacy_observation_table_preserving_incremental_stat
                 observed_version TEXT NOT NULL,
                 hydrated_version TEXT,
                 last_seen_at TEXT NOT NULL,
-                source_presence TEXT NOT NULL CHECK (source_presence IN ('present', 'absent', 'unknown')),
                 dirty INTEGER NOT NULL DEFAULT 0,
                 hydrated_adapter_hash TEXT,
                 hydrated_card_contract_version INTEGER,
                 hydrated_payload_policy_version INTEGER,
-                error_code TEXT,
-                error_message TEXT,
-                error_stage TEXT,
-                retryable INTEGER,
-                attempt_count INTEGER NOT NULL DEFAULT 0,
-                last_attempt_at TEXT,
-                last_failure_at TEXT,
                 hydrated_projection_version INTEGER,
                 PRIMARY KEY (tenant_id, source_id, record_kind, external_id)
             );
-            CREATE INDEX idx_conversation_session_observations_dirty
-            ON conversation_session_observations(tenant_id, source_id, record_kind, dirty);
             INSERT INTO conversation_session_observations (
                 tenant_id, source_id, record_kind, external_id, observed_version,
-                hydrated_version, last_seen_at, source_presence, dirty,
+                hydrated_version, last_seen_at, dirty,
                 hydrated_adapter_hash, hydrated_card_contract_version,
-                hydrated_payload_policy_version, error_code, error_message,
-                error_stage, retryable, attempt_count, last_attempt_at,
-                last_failure_at, hydrated_projection_version
+                hydrated_payload_policy_version, hydrated_projection_version
             ) VALUES (
                 'default', 'legacy-source', 'session', 'legacy-external', 'observed-v2',
-                'hydrated-v1', '2026-10-01T00:00:00Z', 'absent', 1,
-                'adapter-hash-v1', 7, 3, 'adapter_process_error', 'boom',
-                'adapter', 1, 4, '2026-10-01T00:00:00Z',
-                '2026-10-01T00:00:00Z', 5
+                'hydrated-v1', '2026-10-01T00:00:00Z', 0,
+                'adapter-hash-v1', 7, 3, 5
             );
-            DELETE FROM _sqlx_migrations WHERE version = 202610230002;
+            DELETE FROM _sqlx_migrations WHERE version = 20261028000001;
             "#,
     )
     .expect("seed legacy observation schema");
@@ -762,20 +759,21 @@ async fn migrations_rebuild_legacy_observation_table_preserving_incremental_stat
         conversation_session_observation_columns(&conn),
         expected_conversation_session_observation_columns()
     );
-    let (
-        observed_version,
-        hydrated_version,
-        last_seen_at,
-        dirty,
-        hydrated_adapter_hash,
-        hydrated_card_contract_version,
-        hydrated_payload_policy_version,
-        hydrated_projection_version,
-    ): (
-        String,
-        Option<String>,
-        String,
-        i64,
+    let synced_version: String = conn
+        .query_row(
+            r#"
+            SELECT synced_version
+            FROM conversation_session_observations
+            WHERE tenant_id = 'default' AND source_id = 'legacy-source'
+              AND record_kind = 'session' AND external_id = 'legacy-external'
+            "#,
+            [],
+            |row| row.get(0),
+        )
+        .expect("query rebuilt observation row");
+    assert_eq!(synced_version, "hydrated-v1");
+
+    let (hash, card_ver, policy_ver, proj_ver): (
         Option<String>,
         Option<i64>,
         Option<i64>,
@@ -783,36 +781,20 @@ async fn migrations_rebuild_legacy_observation_table_preserving_incremental_stat
     ) = conn
         .query_row(
             r#"
-            SELECT observed_version, hydrated_version, last_seen_at, dirty,
-                   hydrated_adapter_hash, hydrated_card_contract_version,
-                   hydrated_payload_policy_version, hydrated_projection_version
-            FROM conversation_session_observations
-            WHERE tenant_id = 'default' AND source_id = 'legacy-source'
-              AND record_kind = 'session' AND external_id = 'legacy-external'
+            SELECT synced_adapter_hash, synced_card_contract_version,
+                   synced_payload_policy_version, synced_projection_version
+            FROM conversation_sources
+            WHERE tenant_id = 'default' AND id = 'legacy-source'
             "#,
             [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                ))
-            },
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
-        .expect("query rebuilt observation row");
-    assert_eq!(observed_version, "observed-v2");
-    assert_eq!(hydrated_version.as_deref(), Some("hydrated-v1"));
-    assert_eq!(last_seen_at, "2026-10-01T00:00:00Z");
-    assert_eq!(dirty, 1);
-    assert_eq!(hydrated_adapter_hash.as_deref(), Some("adapter-hash-v1"));
-    assert_eq!(hydrated_card_contract_version, Some(7));
-    assert_eq!(hydrated_payload_policy_version, Some(3));
-    assert_eq!(hydrated_projection_version, Some(5));
+        .expect("query source contract");
+    assert_eq!(hash.as_deref(), Some("adapter-hash-v1"));
+    assert_eq!(card_ver, Some(7));
+    assert_eq!(policy_ver, Some(3));
+    assert_eq!(proj_ver, Some(5));
+
     cleanup_database(&db_path);
 }
 
@@ -822,14 +804,7 @@ fn expected_conversation_session_observation_columns() -> Vec<&'static str> {
         "source_id",
         "record_kind",
         "external_id",
-        "observed_version",
-        "hydrated_version",
-        "last_seen_at",
-        "dirty",
-        "hydrated_adapter_hash",
-        "hydrated_card_contract_version",
-        "hydrated_payload_policy_version",
-        "hydrated_projection_version",
+        "synced_version",
     ]
 }
 
@@ -1186,7 +1161,7 @@ async fn migrations_drop_turn_question_columns_and_redirects_preserves_data() {
         CREATE INDEX idx_web_record_turns_tenant_question
         ON web_record_turns (tenant_id, question_id);
 
-        DELETE FROM _sqlx_migrations WHERE CAST(version AS TEXT) >= '202610260001';
+        DELETE FROM _sqlx_migrations WHERE version = 202610260001;
         PRAGMA foreign_keys = ON;
         "#,
     )
@@ -1489,7 +1464,7 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (tenant_id, source_question_id)
             );
-            DELETE FROM _sqlx_migrations WHERE CAST(version AS TEXT) >= '202610230006';
+            DELETE FROM _sqlx_migrations WHERE version IN (202610230006, 202610230007);
             "#,
     )
     .expect("seed pre-migration question-level index");
@@ -1697,6 +1672,13 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         "web_record_part_links",
         "conversation_question_fts",
         "conversation_question_redirects",
+        "conversation_sync_runs",
+        "conversation_sync_deltas",
+        "session_memories",
+        "legacy_memory_items",
+        "legacy_memory_item_evidence",
+        "legacy_memory_item_revisions",
+        "memory_maintenance_jobs",
     ];
     for table in dropped_legacy_tables {
         let count: i64 = conn
@@ -1741,8 +1723,6 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         "conversation_session_observations",
         "conversation_sessions",
         "conversation_sources",
-        "conversation_sync_deltas",
-        "conversation_sync_runs",
         "conversation_turns",
         "conversation_usage_events",
         "conversation_usage_source_states",
@@ -1771,7 +1751,11 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
             .expect("query columns")
             .collect::<Result<Vec<_>, _>>()
             .expect("collect columns");
-        assert_eq!(columns.len(), 15, "{table} 必须为 15 列终态");
+        assert_eq!(
+            columns.len(),
+            18,
+            "{table} 必须为 18 列终态 (含子 Agent 字段)"
+        );
         assert!(!columns.contains(&"question_id".to_string()));
         assert!(!columns.contains(&"question_origin".to_string()));
     }
@@ -2152,15 +2136,20 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
 
     // 插入 util6 的衍生记录（如 session_memory_jobs、conversation_session_observations 等）
     conn.execute(
-        "INSERT INTO conversation_session_observations (tenant_id, source_id, record_kind, external_id, observed_version, last_seen_at)
-         VALUES ('util6', 'src-1', 'session', 'ext-2', '1', '2026-10-24T00:00:00Z')",
+        "INSERT INTO conversation_session_observations (tenant_id, source_id, record_kind, external_id, synced_version)
+         VALUES ('util6', 'src-1', 'session', 'ext-2', '1')",
         [],
     ).expect("insert util6 observation");
 
-    // 3. 回退 202610240001 及后续迁移记录，模拟从旧版本升级触发迁移
-    conn.execute(
-        "DELETE FROM _sqlx_migrations WHERE CAST(version AS TEXT) >= '202610240001'",
-        [],
+    // 3. 回退 202610240001~202610240005 迁移记录，模拟从旧版本升级触发迁移
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS conversation_sync_deltas (tenant_id TEXT);
+        CREATE TABLE IF NOT EXISTS conversation_sync_runs (tenant_id TEXT);
+        CREATE TABLE IF NOT EXISTS session_memory_source_references (tenant_id TEXT);
+        CREATE TABLE IF NOT EXISTS memory_extractions (tenant_id TEXT, id TEXT, PRIMARY KEY (tenant_id, id));
+        DELETE FROM _sqlx_migrations WHERE version IN (202610240001, 202610240002, 202610240003, 202610240004);
+        "#,
     )
     .expect("rollback migration version");
     drop(conn);
@@ -2170,6 +2159,15 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
 
     // 5. 校验断言
     let conn = Connection::open(&db_path).expect("reopen migrated db");
+    conn.execute_batch(
+        r#"
+        DROP TABLE IF EXISTS conversation_sync_deltas;
+        DROP TABLE IF EXISTS conversation_sync_runs;
+        DROP TABLE IF EXISTS session_memory_source_references;
+        DROP TABLE IF EXISTS memory_extractions;
+        "#,
+    )
+    .expect("clean up temp tables");
 
     // A. util6 租户及其数据被干净清理
     let util6_tenant_count: i64 = conn
@@ -2426,10 +2424,17 @@ async fn acceptance_spec_126_turn_triad_schema_and_parts_slimming() {
             .expect("collect cols");
         rows
     };
-    assert_eq!(turn_cols.len(), 15, "conversation_turns 必须严格为 15 列");
+    assert_eq!(
+        turn_cols.len(),
+        18,
+        "conversation_turns 必须严格为 18 列 (包含 turn_kind, agent_role, parent_turn_id)"
+    );
     assert!(turn_cols.contains(&"prompt".to_string()));
     assert!(turn_cols.contains(&"process".to_string()));
     assert!(turn_cols.contains(&"response".to_string()));
+    assert!(turn_cols.contains(&"turn_kind".to_string()));
+    assert!(turn_cols.contains(&"agent_role".to_string()));
+    assert!(turn_cols.contains(&"parent_turn_id".to_string()));
     assert!(!turn_cols.contains(&"user_text".to_string()));
     assert!(!turn_cols.contains(&"question_id".to_string()));
     assert!(!turn_cols.contains(&"question_origin".to_string()));
@@ -2478,7 +2483,7 @@ async fn acceptance_spec_126_turn_triad_schema_and_parts_slimming() {
 
     // 2. 构造历史脏数据并执行迁移自愈测试
     conn.execute(
-        "DELETE FROM _sqlx_migrations WHERE CAST(version AS TEXT) >= '202610250001'",
+        "DELETE FROM _sqlx_migrations WHERE version = 202610250001",
         [],
     )
     .expect("delete migration version");

@@ -2,12 +2,12 @@
 fn stable_sqlx_repositories_have_zero_positional_try_get() {
     let files = [
         (
-            "global_memory_repo.rs",
-            include_str!("memory/global_memory_repo.rs"),
+            "watermark_repo.rs",
+            include_str!("memory/watermark_repo.rs"),
         ),
         (
-            "project_memory_repo.rs",
-            include_str!("memory/project_memory_repo.rs"),
+            "memory_usage_repo.rs",
+            include_str!("memory/memory_usage_repo.rs"),
         ),
         (
             "search_index_repo.rs",

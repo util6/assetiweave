@@ -214,6 +214,64 @@ describe("ConversationTurn", () => {
     expect(html).toContain("claude-3-7-sonnet");
   });
 
+  it("renders a specialized subagent turn with subagent task header, agent role badge, and model badge", () => {
+    const subagentTurnQuestion: ConversationQuestionDetail = {
+      ...question,
+      turns: [
+        {
+          ...question.turns[0]!,
+          turn_kind: "subagent",
+          agent_role: "Code Reviewer",
+          model: "gemini-1.5-pro",
+          prompt: "Please review the diff between branch A and branch B",
+        },
+      ],
+      projected_content_nodes: [
+        projectedNode(
+          "part-ans-1",
+          "turn-1",
+          "answer",
+          "Review complete. All good.",
+        ),
+      ],
+    };
+
+    const [model] = buildConversationTurnPresentations(subagentTurnQuestion);
+    const controller: ConversationContentController = {
+      cancelTranslation: async () => undefined,
+      copyBlock: async () => undefined,
+      expandedBlockIds: new Set(),
+      getTranslatedText: () => undefined,
+      getTranslationPhase: () => undefined,
+      isCopied: () => false,
+      isTranslating: () => false,
+      toggleExpanded: () => undefined,
+      translateBlock: async () => undefined,
+      translationAvailability: "unavailable",
+    };
+    const html = renderToStaticMarkup(
+      <ConversationTurn
+        controller={controller}
+        index={0}
+        model={model!}
+        recordKind="session"
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+    expect(html).toContain("子代理任务");
+    expect(html).toContain("Code Reviewer");
+    expect(html).toContain("gemini-1.5-pro");
+    expect(html).toContain("Please review the diff");
+    expect(html).toContain("复制子代理提示词");
+  });
+
   it("projects one raw command Part into ephemeral display nodes with one shared Part ID", () => {
     const executionQuestion: ConversationQuestionDetail = {
       ...question,

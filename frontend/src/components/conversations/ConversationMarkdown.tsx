@@ -3,11 +3,26 @@ import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import type { MemoryNavigationTarget } from "../../types/memory";
 import {
   CodeBlockRenderer,
   InlineCodeRenderer,
   rehypeLatexMathDataAttr,
 } from "./ConversationMarkdownRenderers";
+
+const AIWC_SESSION_URI_REGEX =
+  /^aiwc:\/\/session\/([a-zA-Z0-9_-]+)(?:\/turn\/(\d+))?/;
+
+export function parseAiwcSessionUri(
+  href: string,
+): { sessionId: string; turnIndex?: number } | null {
+  const match = href.match(AIWC_SESSION_URI_REGEX);
+  if (!match) return null;
+  return {
+    sessionId: match[1],
+    turnIndex: match[2] ? parseInt(match[2], 10) : undefined,
+  };
+}
 
 export function convertLatexDelimiters(source: string): string {
   const parts = source.split(/(```[\s\S]*?```)/g);
@@ -272,11 +287,63 @@ const rehypePlugins: any[] = [
   rehypeLatexMathDataAttr,
 ];
 
-export function MarkdownContent({ value }: { value: string }) {
+export function MarkdownContent({
+  value,
+  onNavigateSession,
+}: {
+  value: string;
+  onNavigateSession?: (target: MemoryNavigationTarget) => void;
+}) {
   const normalizedValue = useMemo(
     () => normalizeMarkdownSource(value),
     [value],
   );
+
+  const customComponents = useMemo(() => {
+    return {
+      ...markdownComponents,
+      a: ({ href, children, node, ...props }: any) => {
+        const aiwcMatch = href ? parseAiwcSessionUri(href) : null;
+        if (aiwcMatch && onNavigateSession) {
+          return (
+            <a
+              className="cursor-pointer font-medium text-primary underline underline-offset-2 hover:text-primary-strong"
+              href={href}
+              onClick={(e) => {
+                e.preventDefault();
+                onNavigateSession({
+                  record_kind: "session",
+                  source_id: null,
+                  session_id: aiwcMatch.sessionId,
+                  question_id: null,
+                  turn_id:
+                    aiwcMatch.turnIndex !== undefined
+                      ? String(aiwcMatch.turnIndex)
+                      : null,
+                  part_id: null,
+                  block_id: null,
+                });
+              }}
+              {...props}
+            >
+              {children}
+            </a>
+          );
+        }
+        return (
+          <a
+            className="font-medium text-primary underline underline-offset-2 hover:text-primary-strong"
+            href={href}
+            rel="noreferrer"
+            target="_blank"
+            {...props}
+          >
+            {children}
+          </a>
+        );
+      },
+    };
+  }, [onNavigateSession]);
 
   if (!normalizedValue.trim()) {
     return (
@@ -289,9 +356,10 @@ export function MarkdownContent({ value }: { value: string }) {
   return (
     <div className="space-y-3 text-body-sm leading-6 text-on-surface">
       <ReactMarkdown
-        components={markdownComponents}
+        components={customComponents}
         rehypePlugins={rehypePlugins}
         remarkPlugins={remarkPlugins}
+        urlTransform={(url) => url}
       >
         {normalizedValue}
       </ReactMarkdown>

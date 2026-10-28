@@ -1,8 +1,8 @@
 /* @vitest-environment jsdom */
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
-import { MarkdownContent } from "./ConversationMarkdown";
+import { describe, expect, it, vi } from "vitest";
+import { MarkdownContent, parseAiwcSessionUri } from "./ConversationMarkdown";
 
 describe("ConversationMarkdown", () => {
   it("renders markdown headings, lists, inline code, strong text, and code fences", () => {
@@ -175,6 +175,40 @@ describe("ConversationMarkdown", () => {
       expect(
         document.querySelectorAll('[id^="dconversation-mermaid-"]'),
       ).toHaveLength(0);
+    });
+  });
+
+  it("parses aiwc://session URI correctly and triggers onNavigateSession on click", () => {
+    expect(parseAiwcSessionUri("aiwc://session/38623279/turn/2")).toEqual({
+      sessionId: "38623279",
+      turnIndex: 2,
+    });
+    expect(parseAiwcSessionUri("aiwc://session/abcd1234")).toEqual({
+      sessionId: "abcd1234",
+      turnIndex: undefined,
+    });
+    expect(parseAiwcSessionUri("https://example.com")).toBeNull();
+
+    const onNavigate = vi.fn();
+    const { container } = render(
+      <MarkdownContent
+        onNavigateSession={onNavigate}
+        value="- [38623279#T2](aiwc://session/38623279/turn/2): task detail"
+      />,
+    );
+
+    const link = container.querySelector("a");
+    expect(link).not.toBeNull();
+    fireEvent.click(link!);
+
+    expect(onNavigate).toHaveBeenCalledWith({
+      record_kind: "session",
+      source_id: null,
+      session_id: "38623279",
+      question_id: null,
+      turn_id: "2",
+      part_id: null,
+      block_id: null,
     });
   });
 });

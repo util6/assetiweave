@@ -56,6 +56,8 @@ function emitProgress(progress = {}) {
 
 function expandPath(value) {
   if (!value) return value;
+  if (Array.isArray(value)) return value[0] ? expandPath(value[0]) : null;
+  if (typeof value !== "string") return String(value);
   if (value === "~") return homedir();
   if (value.startsWith("~/")) return path.join(homedir(), value.slice(2));
   return value;
@@ -285,9 +287,16 @@ function textPart(role, text) {
 }
 
 
+function resolvePrompt(...candidates) {
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim().length > 0) return c.trim();
+  }
+  return "Subagent execution";
+}
+
 function displayTurns(turns) {
   return turns
-    .filter((turn) => Array.isArray(turn.parts) && turn.parts.length > 0)
+    .filter((turn) => (Array.isArray(turn.parts) && turn.parts.length > 0) || turn.turn_kind === "subagent" || turn.turn_kind === "continuation" || Boolean(turn.user_text?.trim()))
     .map((turn, index) => ({
       ...turn,
       turn_index: index,
@@ -1034,6 +1043,10 @@ const IGNORED_STEP_TYPES = new Set([
 function buildTurnsFromSteps(steps) {
   const turns = [];
   let current = null;
+  let activeSubagent = null;
+  let anchorTurnId = null;
+  let subagentCount = 0;
+  let continuationCount = 0;
   let projectPath = null;
   let currentModel = null;
   const pendingFileOperations = [];
@@ -1051,11 +1064,13 @@ function buildTurnsFromSteps(steps) {
       if (match) {
         currentModel = match[1].replace(/\.+$/, "").trim();
         if (current && !current.model) current.model = currentModel;
+        if (activeSubagent && !activeSubagent.model) activeSubagent.model = currentModel;
       }
     }
     if (step.model) {
       currentModel = String(step.model);
       if (current && !current.model) current.model = currentModel;
+      if (activeSubagent && !activeSubagent.model) activeSubagent.model = currentModel;
     }
 
     // Skip system-only noise
@@ -1065,11 +1080,18 @@ function buildTurnsFromSteps(steps) {
     if (type === "USER_INPUT" && source === "USER_EXPLICIT") {
       const userText = extractUserRequestText(step.content);
       if (!userText) continue;
+      if (activeSubagent) {
+        turns.push(activeSubagent);
+        activeSubagent = null;
+      }
       if (current) turns.push(current);
       pendingFileOperations.length = 0;
       pendingToolCalls.length = 0;
+      anchorTurnId = `turn-${turns.length}`;
+      subagentCount = 0;
+      continuationCount = 0;
       current = {
-        external_id: `turn-${turns.length}`,
+        external_id: anchorTurnId,
         turn_index: turns.length,
         user_text: userText,
         title: null,
@@ -1081,31 +1103,125 @@ function buildTurnsFromSteps(steps) {
       continue;
     }
 
-    if (!current) continue;
+    if (!current && !activeSubagent && turns.length === 0) continue;
 
     // PLANNER_RESPONSE → assistant text + tool calls
     if (type === "PLANNER_RESPONSE" && source === "MODEL") {
       const responseText = String(step.content ?? "").trim();
-      if (responseText) {
-        const part = textPart("assistant", responseText);
-        if (part) current.parts.push(part);
+      const hasSubagentCall = Array.isArray(step.tool_calls) && step.tool_calls.some(
+        (c) => c?.name === "invoke_subagent" || c?.name === "call_subagent"
+      );
+
+      if (hasSubagentCall) {
+        if (current) {
+          if (responseText) {
+            const part = textPart("assistant", responseText);
+            if (part) current.parts.push(part);
+          }
+          current.ended_at = timestamp;
+          turns.push(current);
+          anchorTurnId = current.external_id;
+          current = null;
+        } else if (activeSubagent) {
+          turns.push(activeSubagent);
+          activeSubagent = null;
+        }
+
+        const parentAnchorTurnId = anchorTurnId || (turns[0]?.external_id ?? "turn-0");
+        const subCall = step.tool_calls.find((c) => c?.name === "invoke_subagent" || c?.name === "call_subagent");
+        let argsObj = subCall?.args;
+        if (typeof argsObj === "string") {
+          try { argsObj = JSON.parse(argsObj); } catch {}
+        }
+        const subagents = Array.isArray(argsObj?.Subagents) && argsObj.Subagents.length > 0
+          ? argsObj.Subagents
+          : [argsObj || {}];
+
+        const execId = toolCallExecutionId(subCall, parentAnchorTurnId, ++subagentCount);
+        subCall.execution_id = execId;
+        pendingToolCalls.push({ executionId: execId, name: subCall.name, args: subCall.args, isSubagentDispatch: true });
+
+        for (let sIdx = 0; sIdx < subagents.length; sIdx++) {
+          const item = subagents[sIdx];
+          const agentRole = item.Role || item.TypeName || item.role || argsObj?.role || "Subagent";
+          const prompt = resolvePrompt(item.Prompt, item.prompt, item.task, argsObj?.prompt, argsObj?.task, "Subagent execution");
+          const subagentModel = item.Model || item.model || currentModel;
+
+          const subTurn = {
+            external_id: `${parentAnchorTurnId}-subagent-${sIdx === 0 ? subagentCount : ++subagentCount}`,
+            turn_index: turns.length,
+            user_text: prompt,
+            turn_kind: "subagent",
+            agent_role: agentRole,
+            parent_turn_id: parentAnchorTurnId,
+            title: null,
+            started_at: timestamp,
+            ended_at: sIdx < subagents.length - 1 ? timestamp : null,
+            model: subagentModel,
+            parts: [],
+          };
+
+          if (sIdx < subagents.length - 1) {
+            turns.push(subTurn);
+          } else {
+            activeSubagent = subTurn;
+          }
+        }
+
+        const otherCalls = step.tool_calls.filter((c) => c !== subCall);
+        if (otherCalls.length > 0) {
+          pendingFileOperations.push(
+            ...otherCalls.map((call) => fileOperationFromToolCall(call, knownFileContents)).filter(Boolean),
+          );
+          for (const call of otherCalls) {
+            if (!call?.name) continue;
+            activeSubagent.toolCallCount = (activeSubagent.toolCallCount || 0) + 1;
+            const cExecId = toolCallExecutionId(call, activeSubagent.external_id, activeSubagent.toolCallCount);
+            call.execution_id = cExecId;
+            pendingToolCalls.push({ executionId: cExecId, name: call.name, args: call.args });
+          }
+          activeSubagent.parts.push(...toolCallParts(otherCalls, activeSubagent.external_id));
+          projectPath ??= inferProjectPathFromToolCalls(otherCalls);
+        }
+        continue;
       }
-      // Extract tool call parts
-      if (Array.isArray(step.tool_calls) && step.tool_calls.length > 0) {
+
+      const parentAnchorTurnId = anchorTurnId || (turns[0]?.external_id ?? "turn-0");
+      if (!current && !activeSubagent) {
+        current = {
+          external_id: `${parentAnchorTurnId}-cont-${++continuationCount}`,
+          turn_index: turns.length,
+          user_text: "Continue following subagent execution",
+          turn_kind: "continuation",
+          parent_turn_id: parentAnchorTurnId,
+          title: null,
+          started_at: timestamp,
+          ended_at: null,
+          model: currentModel,
+          parts: [],
+        };
+      }
+
+      const targetTurn = activeSubagent || current;
+      if (responseText && targetTurn) {
+        const part = textPart("assistant", responseText);
+        if (part) targetTurn.parts.push(part);
+      }
+      if (Array.isArray(step.tool_calls) && step.tool_calls.length > 0 && targetTurn) {
         pendingFileOperations.push(
           ...step.tool_calls.map((call) => fileOperationFromToolCall(call, knownFileContents)).filter(Boolean),
         );
         for (const call of step.tool_calls) {
           if (!call?.name) continue;
-          current.toolCallCount = (current.toolCallCount || 0) + 1;
-          const execId = toolCallExecutionId(call, current.external_id, current.toolCallCount);
+          targetTurn.toolCallCount = (targetTurn.toolCallCount || 0) + 1;
+          const execId = toolCallExecutionId(call, targetTurn.external_id, targetTurn.toolCallCount);
           call.execution_id = execId;
           pendingToolCalls.push({ executionId: execId, name: call.name, args: call.args });
         }
-        current.parts.push(...toolCallParts(step.tool_calls, current.external_id));
+        targetTurn.parts.push(...toolCallParts(step.tool_calls, targetTurn.external_id));
         projectPath ??= inferProjectPathFromToolCalls(step.tool_calls);
       }
-      current.ended_at = timestamp;
+      if (targetTurn) targetTurn.ended_at = timestamp;
       continue;
     }
 
@@ -1134,17 +1250,38 @@ function buildTurnsFromSteps(steps) {
         const matchedCall = matchedIndex >= 0 ? pendingToolCalls.splice(matchedIndex, 1)[0] : null;
         const sourceExecutionId = matchedCall?.executionId ?? null;
 
+        if (matchedCall?.isSubagentDispatch || (matchedCall && ["invoke_subagent", "call_subagent"].includes(matchedCall.name))) {
+          if (activeSubagent) {
+            const reportText = typeof step.content === "string" ? step.content.trim() : JSON.stringify(step.content);
+            if (reportText) {
+              const part = textPart("assistant", reportText);
+              if (part) activeSubagent.parts.push(part);
+            }
+            activeSubagent.ended_at = timestamp;
+            turns.push(activeSubagent);
+            activeSubagent = null;
+          }
+          continue;
+        }
+
         const isCodeAction = type === "CODE_ACTION" || (matchedCall && /write|replace|edit|patch/i.test(matchedCall.name));
         const fileOperation = isCodeAction
           ? (matchPendingFileOperation(pendingFileOperations, step.content) || operationFromMatchedCall(matchedCall, knownFileContents))
           : null;
 
-        current.parts.push(...toolResultPart(step, fileOperation, sourceExecutionId, matchedCall));
-        current.ended_at = timestamp;
+        const targetTurn = activeSubagent || current;
+        if (targetTurn) {
+          targetTurn.parts.push(...toolResultPart(step, fileOperation, sourceExecutionId, matchedCall));
+          targetTurn.ended_at = timestamp;
+        }
       }
     }
   }
+  if (activeSubagent) turns.push(activeSubagent);
   if (current) turns.push(current);
+  for (let i = 0; i < turns.length; i++) {
+    turns[i].turn_index = i;
+  }
   if (projectPath) {
     for (const turn of turns) {
       for (const part of turn.parts) {
@@ -1183,12 +1320,29 @@ function isInternalSessionMeta(metaPath) {
       raw.includes("agent-runtimes") ||
       raw.includes("smoke_workspace") ||
       raw.includes(".system_generated") ||
-      raw.includes("test-scratch")
+      raw.includes("test-scratch") ||
+      raw.includes('"is_subagent": true') ||
+      raw.includes('"is_subagent":true') ||
+      raw.includes('"parent_session_id"') ||
+      raw.includes('"parent_thread_id"') ||
+      raw.includes('"subagent": true') ||
+      raw.includes('"subagent":true')
     ) {
       return true;
     }
     const meta = JSON.parse(raw);
     if (isInternalExecutionPath(meta.cwd)) return true;
+    if (
+      meta.is_subagent ||
+      meta.subagent ||
+      meta.parent_session_id ||
+      meta.parent_id ||
+      meta.parent_thread_id ||
+      meta.execution_origin === "subagent" ||
+      meta.role === "subagent"
+    ) {
+      return true;
+    }
   } catch {}
   return false;
 }
@@ -1929,6 +2083,9 @@ function listSessions() {
           if (!entry.isDirectory() || !isUuidDir(entry.name)) continue;
           const id = entry.name;
           if (seenExternalIds.has(id)) continue;
+          const metaJson = path.join(brainDir, id, "meta.json");
+          const dotMeta = path.join(brainDir, id, ".meta");
+          if (isInternalSessionMeta(metaJson) || isInternalSessionMeta(dotMeta)) continue;
           const transcript = findTranscriptFile(path.join(brainDir, id));
           if (transcript) {
             seenExternalIds.add(id);

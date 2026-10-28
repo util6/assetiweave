@@ -34,16 +34,6 @@ pub(super) async fn mark_missing_conversation_sessions_sqlx_tx(
             .execute(&mut **tx)
             .await
             .map_err(StoreError::external)?;
-            insert_conversation_sync_delta_sqlx_tx(
-                tx,
-                tenant_id,
-                sync_run_id,
-                "session",
-                &session_id,
-                "restored",
-                now,
-            )
-            .await?;
             changed_session_ids.push(session_id.clone());
             continue;
         }
@@ -64,24 +54,18 @@ pub(super) async fn mark_missing_conversation_sessions_sqlx_tx(
         .await
         .map_err(StoreError::external)?;
         sqlx::query(
-            "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND session_id = ?3 AND status = 'active'",
+            r#"
+            DELETE FROM conversation_session_observations
+            WHERE tenant_id = ?1 AND source_id = ?2 AND record_kind = 'session'
+              AND external_id = (SELECT external_id FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?3)
+            "#,
         )
-        .bind(now)
         .bind(tenant_id)
+        .bind(source_id)
         .bind(&session_id)
         .execute(&mut **tx)
         .await
         .map_err(StoreError::external)?;
-        insert_conversation_sync_delta_sqlx_tx(
-            tx,
-            tenant_id,
-            sync_run_id,
-            "session",
-            &session_id,
-            "missing",
-            now,
-        )
-        .await?;
         changed_session_ids.push(session_id);
     }
     Ok(changed_session_ids)

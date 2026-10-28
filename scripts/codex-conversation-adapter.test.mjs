@@ -1275,8 +1275,12 @@ test("Codex adapter filters out subagent threads from list_sessions and read_ses
       .find((m) => m.type === "item")?.item?.session;
     assert.ok(userSession);
     assert.equal(userSession.external_id, "user-session-1");
-    assert.equal(userSession.turns.length, 1);
+    assert.equal(userSession.turns.length, 2);
     assert.equal(userSession.turns[0].user_text, "User question");
+    assert.equal(userSession.turns[1].turn_kind, "subagent");
+    assert.equal(userSession.turns[1].agent_role, "Subagent");
+    assert.equal(userSession.turns[1].parent_turn_id, userSession.turns[0].external_id);
+    assert.equal(userSession.turns[1].user_text, "User question fork");
 
     // 3. read_session for subagent should return empty
     const readSubResult = spawnSync(process.execPath, [adapterPath], {
@@ -1294,6 +1298,125 @@ test("Codex adapter filters out subagent threads from list_sessions and read_ses
       .map((l) => JSON.parse(l))
       .filter((m) => m.type === "item");
     assert.equal(subItems.length, 0);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter multi-turn session keeps subsequent question as standard user turn", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-multiturn-"));
+  try {
+    const userRollout = path.join(fixtureRoot, "rollout-user.jsonl");
+    const subagentRollout = path.join(fixtureRoot, "rollout-subagent.jsonl");
+    writeFileSync(
+      userRollout,
+      [
+        event("2026-09-11T00:00:00Z", "user", "Question 1: Fix bug"),
+        event("2026-09-11T00:00:01Z", "assistant", "Working on bug fix"),
+        event("2026-09-11T00:05:00Z", "user", "Question 2: What is the weather today in Tokyo?"),
+        event("2026-09-11T00:05:01Z", "assistant", "Tokyo is sunny."),
+      ].join("\n")
+    );
+    writeFileSync(
+      subagentRollout,
+      [
+        event("2026-09-11T00:00:01Z", "user", "Subagent task: analyze crash dump"),
+        event("2026-09-11T00:00:02Z", "assistant", "Crash dump analyzed"),
+      ].join("\n")
+    );
+
+    runSqlite(
+      fixtureRoot,
+      [
+        "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT, thread_source TEXT, source TEXT);",
+        `INSERT INTO threads VALUES ('user-session-multi', '${sqlString(userRollout)}', 'User Task', '2026-09-11T00:05:01Z', 'user', 'vscode');`,
+        `INSERT INTO threads VALUES ('subagent-session-multi', '${sqlString(subagentRollout)}', '', '2026-09-11T00:00:02Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"user-session-multi"}}}');`,
+      ].join("\n")
+    );
+
+    const readUserResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "read_session",
+        source: { location: fixtureRoot },
+        params: { session_id: "user-session-multi" },
+      }),
+    });
+    assert.equal(readUserResult.status, 0, readUserResult.stderr);
+    const userSession = readUserResult.stdout
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .find((m) => m.type === "item")?.item?.session;
+    assert.ok(userSession);
+    assert.equal(userSession.turns.length, 3);
+
+    // Turn 0: Question 1
+    assert.equal(userSession.turns[0].user_text, "Question 1: Fix bug");
+    assert.equal(userSession.turns[0].turn_kind, undefined);
+
+    // Turn 1: Subagent
+    assert.equal(userSession.turns[1].turn_kind, "subagent");
+    assert.equal(userSession.turns[1].agent_role, "Subagent");
+    assert.equal(userSession.turns[1].parent_turn_id, userSession.turns[0].external_id);
+    assert.equal(userSession.turns[1].user_text, "Subagent task: analyze crash dump");
+
+    // Turn 2: Question 2 (MUST remain standard user turn, NOT continuation!)
+    assert.equal(userSession.turns[2].user_text, "Question 2: What is the weather today in Tokyo?");
+    assert.equal(userSession.turns[2].turn_kind, undefined, "Question 2 turn_kind must be undefined");
+    assert.equal(userSession.turns[2].parent_turn_id, undefined, "Question 2 parent_turn_id must be undefined");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter falls back to valid string when subagent prompt is whitespace-only", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-ws-"));
+  try {
+    const userRollout = path.join(fixtureRoot, "rollout-user.jsonl");
+    const subagentRollout = path.join(fixtureRoot, "rollout-subagent.jsonl");
+    writeFileSync(
+      userRollout,
+      [
+        event("2026-09-11T00:00:00Z", "user", "Main question"),
+        event("2026-09-11T00:00:01Z", "assistant", "Main answer"),
+      ].join("\n")
+    );
+    writeFileSync(
+      subagentRollout,
+      [
+        event("2026-09-11T00:00:01Z", "user", "   \t\n  "),
+        event("2026-09-11T00:00:02Z", "assistant", "Subagent answer"),
+      ].join("\n")
+    );
+
+    runSqlite(
+      fixtureRoot,
+      [
+        "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT, thread_source TEXT, source TEXT);",
+        `INSERT INTO threads VALUES ('user-session-ws', '${sqlString(userRollout)}', 'Task', '2026-09-11T00:00:01Z', 'user', 'vscode');`,
+        `INSERT INTO threads VALUES ('subagent-session-ws', '${sqlString(subagentRollout)}', '', '2026-09-11T00:00:02Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"user-session-ws"}}}');`,
+      ].join("\n")
+    );
+
+    const readUserResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "read_session",
+        source: { location: fixtureRoot },
+        params: { session_id: "user-session-ws" },
+      }),
+    });
+    assert.equal(readUserResult.status, 0, readUserResult.stderr);
+    const userSession = readUserResult.stdout
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .find((m) => m.type === "item")?.item?.session;
+    assert.ok(userSession);
+    assert.equal(userSession.turns[1].turn_kind, "subagent");
+    assert.equal(userSession.turns[1].user_text, "Subagent execution");
+    assert.ok(userSession.turns[1].user_text.trim().length > 0);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

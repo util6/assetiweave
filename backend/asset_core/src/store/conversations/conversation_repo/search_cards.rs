@@ -1,53 +1,5 @@
 use super::*;
 
-pub async fn load_recent_conversation_sync_deltas_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    record_kind: ConversationRecordKind,
-    source_id: Option<&str>,
-    adapter_id: Option<&str>,
-    recent_run_limit: usize,
-) -> StoreResult<Vec<ConversationSyncDelta>> {
-    let record_kind = match record_kind {
-        ConversationRecordKind::Session => "session",
-        ConversationRecordKind::Web => "web",
-    };
-    let run_limit = i64::try_from(recent_run_limit.clamp(1, 20)).map_err(|_| {
-        StoreError::external("invalid recent conversation sync run limit".to_string())
-    })?;
-    sqlx::query_as::<_, ConversationSyncDelta>(
-        r#"
-        WITH recent_runs AS (
-            SELECT r.id
-            FROM conversation_sync_runs r
-            JOIN conversation_sync_deltas d
-              ON d.tenant_id = r.tenant_id AND d.sync_run_id = r.id
-            WHERE r.tenant_id = ?1
-              AND r.status = 'completed'
-              AND d.record_kind = ?2
-              AND (?3 IS NULL OR r.source_id = ?3)
-              AND (?4 IS NULL OR r.adapter_id = ?4)
-            GROUP BY r.id
-            ORDER BY MAX(d.observed_at) DESC, r.id DESC
-            LIMIT ?5
-        )
-        SELECT d.sync_run_id, d.session_id, d.change_kind, d.observed_at
-        FROM conversation_sync_deltas d
-        JOIN recent_runs r ON r.id = d.sync_run_id
-        WHERE d.tenant_id = ?1 AND d.record_kind = ?2
-        ORDER BY d.observed_at DESC, d.sync_run_id DESC, d.session_id ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(record_kind)
-    .bind(source_id)
-    .bind(adapter_id)
-    .bind(run_limit)
-    .fetch_all(pool)
-    .await
-    .map_err(StoreError::external)
-}
-
 #[allow(clippy::too_many_arguments)]
 pub async fn search_conversation_cards_sqlx(
     pool: &SqlitePool,

@@ -803,6 +803,7 @@ async fn sqlx_web_record_aggregates_only_declared_content_cards() {
             content_card: None,
             metadata_json: content_card_metadata("answer"),
         }],
+        ..Default::default()
     });
 
     let detail = async {
@@ -1219,6 +1220,7 @@ fn fixture_session() -> NormalizedConversationSession {
                 content_card: None,
                 metadata_json: content_card_metadata("answer"),
             }],
+            ..Default::default()
         }],
         ..Default::default()
     }

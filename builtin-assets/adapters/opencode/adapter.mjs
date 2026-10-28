@@ -358,9 +358,17 @@ function turnsForSession(turnsBySession, sessionId) {
   return turns;
 }
 
+function resolvePrompt(...candidates) {
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim().length > 0) return c.trim();
+  }
+  return "Subagent execution";
+}
+
 function displayTurns(turns) {
+  const parentTurnIds = new Set(turns.map((turn) => turn.parent_turn_id).filter(Boolean));
   return turns
-    .filter((turn) => Array.isArray(turn.parts) && turn.parts.length > 0)
+    .filter((turn) => (Array.isArray(turn.parts) && turn.parts.length > 0) || turn.turn_kind === "subagent" || parentTurnIds.has(turn.external_id))
     .map((turn, index) => ({
       ...turn,
       turn_index: index,
@@ -610,14 +618,14 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
         .map((part) => part.text)
         .filter(Boolean)
         .join("\n\n");
-      if (!userText.trim()) continue;
+      const effectiveUserText = resolvePrompt(userText, "User message");
       const turns = turnsForSession(turnsBySession, sessionId);
       const current = currentBySession.get(sessionId);
       if (current) turns.push(current);
       currentBySession.set(sessionId, {
         external_id: String(message.id),
         turn_index: turns.length,
-        user_text: userText,
+        user_text: effectiveUserText,
         title: null,
         started_at: timestamp == null ? null : String(timestamp),
         ended_at: null,
@@ -654,6 +662,7 @@ function readSessions(includeTurns) {
   const titleCol = pick(sessionColumns, ["title", "name"]);
   const projectCol = pick(sessionColumns, ["project", "project_path", "cwd", "directory", "path"]);
   const updatedCol = pick(sessionColumns, ["updated_at", "time_updated", "timeUpdated", "created_at"]);
+  const parentCol = pick(sessionColumns, ["parent_id", "parentID", "parent_session_id", "parent"]);
   const messageSessionCol = pick(messageColumns, ["session_id", "sessionID", "session"]);
   const messageIdCol = pick(messageColumns, ["id", "message_id"]);
   const partSessionCol = pick(partColumns, ["session_id", "sessionID", "session"]);
@@ -662,6 +671,8 @@ function readSessions(includeTurns) {
   const filters = [];
   if (requestedSessionId) {
     filters.push(`s.${quoteIdent(idCol)} = ${sqlString(requestedSessionId)}`);
+  } else if (parentCol) {
+    filters.push(`(s.${quoteIdent(parentCol)} IS NULL OR s.${quoteIdent(parentCol)} = '')`);
   }
   if (projectCol) {
     filters.push(`NOT (s.${quoteIdent(projectCol)} LIKE '%agent-executions%' OR s.${quoteIdent(projectCol)} LIKE '%agent-runs%' OR s.${quoteIdent(projectCol)} LIKE '%.assetiweave%')`);
@@ -673,21 +684,102 @@ function readSessions(includeTurns) {
     : messageIdCol && partMessageCol
       ? `(SELECT COALESCE(MAX(p.rowid), 0) FROM part p JOIN message m ON p.${quoteIdent(partMessageCol)} = m.${quoteIdent(messageIdCol)} WHERE m.${quoteIdent(messageSessionCol)} = s.${quoteIdent(idCol)})`
       : "0";
-  const sessionSql = `SELECT s.${quoteIdent(idCol)} AS id, ${titleCol ? `s.${quoteIdent(titleCol)}` : "NULL"} AS title, ${projectCol ? `s.${quoteIdent(projectCol)}` : "NULL"} AS project_path, ${updatedCol ? `s.${quoteIdent(updatedCol)}` : "NULL"} AS updated_at, ${messageVersionExpr} AS message_version, ${partVersionExpr} AS part_version FROM session s ${sessionWhere} ORDER BY s.rowid DESC`;
+  const parentExpr = parentCol ? `s.${quoteIdent(parentCol)}` : "NULL";
+  const sessionSql = `SELECT s.${quoteIdent(idCol)} AS id, ${titleCol ? `s.${quoteIdent(titleCol)}` : "NULL"} AS title, ${projectCol ? `s.${quoteIdent(projectCol)}` : "NULL"} AS project_path, ${updatedCol ? `s.${quoteIdent(updatedCol)}` : "NULL"} AS updated_at, ${parentExpr} AS parent_id, ${messageVersionExpr} AS message_version, ${partVersionExpr} AS part_version FROM session s ${sessionWhere} ORDER BY s.rowid DESC`;
   const rows = sqliteJson(dbPath, sessionSql);
+
+  const parentIds = rows.map((r) => String(r.id));
+  let childRows = [];
+  if (includeTurns && parentCol && parentIds.length > 0) {
+    const childSql = `SELECT s.${quoteIdent(idCol)} AS id, ${titleCol ? `s.${quoteIdent(titleCol)}` : "NULL"} AS title, ${projectCol ? `s.${quoteIdent(projectCol)}` : "NULL"} AS project_path, ${updatedCol ? `s.${quoteIdent(updatedCol)}` : "NULL"} AS updated_at, s.${quoteIdent(parentCol)} AS parent_id FROM session s WHERE s.${quoteIdent(parentCol)} IN (${parentIds.map(sqlString).join(", ")}) ORDER BY s.rowid ASC`;
+    try {
+      childRows = sqliteJson(dbPath, childSql);
+    } catch {}
+  }
+
+  const childSessionsByParent = new Map();
+  for (const childRow of childRows) {
+    const pId = String(childRow.parent_id);
+    const list = childSessionsByParent.get(pId) || [];
+    list.push(childRow);
+    childSessionsByParent.set(pId, list);
+  }
+
+  const allSessionIdsToQuery = [...parentIds, ...childRows.map((r) => String(r.id))];
   const turnsBySession = includeTurns
     ? readTurnsBySession(
       dbPath,
       messageColumns,
       partColumns,
-      rows.map((row) => String(row.id)),
+      allSessionIdsToQuery,
     )
     : new Map();
+
   return rows.flatMap((row) => {
     if (isInternalExecutionPath(row.project_path)) return [];
-    const turns = displayTurns(turnsBySession.get(String(row.id)) ?? []);
-    if (includeTurns && !turns.length) return [];
-    return [{
+    const sessionId = String(row.id);
+    const isSubagent = Boolean(row.parent_id);
+    const children = childSessionsByParent.get(sessionId) || [];
+    const rawTurns = turnsBySession.get(sessionId) ?? [];
+    let turns = [];
+
+    if (children.length > 0 && rawTurns.length > 0) {
+      const anchorTurn = { ...rawTurns[0] };
+      const anchorTurnId = anchorTurn.external_id;
+      const combinedTurns = [];
+
+      const earlyParts = [];
+      const lateParts = [];
+      for (const p of (anchorTurn.parts || [])) {
+        if (p.role === "assistant" && p.kind === "text") {
+          lateParts.push(p);
+        } else {
+          earlyParts.push(p);
+        }
+      }
+
+      anchorTurn.parts = earlyParts;
+      combinedTurns.push(anchorTurn);
+
+      for (const childRow of children) {
+        const childTurns = turnsBySession.get(String(childRow.id)) ?? [];
+        for (const childTurn of childTurns) {
+          combinedTurns.push({
+            ...childTurn,
+            external_id: childTurn.external_id || String(childRow.id),
+            turn_kind: "subagent",
+            agent_role: childRow.title || "subagent",
+            parent_turn_id: anchorTurnId,
+            user_text: resolvePrompt(childTurn.user_text === "User message" ? null : childTurn.user_text, childRow.title, "Subagent execution"),
+          });
+        }
+      }
+
+      if (lateParts.length > 0) {
+        combinedTurns.push({
+          external_id: `${anchorTurnId}-cont`,
+          turn_kind: "continuation",
+          parent_turn_id: anchorTurnId,
+          user_text: "Continue following subagent execution",
+          title: null,
+          started_at: anchorTurn.ended_at || anchorTurn.started_at,
+          ended_at: anchorTurn.ended_at,
+          model: anchorTurn.model,
+          parts: lateParts,
+        });
+      }
+
+      for (const restTurn of rawTurns.slice(1)) {
+        combinedTurns.push(restTurn);
+      }
+
+      turns = displayTurns(combinedTurns);
+    } else {
+      turns = displayTurns(rawTurns);
+    }
+    if (includeTurns && !turns.length && !isSubagent) return [];
+
+    const sessionPayload = {
       external_id: String(row.id),
       title: (row.title == null || !String(row.title).trim())
         ? (sanitizeSessionShortTitle(turns[0]?.user_text) || null)
@@ -697,8 +789,11 @@ function readSessions(includeTurns) {
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),
       source_locator: dbPath,
       source_fingerprint: sessionVersionToken(row),
+      execution_origin: isSubagent ? "subagent" : "opencode",
+      user_visible: !isSubagent,
       turns,
-    }];
+    };
+    return [sessionPayload];
   });
 }
 

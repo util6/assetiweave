@@ -436,6 +436,7 @@ impl AppService {
                     ended_at: Some(turn.updated_at.clone()),
                     model: None,
                     parts,
+                    ..Default::default()
                 }
             })
             .collect::<Vec<_>>();

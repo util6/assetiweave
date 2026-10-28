@@ -283,7 +283,8 @@ pub async fn load_web_record_session_detail_sqlx(
     let turn_rows = sqlx::query_as::<_, ConversationTurnRow>(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.prompt, t.process, t.response, t.title,
-               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at
+               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
+               t.turn_kind, t.agent_role, t.parent_turn_id
         FROM web_record_turns t
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
         ORDER BY t.turn_index ASC, t.id ASC

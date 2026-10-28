@@ -316,7 +316,11 @@ pub async fn import_conversation_sessions_advanced_sqlx(
     sqlx::query(
         r#"
         UPDATE conversation_sources
-        SET last_synced_at = ?1, last_sync_status = ?2, updated_at = ?1
+        SET last_synced_at = ?1, last_sync_status = ?2, updated_at = ?1,
+            synced_adapter_hash = ?5,
+            synced_card_contract_version = ?6,
+            synced_payload_policy_version = ?7,
+            synced_projection_version = ?8
         WHERE tenant_id = ?3 AND id = ?4
         "#,
     )
@@ -324,27 +328,13 @@ pub async fn import_conversation_sessions_advanced_sqlx(
     .bind(status_str)
     .bind(tenant_id)
     .bind(&source.id)
+    .bind(adapter_content_hash)
+    .bind(card_contract_version.map(i64::from))
+    .bind(i64::from(payload_policy_version))
+    .bind(projection_version.map(i64::from))
     .execute(&mut *final_tx)
     .await
     .map_err(StoreError::external)?;
-
-    insert_sync_run_sqlx_tx(
-        &mut final_tx,
-        tenant_id,
-        &ConversationSyncRun {
-            id: sync_run_id.clone(),
-            source_id: Some(source.id.clone()),
-            adapter_id: Some(source.adapter_id.clone()),
-            status,
-            started_at: now.clone(),
-            finished_at: Some(now.clone()),
-            session_count: (sessions.len() + initial_failed_count) as i64,
-            turn_count: turn_count as i64,
-            warning_count: session_warnings.len() as i64,
-            error_message: error_summary,
-        },
-    )
-    .await?;
 
     if !all_changed_session_ids.is_empty() || !missing_or_restored_session_ids.is_empty() {
         let revision =

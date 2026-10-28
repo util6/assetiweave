@@ -142,6 +142,7 @@ impl AppService {
     ) -> AppResult<ConversationOutline> {
         self.get_conversation_outline(crate::backend::application::ConversationOutlineParams {
             id: params.id,
+            detail_level: params.detail_level,
         })
         .await
     }

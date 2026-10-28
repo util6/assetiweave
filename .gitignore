@@ -97,3 +97,6 @@ pnpm-debug.log*
 
 # Scratch and one-off debug scripts
 scratch/
+.agents/
+PROJECT.md
+TEST_INFRA.md
