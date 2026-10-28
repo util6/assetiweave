@@ -1023,6 +1023,12 @@ test("Antigravity inlines invoke_subagent calls into specialized subagent turns 
     assert.equal(lastPart.role, "assistant");
     assert.match(lastPart.text, /Audit complete/);
 
+    // Subagent execution must appear only as specialized turns, never as JSON cards
+    const cardParts = session.turns.flatMap((turn) => turn.parts || []).filter(
+      (part) => String(part.content_card?.kind ?? part.kind ?? "").endsWith(".subagent"),
+    );
+    assert.deepEqual(cardParts, [], "subagent JSON cards must not be generated");
+
     // Turn 2: Continuation turn
     const turn2 = session.turns[2];
     assert.equal(turn2.turn_index, 2);
@@ -1242,6 +1248,60 @@ test("Antigravity handles parallel subagents dispatching multiple distinct subag
     assert.equal(session.turns[2].agent_role, "tester");
     assert.equal(session.turns[2].user_text, "Run test suite");
     assert.equal(session.turns[2].parent_turn_id, session.turns[0].external_id);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity does not emit subagent JSON cards when several dispatch calls share one response", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-nocard-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript.jsonl");
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:00Z",
+        content: "<USER_REQUEST>Run two audits</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:01Z",
+        content: "Spawning two independent workers",
+        tool_calls: [
+          {
+            name: "invoke_subagent",
+            args: { Subagents: [{ Role: "linter", Prompt: "Lint source files" }] },
+          },
+          {
+            name: "invoke_subagent",
+            args: { Subagents: [{ Role: "tester", Prompt: "Run test suite" }] },
+          },
+        ],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:02Z",
+        content: "Both tasks completed",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+
+    const roleOf = (turn) => turn.agent_role;
+    const subTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
+    assert.ok(subTurns.length >= 1, "subagent turns must still be produced");
+    assert.ok(subTurns.every((turn) => roleOf(turn)), "subagent turns must keep their dispatched role");
+
+    const cardParts = session.turns.flatMap((turn) => turn.parts || []).filter(
+      (part) => String(part.content_card?.kind ?? part.kind ?? "").endsWith(".subagent"),
+    );
+    assert.deepEqual(cardParts, [], "subagent JSON cards must not be generated");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
