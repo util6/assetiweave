@@ -365,6 +365,21 @@ function resolvePrompt(...candidates) {
   return "Subagent execution";
 }
 
+const SUBAGENT_TITLE_SUFFIX = /\(@([^\s()]+)\s+subagent\)\s*$/i;
+
+// OpenCode titles child sessions as "<task description> (@<type> subagent)".
+// The type is the only stable role name; the description belongs to the turn title.
+function parseSubagentTitle(title) {
+  const raw = typeof title === "string" ? title.trim() : "";
+  if (!raw) return { agentRole: null, description: null };
+  const suffix = raw.match(SUBAGENT_TITLE_SUFFIX);
+  if (!suffix) return { agentRole: null, description: raw };
+  return {
+    agentRole: suffix[1],
+    description: raw.slice(0, suffix.index).trim() || null,
+  };
+}
+
 function displayTurns(turns) {
   const parentTurnIds = new Set(turns.map((turn) => turn.parent_turn_id).filter(Boolean));
   return turns
@@ -743,14 +758,16 @@ function readSessions(includeTurns) {
 
       for (const childRow of children) {
         const childTurns = turnsBySession.get(String(childRow.id)) ?? [];
+        const childTitle = parseSubagentTitle(childRow.title);
         for (const childTurn of childTurns) {
           combinedTurns.push({
             ...childTurn,
             external_id: childTurn.external_id || String(childRow.id),
             turn_kind: "subagent",
-            agent_role: childRow.title || "subagent",
+            agent_role: childTitle.agentRole ?? undefined,
+            title: childTitle.description ?? childTurn.title ?? null,
             parent_turn_id: anchorTurnId,
-            user_text: resolvePrompt(childTurn.user_text === "User message" ? null : childTurn.user_text, childRow.title, "Subagent execution"),
+            user_text: resolvePrompt(childTurn.user_text === "User message" ? null : childTurn.user_text, childTitle.description, "Subagent execution"),
           });
         }
       }

@@ -504,35 +504,7 @@ function parseJsonl(text, sessionIdFallback, filePath) {
           matchedChildPath,
           anchorTurnId: currentTurn.external_id,
         });
-        const agentData = {
-          agent_role: args?.subagent_type || "Explore",
-          description: args?.description || "Subagent Task",
-          task: args?.prompt || args?.description || "",
-          child_session_id: matchedChildId || undefined,
-        };
-        currentTurn.parts.push({
-          role: "tool",
-          kind: "subagent",
-          text: JSON.stringify(agentData, null, 2),
-          language: null,
-          command: null,
-          cwd: entry.cwd || null,
-          status: "completed",
-          exit_code: 0,
-          source_execution_id: callId,
-          metadata_json: JSON.stringify({
-            tool_name: "Agent",
-            agent_role: args?.subagent_type || "Explore",
-            child_session_id: matchedChildId,
-            description: args?.description,
-          }),
-          content_card: {
-            schema_version: 1,
-            kind: `${ADAPTER_ID}.subagent`,
-            semantic_role: "subagent",
-            renderer: "subagent_tree",
-          },
-        });
+        // The dispatch is modeled as a specialized subagent turn; no inline card is emitted.
         if (entry.timestamp) currentTurn.ended_at = new Date(entry.timestamp).toISOString();
         continue;
       }

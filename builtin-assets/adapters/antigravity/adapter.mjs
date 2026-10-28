@@ -441,52 +441,8 @@ function toolCallParts(toolCalls, turnId) {
       continue;
     }
 
-    // Special handling for subagent invocation
+    // Subagent dispatch is modeled as its own specialized turn; no inline card is emitted here.
     if (toolName === "invoke_subagent" || toolName === "call_subagent") {
-      const subagents = Array.isArray(argsObj?.Subagents) ? argsObj.Subagents : [];
-      const firstSubagent = subagents[0] || {};
-      const agentRole = firstSubagent.Role || firstSubagent.TypeName || "Subagent";
-      const prompt = firstSubagent.Prompt || argsObj?.prompt || argsObj?.task || "";
-      const subagentData = {
-        agent_role: agentRole,
-        task: prompt,
-        type_name: firstSubagent.TypeName || undefined,
-        model: firstSubagent.Model || undefined,
-        total_subagents: subagents.length || 1,
-        status: "invoked",
-      };
-      parts.push({
-        role: "tool",
-        kind: "antigravity.subagent",
-        text: JSON.stringify(subagentData, null, 2),
-        language: null,
-        command: null,
-        cwd: null,
-        status: "invoked",
-        exit_code: null,
-        source_execution_id: executionId,
-        content_card: {
-          schema_version: 1,
-          kind: "antigravity.subagent",
-          semantic_role: "subagent",
-          renderer: "subagent_tree",
-        },
-        metadata_json: metadata(
-          compactObject({
-            type: "subagent",
-            format: "json",
-            tool_name: toolName,
-            source_execution_id: executionId,
-            content_card: {
-              schema_version: 1,
-              kind: "antigravity.subagent",
-              semantic_role: "subagent",
-              renderer: "subagent_tree",
-            },
-          }),
-          { name: toolName, tool_name: toolName, tool_input: argsObj },
-        ),
-      });
       continue;
     }
 
@@ -740,35 +696,6 @@ function toolResultPart(step, fileOperation = null, sourceExecutionId = null, ma
           source_execution_id: sourceExecutionId,
         }),
         { source_type: type, tool_name: toolName || "search", signal: "ambient", execution_kind: "search" },
-      ),
-    }];
-  }
-
-  if (["invoke_subagent", "call_subagent"].includes(toolName)) {
-    return [{
-      role: "tool",
-      kind: "antigravity.subagent",
-      text: content,
-      language: null,
-      command: null,
-      cwd: null,
-      status: "success",
-      exit_code: 0,
-      source_execution_id: sourceExecutionId,
-      content_card: {
-        schema_version: 1,
-        kind: "antigravity.subagent",
-        semantic_role: "subagent",
-        renderer: "subagent_tree",
-      },
-      metadata_json: metadata(
-        compactObject({
-          type: "subagent",
-          format: "plain",
-          status: "success",
-          source_execution_id: sourceExecutionId,
-        }),
-        { source_type: type, tool_name: toolName },
       ),
     }];
   }
