@@ -140,21 +140,21 @@ pub struct ConversationOutlineArgs {
     #[arg(
         long,
         conflicts_with_all = ["qa", "full"],
-        help = "Show questions only: [index, turn_id, question]"
+        help = "Show questions only: [index, turn_id, question, turn_kind, agent_role, parent_turn_id]"
     )]
     pub questions: bool,
 
     #[arg(
         long,
         conflicts_with_all = ["questions", "full"],
-        help = "Show QA pairs with answers: [index, turn_id, question, answer]"
+        help = "Show QA pairs with answers: [index, turn_id, question, answer, turn_kind, agent_role, parent_turn_id]"
     )]
     pub qa: bool,
 
     #[arg(
         long,
         conflicts_with_all = ["questions", "qa"],
-        help = "Show full outline including answers: [index, turn_id, question, activities, cards, answer]"
+        help = "Show full outline including answers: [index, turn_id, question, activities, cards, answer, turn_kind, agent_role, parent_turn_id]"
     )]
     pub full: bool,
 }
