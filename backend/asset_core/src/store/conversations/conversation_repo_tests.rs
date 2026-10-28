@@ -4469,3 +4469,45 @@ async fn test_subagent_turn_response_survives_trailing_command() {
     drop(database);
     cleanup_database(&db_path);
 }
+
+/// 载荷策略版本上移时，即使源文件指纹一字未改，也必须在本轮强制重读存量会话。
+///
+/// 回归背景：会话 unchanged 判定只看会话字段与内容，不看策略版本；若首轮把
+/// 未变更会话判成 skip 并把源级版本写成新值，后续所有轮次都会永久跳过，
+/// 存量会话永远不会补齐新解析结构。
+#[tokio::test]
+async fn sqlx_payload_policy_bump_reparses_unchanged_sessions_in_the_same_run() {
+    let (database, db_path, source) =
+        open_conversation_reparse_fixture("payload-policy-force-reparse").await;
+    let pool = database.pool();
+    let sessions = [fixture_session("v1")];
+
+    import_conversation_sessions_sqlx(pool, TEST_TENANT_ID, &source, &sessions, false)
+        .await
+        .expect("import session under current policy");
+
+    // 回落到上一发行版写入的源级策略版本，模拟升级前的库状态。
+    sqlx::query(
+        "UPDATE conversation_sources SET synced_payload_policy_version = ?1 WHERE tenant_id = ?2 AND id = ?3",
+    )
+    .bind(i64::from(PRE_SUBAGENT_TURNS_PAYLOAD_POLICY_VERSION))
+    .bind(TEST_TENANT_ID)
+    .bind(&source.id)
+    .execute(pool)
+    .await
+    .expect("roll source payload policy version back");
+
+    // 源数据完全相同（指纹不变），但策略版本落后，本轮必须重读。
+    let result = import_conversation_sessions_sqlx(pool, TEST_TENANT_ID, &source, &sessions, false)
+        .await
+        .expect("reparse after policy bump");
+
+    assert_eq!(
+        result.changed_session_count, 1,
+        "a payload policy bump must force a reparse in the same run, not defer it behind an unchanged fingerprint"
+    );
+    assert_eq!(result.skipped_session_count, 0);
+
+    drop(database);
+    cleanup_database(&db_path);
+}

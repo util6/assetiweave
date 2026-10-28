@@ -13,6 +13,9 @@ pub(super) async fn import_single_session_sqlx_tx(
     card_contract_version: Option<u32>,
     payload_policy_version: u32,
     projection_version: Option<u32>,
+    // 载荷解析策略版本发生上移时，源文件指纹不会变化，仅靠 unchanged 判定会永久跳过存量会话。
+    // 该标记只在本轮有效：源级版本尚未与当前策略版本对齐时为 true，强制重读一次。
+    force_reparse: bool,
 ) -> StoreResult<Option<String>> {
     if is_droppable_internal_session(normalized, session) {
         return Ok(None);
@@ -23,7 +26,10 @@ pub(super) async fn import_single_session_sqlx_tx(
         } else {
             "new"
         };
-    if conversation_session_is_unchanged_sqlx_tx(&mut *tx, tenant_id, session, normalized).await? {
+    if !force_reparse
+        && conversation_session_is_unchanged_sqlx_tx(&mut *tx, tenant_id, session, normalized)
+            .await?
+    {
         upsert_single_session_observation_clean_sqlx_tx(
             &mut *tx,
             tenant_id,

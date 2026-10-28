@@ -54,6 +54,20 @@ pub async fn import_conversation_sessions_advanced_sqlx(
     }
 
     let now = Utc::now().to_rfc3339();
+    // 源级载荷策略版本与当前版本不一致时，本轮必须强制重读存量会话：
+    // 会话的 unchanged 判定只看源文件指纹与内容，策略升级不会改变指纹，
+    // 若不强制，升级后的第一轮会把所有会话判为未变更并写回新版本，导致永久跳过。
+    let stored_payload_policy_version = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT synced_payload_policy_version FROM conversation_sources WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(&source.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(StoreError::external)?
+    .flatten();
+    let force_reparse =
+        stored_payload_policy_version != Some(i64::from(payload_policy_version));
     let sync_run_id = stable_id("conversation-sync", &[&source.id, &now]);
     let mut skipped_session_count = 0usize;
     let mut changed_session_count = 0usize;
@@ -131,6 +145,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                     card_contract_version,
                     payload_policy_version,
                     projection_version,
+                    force_reparse,
                 )
                 .await
                 {
@@ -211,6 +226,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                     card_contract_version,
                     payload_policy_version,
                     projection_version,
+                    force_reparse,
                 )
                 .await;
 
