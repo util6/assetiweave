@@ -287,13 +287,6 @@ function textPart(role, text) {
 }
 
 
-function resolvePrompt(...candidates) {
-  for (const c of candidates) {
-    if (typeof c === "string" && c.trim().length > 0) return c.trim();
-  }
-  return "Subagent execution";
-}
-
 function displayTurns(turns) {
   return turns
     .filter((turn) => (Array.isArray(turn.parts) && turn.parts.length > 0) || turn.turn_kind === "subagent" || turn.turn_kind === "continuation" || Boolean(turn.user_text?.trim()))
@@ -441,52 +434,8 @@ function toolCallParts(toolCalls, turnId) {
       continue;
     }
 
-    // Special handling for subagent invocation
+    // Subagent dispatch is modeled as its own specialized turn; no inline card is emitted here.
     if (toolName === "invoke_subagent" || toolName === "call_subagent") {
-      const subagents = Array.isArray(argsObj?.Subagents) ? argsObj.Subagents : [];
-      const firstSubagent = subagents[0] || {};
-      const agentRole = firstSubagent.Role || firstSubagent.TypeName || "Subagent";
-      const prompt = firstSubagent.Prompt || argsObj?.prompt || argsObj?.task || "";
-      const subagentData = {
-        agent_role: agentRole,
-        task: prompt,
-        type_name: firstSubagent.TypeName || undefined,
-        model: firstSubagent.Model || undefined,
-        total_subagents: subagents.length || 1,
-        status: "invoked",
-      };
-      parts.push({
-        role: "tool",
-        kind: "antigravity.subagent",
-        text: JSON.stringify(subagentData, null, 2),
-        language: null,
-        command: null,
-        cwd: null,
-        status: "invoked",
-        exit_code: null,
-        source_execution_id: executionId,
-        content_card: {
-          schema_version: 1,
-          kind: "antigravity.subagent",
-          semantic_role: "subagent",
-          renderer: "subagent_tree",
-        },
-        metadata_json: metadata(
-          compactObject({
-            type: "subagent",
-            format: "json",
-            tool_name: toolName,
-            source_execution_id: executionId,
-            content_card: {
-              schema_version: 1,
-              kind: "antigravity.subagent",
-              semantic_role: "subagent",
-              renderer: "subagent_tree",
-            },
-          }),
-          { name: toolName, tool_name: toolName, tool_input: argsObj },
-        ),
-      });
       continue;
     }
 
@@ -740,35 +689,6 @@ function toolResultPart(step, fileOperation = null, sourceExecutionId = null, ma
           source_execution_id: sourceExecutionId,
         }),
         { source_type: type, tool_name: toolName || "search", signal: "ambient", execution_kind: "search" },
-      ),
-    }];
-  }
-
-  if (["invoke_subagent", "call_subagent"].includes(toolName)) {
-    return [{
-      role: "tool",
-      kind: "antigravity.subagent",
-      text: content,
-      language: null,
-      command: null,
-      cwd: null,
-      status: "success",
-      exit_code: 0,
-      source_execution_id: sourceExecutionId,
-      content_card: {
-        schema_version: 1,
-        kind: "antigravity.subagent",
-        semantic_role: "subagent",
-        renderer: "subagent_tree",
-      },
-      metadata_json: metadata(
-        compactObject({
-          type: "subagent",
-          format: "plain",
-          status: "success",
-          source_execution_id: sourceExecutionId,
-        }),
-        { source_type: type, tool_name: toolName },
       ),
     }];
   }
@@ -1030,6 +950,347 @@ function viewFileBody(content) {
 }
 
 // ---------------------------------------------------------------------------
+// Antigravity-specific: subagent registry tree
+//
+// Antigravity records every dispatched subagent in
+// `<conversation>/.system_generated/subagents/<conversationId>.json`, and each
+// subagent keeps its own conversation directory. The registry is the source of
+// truth for the tree; the main transcript only points at the dispatching step.
+// ---------------------------------------------------------------------------
+
+const SUBAGENT_REGISTRY_DIR = path.join(".system_generated", "subagents");
+const MAX_SUBAGENT_DEPTH = 4;
+const SUBAGENT_PROMPT_FALLBACK = "Subagent execution";
+const INJECTED_PROMPT_BLOCK =
+  /^\s*<(?:SYSTEM_MESSAGE|system_message|system_information|environment_context|user_instructions|additional_metadata|context|plugins?|plugin_list|plugin_inventory|available_plugins|rules|repository_context|INSTRUCTIONS)\b/i;
+
+function emitWarning(message) {
+  emit("warning", { message });
+}
+
+function isSubagentCall(call) {
+  return call?.name === "invoke_subagent" || call?.name === "call_subagent";
+}
+
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+/**
+ * Normalizes the dispatch payload into the per-subagent descriptors the host was asked to spawn.
+ * Both the `Subagents` array shape and the flat `{ role, prompt }` shape are supported.
+ */
+function subagentItemsFromCall(call) {
+  let argsObj = call?.args;
+  if (typeof argsObj === "string") {
+    try {
+      argsObj = JSON.parse(argsObj);
+    } catch {
+      argsObj = null;
+    }
+  }
+  const argsObject = argsObj && typeof argsObj === "object" ? argsObj : {};
+  const rawItems = Array.isArray(argsObject.Subagents) && argsObject.Subagents.length > 0
+    ? argsObject.Subagents
+    : (argsObject.Prompt || argsObject.prompt || argsObject.task || argsObject.Role || argsObject.role ? [argsObject] : []);
+  const items = [];
+  for (const raw of rawItems) {
+    if (!raw || typeof raw !== "object") continue;
+    items.push({
+      role: firstNonEmptyString(raw.Role, raw.role, argsObject.Role, argsObject.role),
+      typeName: firstNonEmptyString(raw.TypeName, raw.typeName, argsObject.TypeName, argsObject.typeName),
+      prompt: firstNonEmptyString(raw.Prompt, raw.prompt, raw.task, argsObject.Prompt, argsObject.prompt, argsObject.task),
+      model: firstNonEmptyString(raw.Model, raw.model),
+    });
+  }
+  return items;
+}
+
+/**
+ * 派发参数里没有可读提示词时的占位文本；这里只负责告警与兜底，
+ * 不再假装"解析"入参，命名需如实反映行为。
+ */
+function subagentPromptPlaceholder(item) {
+  emitWarning(
+    `Antigravity subagent ${item?.role ?? item?.typeName ?? "unknown"} has no dispatch prompt; using placeholder text`,
+  );
+  return SUBAGENT_PROMPT_FALLBACK;
+}
+
+function readSubagentRegistry(conversationDir) {
+  if (!conversationDir) return [];
+  const registryDir = path.join(conversationDir, SUBAGENT_REGISTRY_DIR);
+  if (!existsSync(registryDir)) return [];
+  let names = [];
+  try {
+    names = readdirSync(registryDir).filter((name) => name.endsWith(".json")).sort();
+  } catch {
+    return [];
+  }
+  const entries = [];
+  for (const name of names) {
+    let raw = null;
+    try {
+      raw = JSON.parse(readFileSync(path.join(registryDir, name), "utf8"));
+    } catch {
+      continue;
+    }
+    const conversationId = firstNonEmptyString(raw?.conversationId);
+    if (!conversationId) continue;
+    const descriptor = raw?.subagentDescriptor && typeof raw.subagentDescriptor === "object"
+      ? raw.subagentDescriptor
+      : {};
+    entries.push({
+      conversationId,
+      role: firstNonEmptyString(descriptor.role),
+      typeName: firstNonEmptyString(descriptor.typeName),
+      spawnStepIndex: Number.isInteger(raw?.spawnStepIndex) ? raw.spawnStepIndex : null,
+    });
+  }
+  entries.sort(
+    (a, b) =>
+      (a.spawnStepIndex ?? Number.MAX_SAFE_INTEGER) - (b.spawnStepIndex ?? Number.MAX_SAFE_INTEGER)
+      || a.conversationId.localeCompare(b.conversationId),
+  );
+  return entries;
+}
+
+function readTranscriptSteps(transcriptPath) {
+  const steps = [];
+  let text = "";
+  try {
+    text = readFileSync(transcriptPath, "utf8");
+  } catch {
+    return steps;
+  }
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      steps.push(JSON.parse(line));
+    } catch {
+      continue;
+    }
+  }
+  return steps;
+}
+
+function isInjectedPromptText(text) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) return true;
+  return INJECTED_PROMPT_BLOCK.test(trimmed);
+}
+
+function firstRealUserInputFromSteps(steps) {
+  for (const step of steps) {
+    if (!step || step.type !== "USER_INPUT" || step.source !== "USER_EXPLICIT") continue;
+    const text = extractUserRequestText(step.content);
+    if (!text || isInjectedPromptText(text)) continue;
+    return text;
+  }
+  return null;
+}
+
+function resolveSubagentModel(value, inheritedModel) {
+  const model = firstNonEmptyString(value);
+  if (!model || /^inherit$/i.test(model)) return inheritedModel ?? null;
+  return model;
+}
+
+function resolveDispatchForStep(stepIndex, dispatches) {
+  if (!Array.isArray(dispatches) || dispatches.length === 0) return null;
+  if (!Number.isInteger(stepIndex)) return dispatches.length === 1 ? dispatches[0] : null;
+  const exact = dispatches.find((dispatch) => dispatch.stepIndex === stepIndex);
+  if (exact) return exact;
+  let best = null;
+  let bestAnchor = -Infinity;
+  for (const dispatch of dispatches) {
+    const anchor = Number.isInteger(dispatch.stepIndex) ? dispatch.stepIndex : dispatch.plannerStepIndex;
+    if (!Number.isInteger(anchor) || anchor > stepIndex || anchor < bestAnchor) continue;
+    best = dispatch;
+    bestAnchor = anchor;
+  }
+  return best;
+}
+
+function buildSubagentConversationContent({ conversationDir, transcriptPath, dispatchPrompt }) {
+  const steps = readTranscriptSteps(transcriptPath);
+  const entries = readSubagentRegistry(conversationDir);
+  const resolvedPrompt = firstNonEmptyString(dispatchPrompt) ?? firstRealUserInputFromSteps(steps);
+  if (!resolvedPrompt) {
+    emitWarning(
+      `Antigravity subagent ${path.basename(conversationDir)} has no task prompt; using placeholder text`,
+    );
+  }
+  const userText = resolvedPrompt ?? SUBAGENT_PROMPT_FALLBACK;
+  let parts = [];
+  let dispatches = [];
+  if (steps.length > 0) {
+    const parsed = buildTurnsFromSteps(
+      [
+        {
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          content: `<USER_REQUEST>${userText}</USER_REQUEST>`,
+          created_at: steps[0]?.created_at ?? null,
+        },
+        ...steps,
+      ],
+      { registryMode: entries.length > 0 },
+    );
+    parts = parsed.turns.flatMap((turn) => turn.parts);
+    dispatches = parsed.dispatches;
+  }
+  return {
+    userText,
+    parts,
+    dispatches,
+    entries,
+    startedAt: steps[0]?.created_at ?? null,
+    endedAt: steps.at(-1)?.created_at ?? null,
+  };
+}
+
+function takeMatchingSubagentItem(dispatch, usedItems, entry) {
+  if (!dispatch) return null;
+  const items = Array.isArray(dispatch.subagents) ? dispatch.subagents : [];
+  const used = usedItems.get(dispatch) ?? new Set();
+  usedItems.set(dispatch, used);
+  let index = entry.role
+    ? items.findIndex((item, candidate) => !used.has(candidate) && item.role === entry.role)
+    : -1;
+  if (index < 0 && entry.typeName) {
+    index = items.findIndex((item, candidate) => !used.has(candidate) && item.typeName === entry.typeName);
+  }
+  if (index < 0) index = items.findIndex((_, candidate) => !used.has(candidate));
+  if (index < 0) return null;
+  used.add(index);
+  return items[index];
+}
+
+/**
+ * Turns the registry into one subagent turn per registered subagent, recursively.
+ * Parent pointers come from the dispatching step index, so a subagent always hangs
+ * off the turn that actually dispatched it.
+ */
+function attachSubagentTurns({ conversationDir, registry, turns, dispatches }) {
+  const brainDir = path.dirname(conversationDir);
+  const visitedConversationIds = new Set([path.basename(conversationDir)]);
+  const childrenByTurnId = new Map();
+  const ordinalByTurnId = new Map();
+  const usedItems = new Map();
+
+  const expand = ({ entries, conversationDispatches, depth, ownerTurnId, ownerModel }) => {
+    const ownerDispatch = ownerTurnId
+      ? { parentTurnId: ownerTurnId, subagents: conversationDispatches.flatMap((dispatch) => dispatch.subagents ?? []) }
+      : null;
+    for (const entry of entries) {
+      const dispatch = ownerDispatch ?? resolveDispatchForStep(entry.spawnStepIndex, conversationDispatches);
+      const item = takeMatchingSubagentItem(dispatch, usedItems, entry);
+      const parentTurnId = ownerTurnId ?? dispatch?.parentTurnId ?? null;
+      if (!parentTurnId) {
+        emitWarning(`Antigravity subagent ${entry.conversationId} has no dispatching turn; skipped`);
+        continue;
+      }
+
+      const ordinal = (ordinalByTurnId.get(parentTurnId) ?? 0) + 1;
+      ordinalByTurnId.set(parentTurnId, ordinal);
+      const subagentTurn = {
+        external_id: `${parentTurnId}-subagent-${ordinal}-${entry.conversationId}`,
+        turn_index: 0,
+        user_text: item?.prompt ?? SUBAGENT_PROMPT_FALLBACK,
+        turn_kind: "subagent",
+        agent_role: entry.role ?? item?.role ?? undefined,
+        parent_turn_id: parentTurnId,
+        title: entry.typeName ?? item?.typeName ?? null,
+        started_at: null,
+        ended_at: null,
+        model: resolveSubagentModel(item?.model, ownerModel),
+        parts: [],
+      };
+      const siblings = childrenByTurnId.get(parentTurnId);
+      if (siblings) siblings.push(subagentTurn);
+      else childrenByTurnId.set(parentTurnId, [subagentTurn]);
+
+      const childDepth = depth + 1;
+      if (childDepth > MAX_SUBAGENT_DEPTH) {
+        emitWarning(
+          `Antigravity subagent ${entry.conversationId} exceeds the depth limit of ${MAX_SUBAGENT_DEPTH}; kept as a leaf turn`,
+        );
+        continue;
+      }
+      if (visitedConversationIds.has(entry.conversationId)) {
+        emitWarning(
+          `Antigravity subagent ${entry.conversationId} is already expanded (cycle); kept as a leaf turn`,
+        );
+        continue;
+      }
+      const childConversationDir = path.join(brainDir, entry.conversationId);
+      const childTranscriptPath = findTranscriptFile(childConversationDir);
+      if (!childTranscriptPath) {
+        emitWarning(
+          `Antigravity subagent ${entry.conversationId} has no child session record; kept the dispatch turn only`,
+        );
+        continue;
+      }
+
+      visitedConversationIds.add(entry.conversationId);
+      const content = buildSubagentConversationContent({
+        conversationDir: childConversationDir,
+        transcriptPath: childTranscriptPath,
+        dispatchPrompt: item?.prompt ?? null,
+      });
+      subagentTurn.user_text = content.userText;
+      subagentTurn.parts = content.parts;
+      subagentTurn.started_at = content.startedAt;
+      subagentTurn.ended_at = content.endedAt ?? content.startedAt;
+      subagentTurn.model ??= ownerModel ?? null;
+      expand({
+        entries: content.entries,
+        conversationDispatches: content.dispatches,
+        depth: childDepth,
+        ownerTurnId: subagentTurn.external_id,
+        ownerModel: subagentTurn.model,
+      });
+    }
+  };
+
+  expand({ entries: registry, conversationDispatches: dispatches, depth: 0, ownerTurnId: null, ownerModel: null });
+
+  const ordered = [];
+  const appendWithChildren = (turn) => {
+    ordered.push(turn);
+    for (const child of childrenByTurnId.get(turn.external_id) ?? []) appendWithChildren(child);
+  };
+  for (const turn of turns) appendWithChildren(turn);
+  return ordered;
+}
+
+function buildSessionTurnsFromSteps(steps, conversationDir) {
+  const registry = readSubagentRegistry(conversationDir);
+  const parsed = buildTurnsFromSteps(steps, { registryMode: registry.length > 0 });
+  if (registry.length === 0 || parsed.turns.length === 0) return parsed;
+  return {
+    ...parsed,
+    turns: attachSubagentTurns({
+      conversationDir,
+      registry,
+      turns: parsed.turns,
+      dispatches: parsed.dispatches,
+    }),
+  };
+}
+
+function conversationDirForTranscript(transcriptPath) {
+  const logsDir = path.dirname(transcriptPath);
+  const systemDir = path.dirname(logsDir);
+  if (path.basename(systemDir) === ".system_generated") return path.dirname(systemDir);
+  return logsDir;
+}
+
+// ---------------------------------------------------------------------------
 // Antigravity transcript parsing
 // ---------------------------------------------------------------------------
 
@@ -1040,12 +1301,15 @@ const IGNORED_STEP_TYPES = new Set([
   "SYSTEM_MESSAGE",
 ]);
 
-function buildTurnsFromSteps(steps) {
+function buildTurnsFromSteps(steps, options = {}) {
+  const registryMode = Boolean(options.registryMode);
   const turns = [];
+  const dispatches = [];
   let current = null;
   let activeSubagent = null;
   let anchorTurnId = null;
   let subagentCount = 0;
+  let dispatchCount = 0;
   let continuationCount = 0;
   let projectPath = null;
   let currentModel = null;
@@ -1108,11 +1372,9 @@ function buildTurnsFromSteps(steps) {
     // PLANNER_RESPONSE → assistant text + tool calls
     if (type === "PLANNER_RESPONSE" && source === "MODEL") {
       const responseText = String(step.content ?? "").trim();
-      const hasSubagentCall = Array.isArray(step.tool_calls) && step.tool_calls.some(
-        (c) => c?.name === "invoke_subagent" || c?.name === "call_subagent"
-      );
+      const subagentCalls = Array.isArray(step.tool_calls) ? step.tool_calls.filter(isSubagentCall) : [];
 
-      if (hasSubagentCall) {
+      if (subagentCalls.length > 0) {
         if (current) {
           if (responseText) {
             const part = textPart("assistant", responseText);
@@ -1127,49 +1389,62 @@ function buildTurnsFromSteps(steps) {
           activeSubagent = null;
         }
 
-        const parentAnchorTurnId = anchorTurnId || (turns[0]?.external_id ?? "turn-0");
-        const subCall = step.tool_calls.find((c) => c?.name === "invoke_subagent" || c?.name === "call_subagent");
-        let argsObj = subCall?.args;
-        if (typeof argsObj === "string") {
-          try { argsObj = JSON.parse(argsObj); } catch {}
+        const parentAnchorTurnId = anchorTurnId || (turns.at(-1)?.external_id ?? turns[0]?.external_id ?? "turn-0");
+
+        if (registryMode) {
+          // The registry owns subagent turn creation; only remember which step dispatched what.
+          const dispatch = {
+            parentTurnId: parentAnchorTurnId,
+            plannerStepIndex: Number.isInteger(step.step_index) ? step.step_index : null,
+            stepIndex: null,
+            subagents: subagentCalls.flatMap((call) => subagentItemsFromCall(call)),
+          };
+          dispatches.push(dispatch);
+          for (const call of subagentCalls) {
+            pendingToolCalls.push({
+              executionId: toolCallExecutionId(call, parentAnchorTurnId, ++dispatchCount),
+              name: call.name,
+              args: call.args,
+              isSubagentDispatch: true,
+              dispatch,
+            });
+          }
+          continue;
         }
-        const subagents = Array.isArray(argsObj?.Subagents) && argsObj.Subagents.length > 0
-          ? argsObj.Subagents
-          : [argsObj || {}];
 
-        const execId = toolCallExecutionId(subCall, parentAnchorTurnId, ++subagentCount);
-        subCall.execution_id = execId;
-        pendingToolCalls.push({ executionId: execId, name: subCall.name, args: subCall.args, isSubagentDispatch: true });
+        for (const call of subagentCalls) {
+          const execId = toolCallExecutionId(call, parentAnchorTurnId, ++dispatchCount);
+          call.execution_id = execId;
+          pendingToolCalls.push({ executionId: execId, name: call.name, args: call.args, isSubagentDispatch: true });
+        }
 
-        for (let sIdx = 0; sIdx < subagents.length; sIdx++) {
-          const item = subagents[sIdx];
-          const agentRole = item.Role || item.TypeName || item.role || argsObj?.role || "Subagent";
-          const prompt = resolvePrompt(item.Prompt, item.prompt, item.task, argsObj?.prompt, argsObj?.task, "Subagent execution");
-          const subagentModel = item.Model || item.model || currentModel;
-
+        const subagentItems = subagentCalls.flatMap((call) => subagentItemsFromCall(call));
+        for (let sIdx = 0; sIdx < subagentItems.length; sIdx++) {
+          const item = subagentItems[sIdx];
+          const prompt = item.prompt ?? subagentPromptPlaceholder(item);
           const subTurn = {
-            external_id: `${parentAnchorTurnId}-subagent-${sIdx === 0 ? subagentCount : ++subagentCount}`,
+            external_id: `${parentAnchorTurnId}-subagent-${++subagentCount}`,
             turn_index: turns.length,
             user_text: prompt,
             turn_kind: "subagent",
-            agent_role: agentRole,
+            agent_role: item.role ?? undefined,
             parent_turn_id: parentAnchorTurnId,
-            title: null,
+            title: item.typeName ?? null,
             started_at: timestamp,
-            ended_at: sIdx < subagents.length - 1 ? timestamp : null,
-            model: subagentModel,
+            ended_at: sIdx < subagentItems.length - 1 ? timestamp : null,
+            model: resolveSubagentModel(item.model, currentModel),
             parts: [],
           };
 
-          if (sIdx < subagents.length - 1) {
+          if (sIdx < subagentItems.length - 1) {
             turns.push(subTurn);
           } else {
             activeSubagent = subTurn;
           }
         }
 
-        const otherCalls = step.tool_calls.filter((c) => c !== subCall);
-        if (otherCalls.length > 0) {
+        const otherCalls = step.tool_calls.filter((c) => !isSubagentCall(c));
+        if (otherCalls.length > 0 && activeSubagent) {
           pendingFileOperations.push(
             ...otherCalls.map((call) => fileOperationFromToolCall(call, knownFileContents)).filter(Boolean),
           );
@@ -1251,6 +1526,10 @@ function buildTurnsFromSteps(steps) {
         const sourceExecutionId = matchedCall?.executionId ?? null;
 
         if (matchedCall?.isSubagentDispatch || (matchedCall && ["invoke_subagent", "call_subagent"].includes(matchedCall.name))) {
+          // The dispatch acknowledgement step is the anchor the host registry points at (`spawnStepIndex`).
+          if (matchedCall?.dispatch && Number.isInteger(step.step_index)) {
+            matchedCall.dispatch.stepIndex = step.step_index;
+          }
           if (activeSubagent) {
             const reportText = typeof step.content === "string" ? step.content.trim() : JSON.stringify(step.content);
             if (reportText) {
@@ -1291,7 +1570,7 @@ function buildTurnsFromSteps(steps) {
       }
     }
   }
-  return { turns, projectPath };
+  return { turns, projectPath, dispatches };
 }
 
 function isInternalExecutionPath(cwd) {
@@ -1398,7 +1677,7 @@ function hasValidConversationSteps(dbPath) {
   }
 }
 
-function parseTranscript(text) {
+function parseTranscript(text, conversationDir = null) {
   const steps = [];
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -1408,7 +1687,9 @@ function parseTranscript(text) {
       continue;
     }
   }
-  const result = buildTurnsFromSteps(steps);
+  const result = conversationDir
+    ? buildSessionTurnsFromSteps(steps, conversationDir)
+    : buildTurnsFromSteps(steps);
   if (result.turns.length > 0 && isSyntheticWorkOrderText(result.turns[0]?.user_text)) {
     return { turns: [], projectPath: null };
   }
@@ -1954,7 +2235,7 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
         total: 1,
       });
       const text = readFileSync(targetPath, "utf8");
-      const parsed = parseTranscript(text);
+      const parsed = parseTranscript(text, conversationDirForTranscript(targetPath));
       const turns = displayTurns(parsed.turns);
       if (!turns.length) return null;
       if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) {
@@ -1987,7 +2268,7 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
         total: 1,
       });
       const text = readFileSync(transcriptInDir, "utf8");
-      const parsed = parseTranscript(text);
+      const parsed = parseTranscript(text, targetPath);
       const turns = displayTurns(parsed.turns);
       if (!turns.length) return null;
       if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) {
@@ -2240,7 +2521,7 @@ function readSession(onSession = null) {
     } catch {
       continue;
     }
-    const parsed = parseTranscript(text);
+    const parsed = parseTranscript(text, convDir);
     const turns = displayTurns(parsed.turns);
     if (!turns.length) continue;
     if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) continue;

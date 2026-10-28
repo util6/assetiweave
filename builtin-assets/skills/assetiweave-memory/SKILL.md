@@ -60,15 +60,18 @@ description: 通过 AssetIWeave 的统一 Memory API 与会话逐级取证体系
 
 **Session 级**（`level: "session"`）：`session_id`、`source_id`、`total_turns`、`created_at?`。
 支持三档互斥详细度开关与默认骨架：
-- 默认（不带开关）：`turns.columns = ["index", "turn_id", "question", "activities", "cards"]`
-- `--questions`（最精简）：`turns.columns = ["index", "turn_id", "question"]`，仅输出用户问题主干。
-- `--qa`（问答主干，思维分支寻回主力档）：`turns.columns = ["index", "turn_id", "question", "answer"]`，直接返回最终回答内容（`turn.response`），不含 activities 与 cards 噪音。
-- `--full`（最详细）：`turns.columns = ["index", "turn_id", "question", "activities", "cards", "answer"]`，包含卡片/活动概况与最终回答。
+- 默认（不带开关）：`turns.columns = ["index", "turn_id", "question", "activities", "cards", "turn_kind", "agent_role", "parent_turn_id"]`
+- `--questions`（最精简）：`turns.columns = ["index", "turn_id", "question", "turn_kind", "agent_role", "parent_turn_id"]`，仅输出用户问题主干。
+- `--qa`（问答主干，思维分支寻回主力档）：`turns.columns = ["index", "turn_id", "question", "answer", "turn_kind", "agent_role", "parent_turn_id"]`，直接返回最终回答内容（`turn.response`），不含 activities 与 cards 噪音。
+- `--full`（最详细）：`turns.columns = ["index", "turn_id", "question", "activities", "cards", "answer", "turn_kind", "agent_role", "parent_turn_id"]`，包含卡片/活动概况与最终回答。
 - `activities`：该轮工具/命令活动的**连续去重**摘要（如 `["Git status check","Build desktop crate"]`），不是逐条流水。
 - `cards`：该轮卡片数量（整数），据此判断是否需要放大到 Turn 级。
 - `index` 为 **1-based** 轮次序号。
+- `turn_kind`：轮次种类（如 `user`、`subagent`、`continuation`），历史数据可能为 `null`。
+- `agent_role`：子代理语义角色（如 `Rust Core Reviewer 2`），主代理轮次为 `null`。
+- `parent_turn_id`：派发该子代理的父轮次 **8 位短 ID**，与 `turn_id` 列同一取值域，可直接拼接回本表定位父轮次；顶层轮次为 `null`。
 
-**Turn 级**（`level: "turn"`）：`session_id`、`turn_id`、`turn_index`、`total_turns`、`user_question`，以及
+**Turn 级**（`level: "turn"`）：`session_id`、`turn_id`、`turn_index`、`total_turns`、`user_question`、`turn_kind`、`agent_role`、`parent_turn_id`（语义同 Session 级，主代理轮次为 `null`），以及
 `cards.columns = ["order","card_id","kind","label","status","chars"]`
 - `label`：命令/工具的语义标签（Agent 设计里的 command_label），是判断卡片价值的最强信号。
 - `chars`：正文长度预估。**先看 chars 再决定是否下钻**，避免把超长输出拉进上下文。

@@ -153,6 +153,12 @@ pub(super) async fn prepare_turn_for_import_sqlx_tx(
         &normalized.parts,
     );
 
+    // 子代理 Turn 合并了逐轮内容，最终汇报可能落在尾随的工具执行之前；
+    // 与主 Turn 同源，仍按 Triad 约定把最后一段助手输出写进 response。
+    if normalized.is_subagent() {
+        triad.promote_trailing_assistant_output(&normalized.parts);
+    }
+
     let old_row = sqlx::query_as::<_, (Option<String>, Option<String>)>(
         "SELECT process, response FROM conversation_turns WHERE tenant_id = ?1 AND session_id = ?2 AND external_id = ?3",
     )

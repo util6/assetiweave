@@ -286,7 +286,8 @@ test("OpenCode inlines child session subagent turns, emits continuation turn, an
 
     // Subagent turn
     assert.equal(subTurn.turn_kind, "subagent");
-    assert.equal(subTurn.agent_role, "代码审查子代理");
+    assert.ok(!subTurn.agent_role, "title without a (@type subagent) suffix must not become the role");
+    assert.equal(subTurn.title, "代码审查子代理");
     assert.equal(subTurn.parent_turn_id, anchorTurn.external_id);
     assert.equal(subTurn.user_text, "逐行审查 src/main.ts 的变更");
     assert.ok(subTurn.parts.some((p) => p.text?.includes("没有发现类型安全问题")));
@@ -373,6 +374,98 @@ test("OpenCode falls back to valid string when subagent prompt is whitespace-onl
     assert.ok(subTurn, "Subagent turn must exist");
     assert.equal(subTurn.user_text, "Subagent execution");
     assert.ok(subTurn.user_text.trim().length > 0);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("OpenCode derives short agent role from subagent type and keeps task description in title", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-role-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode-role.db");
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT, parent_id TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
+      "INSERT INTO session VALUES ('session-role-parent', 'Parent session', '/tmp/project', '2026-08-06T00:10:00Z', NULL);",
+      "INSERT INTO session VALUES ('session-role-child', '查找PDF中的医保代码 (@general subagent)', '/tmp/project', '2026-08-06T00:01:00Z', 'session-role-parent');",
+      `INSERT INTO message VALUES ('msg-rp', 'session-role-parent', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-rp', 'msg-rp', 'session-role-parent', '${sqlString(JSON.stringify({ type: "text", text: "Parent task" }))}');`,
+      `INSERT INTO message VALUES ('msg-rc', 'session-role-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:30Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-rc', 'msg-rc', 'session-role-child', '${sqlString(JSON.stringify({ type: "text", text: "查找PDF中的医保代码" }))}');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(dbPath);
+    const subTurn = session.turns.find((t) => t.turn_kind === "subagent");
+    assert.ok(subTurn, "Subagent turn must exist");
+    assert.equal(subTurn.agent_role, "general", "agent_role must be the short subagent type");
+    assert.equal(subTurn.title, "查找PDF中的医保代码", "task description must be preserved as turn title");
+    assert.equal(subTurn.user_text, "查找PDF中的医保代码");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("OpenCode leaves agent role empty when subagent title carries no type suffix", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-notype-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode-notype.db");
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT, parent_id TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
+      "INSERT INTO session VALUES ('session-nt-parent', 'Parent session', '/tmp/project', '2026-08-06T00:10:00Z', NULL);",
+      "INSERT INTO session VALUES ('session-nt-child', '自由命名的子任务', '/tmp/project', '2026-08-06T00:01:00Z', 'session-nt-parent');",
+      `INSERT INTO message VALUES ('msg-ntp', 'session-nt-parent', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-ntp', 'msg-ntp', 'session-nt-parent', '${sqlString(JSON.stringify({ type: "text", text: "Parent task" }))}');`,
+      `INSERT INTO message VALUES ('msg-ntc', 'session-nt-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:30Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-ntc', 'msg-ntc', 'session-nt-child', '${sqlString(JSON.stringify({ type: "text", text: "自由命名的子任务" }))}');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(dbPath);
+    const subTurn = session.turns.find((t) => t.turn_kind === "subagent");
+    assert.ok(subTurn, "Subagent turn must exist");
+    assert.ok(!subTurn.agent_role, "agent_role must stay empty without a type suffix");
+    assert.equal(subTurn.title, "自由命名的子任务");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("OpenCode folds every child round into one subagent Turn", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-merge-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode-merge.db");
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT, parent_id TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
+      "INSERT INTO session VALUES ('session-merge-parent', '主任务', '/tmp/project', '2026-08-06T00:10:00Z', NULL);",
+      "INSERT INTO session VALUES ('session-merge-child', '核对迁移脚本 (@reviewer subagent)', '/tmp/project', '2026-08-06T00:05:00Z', 'session-merge-parent');",
+      `INSERT INTO message VALUES ('msg-p1', 'session-merge-parent', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-p1', 'msg-p1', 'session-merge-parent', '${sqlString(JSON.stringify({ type: "text", text: "派发子代理核对迁移脚本" }))}');`,
+      `INSERT INTO message VALUES ('msg-c1', 'session-merge-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:01:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-c1', 'msg-c1', 'session-merge-child', '${sqlString(JSON.stringify({ type: "text", text: "先核对索引" }))}');`,
+      `INSERT INTO message VALUES ('msg-c2', 'session-merge-child', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:02:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-c2', 'msg-c2', 'session-merge-child', '${sqlString(JSON.stringify({ type: "text", text: "索引核对完成。" }))}');`,
+      `INSERT INTO message VALUES ('msg-c3', 'session-merge-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:03:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-c3', 'msg-c3', 'session-merge-child', '${sqlString(JSON.stringify({ type: "text", text: "再核对外键" }))}');`,
+      `INSERT INTO message VALUES ('msg-c4', 'session-merge-child', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:04:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-c4', 'msg-c4', 'session-merge-child', '${sqlString(JSON.stringify({ type: "text", text: "外键核对完成：无违规。" }))}');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(dbPath);
+    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurns.length, 1, "一个子会话只能产出一个 subagent Turn");
+
+    const subTurn = subagentTurns[0];
+    assert.equal(subTurn.agent_role, "reviewer");
+    assert.equal(subTurn.user_text, "先核对索引");
+    assert.deepEqual(
+      subTurn.parts.map((part) => part.text),
+      ["索引核对完成。", "外键核对完成：无违规。"],
+      "子会话逐轮内容按顺序合并进同一个 Turn 的 parts"
+    );
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

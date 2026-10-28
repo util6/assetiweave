@@ -3,7 +3,7 @@ use crate::backend::application::{
 };
 use crate::backend::domain::conversations::outline::{
     CardOutline, CardTargetMeta, ConversationOutlineDetailLevel, MatrixView, NeighborhoodCardRow,
-    SessionOutline, SessionTurnRow, TurnCardRow, TurnOutline,
+    SessionOutline, SessionTurnFacts, SessionTurnRow, TurnCardRow, TurnOutline,
 };
 use crate::backend::domain::conversations::{
     ConversationCardDetail, ConversationOutline, ConversationQuestionDetail,
@@ -170,6 +170,13 @@ fn collect_turn_cards(question: &ConversationQuestionDetail, turn_id: &str) -> V
     cards
 }
 
+fn short_parent_turn_id(parent_turn_id: Option<&str>) -> Option<String> {
+    parent_turn_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(crate::backend::domain::conversation_id_fragment)
+}
+
 fn build_session_outline(
     detail: ConversationSessionDetail,
     detail_level: ConversationOutlineDetailLevel,
@@ -214,100 +221,29 @@ fn build_session_outline(
 
             all_turns.push((
                 turn.turn_index,
-                turn.id.clone(),
-                question_text,
-                activities,
-                cards_count,
-                turn.response.clone(),
+                SessionTurnFacts {
+                    turn_id: crate::backend::domain::conversation_id_fragment(&turn.id),
+                    question: question_text,
+                    activities,
+                    cards: cards_count,
+                    answer: turn.response.clone(),
+                    turn_kind: turn.turn_kind.clone(),
+                    agent_role: turn.agent_role.clone(),
+                    parent_turn_id: short_parent_turn_id(turn.parent_turn_id.as_deref()),
+                },
             ));
         }
     }
 
-    all_turns.sort_by_key(|t| t.0);
+    all_turns.sort_by_key(|(turn_index, _)| *turn_index);
     let total_turns = all_turns.len();
 
-    let (columns, rows) = match detail_level {
-        ConversationOutlineDetailLevel::Questions => (
-            vec!["index".into(), "turn_id".into(), "question".into()],
-            all_turns
-                .into_iter()
-                .enumerate()
-                .map(
-                    |(i, (_, turn_id, question, _, _, _))| SessionTurnRow::Questions {
-                        index: i + 1,
-                        turn_id: crate::backend::domain::conversation_id_fragment(&turn_id),
-                        question,
-                    },
-                )
-                .collect(),
-        ),
-        ConversationOutlineDetailLevel::Qa => (
-            vec![
-                "index".into(),
-                "turn_id".into(),
-                "question".into(),
-                "answer".into(),
-            ],
-            all_turns
-                .into_iter()
-                .enumerate()
-                .map(
-                    |(i, (_, turn_id, question, _, _, answer))| SessionTurnRow::Qa {
-                        index: i + 1,
-                        turn_id: crate::backend::domain::conversation_id_fragment(&turn_id),
-                        question,
-                        answer,
-                    },
-                )
-                .collect(),
-        ),
-        ConversationOutlineDetailLevel::Full => (
-            vec![
-                "index".into(),
-                "turn_id".into(),
-                "question".into(),
-                "activities".into(),
-                "cards".into(),
-                "answer".into(),
-            ],
-            all_turns
-                .into_iter()
-                .enumerate()
-                .map(|(i, (_, turn_id, question, activities, cards, answer))| {
-                    SessionTurnRow::Full {
-                        index: i + 1,
-                        turn_id: crate::backend::domain::conversation_id_fragment(&turn_id),
-                        question,
-                        activities,
-                        cards,
-                        answer,
-                    }
-                })
-                .collect(),
-        ),
-        ConversationOutlineDetailLevel::Default => (
-            vec![
-                "index".into(),
-                "turn_id".into(),
-                "question".into(),
-                "activities".into(),
-                "cards".into(),
-            ],
-            all_turns
-                .into_iter()
-                .enumerate()
-                .map(
-                    |(i, (_, turn_id, question, activities, cards, _))| SessionTurnRow::Default {
-                        index: i + 1,
-                        turn_id: crate::backend::domain::conversation_id_fragment(&turn_id),
-                        question,
-                        activities,
-                        cards,
-                    },
-                )
-                .collect(),
-        ),
-    };
+    let columns = SessionTurnRow::columns(detail_level);
+    let rows = all_turns
+        .into_iter()
+        .enumerate()
+        .map(|(index, (_, facts))| SessionTurnRow::from_facts(detail_level, index + 1, facts))
+        .collect();
 
     Ok(ConversationOutline::Session(SessionOutline {
         session_id: session_short_id,
@@ -374,6 +310,9 @@ fn build_turn_outline(
         turn_index: target_pos + 1,
         total_turns,
         user_question,
+        turn_kind: turn.turn_kind.clone(),
+        agent_role: turn.agent_role.clone(),
+        parent_turn_id: short_parent_turn_id(turn.parent_turn_id.as_deref()),
         cards: MatrixView {
             columns: vec![
                 "order".into(),

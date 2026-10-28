@@ -365,6 +365,21 @@ function resolvePrompt(...candidates) {
   return "Subagent execution";
 }
 
+const SUBAGENT_TITLE_SUFFIX = /\(@([^\s()]+)\s+subagent\)\s*$/i;
+
+// OpenCode titles child sessions as "<task description> (@<type> subagent)".
+// The type is the only stable role name; the description belongs to the turn title.
+function parseSubagentTitle(title) {
+  const raw = typeof title === "string" ? title.trim() : "";
+  if (!raw) return { agentRole: null, description: null };
+  const suffix = raw.match(SUBAGENT_TITLE_SUFFIX);
+  if (!suffix) return { agentRole: null, description: raw };
+  return {
+    agentRole: suffix[1],
+    description: raw.slice(0, suffix.index).trim() || null,
+  };
+}
+
 function displayTurns(turns) {
   const parentTurnIds = new Set(turns.map((turn) => turn.parent_turn_id).filter(Boolean));
   return turns
@@ -743,16 +758,30 @@ function readSessions(includeTurns) {
 
       for (const childRow of children) {
         const childTurns = turnsBySession.get(String(childRow.id)) ?? [];
-        for (const childTurn of childTurns) {
-          combinedTurns.push({
-            ...childTurn,
-            external_id: childTurn.external_id || String(childRow.id),
-            turn_kind: "subagent",
-            agent_role: childRow.title || "subagent",
-            parent_turn_id: anchorTurnId,
-            user_text: resolvePrompt(childTurn.user_text === "User message" ? null : childTurn.user_text, childRow.title, "Subagent execution"),
-          });
-        }
+        const childTitle = parseSubagentTitle(childRow.title);
+        if (!childTurns.length) continue;
+        // 一个子会话严格合并为一个 subagent Turn：逐轮内容按原顺序串成该 Turn 的 parts
+        const firstChildTurn = childTurns[0];
+        const lastChildTurn = childTurns.at(-1);
+        combinedTurns.push({
+          external_id: String(childRow.id),
+          turn_index: 0,
+          turn_kind: "subagent",
+          agent_role: childTitle.agentRole ?? undefined,
+          title: childTitle.description ?? lastChildTurn?.title ?? null,
+          parent_turn_id: anchorTurnId,
+          started_at: firstChildTurn.started_at ?? null,
+          ended_at: lastChildTurn?.ended_at ?? lastChildTurn?.started_at ?? null,
+          model: childTurns.map((turn) => turn.model).find(Boolean) ?? null,
+          user_text: resolvePrompt(
+            childTurns
+              .map((turn) => (turn.user_text === "User message" ? null : turn.user_text))
+              .find(Boolean),
+            childTitle.description,
+            "Subagent execution",
+          ),
+          parts: childTurns.flatMap((turn) => (Array.isArray(turn.parts) ? turn.parts : [])),
+        });
       }
 
       if (lateParts.length > 0) {

@@ -9,6 +9,7 @@ pub mod id;
 pub mod links;
 mod normalized;
 pub mod outline;
+mod outline_semantics;
 pub mod pricing;
 pub mod projection;
 pub mod read_models;

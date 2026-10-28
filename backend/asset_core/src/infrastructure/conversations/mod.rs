@@ -1,4 +1,15 @@
-pub const CONVERSATION_PAYLOAD_POLICY_VERSION: u32 = 10;
+/// 会话载荷解析策略版本。
+///
+/// 该值参与增量同步的水位身份判定：`conversation_sources` 上记录的
+/// `synced_payload_policy_version` 与它不一致时，该数据源的全部会话水位会被清空，
+/// 下一轮同步重新读取并解析存量会话；同时 `conversation_payload_policy_state`
+/// 里记录的已应用版本落后时，启动阶段会主动请求一次全量重解析。
+///
+/// 提升该值即可驱动存量会话重解析，禁止另行引入第二套版本机制。
+///
+/// - v10：子代理 Turn 建模（Issue #148）之前的载荷策略。
+/// - v11：新增子代理 Turn 树、真实角色与派发提示词，存量会话必须重解析补齐结构。
+pub const CONVERSATION_PAYLOAD_POLICY_VERSION: u32 = 11;
 pub mod external;
 pub mod external_manifest;
 pub mod external_parser;

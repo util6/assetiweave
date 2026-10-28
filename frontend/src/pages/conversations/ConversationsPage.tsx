@@ -56,9 +56,12 @@ import {
 } from "../../components/conversations/ConversationContentCards";
 import {
   buildConversationBlockTurnIndex,
+  buildConversationTurnIndex,
   buildConversationTurnPresentations,
   collectConversationTurnBlocks,
+  conversationTurnAncestorIds,
   ConversationTurn,
+  visibleConversationTurnPresentations,
 } from "../../components/conversations/ConversationTurn";
 import {
   DEFAULT_TRANSLATION_SETTINGS,
@@ -2879,8 +2882,34 @@ export function QuestionPreview({
     () => buildConversationTurnPresentations(question, commandProjections),
     [commandProjections, question],
   );
+  // 默认全部展开：按 Tier 分层全部可见，collapsedTurnIds 只记录用户主动收起的分支。
+  const [collapsedTurnIds, setCollapsedTurnIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  const turnIndex = useMemo(
+    () => buildConversationTurnIndex(turnModels),
+    [turnModels],
+  );
+  const visibleTurnModels = useMemo(
+    () =>
+      visibleConversationTurnPresentations(
+        turnModels,
+        collapsedTurnIds,
+        turnIndex,
+      ),
+    [collapsedTurnIds, turnIndex, turnModels],
+  );
+  const toggleTurnCollapsed = useCallback((turnId: string) => {
+    setCollapsedTurnIds((current) => {
+      const next = new Set(current);
+      if (next.has(turnId)) next.delete(turnId);
+      else next.add(turnId);
+      return next;
+    });
+  }, []);
   const contentController = useConversationContentController({
-    blocks: collectConversationTurnBlocks(turnModels),
+    // 只收集可见 Turn 的 block：折叠隐藏的子 Turn 不得进入 block 索引
+    blocks: collectConversationTurnBlocks(visibleTurnModels),
     onCopyError,
     onTranslationError: onCopyError,
     recordKind,
@@ -2959,11 +2988,34 @@ export function QuestionPreview({
 
   useEffect(() => {
     if (!activeTurnId) return;
+    const branch = [
+      activeTurnId,
+      ...conversationTurnAncestorIds(turnModels, activeTurnId, turnIndex),
+    ];
+    // 深链定位时把沿途分支从「已收起」集合里移除，保证目标 Turn 可见。
+    setCollapsedTurnIds((current) => {
+      if (!branch.some((turnId) => current.has(turnId))) return current;
+      const next = new Set(current);
+      branch.forEach((turnId) => next.delete(turnId));
+      return next;
+    });
+  }, [activeTurnId, turnIndex, turnModels]);
+
+  const scrolledTurnIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeTurnId) {
+      scrolledTurnIdRef.current = null;
+      return;
+    }
+    if (scrolledTurnIdRef.current === activeTurnId) return;
+    if (!visibleTurnModels.some((model) => model.turn.id === activeTurnId))
+      return;
+    scrolledTurnIdRef.current = activeTurnId;
     virtualizedCollectionRef.current?.scrollToKey(activeTurnId, {
       align: "center",
       behavior: "auto",
     });
-  }, [activeTurnId]);
+  }, [activeTurnId, visibleTurnModels]);
 
   const handleTurnReady = useCallback(
     (turnId: string) => {
@@ -3034,7 +3086,7 @@ export function QuestionPreview({
               }
               deferredRenderingEnabled={
                 renderingFlags.deferredSkeletonRendering &&
-                turnModels.length >= 12
+                visibleTurnModels.length >= 12
               }
               eagerKeys={eagerKeys}
               enabled={renderingFlags.conversationTurnVirtualization}
@@ -3042,7 +3094,7 @@ export function QuestionPreview({
               fallback={() => <ConversationTurnSkeleton />}
               getItemKey={(model) => model.turn.id}
               gap={0}
-              items={turnModels}
+              items={visibleTurnModels}
               minItems={12}
               onItemReady={handleTurnReady}
               pinnedKeys={pinnedKeys}
@@ -3052,10 +3104,12 @@ export function QuestionPreview({
                   activeBlockId={activeBlockId}
                   colors={contentCardColors}
                   controller={contentController}
+                  expanded={!collapsedTurnIds.has(model.turn.id)}
                   index={index}
                   model={model}
                   onCopyError={onCopyError}
                   onCommandPartsVisible={handleCommandPartsVisible}
+                  onToggleExpanded={toggleTurnCollapsed}
                   recordKind={recordKind}
                   resultPreviewLineLimit={resultPreviewLineLimit}
                   t={t}

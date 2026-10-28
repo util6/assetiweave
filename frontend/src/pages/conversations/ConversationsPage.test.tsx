@@ -268,6 +268,81 @@ describe("MarkdownContent", () => {
     expect(html).toContain("assetiweave-cli conversation sync --dry-run");
   });
 
+  it("shows every subagent tier expanded, with tier headers and collapsible branches", () => {
+    const question = subagentTreeFixture();
+    const { container } = render(
+      <QuestionPreview
+        onExport={async () => undefined}
+        onPickOutputRoot={async () => null}
+        outputRoot="/tmp/conversation-export"
+        question={question}
+        session={{ ...sessionDetail, questions: [question] }}
+        setOutputRoot={vi.fn()}
+        t={t}
+      />,
+    );
+
+    // 默认全部展开：子代理的正文与下一层子代理都直接可见。
+    expect(
+      container.querySelector('[data-conversation-turn-id="turn-child"]'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector(
+        '[data-conversation-card-id="part-child-node-0"]',
+      ),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('[data-conversation-turn-id="turn-grandchild"]'),
+    ).toBeTruthy();
+    // 每一层有一个 Tier 分组头。
+    expect(
+      container.querySelector('[data-conversation-tier="1"]'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('[data-conversation-tier="2"]'),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "收起子代理" })[0]!);
+
+    expect(
+      container.querySelector(
+        '[data-conversation-card-id="part-child-node-0"]',
+      ),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-conversation-turn-id="turn-grandchild"]'),
+    ).toBeNull();
+  });
+
+  it("auto-expands collapsed ancestors when navigating to a deep subagent card", async () => {
+    const question = subagentTreeFixture();
+    const { container } = render(
+      <QuestionPreview
+        activeSearchTarget={{
+          blockId: "part-grandchild-node-0",
+          cardType: "answer",
+          questionId: question.question.id,
+          sessionId: sessionDetail.session.id,
+        }}
+        onExport={async () => undefined}
+        onPickOutputRoot={async () => null}
+        outputRoot="/tmp/conversation-export"
+        question={question}
+        session={{ ...sessionDetail, questions: [question] }}
+        setOutputRoot={vi.fn()}
+        t={t}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        container.querySelector(
+          '[data-conversation-card-id="part-grandchild-node-0"]',
+        ),
+      ).toBeTruthy(),
+    );
+  });
+
   it("omits project path from web record question previews", () => {
     const html = renderToStaticMarkup(
       <QuestionPreview
@@ -1877,6 +1952,83 @@ describe("conversation navigation compatibility", () => {
     });
   });
 });
+
+function subagentTreeFixture(): ConversationQuestionDetail {
+  type TurnRecord = ConversationQuestionDetail["turns"][number];
+  const turn = (
+    id: string,
+    overrides: Partial<TurnRecord> = {},
+  ): TurnRecord => ({
+    id,
+    session_id: "session-1",
+    external_id: id,
+    turn_index: 0,
+    prompt: `Prompt for ${id}`,
+    fingerprint: id,
+    missing: false,
+    imported_at: now,
+    ...overrides,
+  });
+  const turns: TurnRecord[] = [
+    turn("turn-root", { prompt: "主问题", turn_index: 0 }),
+    turn("turn-child", {
+      agent_role: "Teamwork Orchestrator",
+      ended_at: now,
+      model: "gemini-1.5-pro",
+      parent_turn_id: "turn-root",
+      prompt: "协调发布计划",
+      started_at: now,
+      title: "teamwork_preview_orchestrator",
+      turn_index: 1,
+      turn_kind: "subagent",
+    }),
+    turn("turn-grandchild", {
+      agent_role: "Project Orchestrator",
+      ended_at: null,
+      parent_turn_id: "turn-child",
+      prompt: "拆解发布步骤",
+      started_at: now,
+      turn_index: 2,
+      turn_kind: "subagent",
+    }),
+  ];
+
+  return {
+    question: {
+      id: "question-tree",
+      session_id: "session-1",
+      title: "子代理树",
+      created_at: now,
+      updated_at: now,
+    },
+    turns,
+    parts: [],
+    question_turns: turns.map((record, turn_order) => ({
+      question_id: "question-tree",
+      turn_id: record.id,
+      turn_order,
+      assignment_origin: "auto_merged" as const,
+      assigned_at: now,
+      updated_at: now,
+    })),
+    projected_content_nodes: [
+      createProjectedNode({
+        content: "子代理内部记录",
+        nodeType: "answer",
+        partId: "part-child",
+        semanticRole: "answer",
+        turnId: "turn-child",
+      }),
+      createProjectedNode({
+        content: "最深层结论",
+        nodeType: "answer",
+        partId: "part-grandchild",
+        semanticRole: "answer",
+        turnId: "turn-grandchild",
+      }),
+    ],
+  };
+}
 
 const questionDetail: ConversationQuestionDetail = {
   question: {
