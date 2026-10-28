@@ -1374,6 +1374,527 @@ test("Antigravity multi-turn session keeps subsequent question as standard user 
 });
 
 
+test("Antigravity inlines every registered subagent as its own turn with a resolved parent and deep content", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-tree-"));
+  try {
+    const brainDir = path.join(fixtureRoot, "brain");
+    const mainId = "a0000000-0000-4000-8000-000000000001";
+    const orchestratorId = "a0000000-0000-4000-8000-000000000002";
+    const projectId = "a0000000-0000-4000-8000-000000000003";
+    const leafIds = Array.from({ length: 16 }, (_, index) => `b0000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+
+    writeConversation(brainDir, mainId, {
+      steps: [
+        userStep(0, "Orchestrate the multi-agent review"),
+        ...dispatchSteps(1, [
+          { Role: "Teamwork Orchestrator", TypeName: "teamwork_preview", Prompt: "Coordinate the multi-agent review", Model: "inherit" },
+        ], [orchestratorId]),
+        step(3, "MODEL", "PLANNER_RESPONSE", { content: "Orchestrator dispatched." }),
+      ],
+      subagents: [{ conversationId: orchestratorId, role: "Teamwork Orchestrator", typeName: "teamwork_preview", spawnStepIndex: 2 }],
+    });
+
+    writeConversation(brainDir, orchestratorId, {
+      steps: [
+        step(0, "SYSTEM", "SYSTEM_MESSAGE", { content: "<SYSTEM_MESSAGE>You are the teamwork orchestrator.</SYSTEM_MESSAGE>" }),
+        ...dispatchSteps(1, [
+          { Role: "Project Orchestrator", TypeName: "teamwork_preview_orchestrator", Prompt: "Plan the review work" },
+        ], [projectId]),
+        step(3, "MODEL", "PLANNER_RESPONSE", { content: "Project orchestrator spawned." }),
+      ],
+      subagents: [{ conversationId: projectId, role: "Project Orchestrator", typeName: "teamwork_preview_orchestrator", spawnStepIndex: 2 }],
+    });
+
+    const leafRoles = leafIds.map((_, index) => `Rust Core Reviewer ${index + 1}`);
+    const projectSteps = [];
+    const projectSubagents = [];
+    for (let batch = 0; batch < 4; batch += 1) {
+      const startIndex = 1 + batch * 2;
+      const batchRoles = leafRoles.slice(batch * 4, batch * 4 + 4);
+      const batchIds = leafIds.slice(batch * 4, batch * 4 + 4);
+      projectSteps.push(
+        ...dispatchSteps(
+          startIndex,
+          batchRoles.map((role) => ({ Role: role, TypeName: "teamwork_preview_reviewer", Prompt: `Review module for ${role}` })),
+          batchIds,
+        ),
+      );
+      batchIds.forEach((conversationId, index) => {
+        projectSubagents.push({
+          conversationId,
+          role: batchRoles[index],
+          typeName: "teamwork_preview_reviewer",
+          spawnStepIndex: startIndex + 1,
+        });
+      });
+    }
+    projectSteps.push(step(9, "MODEL", "PLANNER_RESPONSE", { content: "All reviewers are running." }));
+
+    writeConversation(brainDir, projectId, { steps: projectSteps, subagents: projectSubagents });
+
+    leafIds.forEach((conversationId, index) => {
+      writeConversation(brainDir, conversationId, {
+        steps: [
+          step(0, "SYSTEM", "SYSTEM_MESSAGE", { content: "<SYSTEM_MESSAGE>You are a reviewer subagent.</SYSTEM_MESSAGE>" }),
+          step(1, "MODEL", "PLANNER_RESPONSE", {
+            content: "",
+            tool_calls: [{ name: "run_command", args: { CommandLine: `rg "module ${index + 1}" src`, Cwd: "/tmp/project" } }],
+          }),
+          step(2, "MODEL", "GENERIC", { content: "Process exited with code 0\nOutput:\n3 matches" }),
+          step(3, "MODEL", "PLANNER_RESPONSE", { content: `Module ${index + 1} review complete: 3 matches.` }),
+        ],
+      });
+    });
+
+    const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
+    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+
+    const mainTurn = session.turns[0];
+    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurns.length, 18, "every registered subagent must become exactly one turn");
+    assert.deepEqual(warnings, []);
+
+    const turnIds = new Set(session.turns.map((turn) => turn.external_id));
+    for (const turn of subagentTurns) {
+      assert.ok(turnIds.has(turn.parent_turn_id), `parent ${turn.parent_turn_id} must resolve to an imported turn`);
+    }
+
+    const byRole = new Map(subagentTurns.map((turn) => [turn.agent_role, turn]));
+    const orchestrator = byRole.get("Teamwork Orchestrator");
+    const project = byRole.get("Project Orchestrator");
+    assert.equal(orchestrator.parent_turn_id, mainTurn.external_id, "layer 1 must hang off the dispatching main turn");
+    assert.equal(project.parent_turn_id, orchestrator.external_id, "layer 2 must hang off its orchestrator turn");
+    assert.equal(orchestrator.title, "teamwork_preview");
+    assert.equal(project.title, "teamwork_preview_orchestrator");
+    assert.equal(orchestrator.user_text, "Coordinate the multi-agent review");
+
+    const deepestTurns = subagentTurns.filter((turn) => turn.parent_turn_id === project.external_id);
+    assert.equal(deepestTurns.length, 16);
+    const deepest = deepestTurns[0];
+    assert.equal(deepest.agent_role, "Rust Core Reviewer 1");
+    assert.equal(deepest.title, "teamwork_preview_reviewer");
+    assert.equal(deepest.user_text, "Review module for Rust Core Reviewer 1");
+    assert.ok(deepest.parts.length > 0, "the deepest layer must carry execution content");
+    const commandPart = deepest.parts.find((part) => part.kind === "command");
+    assert.ok(commandPart, "the deepest layer must expose the commands it ran");
+    assert.match(commandPart.command, /rg "module 1" src/);
+    const lastPart = deepest.parts.at(-1);
+    assert.equal(lastPart.role, "assistant");
+    assert.match(lastPart.text, /Module 1 review complete/);
+
+    const repeated = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+    assert.deepEqual(
+      repeated.session.turns.map((turn) => turn.external_id),
+      session.turns.map((turn) => turn.external_id),
+      "subagent turn identity must stay stable across repeated syncs",
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity keeps every subagent dispatched inside the same execution step", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-parallel-step-"));
+  try {
+    const brainDir = path.join(fixtureRoot, "brain");
+    const mainId = "c0000000-0000-4000-8000-000000000001";
+    const childIds = [
+      "c0000000-0000-4000-8000-000000000011",
+      "c0000000-0000-4000-8000-000000000012",
+      "c0000000-0000-4000-8000-000000000013",
+      "c0000000-0000-4000-8000-000000000014",
+    ];
+    const roles = ["Scope Explorer", "Adapter Explorer", "Storage Explorer", "UI Explorer"];
+
+    writeConversation(brainDir, mainId, {
+      steps: [
+        userStep(0, "Explore the repository"),
+        step(1, "MODEL", "PLANNER_RESPONSE", {
+          content: "",
+          tool_calls: [
+            {
+              name: "invoke_subagent",
+              args: { Subagents: [
+                { Role: roles[0], TypeName: "teamwork_preview_explorer", Prompt: "Explore the scope" },
+                { Role: roles[1], TypeName: "teamwork_preview_explorer", Prompt: "Explore the adapters" },
+              ] },
+            },
+            {
+              name: "invoke_subagent",
+              args: { Subagents: [
+                { Role: roles[2], TypeName: "teamwork_preview_explorer", Prompt: "Explore storage" },
+                { Role: roles[3], TypeName: "teamwork_preview_explorer", Prompt: "Explore the UI" },
+              ] },
+            },
+          ],
+        }),
+        step(2, "MODEL", "GENERIC", { content: "Created the following subagents:\n{}" }),
+      ],
+      subagents: childIds.map((conversationId, index) => ({
+        conversationId,
+        role: roles[index],
+        typeName: "teamwork_preview_explorer",
+        spawnStepIndex: 2,
+      })),
+    });
+
+    childIds.forEach((conversationId, index) => {
+      writeConversation(brainDir, conversationId, {
+        steps: [
+          step(0, "MODEL", "PLANNER_RESPONSE", { content: "", tool_calls: [{ name: "list_dir", args: { DirectoryPath: `/tmp/project/${index}` } }] }),
+          step(1, "MODEL", "GENERIC", { content: `{"name":"src","isDir":true}` }),
+          step(2, "MODEL", "PLANNER_RESPONSE", { content: `${roles[index]} is done.` }),
+        ],
+      });
+    });
+
+    const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
+    const { session } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+
+    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurns.length, 4);
+    assert.deepEqual(subagentTurns.map((turn) => turn.agent_role), roles);
+    assert.equal(new Set(subagentTurns.map((turn) => turn.parent_turn_id)).size, 1);
+    for (const turn of subagentTurns) assert.ok(turn.parts.length > 0);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity hangs each subagent off the turn that dispatched it instead of the last main turn", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-per-question-"));
+  try {
+    const brainDir = path.join(fixtureRoot, "brain");
+    const mainId = "14000000-0000-4000-8000-000000000001";
+    const firstChildId = "14000000-0000-4000-8000-000000000011";
+    const secondChildId = "14000000-0000-4000-8000-000000000012";
+
+    writeConversation(brainDir, mainId, {
+      steps: [
+        userStep(0, "First question"),
+        ...dispatchSteps(1, [{ Role: "First Worker", TypeName: "teamwork_preview_worker", Prompt: "Handle the first question" }], [firstChildId]),
+        userStep(3, "Second question"),
+        ...dispatchSteps(4, [{ Role: "Second Worker", TypeName: "teamwork_preview_worker", Prompt: "Handle the second question" }], [secondChildId]),
+      ],
+      subagents: [
+        { conversationId: firstChildId, role: "First Worker", typeName: "teamwork_preview_worker", spawnStepIndex: 2 },
+        { conversationId: secondChildId, role: "Second Worker", typeName: "teamwork_preview_worker", spawnStepIndex: 5 },
+      ],
+    });
+
+    for (const [conversationId, text] of [[firstChildId, "first done"], [secondChildId, "second done"]]) {
+      writeConversation(brainDir, conversationId, {
+        steps: [step(0, "MODEL", "PLANNER_RESPONSE", { content: text })],
+      });
+    }
+
+    const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
+    const { session } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+
+    const mainTurns = session.turns.filter((turn) => turn.turn_kind === undefined);
+    assert.equal(mainTurns.length, 2);
+    const [firstQuestion, secondQuestion] = mainTurns;
+    const firstWorker = session.turns.find((turn) => turn.agent_role === "First Worker");
+    const secondWorker = session.turns.find((turn) => turn.agent_role === "Second Worker");
+    assert.equal(firstWorker.parent_turn_id, firstQuestion.external_id);
+    assert.equal(secondWorker.parent_turn_id, secondQuestion.external_id);
+    assert.deepEqual(
+      session.turns.map((turn) => turn.external_id),
+      [firstQuestion.external_id, firstWorker.external_id, secondQuestion.external_id, secondWorker.external_id],
+      "each subagent turn must sit directly after the turn that dispatched it",
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity degrades subagents beyond the depth limit to leaf turns and warns", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-depth-"));
+  try {
+    const brainDir = path.join(fixtureRoot, "brain");
+    const chainIds = Array.from({ length: 6 }, (_, index) => `d0000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+
+    chainIds.forEach((conversationId, index) => {
+      const nextId = chainIds[index + 1];
+      const steps = [userStep(0, `Level ${index + 1} task`)];
+      const subagents = [];
+      if (nextId) {
+        steps.push(...dispatchSteps(1, [{ Role: `Level ${index + 2} Orchestrator`, TypeName: "teamwork_preview_orchestrator", Prompt: `Delegate level ${index + 2}` }], [nextId]));
+        subagents.push({
+          conversationId: nextId,
+          role: `Level ${index + 2} Orchestrator`,
+          typeName: "teamwork_preview_orchestrator",
+          spawnStepIndex: 2,
+        });
+      }
+      steps.push(step(3, "MODEL", "PLANNER_RESPONSE", { content: `Level ${index + 1} finished.` }));
+      writeConversation(brainDir, conversationId, { steps, subagents });
+    });
+
+    const transcriptPath = path.join(brainDir, chainIds[0], ".system_generated", "logs", "transcript_full.jsonl");
+    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+
+    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurns.length, 5, "the tree must stop one level past the depth limit");
+    const depths = subagentTurns.map((turn) => {
+      let depth = 1;
+      let parentId = turn.parent_turn_id;
+      while (parentId && parentId !== session.turns[0].external_id) {
+        const parent = subagentTurns.find((candidate) => candidate.external_id === parentId);
+        if (!parent) break;
+        depth += 1;
+        parentId = parent.parent_turn_id;
+      }
+      return depth;
+    });
+    assert.equal(Math.max(...depths), 5);
+    const deepest = subagentTurns.find((turn) => turn.external_id.endsWith(chainIds[5]));
+    assert.ok(deepest, "the over-limit subagent must still be kept as a leaf turn");
+    assert.equal(deepest.parts.length, 0, "the over-limit subagent must not be expanded");
+    assert.equal(deepest.user_text, "Delegate level 6");
+    assert.ok(warnings.some((warning) => /depth/i.test(warning)), `expected a depth warning, got ${JSON.stringify(warnings)}`);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity stops expanding a cyclic subagent reference and warns", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-cycle-"));
+  try {
+    const brainDir = path.join(fixtureRoot, "brain");
+    const mainId = "e0000000-0000-4000-8000-000000000001";
+    const childId = "e0000000-0000-4000-8000-000000000002";
+
+    writeConversation(brainDir, mainId, {
+      steps: [
+        userStep(0, "Delegate a cyclic task"),
+        ...dispatchSteps(1, [{ Role: "Loop Orchestrator", TypeName: "teamwork_preview_orchestrator", Prompt: "Delegate back to the root" }], [childId]),
+      ],
+      subagents: [{ conversationId: childId, role: "Loop Orchestrator", typeName: "teamwork_preview_orchestrator", spawnStepIndex: 2 }],
+    });
+
+    writeConversation(brainDir, childId, {
+      steps: [
+        step(0, "MODEL", "PLANNER_RESPONSE", { content: "", tool_calls: [{ name: "run_command", args: { CommandLine: "pwd" } }] }),
+        step(1, "MODEL", "GENERIC", { content: "Process exited with code 0\nOutput:\n/tmp/project" }),
+        ...dispatchSteps(2, [{ Role: "Root Again", TypeName: "teamwork_preview", Prompt: "Return to the root" }], [mainId]),
+      ],
+      subagents: [{ conversationId: mainId, role: "Root Again", typeName: "teamwork_preview", spawnStepIndex: 3 }],
+    });
+
+    const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
+    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+
+    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurns.length, 2, "a cyclic reference must not expand forever");
+    const cyclic = subagentTurns.find((turn) => turn.agent_role === "Root Again");
+    assert.ok(cyclic, "the cyclic dispatch must still be represented once");
+    assert.equal(cyclic.parts.length, 0);
+    assert.ok(warnings.some((warning) => /cycle|cyclic/i.test(warning)), `expected a cycle warning, got ${JSON.stringify(warnings)}`);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity keeps the dispatch turn and warns when the child session record is missing", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-missing-"));
+  try {
+    const brainDir = path.join(fixtureRoot, "brain");
+    const mainId = "f0000000-0000-4000-8000-000000000001";
+    const missingId = "f0000000-0000-4000-8000-000000000002";
+
+    writeConversation(brainDir, mainId, {
+      steps: [
+        userStep(0, "Delegate a task with no transcript"),
+        ...dispatchSteps(1, [{ Role: "Ghost Worker", TypeName: "teamwork_preview_worker", Prompt: "Audit the migration" }], [missingId]),
+        step(3, "MODEL", "PLANNER_RESPONSE", { content: "Waiting for the worker." }),
+      ],
+      subagents: [{ conversationId: missingId, role: "Ghost Worker", typeName: "teamwork_preview_worker", spawnStepIndex: 2 }],
+    });
+
+    const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
+    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+
+    const subagentTurn = session.turns.find((turn) => turn.turn_kind === "subagent");
+    assert.ok(subagentTurn, "the session must still import with the dispatch turn preserved");
+    assert.equal(subagentTurn.agent_role, "Ghost Worker");
+    assert.equal(subagentTurn.user_text, "Audit the migration");
+    assert.equal(subagentTurn.parts.length, 0);
+    assert.ok(
+      warnings.some((warning) => /child session|missing/i.test(warning)),
+      `expected a missing-session warning, got ${JSON.stringify(warnings)}`,
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity takes the dispatch task text instead of system injected prompt blocks", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-prompt-"));
+  try {
+    const brainDir = path.join(fixtureRoot, "brain");
+    const mainId = "11000000-0000-4000-8000-000000000001";
+    const childId = "11000000-0000-4000-8000-000000000002";
+
+    writeConversation(brainDir, mainId, {
+      steps: [
+        userStep(0, "Audit the adapters"),
+        ...dispatchSteps(1, [{ Role: "Adapter Auditor", TypeName: "teamwork_preview_auditor", Prompt: "Audit the antigravity adapter" }], [childId]),
+      ],
+      subagents: [{ conversationId: childId, role: "Adapter Auditor", typeName: "teamwork_preview_auditor", spawnStepIndex: 2 }],
+    });
+
+    writeConversation(brainDir, childId, {
+      steps: [
+        userStep(0, "<environment_context><cwd>/tmp/project</cwd><plugins>300 plugins</plugins></environment_context>"),
+        userStep(1, "Investigate the flaky test"),
+        step(2, "MODEL", "PLANNER_RESPONSE", { content: "Investigation done." }),
+      ],
+    });
+
+    const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
+    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+
+    const subagentTurn = session.turns.find((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurn.user_text, "Audit the antigravity adapter");
+    assert.deepEqual(warnings, []);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity falls back to the child user input when no dispatch task text exists", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-fallback-prompt-"));
+  try {
+    const brainDir = path.join(fixtureRoot, "brain");
+    const mainId = "12000000-0000-4000-8000-000000000001";
+    const childId = "12000000-0000-4000-8000-000000000002";
+
+    writeConversation(brainDir, mainId, {
+      steps: [
+        userStep(0, "Dispatch without a task prompt"),
+        ...dispatchSteps(1, [{ Role: "Flaky Test Hunter", TypeName: "teamwork_preview_worker" }], [childId]),
+      ],
+      subagents: [{ conversationId: childId, role: "Flaky Test Hunter", typeName: "teamwork_preview_worker", spawnStepIndex: 2 }],
+    });
+
+    writeConversation(brainDir, childId, {
+      steps: [
+        userStep(0, "<environment_context><cwd>/tmp/project</cwd></environment_context>"),
+        userStep(1, "Investigate the flaky test"),
+        step(2, "MODEL", "PLANNER_RESPONSE", { content: "The flaky test is fixed." }),
+      ],
+    });
+
+    const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
+    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+
+    const subagentTurn = session.turns.find((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurn.user_text, "Investigate the flaky test");
+    assert.deepEqual(warnings, []);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity uses a placeholder prompt and warns when no task text can be recovered", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-placeholder-"));
+  try {
+    const brainDir = path.join(fixtureRoot, "brain");
+    const mainId = "13000000-0000-4000-8000-000000000001";
+    const childId = "13000000-0000-4000-8000-000000000002";
+
+    writeConversation(brainDir, mainId, {
+      steps: [
+        userStep(0, "Dispatch an anonymous worker"),
+        ...dispatchSteps(1, [{ Role: "Anonymous Worker", TypeName: "teamwork_preview_worker" }], [childId]),
+      ],
+      subagents: [{ conversationId: childId, role: "Anonymous Worker", typeName: "teamwork_preview_worker", spawnStepIndex: 2 }],
+    });
+
+    writeConversation(brainDir, childId, {
+      steps: [step(0, "SYSTEM", "SYSTEM_MESSAGE", { content: "<SYSTEM_MESSAGE>no task text here</SYSTEM_MESSAGE>" })],
+    });
+
+    const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
+    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+
+    const subagentTurn = session.turns.find((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurn.user_text, "Subagent execution");
+    assert.ok(warnings.some((warning) => /prompt/i.test(warning)), `expected a prompt warning, got ${JSON.stringify(warnings)}`);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+function step(index, source, type, extra = {}) {
+  return {
+    step_index: index,
+    source,
+    type,
+    status: "DONE",
+    created_at: `2026-10-28T10:00:${String(index).padStart(2, "0")}Z`,
+    ...extra,
+  };
+}
+
+function userStep(index, text) {
+  return step(index, "USER_EXPLICIT", "USER_INPUT", { content: `<USER_REQUEST>${text}</USER_REQUEST>` });
+}
+
+function dispatchSteps(startIndex, subagents, conversationIds = []) {
+  const created = conversationIds.map((conversationId) => JSON.stringify({
+    conversationId,
+    logAbsoluteUri: `file:///tmp/brain/${conversationId}/.system_generated/logs/transcript.jsonl`,
+  }));
+  return [
+    step(startIndex, "MODEL", "PLANNER_RESPONSE", {
+      content: "",
+      tool_calls: [{ name: "invoke_subagent", args: { Subagents: subagents } }],
+    }),
+    step(startIndex + 1, "MODEL", "GENERIC", {
+      content: `Created the following subagents:\n${created.join("\n")}`,
+    }),
+  ];
+}
+
+function writeConversation(brainDir, conversationId, { steps = [], subagents = [] }) {
+  const conversationDir = path.join(brainDir, conversationId);
+  const logsDir = path.join(conversationDir, ".system_generated", "logs");
+  mkdirSync(logsDir, { recursive: true });
+  writeFileSync(path.join(logsDir, "transcript_full.jsonl"), steps.map((entry) => JSON.stringify(entry)).join("\n"));
+  if (subagents.length === 0) return conversationDir;
+  const registryDir = path.join(conversationDir, ".system_generated", "subagents");
+  mkdirSync(registryDir, { recursive: true });
+  for (const subagent of subagents) {
+    writeFileSync(
+      path.join(registryDir, `${subagent.conversationId}.json`),
+      JSON.stringify({
+        conversationId: subagent.conversationId,
+        subagentDescriptor: { typeName: subagent.typeName, role: subagent.role },
+        state: "SUBAGENT_STATE_ALIVE",
+        spawnStepIndex: subagent.spawnStepIndex,
+        workspaceUris: ["file:///tmp/project"],
+      }),
+    );
+  }
+  return conversationDir;
+}
+
+function runFixtureAdapter(input) {
+  const result = spawnSync(process.execPath, [adapterPath], {
+    encoding: "utf8",
+    input: JSON.stringify(input),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const messages = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  return {
+    messages,
+    session: messages.find((message) => message.type === "item" && message.item?.session)?.item.session ?? null,
+    warnings: messages.filter((message) => message.type === "warning").map((message) => message.message),
+  };
+}
+
 function readFixtureSession(transcriptPath) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",
