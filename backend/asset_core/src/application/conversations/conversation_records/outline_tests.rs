@@ -207,7 +207,16 @@ async fn test_conversation_outline_and_card_get_full_suite() {
             assert_eq!(s.total_turns, 2);
             assert_eq!(
                 s.turns.columns,
-                vec!["index", "turn_id", "question", "activities", "cards"]
+                vec![
+                    "index",
+                    "turn_id",
+                    "question",
+                    "activities",
+                    "cards",
+                    "turn_kind",
+                    "agent_role",
+                    "parent_turn_id"
+                ]
             );
             assert_eq!(s.turns.rows.len(), 2);
             assert_eq!(s.turns.rows[0].index(), 1);
@@ -331,11 +340,22 @@ async fn test_conversation_outline_and_card_get_full_suite() {
     // 6. Test JSON serialization and round-trip
     let json_session = serde_json::to_string(&outline_session).expect("serialize session outline");
     assert!(json_session.contains("\"level\":\"session\""));
-    assert!(json_session
-        .contains("\"columns\":[\"index\",\"turn_id\",\"question\",\"activities\",\"cards\"]"));
+    assert!(json_session.contains(
+        "\"columns\":[\"index\",\"turn_id\",\"question\",\"activities\",\"cards\",\"turn_kind\",\"agent_role\",\"parent_turn_id\"]"
+    ));
     assert!(!json_session.contains("\"stats\""));
     assert!(!json_session.contains("\"title\""));
     assert!(!json_session.contains("\"answer_id\""));
+
+    // 6.1 Row 序列化必须能无损回读（子代理语义列随行回读）
+    if let ConversationOutline::Session(s) = &outline_session {
+        let row = &s.turns.rows[0];
+        let round_trip: SessionTurnRow =
+            serde_json::from_str(&serde_json::to_string(row).unwrap()).unwrap();
+        assert_eq!(&round_trip, row);
+    } else {
+        panic!("expected session outline");
+    }
 
     // 7. Test Detail Level: Questions
     let outline_questions = service
@@ -346,7 +366,17 @@ async fn test_conversation_outline_and_card_get_full_suite() {
         .await
         .expect("get outline with questions mode");
     if let ConversationOutline::Session(s) = &outline_questions {
-        assert_eq!(s.turns.columns, vec!["index", "turn_id", "question"]);
+        assert_eq!(
+            s.turns.columns,
+            vec![
+                "index",
+                "turn_id",
+                "question",
+                "turn_kind",
+                "agent_role",
+                "parent_turn_id"
+            ]
+        );
         assert_eq!(s.turns.rows.len(), 2);
         assert_eq!(s.turns.rows[0].index(), 1);
         assert_eq!(
@@ -359,7 +389,10 @@ async fn test_conversation_outline_and_card_get_full_suite() {
             serde_json::json!([
                 1,
                 s.turns.rows[0].turn_id(),
-                "Please run diagnostics and show status"
+                "Please run diagnostics and show status",
+                null,
+                null,
+                null
             ])
         );
     } else {
@@ -377,12 +410,20 @@ async fn test_conversation_outline_and_card_get_full_suite() {
     if let ConversationOutline::Session(s) = &outline_qa {
         assert_eq!(
             s.turns.columns,
-            vec!["index", "turn_id", "question", "answer"]
+            vec![
+                "index",
+                "turn_id",
+                "question",
+                "answer",
+                "turn_kind",
+                "agent_role",
+                "parent_turn_id"
+            ]
         );
         assert_eq!(s.turns.rows.len(), 2);
         let qa_val = serde_json::to_value(&s.turns.rows[0]).unwrap();
         assert!(qa_val.is_array());
-        assert_eq!(qa_val.as_array().unwrap().len(), 4);
+        assert_eq!(qa_val.as_array().unwrap().len(), 7);
     } else {
         panic!("expected session outline");
     }
@@ -404,13 +445,16 @@ async fn test_conversation_outline_and_card_get_full_suite() {
                 "question",
                 "activities",
                 "cards",
-                "answer"
+                "answer",
+                "turn_kind",
+                "agent_role",
+                "parent_turn_id"
             ]
         );
         assert_eq!(s.turns.rows.len(), 2);
         let full_val = serde_json::to_value(&s.turns.rows[0]).unwrap();
         assert!(full_val.is_array());
-        assert_eq!(full_val.as_array().unwrap().len(), 6);
+        assert_eq!(full_val.as_array().unwrap().len(), 9);
     } else {
         panic!("expected session outline");
     }

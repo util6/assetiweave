@@ -83,7 +83,7 @@ aiwc conversation outline <short_id> --qa
 ```
 *注：仅在极少数需要卡片类型或工具执行结果辅助判定的复杂排障会话中，才按需使用 `aiwc conversation outline <short_id> --full`。严禁全量 dump 原始会话全文字符串。*
 
-`--qa` 返回紧凑的列式矩阵 JSON（`turns.columns = ["index", "turn_id", "question", "answer"]`），其中 `index` 为 **1-based** 轮次序号：
+`--qa` 返回紧凑的列式矩阵 JSON（`turns.columns = ["index", "turn_id", "question", "answer", "turn_kind", "agent_role", "parent_turn_id"]`），其中 `index` 为 **1-based** 轮次序号；`turn_kind` / `agent_role` / `parent_turn_id` 标识子代理轮次及其父轮次（顶层轮次为 `null`）：
 ```json
 {
   "ok": true,
@@ -91,10 +91,10 @@ aiwc conversation outline <short_id> --qa
     "session_id": "73c20273",
     "total_turns": 3,
     "turns": {
-      "columns": ["index", "turn_id", "question", "answer"],
+      "columns": ["index", "turn_id", "question", "answer", "turn_kind", "agent_role", "parent_turn_id"],
       "rows": [
-        [1, "9633a9d7", "/implement-spec 落地[#135]...", null],
-        [2, "faf95fe7", "/implement-spec 落地[#135]...", "# 任务完成报告..."]
+        [1, "9633a9d7", "/implement-spec 落地[#135]...", null, "user", null, null],
+        [2, "faf95fe7", "/implement-spec 落地[#135]...", "# 任务完成报告...", "subagent", "Rust Core Reviewer 2", "9633a9d7"]
       ]
     }
   }

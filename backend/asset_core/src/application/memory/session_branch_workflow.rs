@@ -129,6 +129,7 @@ impl AppService {
                         turn_id,
                         question,
                         answer,
+                        ..
                     } = row
                     {
                         qa_turns.push((index, turn_id, question, answer));

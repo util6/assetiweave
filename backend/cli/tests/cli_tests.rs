@@ -644,7 +644,16 @@ fn test_conversation_outline_and_card_drilldown() {
     assert_eq!(json_so["data"]["level"], "session");
     assert_eq!(
         json_so["data"]["turns"]["columns"],
-        serde_json::json!(["index", "turn_id", "question", "activities", "cards"])
+        serde_json::json!([
+            "index",
+            "turn_id",
+            "question",
+            "activities",
+            "cards",
+            "turn_kind",
+            "agent_role",
+            "parent_turn_id"
+        ])
     );
     assert!(json_so["data"]["turns"]["rows"].is_array());
 
@@ -659,7 +668,14 @@ fn test_conversation_outline_and_card_drilldown() {
     assert_eq!(json_q["ok"], true);
     assert_eq!(
         json_q["data"]["turns"]["columns"],
-        serde_json::json!(["index", "turn_id", "question"])
+        serde_json::json!([
+            "index",
+            "turn_id",
+            "question",
+            "turn_kind",
+            "agent_role",
+            "parent_turn_id"
+        ])
     );
 
     // 1.2 Test --qa mode
@@ -673,7 +689,15 @@ fn test_conversation_outline_and_card_drilldown() {
     assert_eq!(json_qa["ok"], true);
     assert_eq!(
         json_qa["data"]["turns"]["columns"],
-        serde_json::json!(["index", "turn_id", "question", "answer"])
+        serde_json::json!([
+            "index",
+            "turn_id",
+            "question",
+            "answer",
+            "turn_kind",
+            "agent_role",
+            "parent_turn_id"
+        ])
     );
 
     // 1.3 Test --full mode
@@ -693,7 +717,10 @@ fn test_conversation_outline_and_card_drilldown() {
             "question",
             "activities",
             "cards",
-            "answer"
+            "answer",
+            "turn_kind",
+            "agent_role",
+            "parent_turn_id"
         ])
     );
 
@@ -762,6 +789,236 @@ fn test_conversation_outline_and_card_drilldown() {
             assert_eq!(out_cgr.trim(), content.trim());
         }
     }
+}
+
+#[test]
+fn test_conversation_outline_exposes_subagent_semantics() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().join("subagent_outline.db");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let pool = asset_core::store::open_migrated_pool(&db_path)
+            .await
+            .expect("open migrated pool");
+        let tenant_id = "default";
+        let now = "2026-10-27T00:00:00Z".to_string();
+
+        let adapter = asset_core::domain::ConversationAdapter {
+            id: "codex".to_string(),
+            name: "Codex Adapter".to_string(),
+            kind: asset_core::domain::ConversationAdapterKind::External,
+            version: "0.1.0".to_string(),
+            enabled: true,
+            manifest_path: None,
+            executable_path: None,
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: asset_core::domain::ConversationAdapterTrustState::Trusted,
+            protocol_version: Some(1),
+            capabilities: vec!["read_session".to_string()],
+            input_kinds: vec![asset_core::domain::ConversationSourceKind::Directory],
+            card_contract_version: Some(1),
+            card_kinds: Vec::new(),
+            projection_version: Some(1),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        let source = asset_core::domain::ConversationSource {
+            id: "codex-source".to_string(),
+            adapter_id: "codex".to_string(),
+            name: "Codex Source".to_string(),
+            kind: asset_core::domain::ConversationSourceKind::Directory,
+            location: temp_dir.path().to_string_lossy().to_string(),
+            config_json: None,
+            enabled: true,
+            last_synced_at: None,
+            last_sync_status: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+
+        let session = asset_core::domain::NormalizedConversationSession {
+            external_id: "session-subagent-outline".to_string(),
+            title: Some("子代理大纲".to_string()),
+            turns: vec![
+                asset_core::domain::NormalizedConversationTurn {
+                    external_id: "turn-ext-main".to_string(),
+                    turn_index: 0,
+                    user_text: "Plan the refactor".to_string(),
+                    turn_kind: Some("user".to_string()),
+                    parts: vec![asset_core::domain::NormalizedConversationPart {
+                        role: asset_core::domain::ConversationPartRole::Assistant,
+                        kind: asset_core::domain::ConversationPartKind::Text,
+                        text: Some("Plan ready.".to_string()),
+                        language: None,
+                        command: None,
+                        cwd: None,
+                        status: None,
+                        exit_code: None,
+                        command_label: None,
+                        source_execution_id: None,
+                        content_card: None,
+                        metadata_json: None,
+                    }],
+                    ..Default::default()
+                },
+                asset_core::domain::NormalizedConversationTurn {
+                    external_id: "turn-ext-reviewer".to_string(),
+                    turn_index: 1,
+                    user_text: "Review the diff".to_string(),
+                    turn_kind: Some("subagent".to_string()),
+                    agent_role: Some("Rust Core Reviewer 2".to_string()),
+                    parent_external_id: Some("turn-ext-main".to_string()),
+                    parts: vec![asset_core::domain::NormalizedConversationPart {
+                        role: asset_core::domain::ConversationPartRole::Assistant,
+                        kind: asset_core::domain::ConversationPartKind::Command,
+                        text: None,
+                        language: None,
+                        command: Some("cargo test -p cli".to_string()),
+                        cwd: None,
+                        status: Some("success".to_string()),
+                        exit_code: Some(0),
+                        command_label: Some("test".to_string()),
+                        source_execution_id: None,
+                        content_card: None,
+                        metadata_json: None,
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        asset_core::store::upsert_conversation_adapter_sqlx(&pool, tenant_id, &adapter)
+            .await
+            .expect("upsert adapter");
+        asset_core::store::upsert_conversation_source_sqlx(&pool, tenant_id, &source)
+            .await
+            .expect("upsert source");
+        asset_core::store::import_conversation_sessions_sqlx(
+            &pool,
+            tenant_id,
+            &source,
+            &[session],
+            false,
+        )
+        .await
+        .expect("import session");
+    });
+
+    // 会话短 ID 通过 CLI 自身拿取，避免测试直接依赖落库结构。
+    let mut cmd_list = aiwc_command();
+    let assert_list = cmd_list
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "list", "--limit", "5", "--format", "json"])
+        .assert()
+        .success();
+    let json_list: Value =
+        serde_json::from_slice(&assert_list.get_output().stdout).expect("valid list json");
+    let session_short_id = json_list["data"]
+        .as_array()
+        .expect("list data")
+        .first()
+        .and_then(|item| item["short_id"].as_str())
+        .expect("seeded session must appear in list")
+        .to_string();
+
+    // 会话级大纲：子代理语义作为末三列追加，既有列序不变。
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "outline", &session_short_id])
+        .assert()
+        .success();
+    let json: Value = serde_json::from_slice(&assert.get_output().stdout).expect("valid json");
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["level"], "session");
+    assert_eq!(
+        json["data"]["turns"]["columns"],
+        serde_json::json!([
+            "index",
+            "turn_id",
+            "question",
+            "activities",
+            "cards",
+            "turn_kind",
+            "agent_role",
+            "parent_turn_id"
+        ])
+    );
+
+    let rows = json["data"]["turns"]["rows"]
+        .as_array()
+        .expect("rows is array");
+    assert_eq!(rows.len(), 2, "子代理 Turn 必须与主 Turn 并列可见");
+
+    let parent_row = rows
+        .iter()
+        .find(|row| row[2].as_str() == Some("Plan the refactor"))
+        .expect("parent turn row");
+    let parent_turn_short_id = parent_row[1].as_str().unwrap().to_string();
+    assert_eq!(parent_row[5], "user");
+    assert!(parent_row[6].is_null());
+    assert!(parent_row[7].is_null());
+
+    let child_row = rows
+        .iter()
+        .find(|row| row[2].as_str() == Some("Review the diff"))
+        .expect("subagent turn row");
+    let child_turn_short_id = child_row[1].as_str().unwrap().to_string();
+    assert_eq!(child_row[3], serde_json::json!(["test"]));
+    assert_eq!(child_row[4], 1);
+    assert_eq!(child_row[5], "subagent");
+    assert_eq!(child_row[6], "Rust Core Reviewer 2");
+    assert_eq!(child_row[7], parent_turn_short_id);
+
+    // Turn 级大纲：下钻到子代理轮次时同样带出角色与父指针。
+    let mut cmd_turn = aiwc_command();
+    let assert_turn = cmd_turn
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "outline", &child_turn_short_id])
+        .assert()
+        .success();
+    let json_turn: Value =
+        serde_json::from_slice(&assert_turn.get_output().stdout).expect("valid turn json");
+    assert_eq!(json_turn["data"]["level"], "turn");
+    assert_eq!(json_turn["data"]["turn_id"], child_turn_short_id);
+    assert_eq!(json_turn["data"]["turn_kind"], "subagent");
+    assert_eq!(json_turn["data"]["agent_role"], "Rust Core Reviewer 2");
+    assert_eq!(json_turn["data"]["parent_turn_id"], parent_turn_short_id);
+
+    // 主代理轮次的 Turn 级大纲保持同样的字段形状，只是语义列为 null。
+    let mut cmd_main_turn = aiwc_command();
+    let assert_main_turn = cmd_main_turn
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "outline", &parent_turn_short_id])
+        .assert()
+        .success();
+    let json_main_turn: Value = serde_json::from_slice(&assert_main_turn.get_output().stdout)
+        .expect("valid main turn json");
+    assert_eq!(json_main_turn["data"]["level"], "turn");
+    assert_eq!(json_main_turn["data"]["turn_kind"], "user");
+    assert!(json_main_turn["data"]["agent_role"].is_null());
+    assert!(json_main_turn["data"]["parent_turn_id"].is_null());
+
+    // 引用定位：子代理轮次里的卡片必须落到子代理 Turn，而不是被父 Turn 遮蔽。
+    let card_id = json_turn["data"]["cards"]["rows"][0][1]
+        .as_str()
+        .expect("subagent turn has a card")
+        .to_string();
+    let mut cmd_card = aiwc_command();
+    let assert_card = cmd_card
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "outline", &card_id])
+        .assert()
+        .success();
+    let json_card: Value =
+        serde_json::from_slice(&assert_card.get_output().stdout).expect("valid card json");
+    assert_eq!(json_card["data"]["level"], "card");
+    assert_eq!(json_card["data"]["turn_id"], child_turn_short_id);
+    assert_ne!(json_card["data"]["turn_id"], parent_turn_short_id);
 }
 
 #[test]
