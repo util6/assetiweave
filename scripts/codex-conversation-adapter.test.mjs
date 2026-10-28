@@ -1111,6 +1111,19 @@ test("Codex adapter extracts update_plan tool calls into codex.plan Markdown car
   }
 });
 
+function readSessionMessages(fixtureRoot, sessionId) {
+  const result = spawnSync(process.execPath, [adapterPath], {
+    encoding: "utf8",
+    input: JSON.stringify({
+      method: "read_session",
+      source: { location: fixtureRoot },
+      params: sessionId == null ? {} : { session_id: sessionId },
+    }),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim().split("\n").map((line) => JSON.parse(line));
+}
+
 function readFixtureSession(fixtureRoot) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",
@@ -1278,7 +1291,7 @@ test("Codex adapter filters out subagent threads from list_sessions and read_ses
     assert.equal(userSession.turns.length, 2);
     assert.equal(userSession.turns[0].user_text, "User question");
     assert.equal(userSession.turns[1].turn_kind, "subagent");
-    assert.equal(userSession.turns[1].agent_role, "Subagent");
+    assert.equal(userSession.turns[1].agent_role, null, "缺少子代理元数据时不得伪造角色");
     assert.equal(userSession.turns[1].parent_turn_id, userSession.turns[0].external_id);
     assert.equal(userSession.turns[1].user_text, "User question fork");
 
@@ -1357,7 +1370,7 @@ test("Codex adapter multi-turn session keeps subsequent question as standard use
 
     // Turn 1: Subagent
     assert.equal(userSession.turns[1].turn_kind, "subagent");
-    assert.equal(userSession.turns[1].agent_role, "Subagent");
+    assert.equal(userSession.turns[1].agent_role, null, "缺少子代理元数据时不得伪造角色");
     assert.equal(userSession.turns[1].parent_turn_id, userSession.turns[0].external_id);
     assert.equal(userSession.turns[1].user_text, "Subagent task: analyze crash dump");
 
@@ -1414,9 +1427,151 @@ test("Codex adapter falls back to valid string when subagent prompt is whitespac
       .map((l) => JSON.parse(l))
       .find((m) => m.type === "item")?.item?.session;
     assert.ok(userSession);
-    assert.equal(userSession.turns[1].turn_kind, "subagent");
-    assert.equal(userSession.turns[1].user_text, "Subagent execution");
-    assert.ok(userSession.turns[1].user_text.trim().length > 0);
+    const fallbackTurn = userSession.turns[1];
+    assert.equal(fallbackTurn.turn_kind, "subagent");
+    assert.equal(fallbackTurn.user_text, "Subagent execution");
+    assert.ok(fallbackTurn.user_text.trim().length > 0);
+    assert.ok(
+      readUserResult.stdout
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l))
+        .some((message) => message.type === "warning" && /placeholder/.test(message.message ?? "")),
+      "缺少可读派发提示词时必须发出告警事件"
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter folds each subagent thread into one Turn with real role and task prompt", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-subagent-merge-"));
+  try {
+    const mainRollout = path.join(fixtureRoot, "rollout-main.jsonl");
+    const auditRollout = path.join(fixtureRoot, "rollout-audit.jsonl");
+    const concurrencyRollout = path.join(fixtureRoot, "rollout-concurrency.jsonl");
+    const injectedOnlyRollout = path.join(fixtureRoot, "rollout-injected-only.jsonl");
+
+    writeFileSync(
+      mainRollout,
+      [
+        event("2026-09-12T00:00:00Z", "user", "Main question"),
+        event("2026-09-12T00:00:01Z", "assistant", "Main answer"),
+      ].join("\n")
+    );
+
+    writeFileSync(
+      auditRollout,
+      [
+        event("2026-09-12T00:00:10Z", "user", [
+          "<recommended_plugins>",
+          "- plugin-a: 一个很长的插件清单",
+          "- plugin-b: 另一个插件条目",
+          "</recommended_plugins>",
+          "",
+          "<environment_context>",
+          "  <cwd>/Users/test/project</cwd>",
+          "</environment_context>",
+          "",
+          "审查 SQLite 迁移脚本是否存在冗余索引",
+        ].join("\n")),
+        event("2026-09-12T00:00:11Z", "assistant", "开始审查迁移脚本。"),
+        event("2026-09-12T00:00:12Z", "user", "继续核对索引命中率"),
+        event("2026-09-12T00:00:13Z", "assistant", "审查完成：发现 2 个冗余索引。"),
+      ].join("\n")
+    );
+
+    writeFileSync(
+      concurrencyRollout,
+      [
+        event("2026-09-12T00:00:20Z", "user", [
+          "<user_instructions>",
+          "Always answer in Chinese.",
+          "</user_instructions>",
+          "",
+          "检查并发锁的获取顺序",
+        ].join("\n")),
+        event("2026-09-12T00:00:21Z", "assistant", "并发审计完成：未发现锁顺序反转。"),
+      ].join("\n")
+    );
+
+    writeFileSync(
+      injectedOnlyRollout,
+      [
+        event("2026-09-12T00:00:30Z", "user", [
+          "<recommended_plugins>",
+          "- plugin-a: 只有注入块",
+          "</recommended_plugins>",
+        ].join("\n")),
+        event("2026-09-12T00:00:31Z", "assistant", "注入块会话完成。"),
+      ].join("\n")
+    );
+
+    runSqlite(
+      fixtureRoot,
+      [
+        "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT, thread_source TEXT, source TEXT);",
+        `INSERT INTO threads VALUES ('main-merge', '${sqlString(mainRollout)}', 'Main Task', '2026-09-12T00:00:01Z', 'user', 'vscode');`,
+        `INSERT INTO threads VALUES ('child-audit', '${sqlString(auditRollout)}', '', '2026-09-12T00:00:13Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"main-merge","depth":1,"agent_path":"/root/guard_audit","agent_nickname":"Lagrange","agent_role":"default"}}}');`,
+        `INSERT INTO threads VALUES ('child-concurrency', '${sqlString(concurrencyRollout)}', '', '2026-09-12T00:00:21Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"main-merge","depth":1,"agent_path":"/root/concurrency_audit","agent_nickname":"Noether","agent_role":"default"}}}');`,
+        `INSERT INTO threads VALUES ('child-injected', '${sqlString(injectedOnlyRollout)}', '', '2026-09-12T00:00:31Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"main-merge","depth":1}}}');`,
+      ].join("\n")
+    );
+
+    const firstRead = readSessionMessages(fixtureRoot, "main-merge");
+    const session = firstRead.find((m) => m.type === "item")?.item?.session;
+    assert.ok(session);
+
+    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
+    assert.equal(subagentTurns.length, 3, "每个子代理线程只应产出一个 Turn");
+    assert.equal(session.turns.length, 4);
+
+    const [auditTurn, concurrencyTurn, injectedTurn] = subagentTurns;
+
+    // 角色来自 thread_spawn.agent_path 末段，昵称进 title
+    assert.equal(auditTurn.agent_role, "guard_audit");
+    assert.equal(auditTurn.title, "Lagrange");
+    assert.equal(concurrencyTurn.agent_role, "concurrency_audit");
+    assert.equal(concurrencyTurn.title, "Noether");
+
+    // 派发提示词跳过系统注入块，取真实任务文本
+    assert.equal(auditTurn.user_text, "审查 SQLite 迁移脚本是否存在冗余索引");
+    assert.ok(!auditTurn.user_text.includes("recommended_plugins"));
+    assert.ok(!auditTurn.user_text.includes("environment_context"));
+    assert.equal(concurrencyTurn.user_text, "检查并发锁的获取顺序");
+    assert.ok(!concurrencyTurn.user_text.includes("user_instructions"));
+
+    // 两个不同子代理不应产生相同的提示词
+    assert.notEqual(auditTurn.user_text, concurrencyTurn.user_text);
+
+    // 子代理内部逐轮执行内容合并为该 Turn 的内容事实，最终汇报在末尾
+    assert.deepEqual(
+      auditTurn.parts.map((part) => part.text),
+      ["开始审查迁移脚本。", "审查完成：发现 2 个冗余索引。"]
+    );
+    assert.deepEqual(
+      concurrencyTurn.parts.map((part) => part.text),
+      ["并发审计完成：未发现锁顺序反转。"]
+    );
+    assert.ok(auditTurn.parts.length > 0);
+    assert.equal(auditTurn.parent_turn_id, session.turns[0].external_id);
+
+    // 元数据缺失时角色留空且不伪造
+    assert.ok(!injectedTurn.agent_role, "缺少 thread_spawn 角色时必须留空");
+    assert.equal(injectedTurn.title ?? null, null);
+    assert.equal(injectedTurn.user_text, "Subagent execution");
+    assert.ok(
+      firstRead.some((message) => message.type === "warning" && /placeholder/.test(message.message ?? "")),
+      "无可用任务文本时必须发出告警事件"
+    );
+
+    // 重复同步幂等：external_id 稳定
+    const secondRead = readSessionMessages(fixtureRoot, "main-merge");
+    const secondSession = secondRead.find((m) => m.type === "item")?.item?.session;
+    assert.deepEqual(
+      secondSession.turns.map((turn) => turn.external_id),
+      session.turns.map((turn) => turn.external_id)
+    );
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
