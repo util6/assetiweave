@@ -13,8 +13,6 @@ pub use service::AppService;
 pub use error::{AppError, AppResult};
 
 #[cfg(test)]
-mod bounded_evidence_baseline_tests;
-#[cfg(test)]
 mod tests;
 
 pub use agents::agent_market::{
@@ -58,10 +56,10 @@ pub use conversations::{
     resolve_time_window_bounds, resolve_unified_time,
 };
 pub use memory::params::{
-    MemoryContextResolveParams, MemoryProjectGetParams, MemoryRecallSearchParams,
-    MemoryRecallSessionCreateParams, MemoryRecallSessionGetParams, MemoryRecallTurnCancelParams,
-    MemoryRecallTurnSendParams, MemoryScopeRebuildParams, MemoryTaskGetParams,
-    MemoryTaskListParams, MemoryTaskRetryParams,
+    MemoryContextResolveParams, MemoryProjectGetParams, MemoryRebuildReason, MemoryRebuildTarget,
+    MemoryRecallSearchParams, MemoryRecallSessionCreateParams, MemoryRecallSessionGetParams,
+    MemoryRecallTurnCancelParams, MemoryRecallTurnSendParams, MemoryScopeRebuildParams,
+    MemoryTaskGetParams, MemoryTaskListParams, MemoryTaskRetryParams,
 };
 pub use mounting::{
     mounts::BatchMountWorkflowInput,

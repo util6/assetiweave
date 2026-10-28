@@ -18,6 +18,7 @@ pub mod http_client;
 pub mod logging;
 pub mod logs;
 pub mod logs_error;
+pub mod memory;
 pub mod path_utils;
 pub mod project_path;
 pub mod runtime;

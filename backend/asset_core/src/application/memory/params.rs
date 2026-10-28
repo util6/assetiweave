@@ -70,6 +70,8 @@ pub struct MemoryScopeRebuildParams {
     pub project_path: Option<String>,
     #[serde(default)]
     pub reason: Option<MemoryRebuildReason>,
+    #[serde(default, alias = "forceRebuild")]
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
@@ -129,6 +131,14 @@ pub struct MemoryPipelineParams {
 impl MemoryPipelineParams {
     pub fn background() -> Self {
         Self::default()
+    }
+
+    pub fn manual(force_rebuild: bool) -> Self {
+        Self {
+            force_rebuild,
+            reason: Some(MemoryRebuildReason::Manual),
+            ..Default::default()
+        }
     }
 
     pub fn rebuild(

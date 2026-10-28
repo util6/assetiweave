@@ -162,6 +162,10 @@ pub(super) struct ConversationSourceRow {
     last_sync_status: Option<String>,
     created_at: String,
     updated_at: String,
+    synced_adapter_hash: Option<String>,
+    synced_card_contract_version: Option<i64>,
+    synced_payload_policy_version: Option<i64>,
+    synced_projection_version: Option<i64>,
 }
 
 impl ConversationSourceRow {
@@ -259,6 +263,12 @@ pub(crate) struct ConversationTurnRow {
     missing: i64,
     imported_at: String,
     model: Option<String>,
+    #[sqlx(default)]
+    turn_kind: Option<String>,
+    #[sqlx(default)]
+    agent_role: Option<String>,
+    #[sqlx(default)]
+    parent_turn_id: Option<String>,
 }
 
 impl ConversationTurnRow {
@@ -282,6 +292,9 @@ impl ConversationTurnRow {
             model: self.model,
             process: self.process,
             response: self.response,
+            turn_kind: self.turn_kind,
+            agent_role: self.agent_role,
+            parent_turn_id: self.parent_turn_id,
         }
     }
 }

@@ -87,17 +87,6 @@ pub async fn import_web_record_sessions_sqlx(
                 )
                 .await?;
             }
-            insert_conversation_sync_delta_sqlx_tx(
-                &mut tx,
-                tenant_id,
-                &sync_run_id,
-                "web",
-                &session.id,
-                change_kind,
-                &now,
-            )
-            .await
-            .map_err(StoreError::external)?;
             changed_session_count += 1;
         }
         tx.commit().await.map_err(StoreError::external)?;
@@ -117,23 +106,6 @@ pub async fn import_web_record_sessions_sqlx(
     .execute(&mut *tx)
     .await
     .map_err(StoreError::external)?;
-    insert_sync_run_sqlx_tx(
-        &mut tx,
-        tenant_id,
-        &ConversationSyncRun {
-            id: sync_run_id.clone(),
-            source_id: Some(source.id.clone()),
-            adapter_id: Some(source.adapter_id.clone()),
-            status: ConversationSyncStatus::Completed,
-            started_at: now.clone(),
-            finished_at: Some(now.clone()),
-            session_count: sessions.len() as i64,
-            turn_count: turn_count as i64,
-            warning_count: warning_count as i64,
-            error_message: None,
-        },
-    )
-    .await?;
     tx.commit().await.map_err(StoreError::external)?;
 
     Ok(ConversationImportResult {
@@ -280,9 +252,10 @@ pub async fn insert_web_record_turn_sqlx_tx(
         r#"
         INSERT INTO web_record_turns (
             tenant_id, id, session_id, external_id, turn_index, prompt, process, response,
-            title, started_at, ended_at, fingerprint, missing, imported_at, model
+            title, started_at, ended_at, fingerprint, missing, imported_at, model,
+            turn_kind, agent_role, parent_turn_id
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
         "#,
     )
     .bind(tenant_id)
@@ -300,37 +273,9 @@ pub async fn insert_web_record_turn_sqlx_tx(
     .bind(if turn.missing { 1_i64 } else { 0_i64 })
     .bind(&turn.imported_at)
     .bind(&turn.model)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    Ok(())
-}
-
-pub async fn insert_sync_run_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    run: &ConversationSyncRun,
-) -> StoreResult<()> {
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_sync_runs (
-            tenant_id, id, source_id, adapter_id, status, started_at, finished_at,
-            session_count, turn_count, warning_count, error_message
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(&run.id)
-    .bind(&run.source_id)
-    .bind(&run.adapter_id)
-    .bind(encode_enum_app(run.status)?)
-    .bind(&run.started_at)
-    .bind(&run.finished_at)
-    .bind(run.session_count)
-    .bind(run.turn_count)
-    .bind(run.warning_count)
-    .bind(&run.error_message)
+    .bind(&turn.turn_kind)
+    .bind(&turn.agent_role)
+    .bind(&turn.parent_turn_id)
     .execute(&mut **tx)
     .await
     .map_err(StoreError::external)?;

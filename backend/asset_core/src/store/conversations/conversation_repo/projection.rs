@@ -130,7 +130,8 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
     let turn_rows = sqlx::query_as::<_, ConversationTurnRow>(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.prompt, t.process, t.response, t.title,
-               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at
+               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
+               t.turn_kind, t.agent_role, t.parent_turn_id
         FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
         ORDER BY t.turn_index ASC, t.id ASC
@@ -226,7 +227,11 @@ pub fn project_question_title(
         .as_deref()
         .is_none_or(|title| title.trim().is_empty())
     {
-        if let Some(turn) = turns.iter().find(|turn| !turn.prompt.trim().is_empty()) {
+        let chosen_turn = turns
+            .iter()
+            .find(|turn| !turn.is_subagent() && !turn.prompt.trim().is_empty())
+            .or_else(|| turns.iter().find(|turn| !turn.prompt.trim().is_empty()));
+        if let Some(turn) = chosen_turn {
             question.title = Some(first_line(&turn.prompt));
         }
     }

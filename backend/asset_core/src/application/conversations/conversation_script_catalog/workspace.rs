@@ -380,13 +380,21 @@ impl AppService {
             .or(adapter_id);
         let mut task_conflicts = Vec::new();
         if let Some(adapter_id) = resolved_adapter_id.as_deref() {
-            if crate::backend::store::has_running_conversation_sync_for_adapter_sqlx(
-                self.db.pool(),
-                adapter_id,
-            )
-            .await
-            .map_err(AppError::external)?
-            {
+            let running_tasks = self.runtime.task_runtime().list(
+                crate::backend::infrastructure::tasks::TaskFilter {
+                    kind: Some(crate::backend::infrastructure::tasks::TaskKind::ConversationSync),
+                    active_only: true,
+                    ..Default::default()
+                },
+            );
+            let is_running = running_tasks.iter().any(|task| {
+                task.stages.is_empty()
+                    || task
+                        .stages
+                        .iter()
+                        .any(|stage| stage.id.starts_with(&format!("adapter:{adapter_id}:")))
+            });
+            if is_running {
                 task_conflicts.push("conversation_sync".to_string());
             }
         }

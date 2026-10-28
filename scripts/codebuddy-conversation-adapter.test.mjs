@@ -308,6 +308,7 @@ test("CodeBuddy links Agent tool call to subagent child session and discovers su
 
     // 1. Read main session
     const mainSession = readFixtureSession(mainSessionFile);
+    assert.equal(mainSession.turns.length, 2, "main session should contain anchor turn and inlined subagent turn");
     const agentPart = mainSession.turns[0].parts.find((p) => p.kind === "subagent");
     assert.ok(agentPart, "subagent part should exist in main session");
     assert.equal(agentPart.content_card?.kind, "codebuddy.subagent");
@@ -316,6 +317,14 @@ test("CodeBuddy links Agent tool call to subagent child session and discovers su
     const meta = JSON.parse(agentPart.metadata_json);
     assert.equal(meta.child_session_id, subagentId);
     assert.equal(meta.agent_role, "Explore");
+
+    // Verify inlined subagent turn
+    const subTurn = mainSession.turns[1];
+    assert.equal(subTurn.turn_kind, "subagent");
+    assert.equal(subTurn.agent_role, "Explore");
+    assert.equal(subTurn.parent_turn_id, mainSession.turns[0].external_id);
+    assert.equal(subTurn.user_text, "摸底架构设计与实现");
+    assert.ok(subTurn.parts.some((p) => p.role === "assistant" && p.text?.includes("已完成架构摸底")));
 
     // 2. Read subagent session directly
     const subSession = readFixtureSession(subagentFile);
@@ -332,6 +341,105 @@ test("CodeBuddy links Agent tool call to subagent child session and discovers su
     const items = listResult.stdout.trim().split("\n").map((l) => JSON.parse(l)).filter((m) => m.type === "item");
     assert.equal(items.length, 1); // Subagent session is filtered out from top-level list_sessions
     assert.equal(items[0].item.external_id, "session-main");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("CodeBuddy inlines Agent subagent child turns and emits continuation turn when main agent resumes", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codebuddy-cont-"));
+  try {
+    const parentSessionId = "session-cont-main";
+    const subagentId = "agent-arch-explore";
+
+    const mainSessionFile = path.join(fixtureRoot, `${parentSessionId}.jsonl`);
+    const subagentsDir = path.join(fixtureRoot, parentSessionId, "subagents");
+    mkdirSync(subagentsDir, { recursive: true });
+    const subagentFile = path.join(subagentsDir, `${subagentId}.jsonl`);
+
+    writeFileSync(subagentFile, [
+      JSON.stringify({
+        id: "sub-1",
+        timestamp: 1791000001200,
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "调研微服务划分" }],
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "sub-2",
+        timestamp: 1791000001800,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "微服务划分方案：按DDD领域拆分。" }],
+        cwd: "/project",
+      }),
+    ].join("\n"));
+
+    writeFileSync(mainSessionFile, [
+      JSON.stringify({
+        id: "msg-1",
+        timestamp: 1791000000000,
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "请协助设计微服务架构" }],
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "call-agent",
+        timestamp: 1791000001000,
+        type: "function_call",
+        name: "Agent",
+        callId: "call_agent_sub_1",
+        arguments: {
+          description: "调研微服务划分",
+          prompt: "调研微服务划分",
+          subagent_type: "ArchitectureExpert",
+        },
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "res-agent",
+        timestamp: 1791000002000,
+        type: "function_call_result",
+        name: "Agent",
+        callId: "call_agent_sub_1",
+        status: "completed",
+        output: { type: "text", text: "子代理微服务调研完成" },
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "msg-2",
+        timestamp: 1791000003000,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "综合子代理调研结论，建议采用4个核心领域服务。" }],
+        cwd: "/project",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(mainSessionFile);
+    assert.equal(session.turns.length, 3, "expected anchor, subagent, and continuation turns");
+
+    const [anchorTurn, subTurn, contTurn] = session.turns;
+
+    // Anchor turn
+    assert.equal(anchorTurn.external_id, "msg-1");
+    assert.equal(anchorTurn.user_text, "请协助设计微服务架构");
+    assert.equal(anchorTurn.turn_kind, undefined);
+
+    // Subagent turn
+    assert.equal(subTurn.turn_kind, "subagent");
+    assert.equal(subTurn.agent_role, "ArchitectureExpert");
+    assert.equal(subTurn.parent_turn_id, anchorTurn.external_id);
+    assert.equal(subTurn.user_text, "调研微服务划分");
+    assert.ok(subTurn.parts.some((p) => p.text?.includes("微服务划分方案")));
+
+    // Continuation turn
+    assert.equal(contTurn.turn_kind, "continuation");
+    assert.equal(contTurn.parent_turn_id, anchorTurn.external_id);
+    assert.equal(contTurn.user_text, "Continue following subagent execution");
+    assert.ok(contTurn.parts.some((p) => p.text?.includes("综合子代理调研结论")));
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -506,6 +614,120 @@ test("CodeBuddy cleans present_files array output and tags ambient signal", () =
     assert.equal(resMeta.signal, "ambient");
     assert.equal(resMeta.execution_kind, "read");
     assert.equal(resPart.content_card?.renderer, "plain");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("CodeBuddy multi-turn session keeps subsequent question as standard user turn", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codebuddy-multiturn-"));
+  try {
+    const sessionFile = path.join(fixtureRoot, "session-multi.jsonl");
+    writeFileSync(sessionFile, [
+      // Question 1
+      JSON.stringify({
+        id: "msg-q1",
+        timestamp: 1791000000000,
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Question 1: Fix bug" }],
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "call-agent-q1",
+        timestamp: 1791000001000,
+        type: "function_call",
+        name: "Agent",
+        callId: "call_agent_q1",
+        arguments: { prompt: "Subtask prompt", subagent_type: "Explore" },
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "res-agent-q1",
+        timestamp: 1791000002000,
+        type: "function_call_result",
+        name: "Agent",
+        callId: "call_agent_q1",
+        status: "completed",
+        output: { type: "text", text: "Subtask complete" },
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "msg-ans-q1",
+        timestamp: 1791000003000,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "Question 1 is fixed." }],
+        cwd: "/project",
+      }),
+      // Question 2
+      JSON.stringify({
+        id: "msg-q2",
+        timestamp: 1791000010000,
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Question 2: What is the weather today in Tokyo?" }],
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "msg-ans-q2",
+        timestamp: 1791000011000,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "Tokyo is sunny." }],
+        cwd: "/project",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(sessionFile);
+    const q2Turn = session.turns.find((t) => t.user_text && t.user_text.includes("Question 2: What is the weather today in Tokyo?"));
+    assert.ok(q2Turn, "Question 2 turn must exist");
+    assert.equal(q2Turn.turn_kind, undefined, "Question 2 must NOT be marked as continuation");
+    assert.equal(q2Turn.parent_turn_id, undefined, "Question 2 must NOT have parent_turn_id");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("CodeBuddy falls back to valid string when subagent prompt is whitespace-only", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codebuddy-ws-"));
+  try {
+    const sessionFile = path.join(fixtureRoot, "session-ws.jsonl");
+    writeFileSync(sessionFile, [
+      JSON.stringify({
+        id: "msg-1",
+        timestamp: 1791000000000,
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Run delegator" }],
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "call-agent-ws",
+        timestamp: 1791000001000,
+        type: "function_call",
+        name: "Agent",
+        callId: "call_agent_ws",
+        arguments: { prompt: "   \t\n  ", subagent_type: "Explore" },
+        cwd: "/project",
+      }),
+      JSON.stringify({
+        id: "res-agent-ws",
+        timestamp: 1791000002000,
+        type: "function_call_result",
+        name: "Agent",
+        callId: "call_agent_ws",
+        status: "completed",
+        output: { type: "text", text: "Subtask complete" },
+        cwd: "/project",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(sessionFile);
+    const subTurn = session.turns.find((t) => t.turn_kind === "subagent");
+    assert.ok(subTurn, "Subagent turn must exist");
+    assert.equal(subTurn.user_text, "Subagent execution");
+    assert.ok(subTurn.user_text.trim().length > 0);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

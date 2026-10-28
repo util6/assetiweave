@@ -76,11 +76,18 @@ async fn sqlx_sync_import_reports_progress_and_rolls_back_cancelled_batch() {
             .await
             .unwrap();
             assert_eq!(fingerprints, vec![Some("original".to_string())]);
-            let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_sync_runs")
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            assert_eq!(runs, 1, "cancelled sync must not be marked complete");
+            let session_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2 AND missing = 0",
+            )
+            .bind(TEST_TENANT_ID)
+            .bind(&source.id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                session_count, 1,
+                "cancelled sync must not commit subsequent sessions"
+            );
         }
         let mut progress = Vec::new();
         import_conversation_sessions_with_control_sqlx(
@@ -2195,6 +2202,20 @@ async fn sqlx_adapter_or_card_contract_change_invalidates_incremental_hydration_
         Uuid::new_v4()
     ));
     let database = Database::open_async(&db_path).await.expect("open database");
+    let adapter = test_conversation_adapter(
+        "adapter-1",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let mut source = test_conversation_source(&adapter.id);
+    source.id = "source-1".to_string();
+    upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter)
+        .await
+        .expect("upsert adapter");
+    upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source)
+        .await
+        .expect("upsert source");
+
     let descriptors = vec![
         crate::backend::domain::conversations::ConversationSessionObservation {
             external_id: "session-1".to_string(),
@@ -2298,14 +2319,14 @@ async fn sqlx_adapter_or_card_contract_change_invalidates_incremental_hydration_
 }
 
 #[tokio::test]
-async fn sqlx_observation_reconciles_drift_and_triggers_self_healing() {
+async fn sqlx_observation_missing_session_invalidates_watermark() {
     let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-observation-drift-self-healing-{}.sqlite",
+        "assetiweave-observation-missing-invalidation-{}.sqlite",
         Uuid::new_v4()
     ));
     let database = Database::open_async(&db_path).await.expect("open database");
     let adapter = test_conversation_adapter(
-        "drift-healing-adapter",
+        "missing-invalidation-adapter",
         ConversationAdapterKind::External,
         ConversationAdapterTrustState::Trusted,
     );
@@ -2318,9 +2339,8 @@ async fn sqlx_observation_reconciles_drift_and_triggers_self_healing() {
         .await
         .expect("upsert source");
 
-    // 1. 真实会话表里保存的是旧指纹 v1
     let mut session_v1 = fixture_session("v1");
-    session_v1.external_id = "session-drift".to_string();
+    session_v1.external_id = "session-missing".to_string();
     session_v1.source_fingerprint = Some("v1".to_string());
     import_conversation_sessions_sqlx(
         database.pool(),
@@ -2332,16 +2352,15 @@ async fn sqlx_observation_reconciles_drift_and_triggers_self_healing() {
     .await
     .expect("import session v1");
 
-    // 2. 观察表里发生了漂移：hydrated_version 被错误地写成了 v2
     let descriptors = vec![
         crate::backend::domain::conversations::ConversationSessionObservation {
-            external_id: "session-drift".to_string(),
+            external_id: "session-missing".to_string(),
             updated_at: None,
             source_locator: None,
-            version_token: "v2".to_string(),
+            version_token: "v1".to_string(),
         },
     ];
-    let hydrated = BTreeSet::from(["session-drift".to_string()]);
+    let hydrated = BTreeSet::from(["session-missing".to_string()]);
     persist_conversation_session_observations_sqlx(
         database.pool(),
         TEST_TENANT_ID,
@@ -2357,7 +2376,6 @@ async fn sqlx_observation_reconciles_drift_and_triggers_self_healing() {
     .await
     .expect("persist observations");
 
-    // 3. 此时加载已知版本：因为 underlying fingerprint (v1) != hydrated_version (v2)，触发自愈过滤，不返回该版本
     let versions = load_conversation_session_versions_sqlx(
         database.pool(),
         TEST_TENANT_ID,
@@ -2370,26 +2388,26 @@ async fn sqlx_observation_reconciles_drift_and_triggers_self_healing() {
     )
     .await
     .expect("load versions");
-    assert!(
-        versions.get("session-drift").is_none(),
-        "Drifted session should be excluded from known versions to trigger self-healing"
+    assert_eq!(
+        versions.get("session-missing").map(String::as_str),
+        Some("v1")
     );
 
-    // 4. 当底层真实会话被正确更新为 v2 后，指纹对齐，能够正常返回
-    let mut session_v2 = fixture_session("v2");
-    session_v2.external_id = "session-drift".to_string();
-    session_v2.source_fingerprint = Some("v2".to_string());
-    import_conversation_sessions_sqlx(
-        database.pool(),
+    let mut tx = database.pool().begin().await.expect("begin tx");
+    let now = chrono::Utc::now().to_rfc3339();
+    mark_missing_conversation_sessions_sqlx_tx(
+        &mut tx,
         TEST_TENANT_ID,
-        &source,
-        &[session_v2],
-        false,
+        &source.id,
+        &BTreeSet::new(),
+        "sync-1",
+        &now,
     )
     .await
-    .expect("import session v2");
+    .expect("mark missing");
+    tx.commit().await.expect("commit tx");
 
-    let reconciled_versions = load_conversation_session_versions_sqlx(
+    let after_missing = load_conversation_session_versions_sqlx(
         database.pool(),
         TEST_TENANT_ID,
         &source.id,
@@ -2400,11 +2418,10 @@ async fn sqlx_observation_reconciles_drift_and_triggers_self_healing() {
         None,
     )
     .await
-    .expect("load reconciled versions");
-    assert_eq!(
-        reconciled_versions.get("session-drift").map(String::as_str),
-        Some("v2"),
-        "Reconciled session should be present in known versions"
+    .expect("load versions after missing");
+    assert!(
+        after_missing.get("session-missing").is_none(),
+        "Missing session watermark should be removed"
     );
 
     drop(database);
@@ -2642,6 +2659,7 @@ fn fixture_turn(id: &str, index: i64, user_text: &str) -> NormalizedConversation
             content_card: None,
             metadata_json: content_card_metadata("answer"),
         }],
+        ..Default::default()
     }
 }
 
@@ -3748,4 +3766,215 @@ fn normalized_search_part(
         content_card: None,
         metadata_json: content_card_metadata(card_type),
     }
+}
+
+#[tokio::test]
+async fn test_subagent_turns_save_and_load_persistence_intact() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-subagent-repo-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.unwrap();
+    let adapter = test_conversation_adapter(
+        "subagent-adapter",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    let pool = database.pool();
+
+    upsert_conversation_adapter_sqlx(pool, TEST_TENANT_ID, &adapter)
+        .await
+        .unwrap();
+    upsert_conversation_source_sqlx(pool, TEST_TENANT_ID, &source)
+        .await
+        .unwrap();
+
+    let parent_turn = NormalizedConversationTurn {
+        external_id: "turn-user-parent".to_string(),
+        turn_index: 0,
+        user_text: "Can you analyze the concurrency model of AssetIWeave?".to_string(),
+        title: Some("Concurrency Analysis".to_string()),
+        turn_kind: Some("user".to_string()),
+        agent_role: None,
+        parent_external_id: None,
+        started_at: None,
+        ended_at: None,
+        model: Some("gemini-2.5-pro".to_string()),
+        parts: vec![NormalizedConversationPart {
+            role: ConversationPartRole::Assistant,
+            kind: ConversationPartKind::Text,
+            text: Some("Delegating concurrency deep-dive to explorer specialist...".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: None,
+            content_card: None,
+            metadata_json: None,
+        }],
+        ..Default::default()
+    };
+
+    let subagent_turn = NormalizedConversationTurn {
+        external_id: "turn-subagent-worker".to_string(),
+        turn_index: 1,
+        user_text: "Subagent prompt: Audit mutex lock acquisitions in TaskRuntime and pipeline coordinator.".to_string(),
+        title: None,
+        turn_kind: Some("subagent".to_string()),
+        agent_role: Some("concurrency-auditor".to_string()),
+        parent_external_id: Some("turn-user-parent".to_string()),
+        started_at: None,
+        ended_at: None,
+        model: Some("gemini-2.5-flash".to_string()),
+        parts: vec![
+            NormalizedConversationPart {
+                role: ConversationPartRole::Assistant,
+                kind: ConversationPartKind::Text,
+                text: Some("Examining TaskRuntime RwLock call sites...".to_string()),
+                language: None,
+                command: None,
+                cwd: None,
+                status: None,
+                exit_code: None,
+                command_label: None,
+                source_execution_id: None,
+                content_card: None,
+                metadata_json: None,
+            },
+            NormalizedConversationPart {
+                role: ConversationPartRole::Tool,
+                kind: ConversationPartKind::Command,
+                text: None,
+                language: None,
+                command: Some("cargo test -p asset_core --test database_tests".to_string()),
+                cwd: Some("/workspace".to_string()),
+                status: Some("success".to_string()),
+                exit_code: Some(0),
+                command_label: Some("Run database tests".to_string()),
+                source_execution_id: Some("exec-audit-1".to_string()),
+                content_card: None,
+                metadata_json: None,
+            },
+            NormalizedConversationPart {
+                role: ConversationPartRole::Assistant,
+                kind: ConversationPartKind::Text,
+                text: Some("Concurrency audit complete: All locks adhere to ADR-0017.".to_string()),
+                language: None,
+                command: None,
+                cwd: None,
+                status: None,
+                exit_code: None,
+                command_label: None,
+                source_execution_id: None,
+                content_card: None,
+                metadata_json: None,
+            },
+        ],
+        ..Default::default()
+    };
+
+    let session = NormalizedConversationSession {
+        external_id: "session-concurrency-audit".to_string(),
+        title: Some("AssetIWeave Concurrency Audit".to_string()),
+        project_path: None,
+        started_at: None,
+        updated_at: None,
+        source_locator: None,
+        source_fingerprint: Some("fp-audit-001".to_string()),
+        turns: vec![parent_turn, subagent_turn],
+        ..Default::default()
+    };
+
+    import_conversation_sessions_sqlx(pool, TEST_TENANT_ID, &source, &[session], false)
+        .await
+        .unwrap();
+
+    // 1. Direct SQLite column assertions
+    let (turn_kind, agent_role, parent_turn_id): (Option<String>, Option<String>, Option<String>) =
+        sqlx::query_as(
+            "SELECT turn_kind, agent_role, parent_turn_id FROM conversation_turns WHERE external_id = ?1",
+        )
+        .bind("turn-subagent-worker")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        turn_kind.as_deref(),
+        Some("subagent"),
+        "turn_kind must be persisted as subagent"
+    );
+    assert_eq!(
+        agent_role.as_deref(),
+        Some("concurrency-auditor"),
+        "agent_role must be persisted"
+    );
+    assert!(
+        parent_turn_id.is_some(),
+        "parent_turn_id must be resolved and persisted"
+    );
+
+    // 2. Domain session detail loading
+    let sessions =
+        list_conversation_sessions_sqlx(pool, TEST_TENANT_ID, None, Some(&source.id), None, 10, 0)
+            .await
+            .unwrap();
+    assert_eq!(sessions.len(), 1);
+    let session_id = &sessions[0].session.id;
+
+    let detail = load_conversation_session_detail_sqlx(pool, TEST_TENANT_ID, session_id)
+        .await
+        .unwrap();
+
+    assert_eq!(detail.questions.len(), 1, "Must be grouped into 1 question");
+    let q_detail = &detail.questions[0];
+    assert_eq!(
+        q_detail.turns.len(),
+        2,
+        "Question must contain both parent and subagent turns"
+    );
+    let parent_loaded = &q_detail.turns[0];
+    let subagent_loaded = &q_detail.turns[1];
+
+    assert_eq!(parent_loaded.external_id, "turn-user-parent");
+    assert_eq!(subagent_loaded.external_id, "turn-subagent-worker");
+    assert_eq!(subagent_loaded.turn_kind.as_deref(), Some("subagent"));
+    assert_eq!(
+        subagent_loaded.agent_role.as_deref(),
+        Some("concurrency-auditor")
+    );
+    assert_eq!(
+        subagent_loaded.parent_turn_id.as_deref(),
+        Some(parent_loaded.id.as_str())
+    );
+    assert!(subagent_loaded.is_subagent());
+    assert!(!parent_loaded.is_subagent());
+
+    // 3. Question grouping verification: Subagent turn MUST merge under active question
+    let questions =
+        list_conversation_question_details_sqlx(pool, TEST_TENANT_ID, session_id, None, 10, 0)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        questions.len(),
+        1,
+        "Subagent turn must NOT split into a separate question; must stay merged under active question"
+    );
+    assert_eq!(
+        questions[0].turns.len(),
+        2,
+        "Question must contain both parent and subagent turns"
+    );
+    assert_eq!(
+        questions[0].question.title.as_deref(),
+        Some("Can you analyze the concurrency model of AssetIWeave?"),
+        "Question title must prioritize the user turn over subagent delegation prompt"
+    );
+
+    drop(database);
+    cleanup_database(&db_path);
 }

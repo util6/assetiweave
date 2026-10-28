@@ -74,15 +74,6 @@ pub async fn disable_conversation_source_sqlx(
     .execute(&mut *tx)
     .await
     .map_err(StoreError::external)?;
-    sqlx::query(
-        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND source_id = ?3 AND status = 'active'",
-    )
-    .bind(&source.updated_at)
-    .bind(tenant_id)
-    .bind(source_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(StoreError::external)?;
     tx.commit().await.map_err(StoreError::external)?;
     Ok(source)
 }

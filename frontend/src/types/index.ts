@@ -424,6 +424,9 @@ export interface ConversationTurn {
   started_at?: string | null;
   ended_at?: string | null;
   model?: string | null;
+  turn_kind?: "user" | "subagent" | "continuation" | string | null;
+  agent_role?: string | null;
+  parent_turn_id?: string | null;
   fingerprint: string;
   missing: boolean;
   imported_at: string;

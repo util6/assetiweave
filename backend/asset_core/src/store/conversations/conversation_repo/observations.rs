@@ -10,72 +10,68 @@ pub async fn load_conversation_session_versions_sqlx(
     payload_policy_version: u32,
     projection_version: Option<u32>,
 ) -> StoreResult<std::collections::BTreeMap<String, String>> {
-    let rows: Vec<(String, Option<String>)> = match record_kind {
-        ConversationRecordKind::Session => {
-            sqlx::query_as(
-                r#"
-                SELECT o.external_id, o.hydrated_version
-                FROM conversation_session_observations o
-                LEFT JOIN conversation_sessions s
-                  ON s.tenant_id = o.tenant_id
-                 AND s.source_id = o.source_id
-                 AND s.external_id = o.external_id
-                WHERE o.tenant_id = ?1 AND o.source_id = ?2 AND o.record_kind = 'session'
-                  AND o.dirty = 0
-                  AND (s.id IS NULL OR (s.source_fingerprint = o.hydrated_version AND s.missing = 0))
-                  AND COALESCE(o.hydrated_adapter_hash, '') = COALESCE(?3, '')
-                  AND COALESCE(o.hydrated_card_contract_version, 0) = COALESCE(?4, 0)
-                  AND COALESCE(o.hydrated_payload_policy_version, 0) = ?5
-                  AND COALESCE(o.hydrated_projection_version, 0) = COALESCE(?6, 0)
-                "#,
-            )
-            .bind(tenant_id)
-            .bind(source_id)
-            .bind(adapter_content_hash)
-            .bind(card_contract_version.map(i64::from))
-            .bind(i64::from(payload_policy_version))
-            .bind(projection_version.map(i64::from))
-            .fetch_all(pool)
-            .await
-            .map_err(StoreError::external)?
-        }
-        ConversationRecordKind::Web => {
-            sqlx::query_as(
-                r#"
-                SELECT o.external_id, o.hydrated_version
-                FROM conversation_session_observations o
-                LEFT JOIN web_record_sessions s
-                  ON s.tenant_id = o.tenant_id
-                 AND s.source_id = o.source_id
-                 AND s.external_id = o.external_id
-                WHERE o.tenant_id = ?1 AND o.source_id = ?2 AND o.record_kind = 'web'
-                  AND o.dirty = 0
-                  AND (s.id IS NULL OR (s.source_fingerprint = o.hydrated_version AND s.missing = 0))
-                  AND COALESCE(o.hydrated_adapter_hash, '') = COALESCE(?3, '')
-                  AND COALESCE(o.hydrated_card_contract_version, 0) = COALESCE(?4, 0)
-                  AND COALESCE(o.hydrated_payload_policy_version, 0) = ?5
-                  AND COALESCE(o.hydrated_projection_version, 0) = COALESCE(?6, 0)
-                "#,
-            )
-            .bind(tenant_id)
-            .bind(source_id)
-            .bind(adapter_content_hash)
-            .bind(card_contract_version.map(i64::from))
-            .bind(i64::from(payload_policy_version))
-            .bind(projection_version.map(i64::from))
-            .fetch_all(pool)
-            .await
-            .map_err(StoreError::external)?
-        }
+    let source_contract: Option<(Option<String>, Option<i64>, Option<i64>, Option<i64>)> =
+        sqlx::query_as(
+            r#"
+            SELECT synced_adapter_hash, synced_card_contract_version,
+                   synced_payload_policy_version, synced_projection_version
+            FROM conversation_sources
+            WHERE tenant_id = ?1 AND id = ?2
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(source_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(StoreError::external)?;
+
+    let contract_matches = if let Some((hash, card_ver, policy_ver, proj_ver)) = source_contract {
+        let card_ver = card_ver.and_then(|v| u32::try_from(v).ok());
+        let policy_ver = policy_ver.and_then(|v| u32::try_from(v).ok());
+        let proj_ver = proj_ver.and_then(|v| u32::try_from(v).ok());
+
+        hash.as_deref() == adapter_content_hash
+            && card_ver == card_contract_version
+            && policy_ver == Some(payload_policy_version)
+            && proj_ver == projection_version
+    } else {
+        false
     };
 
-    let mut map = std::collections::BTreeMap::new();
-    for (ext_id, version) in rows {
-        if let Some(v) = version {
-            map.insert(ext_id, v);
-        }
+    let kind_str = match record_kind {
+        ConversationRecordKind::Session => "session",
+        ConversationRecordKind::Web => "web",
+    };
+
+    if !contract_matches {
+        sqlx::query(
+            "DELETE FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND record_kind = ?3",
+        )
+        .bind(tenant_id)
+        .bind(source_id)
+        .bind(kind_str)
+        .execute(pool)
+        .await
+        .map_err(StoreError::external)?;
+
+        return Ok(std::collections::BTreeMap::new());
     }
-    Ok(map)
+
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        r#"
+        SELECT external_id, synced_version
+        FROM conversation_session_observations
+        WHERE tenant_id = ?1 AND source_id = ?2 AND record_kind = ?3
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(kind_str)
+    .fetch_all(pool)
+    .await
+    .map_err(StoreError::external)?;
+
+    Ok(rows.into_iter().collect())
 }
 
 pub async fn conversation_payload_policy_reparse_required_sqlx(
@@ -153,40 +149,25 @@ pub async fn mark_conversation_payload_policy_applied_sqlx(
 
 /// 标记单条会话本轮解析失败。
 ///
-/// `dirty` 是唯一的重试信号：失败会话会带着 `dirty = 1` 留在观测表里，
-/// 下一轮 `load_conversation_session_versions_sqlx` 因 `dirty = 0` 过滤而不返回它，
-/// 于是该会话被重新解析，其余会话继续被跳过。失败详情随同步结果即时返回，不落库。
+/// 失败的会话直接从水位表中删除对应行，确保下一轮增量同步必然重新拉取解析。
 pub async fn record_conversation_session_failure_sqlx(
     pool: &sqlx::SqlitePool,
     tenant_id: &str,
     source_id: &str,
     record_kind: &str,
     external_id: &str,
-    observed_version: Option<&str>,
+    _observed_version: Option<&str>,
 ) -> StoreResult<()> {
-    let now = chrono::Utc::now().to_rfc3339();
-    let ver = observed_version.unwrap_or("");
     sqlx::query(
         r#"
-        INSERT INTO conversation_session_observations (
-            tenant_id, source_id, record_kind, external_id, observed_version,
-            last_seen_at, dirty
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)
-        ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
-            observed_version = CASE
-                WHEN excluded.observed_version != '' THEN excluded.observed_version
-                ELSE conversation_session_observations.observed_version
-            END,
-            last_seen_at = excluded.last_seen_at,
-            dirty = 1
+        DELETE FROM conversation_session_observations
+        WHERE tenant_id = ?1 AND source_id = ?2 AND record_kind = ?3 AND external_id = ?4
         "#,
     )
     .bind(tenant_id)
     .bind(source_id)
     .bind(record_kind)
     .bind(external_id)
-    .bind(ver)
-    .bind(&now)
     .execute(pool)
     .await
     .map_err(StoreError::external)?;
@@ -201,7 +182,7 @@ pub async fn upsert_single_session_observation_clean_sqlx_tx(
     record_kind: &str,
     external_id: &str,
     version_token: &str,
-    now: &str,
+    _now: &str,
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
     payload_policy_version: u32,
@@ -209,21 +190,31 @@ pub async fn upsert_single_session_observation_clean_sqlx_tx(
 ) -> StoreResult<()> {
     sqlx::query(
         r#"
+        UPDATE conversation_sources
+        SET synced_adapter_hash = ?1,
+            synced_card_contract_version = ?2,
+            synced_payload_policy_version = ?3,
+            synced_projection_version = ?4
+        WHERE tenant_id = ?5 AND id = ?6
+        "#,
+    )
+    .bind(adapter_content_hash)
+    .bind(card_contract_version.map(i64::from))
+    .bind(i64::from(payload_policy_version))
+    .bind(projection_version.map(i64::from))
+    .bind(tenant_id)
+    .bind(source_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+
+    sqlx::query(
+        r#"
         INSERT INTO conversation_session_observations (
-            tenant_id, source_id, record_kind, external_id, observed_version,
-            hydrated_version, last_seen_at, dirty,
-            hydrated_adapter_hash, hydrated_card_contract_version,
-            hydrated_payload_policy_version, hydrated_projection_version
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, 0, ?7, ?8, ?9, ?10)
+            tenant_id, source_id, record_kind, external_id, synced_version
+        ) VALUES (?1, ?2, ?3, ?4, ?5)
         ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
-            observed_version = excluded.observed_version,
-            hydrated_version = excluded.hydrated_version,
-            last_seen_at = excluded.last_seen_at,
-            dirty = 0,
-            hydrated_adapter_hash = excluded.hydrated_adapter_hash,
-            hydrated_card_contract_version = excluded.hydrated_card_contract_version,
-            hydrated_payload_policy_version = excluded.hydrated_payload_policy_version,
-            hydrated_projection_version = excluded.hydrated_projection_version
+            synced_version = excluded.synced_version
         "#,
     )
     .bind(tenant_id)
@@ -231,11 +222,6 @@ pub async fn upsert_single_session_observation_clean_sqlx_tx(
     .bind(record_kind)
     .bind(external_id)
     .bind(version_token)
-    .bind(now)
-    .bind(adapter_content_hash)
-    .bind(card_contract_version.map(i64::from))
-    .bind(i64::from(payload_policy_version))
-    .bind(projection_version.map(i64::from))
     .execute(&mut **tx)
     .await
     .map_err(StoreError::external)?;
@@ -264,33 +250,36 @@ pub async fn persist_conversation_session_observations_sqlx(
         .await
         .map_err(StoreError::external)?;
 
-    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        r#"
+        UPDATE conversation_sources
+        SET synced_adapter_hash = ?1,
+            synced_card_contract_version = ?2,
+            synced_payload_policy_version = ?3,
+            synced_projection_version = ?4
+        WHERE tenant_id = ?5 AND id = ?6
+        "#,
+    )
+    .bind(adapter_content_hash)
+    .bind(card_contract_version.map(i64::from))
+    .bind(i64::from(payload_policy_version))
+    .bind(projection_version.map(i64::from))
+    .bind(tenant_id)
+    .bind(source_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(StoreError::external)?;
 
+    let mut written = 0;
     for desc in session_descriptors {
-        let hydrated_version = if hydrated_external_ids.contains(&desc.external_id) {
-            Some(&desc.version_token)
-        } else {
-            None
-        };
-
-        if let Some(hv) = hydrated_version {
+        if hydrated_external_ids.contains(&desc.external_id) {
             sqlx::query(
                 r#"
                 INSERT INTO conversation_session_observations (
-                    tenant_id, source_id, record_kind, external_id, observed_version,
-                    hydrated_version, last_seen_at, dirty,
-                    hydrated_adapter_hash, hydrated_card_contract_version,
-                    hydrated_payload_policy_version, hydrated_projection_version
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10, ?11)
+                    tenant_id, source_id, record_kind, external_id, synced_version
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
                 ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
-                    observed_version = excluded.observed_version,
-                    hydrated_version = excluded.hydrated_version,
-                    last_seen_at = excluded.last_seen_at,
-                    hydrated_adapter_hash = excluded.hydrated_adapter_hash,
-                    hydrated_card_contract_version = excluded.hydrated_card_contract_version,
-                    hydrated_payload_policy_version = excluded.hydrated_payload_policy_version,
-                    hydrated_projection_version = excluded.hydrated_projection_version,
-                    dirty = 0
+                    synced_version = excluded.synced_version
                 "#,
             )
             .bind(tenant_id)
@@ -298,50 +287,13 @@ pub async fn persist_conversation_session_observations_sqlx(
             .bind(kind_str)
             .bind(&desc.external_id)
             .bind(&desc.version_token)
-            .bind(hv)
-            .bind(&now)
-            .bind(adapter_content_hash)
-            .bind(card_contract_version.map(i64::from))
-            .bind(i64::from(payload_policy_version))
-            .bind(projection_version.map(i64::from))
             .execute(&mut *tx)
             .await
             .map_err(StoreError::external)?;
-        } else {
-            // 未完成解析的会话保留既有 dirty，等待下一轮重试
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_session_observations (
-                    tenant_id, source_id, record_kind, external_id, observed_version,
-                    last_seen_at, dirty, hydrated_adapter_hash,
-                    hydrated_card_contract_version,
-                    hydrated_payload_policy_version, hydrated_projection_version
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10)
-                ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
-                    observed_version = excluded.observed_version,
-                    last_seen_at = excluded.last_seen_at,
-                    hydrated_adapter_hash = excluded.hydrated_adapter_hash,
-                    hydrated_card_contract_version = excluded.hydrated_card_contract_version,
-                    hydrated_payload_policy_version = excluded.hydrated_payload_policy_version,
-                    hydrated_projection_version = excluded.hydrated_projection_version
-                "#,
-            )
-            .bind(tenant_id)
-            .bind(source_id)
-            .bind(kind_str)
-            .bind(&desc.external_id)
-            .bind(&desc.version_token)
-            .bind(&now)
-            .bind(adapter_content_hash)
-            .bind(card_contract_version.map(i64::from))
-            .bind(i64::from(payload_policy_version))
-            .bind(projection_version.map(i64::from))
-            .execute(&mut *tx)
-            .await
-            .map_err(StoreError::external)?;
+            written += 1;
         }
     }
 
     tx.commit().await.map_err(StoreError::external)?;
-    Ok(session_descriptors.len())
+    Ok(written)
 }

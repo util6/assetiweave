@@ -136,6 +136,43 @@ pub struct ConversationListArgs {
 pub struct ConversationOutlineArgs {
     #[arg(help = "Any identifier (session ID, turn ID, card ID or 8-hex prefix)")]
     pub id: String,
+
+    #[arg(
+        long,
+        conflicts_with_all = ["qa", "full"],
+        help = "Show questions only: [index, turn_id, question]"
+    )]
+    pub questions: bool,
+
+    #[arg(
+        long,
+        conflicts_with_all = ["questions", "full"],
+        help = "Show QA pairs with answers: [index, turn_id, question, answer]"
+    )]
+    pub qa: bool,
+
+    #[arg(
+        long,
+        conflicts_with_all = ["questions", "qa"],
+        help = "Show full outline including answers: [index, turn_id, question, activities, cards, answer]"
+    )]
+    pub full: bool,
+}
+
+impl ConversationOutlineArgs {
+    pub fn detail_level(
+        &self,
+    ) -> asset_core::backend::domain::conversations::outline::ConversationOutlineDetailLevel {
+        if self.questions {
+            asset_core::backend::domain::conversations::outline::ConversationOutlineDetailLevel::Questions
+        } else if self.qa {
+            asset_core::backend::domain::conversations::outline::ConversationOutlineDetailLevel::Qa
+        } else if self.full {
+            asset_core::backend::domain::conversations::outline::ConversationOutlineDetailLevel::Full
+        } else {
+            asset_core::backend::domain::conversations::outline::ConversationOutlineDetailLevel::Default
+        }
+    }
 }
 
 #[derive(Args, Debug)]

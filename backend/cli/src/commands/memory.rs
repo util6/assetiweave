@@ -8,13 +8,13 @@ use crate::service::CliService;
 use anyhow::Result;
 use asset_core::domain::MemoryScope;
 
-pub async fn handle_memory(args: MemoryArgs, _format: OutputFormat) -> Result<()> {
+pub async fn handle_memory(args: MemoryArgs, format: OutputFormat) -> Result<()> {
     let service = CliService::bootstrap().await?;
     match args.command {
         MemoryCommand::Recent(r) => match r.command {
-            MemoryRecentCommand::Get => {
-                let res = service.memory().get_recent_snapshot().await?;
-                render::render_json_value(&res);
+            MemoryRecentCommand::Get(g) => {
+                let res = service.memory().get_recent_snapshot(g.date).await?;
+                render::render_memory_markdown_view(&res, format);
             }
         },
         MemoryCommand::Context(c) => match c.command {
@@ -35,8 +35,18 @@ pub async fn handle_memory(args: MemoryArgs, _format: OutputFormat) -> Result<()
         },
         MemoryCommand::Project(p) => match p.command {
             MemoryProjectCommand::Get(g) => {
-                let res = service.memory().get_project(g.project_path).await?;
-                render::render_json_value(&res);
+                let project_path = if g.current_project {
+                    std::env::current_dir()
+                        .ok()
+                        .map(|p| p.to_string_lossy().to_string())
+                } else {
+                    g.project_path
+                };
+                let project_path = project_path.ok_or_else(|| {
+                    anyhow::anyhow!("project path is required (provide <project_path> or use --current-project)")
+                })?;
+                let res = service.memory().get_project(project_path).await?;
+                render::render_memory_markdown_view(&res, format);
             }
         },
         MemoryCommand::Rebuild(rb) => {
@@ -47,11 +57,29 @@ pub async fn handle_memory(args: MemoryArgs, _format: OutputFormat) -> Result<()
             } else {
                 rb.project
             };
+            let target = rb
+                .target
+                .as_deref()
+                .and_then(|t| match t.to_lowercase().as_str() {
+                    "recent" => Some(asset_core::application::MemoryRebuildTarget::Recent),
+                    "project" => Some(asset_core::application::MemoryRebuildTarget::Project),
+                    "global" => Some(asset_core::application::MemoryRebuildTarget::Global),
+                    "all" => Some(asset_core::application::MemoryRebuildTarget::All),
+                    _ => None,
+                });
+            let reason = match rb.reason.to_lowercase().as_str() {
+                "migration" => Some(asset_core::application::MemoryRebuildReason::Migration),
+                "projection_repair" => {
+                    Some(asset_core::application::MemoryRebuildReason::ProjectionRepair)
+                }
+                _ => Some(asset_core::application::MemoryRebuildReason::Manual),
+            };
             let params = asset_core::application::MemoryScopeRebuildParams {
                 scope: MemoryScope::default(),
-                target: None,
+                target,
                 project_path,
-                reason: None,
+                reason,
+                force: rb.force,
             };
             let res = service.memory().rebuild(params).await?;
             render::render_json_value(&res);

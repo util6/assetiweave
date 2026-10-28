@@ -14,6 +14,7 @@ pub struct ConversationSourceReadResult {
     pub incremental: bool,
     pub session_failures: Vec<SessionSyncFailure>,
     pub session_warnings: Vec<SessionSyncWarning>,
+    pub skipped_clean_external_ids: Vec<String>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -114,6 +115,7 @@ pub async fn read_source_sessions_with_progress_listener(
             incremental: false,
             session_failures: Vec::new(),
             session_warnings: warnings,
+            skipped_clean_external_ids: Vec::new(),
         });
     };
     let descriptors = deduplicate_session_descriptors(&discovery.session_descriptors)?;
@@ -132,12 +134,14 @@ pub async fn read_source_sessions_with_progress_listener(
             incremental: true,
             session_failures: Vec::new(),
             session_warnings: Vec::new(),
+            skipped_clean_external_ids: Vec::new(),
         });
     }
 
     let mut sessions = Vec::with_capacity(active.len());
     let mut session_failures = Vec::new();
     let mut session_warnings = Vec::new();
+    let mut skipped_clean_external_ids = Vec::new();
     let mut empty_session_count = 0usize;
     let mut legacy_cards_upgraded = 0usize;
     for (index, descriptor) in active.iter().enumerate() {
@@ -163,6 +167,7 @@ pub async fn read_source_sessions_with_progress_listener(
                 let mut read = result.sessions;
                 if read.is_empty() {
                     empty_session_count += 1;
+                    skipped_clean_external_ids.push(descriptor.external_id.clone());
                     continue;
                 }
                 if read.len() != 1 || read[0].external_id != descriptor.external_id {
@@ -223,6 +228,7 @@ pub async fn read_source_sessions_with_progress_listener(
         incremental: true,
         session_failures,
         session_warnings,
+        skipped_clean_external_ids,
     })
 }
 

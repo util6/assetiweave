@@ -932,6 +932,387 @@ test("Antigravity reliably infers project path from modern Path parameter and re
   }
 });
 
+test("Antigravity inlines invoke_subagent calls into specialized subagent turns and emits continuation turn", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:00Z",
+        content: "<USER_REQUEST>Audit dependencies and verify build</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:01Z",
+        content: "I will dispatch a specialist subagent to audit dependencies.",
+        tool_calls: [{
+          name: "invoke_subagent",
+          args: {
+            Subagents: [{
+              Role: "auditor",
+              Prompt: "Audit npm packages for security vulnerabilities",
+              Model: "gemini-2.5-pro",
+            }],
+          },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:02Z",
+        content: "Checking packages with npm audit...",
+        tool_calls: [{
+          name: "run_command",
+          args: {
+            CommandLine: "npm audit --json",
+            toolSummary: "Audit packages",
+          },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "RUN_COMMAND",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:03Z",
+        content: "Process exited with code 0\nOutput:\n{\"vulnerabilities\": {}}",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:04Z",
+        content: "Audit complete: found 0 vulnerabilities.",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:05Z",
+        content: "Subagent completed successfully. All dependencies are secure and build verified.",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    assert.equal(session.turns.length, 3);
+
+    // Turn 0: Anchor turn (User prompt + main pre-dispatch response)
+    const turn0 = session.turns[0];
+    assert.equal(turn0.turn_index, 0);
+    assert.equal(turn0.user_text, "Audit dependencies and verify build");
+    assert.equal(turn0.external_id, "turn-0");
+    assert.ok(turn0.parts.length > 0);
+
+    // Turn 1: Specialized subagent turn
+    const turn1 = session.turns[1];
+    assert.equal(turn1.turn_index, 1);
+    assert.equal(turn1.turn_kind, "subagent");
+    assert.equal(turn1.agent_role, "auditor");
+    assert.equal(turn1.parent_turn_id, "turn-0");
+    assert.equal(turn1.user_text, "Audit npm packages for security vulnerabilities");
+    assert.equal(turn1.model, "gemini-2.5-pro");
+    assert.ok(turn1.parts.length >= 2);
+    const hasCommand = turn1.parts.some((p) => p.kind === "command" && p.command.includes("npm audit"));
+    assert.ok(hasCommand, "Subagent turn should contain command execution part");
+    const lastPart = turn1.parts[turn1.parts.length - 1];
+    assert.equal(lastPart.role, "assistant");
+    assert.match(lastPart.text, /Audit complete/);
+
+    // Turn 2: Continuation turn
+    const turn2 = session.turns[2];
+    assert.equal(turn2.turn_index, 2);
+    assert.equal(turn2.turn_kind, "continuation");
+    assert.equal(turn2.parent_turn_id, "turn-0");
+    assert.equal(turn2.user_text, "Continue following subagent execution");
+    assert.ok(turn2.parts.length > 0);
+    assert.match(turn2.parts[0].text, /All dependencies are secure/);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity excludes derivative subagent sessions from list_sessions", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-listsub-"));
+  try {
+    const brainDir = path.join(fixtureRoot, "brain");
+    const parentId = "11111111-1111-1111-1111-111111111111";
+    const subagentId = "22222222-2222-2222-2222-222222222222";
+
+    // Create parent brain dir with transcript
+    const parentLogs = path.join(brainDir, parentId, ".system_generated", "logs");
+    mkdirSync(parentLogs, { recursive: true });
+    writeFileSync(path.join(parentLogs, "transcript.jsonl"), [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        content: "<USER_REQUEST>Main task</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        content: "Main response",
+      }),
+    ].join("\n"));
+
+    // Create subagent brain dir with meta.json indicating subagent
+    const subLogs = path.join(brainDir, subagentId, ".system_generated", "logs");
+    mkdirSync(subLogs, { recursive: true });
+    writeFileSync(path.join(brainDir, subagentId, "meta.json"), JSON.stringify({
+      is_subagent: true,
+      parent_session_id: parentId,
+      cwd: "/some/project",
+    }));
+    writeFileSync(path.join(subLogs, "transcript.jsonl"), [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        content: "<USER_REQUEST>Subagent delegated task</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        content: "Subagent response",
+      }),
+    ].join("\n"));
+
+    const listResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "list_sessions",
+        source: { location: fixtureRoot },
+        params: {},
+      }),
+    });
+    assert.equal(listResult.status, 0);
+    const items = listResult.stdout
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((m) => m.type === "item")
+      .map((m) => m.item.external_id);
+    assert.deepEqual(items, [parentId]);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity preserves anchor user turn when assistant dispatches subagent with zero preceding text", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-zerotext-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript.jsonl");
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:00Z",
+        content: "<USER_REQUEST>Fix login bug immediately</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:01Z",
+        content: "",
+        tool_calls: [{
+          name: "invoke_subagent",
+          args: { role: "debugger", prompt: "Investigate login crash" },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:02Z",
+        content: "Fixed null pointer in auth handler",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    assert.ok(session.turns.length >= 2, `Expected >= 2 turns, got ${session.turns.length}`);
+    // Anchor user turn must be preserved as turn 0
+    assert.equal(session.turns[0].turn_index, 0);
+    assert.equal(session.turns[0].user_text, "Fix login bug immediately");
+    assert.equal(session.turns[0].turn_kind, undefined);
+
+    // Subagent turn
+    assert.equal(session.turns[1].turn_index, 1);
+    assert.equal(session.turns[1].turn_kind, "subagent");
+    assert.equal(session.turns[1].parent_turn_id, session.turns[0].external_id);
+    assert.equal(session.turns[1].agent_role, "debugger");
+    assert.equal(session.turns[1].user_text, "Investigate login crash");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity falls back to valid string when subagent prompt is whitespace-only", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-ws-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript.jsonl");
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:00Z",
+        content: "<USER_REQUEST>Execute delegation</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:01Z",
+        content: "",
+        tool_calls: [{
+          name: "invoke_subagent",
+          args: { role: "worker", prompt: "   \t\n  " },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:02Z",
+        content: "Done",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    assert.equal(session.turns[1].turn_kind, "subagent");
+    assert.equal(session.turns[1].user_text, "Subagent execution");
+    assert.ok(session.turns[1].user_text.trim().length > 0);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity handles parallel subagents dispatching multiple distinct subagent turns", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-parallel-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript.jsonl");
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:00Z",
+        content: "<USER_REQUEST>Run parallel audits</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:01Z",
+        content: "Spawning parallel workers",
+        tool_calls: [{
+          name: "invoke_subagent",
+          args: {
+            Subagents: [
+              { Role: "linter", Prompt: "Lint source files" },
+              { Role: "tester", Prompt: "Run test suite" },
+            ],
+          },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:02Z",
+        content: "All parallel tasks completed",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    // Turns: 0 = User, 1 = Subagent linter, 2 = Subagent tester
+    assert.ok(session.turns.length >= 3, `Expected >= 3 turns, got ${session.turns.length}`);
+    assert.equal(session.turns[0].user_text, "Run parallel audits");
+    assert.equal(session.turns[1].turn_kind, "subagent");
+    assert.equal(session.turns[1].agent_role, "linter");
+    assert.equal(session.turns[1].user_text, "Lint source files");
+    assert.equal(session.turns[1].parent_turn_id, session.turns[0].external_id);
+
+    assert.equal(session.turns[2].turn_kind, "subagent");
+    assert.equal(session.turns[2].agent_role, "tester");
+    assert.equal(session.turns[2].user_text, "Run test suite");
+    assert.equal(session.turns[2].parent_turn_id, session.turns[0].external_id);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity multi-turn session keeps subsequent question as standard user turn", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-multiturn-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript.jsonl");
+    writeFileSync(transcriptPath, [
+      // Question 1
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:00Z",
+        content: "<USER_REQUEST>Question 1: Fix bug</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:01Z",
+        content: "",
+        tool_calls: [{
+          name: "invoke_subagent",
+          args: { role: "worker", prompt: "Fix bug subtask" },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:02Z",
+        content: "Subtask finished",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-22T10:00:03Z",
+        content: "Question 1 resolved.",
+      }),
+      // Question 2
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-10-22T10:05:00Z",
+        content: "<USER_REQUEST>Question 2: What is the weather in Tokyo?</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-10-22T10:05:01Z",
+        content: "The weather in Tokyo is sunny.",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    // Find Question 2 turn
+    const q2Turn = session.turns.find((t) => t.user_text && t.user_text.includes("Question 2: What is the weather in Tokyo?"));
+    assert.ok(q2Turn, "Question 2 turn should exist in session");
+    assert.equal(q2Turn.turn_kind, undefined, "Question 2 must NOT be marked as continuation");
+    assert.equal(q2Turn.parent_turn_id, undefined, "Question 2 must NOT have parent_turn_id");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 
 function readFixtureSession(transcriptPath) {
   const result = spawnSync(process.execPath, [adapterPath], {

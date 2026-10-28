@@ -96,6 +96,17 @@ function textPart(role, text) {
 }
 
 
+function isSubagentSessionPath(filePath) {
+  if (!filePath) return false;
+  const norm = filePath.replace(/\\/g, "/").toLowerCase();
+  return (
+    norm.includes("/subagents/") ||
+    norm.includes("/subagent/") ||
+    norm.includes(".subagent.") ||
+    norm.endsWith(".subagent.jsonl")
+  );
+}
+
 function collectJsonlFiles(root) {
   if (!existsSync(root)) return [];
   if (statSync(root).isFile()) return root.endsWith(".jsonl") ? [root] : [];
@@ -620,7 +631,13 @@ function toolPart(value) {
 function parseJsonl(text) {
   const turns = [];
   let current = null;
+  let activeSubagent = null;
+  let anchorTurnId = null;
+  let subagentCount = 0;
+  let continuationCount = 0;
   let projectPath = null;
+  let pendingSubagentCallId = null;
+
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
     let value;
@@ -632,50 +649,86 @@ function parseJsonl(text) {
     const payload = eventPayload(value);
     projectPath ??= projectPathFromValue(value) ?? projectPathFromValue(payload);
     const timestamp = stringField(value, ["timestamp", "created_at", "updated_at"]);
-    if (value.isSidechain === true) {
-      const text = extractText(payload);
-      if (current && text.trim()) {
-        const subagentPayload = {
-          agent_role: "Sidechain Subagent",
-          task: text.trim(),
-          status: "completed",
-        };
-        current.parts.push({
-          role: "assistant",
-          kind: "claude-code.subagent",
-          text: JSON.stringify(subagentPayload, null, 2),
-          language: null,
-          command: null,
-          cwd: null,
-          status: "completed",
-          exit_code: null,
-          content_card: {
-            schema_version: 1,
-            kind: "claude-code.subagent",
-            semantic_role: "subagent",
-            renderer: "subagent_tree",
-          },
-          metadata_json: metadata({
-            type: "subagent",
-            format: "json",
-            content_card: {
-              schema_version: 1,
-              kind: "claude-code.subagent",
-              semantic_role: "subagent",
-              renderer: "subagent_tree",
-            },
-          }, value),
-        });
-      }
-      continue;
-    }
     const role = roleOf(payload) ?? roleOf(value);
     const recordType = stringField(payload, ["type"]) ?? stringField(value, ["type"]) ?? "";
     const userText = realUserText(value, payload, role, recordType);
+
+    // 1. Sidechain event handling
+    if (value.isSidechain === true) {
+      if (!activeSubagent) {
+        if (current && (current.parts.length > 0 || (current.turn_kind !== "continuation" && Boolean(current.user_text?.trim())))) {
+          current.ended_at = timestamp;
+          turns.push(current);
+          if (current.turn_kind !== "continuation") {
+            anchorTurnId = current.external_id;
+          }
+        }
+        current = null;
+        const parentAnchorTurnId = anchorTurnId || (turns[0]?.external_id ?? "turn-0");
+        const sideText = resolvePrompt(userText, extractText(payload), stringField(value, ["task", "prompt"]), "Subagent execution");
+        activeSubagent = {
+          external_id: `${parentAnchorTurnId}-subagent-${++subagentCount}`,
+          turn_index: turns.length,
+          user_text: sideText,
+          turn_kind: "subagent",
+          agent_role: "Sidechain Subagent",
+          parent_turn_id: parentAnchorTurnId,
+          title: null,
+          started_at: timestamp,
+          ended_at: null,
+          model: null,
+          parts: [],
+        };
+      }
+
+      if (userText?.trim() && (!activeSubagent.user_text || activeSubagent.user_text === "Subagent execution")) {
+        activeSubagent.user_text = resolvePrompt(userText, activeSubagent.user_text);
+      }
+      if (isUserToolResultMessage(payload)) {
+        const resultParts = contentItemsOfType(payload, "tool_result").flatMap((item) => toolResultPart(item, value));
+        activeSubagent.parts.push(...resultParts);
+        activeSubagent.ended_at = timestamp;
+      } else if (role === "assistant") {
+        activeSubagent.parts.push(...assistantMessageParts(payload, value));
+        activeSubagent.ended_at = timestamp;
+        if (!activeSubagent.model) {
+          activeSubagent.model = stringField(payload?.message, ["model"]) ?? stringField(payload, ["model"]) ?? stringField(value?.message, ["model"]) ?? stringField(value, ["model"]) ?? null;
+        }
+      } else if (recordType.includes("tool") || recordType.includes("shell") || recordType === "patch") {
+        activeSubagent.parts.push(...toolPart(payload));
+        activeSubagent.ended_at = timestamp;
+      } else if (activeSubagent.parts.length === 0 && extractText(payload).trim()) {
+        const txt = extractText(payload).trim();
+        if (txt !== activeSubagent.user_text) {
+          const part = textPart("assistant", txt);
+          if (part) activeSubagent.parts.push(part);
+        }
+      }
+      continue;
+    }
+
+    // If an active sidechain subagent was open, non-sidechain event signals its end
+    if (activeSubagent && !pendingSubagentCallId) {
+      turns.push(activeSubagent);
+      activeSubagent = null;
+    }
+
+    // 2. Real user turn boundary
     if (userText) {
-      if (current) turns.push(current);
+      if (activeSubagent) {
+        turns.push(activeSubagent);
+        activeSubagent = null;
+        pendingSubagentCallId = null;
+      }
+      if (current && (current.parts.length > 0 || current.turn_kind === "subagent")) {
+        turns.push(current);
+      }
+      current = null;
+      anchorTurnId = stringField(payload, ["id", "uuid"]) ?? stringField(value, ["id", "uuid"]) ?? `turn-${turns.length}`;
+      subagentCount = 0;
+      continuationCount = 0;
       current = {
-        external_id: stringField(payload, ["id", "uuid"]) ?? stringField(value, ["id", "uuid"]) ?? `turn-${turns.length}`,
+        external_id: anchorTurnId,
         turn_index: turns.length,
         user_text: userText,
         title: null,
@@ -686,14 +739,90 @@ function parseJsonl(text) {
       };
       continue;
     }
+
+    // 3. Tool results matching an Agent/Task tool call
+    if (pendingSubagentCallId && isUserToolResultMessage(payload)) {
+      const toolResults = contentItemsOfType(payload, "tool_result");
+      const matched = toolResults.find((item) => item.tool_use_id === pendingSubagentCallId || item.id === pendingSubagentCallId);
+      if (matched && activeSubagent) {
+        const outputText = toolText(matched) || (typeof matched?.content === "string" ? matched.content : "") || extractText(matched) || "Subagent execution completed.";
+        const part = textPart("assistant", outputText);
+        if (part) activeSubagent.parts.push(part);
+        activeSubagent.ended_at = timestamp;
+        turns.push(activeSubagent);
+        activeSubagent = null;
+        pendingSubagentCallId = null;
+        continue;
+      }
+    }
+
+    // 4. Main agent continuation turn
+    if (!current && turns.length > 0) {
+      const parentAnchorTurnId = anchorTurnId || (turns[0]?.external_id ?? "turn-0");
+      current = {
+        external_id: `${parentAnchorTurnId}-cont-${++continuationCount}`,
+        turn_index: turns.length,
+        user_text: "Continue following subagent execution",
+        turn_kind: "continuation",
+        parent_turn_id: parentAnchorTurnId,
+        title: null,
+        started_at: timestamp,
+        ended_at: null,
+        model: null,
+        parts: [],
+      };
+    }
+
     if (!current) continue;
+
     if (isUserToolResultMessage(payload)) {
       const resultParts = contentItemsOfType(payload, "tool_result").flatMap((item) => toolResultPart(item, value));
       current.parts.push(...resultParts);
       current.ended_at = timestamp;
       continue;
     }
+
     if (role === "assistant") {
+      // Check for Agent / Task tool calls
+      const agentTool = Array.isArray(payload?.content)
+        ? payload.content.find((item) => item?.type === "tool_use" && (item.name === "Agent" || item.name === "Task"))
+        : null;
+
+      if (agentTool) {
+        const preItems = payload.content.filter((item) => item !== agentTool);
+        if (preItems.length > 0 && current) {
+          current.parts.push(...assistantMessageParts({ ...payload, content: preItems }, value));
+        }
+        if (current && (current.parts.length > 0 || (current.turn_kind !== "continuation" && Boolean(current.user_text?.trim())))) {
+          current.ended_at = timestamp;
+          turns.push(current);
+          if (current.turn_kind !== "continuation") {
+            anchorTurnId = current.external_id;
+          }
+        }
+        current = null;
+
+        const parentAnchorTurnId = anchorTurnId || (turns[0]?.external_id ?? "turn-0");
+        const inputObj = agentTool.input || {};
+        const taskPrompt = resolvePrompt(inputObj.prompt, inputObj.description, inputObj.task, "Subagent execution");
+        const agentRole = inputObj.subagent_type || inputObj.role || agentTool.name;
+        activeSubagent = {
+          external_id: `${parentAnchorTurnId}-subagent-${++subagentCount}`,
+          turn_index: turns.length,
+          user_text: taskPrompt,
+          turn_kind: "subagent",
+          agent_role: agentRole,
+          parent_turn_id: parentAnchorTurnId,
+          title: null,
+          started_at: timestamp,
+          ended_at: null,
+          model: null,
+          parts: [],
+        };
+        pendingSubagentCallId = agentTool.id || `subagent-call-${subagentCount}`;
+        continue;
+      }
+
       current.parts.push(...assistantMessageParts(payload, value));
       current.ended_at = timestamp;
       if (!current.model) {
@@ -701,18 +830,33 @@ function parseJsonl(text) {
       }
       continue;
     }
+
     if (recordType.includes("tool") || recordType.includes("shell") || recordType === "patch") {
       current.parts.push(...toolPart(payload));
       current.ended_at = timestamp;
     }
   }
-  if (current) turns.push(current);
+  if (activeSubagent) turns.push(activeSubagent);
+  if (current && (current.parts.length > 0 || current.turn_kind === "subagent")) {
+    turns.push(current);
+  }
+  for (let i = 0; i < turns.length; i++) {
+    turns[i].turn_index = i;
+  }
   return { turns, projectPath };
 }
 
+function resolvePrompt(...candidates) {
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim().length > 0) return c.trim();
+  }
+  return "Subagent execution";
+}
+
 function displayTurns(turns) {
+  const parentTurnIds = new Set(turns.map((turn) => turn.parent_turn_id).filter(Boolean));
   return turns
-    .filter((turn) => Array.isArray(turn.parts) && turn.parts.length > 0)
+    .filter((turn) => (Array.isArray(turn.parts) && turn.parts.length > 0) || turn.turn_kind === "subagent" || parentTurnIds.has(turn.external_id))
     .map((turn, index) => ({
       ...turn,
       turn_index: index,
@@ -777,6 +921,8 @@ function readSession() {
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
       source_locator: requestedLocator,
       source_fingerprint: versionToken,
+      user_visible: !isSubagentSessionPath(requestedLocator),
+      execution_origin: isSubagentSessionPath(requestedLocator) ? "subagent" : "user",
       turns,
     }];
   }
@@ -798,6 +944,8 @@ function readSession() {
           updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
           source_locator: directCandidate,
           source_fingerprint: versionToken,
+          user_visible: !isSubagentSessionPath(directCandidate),
+          execution_origin: isSubagentSessionPath(directCandidate) ? "subagent" : "user",
           turns,
         }];
       }
@@ -821,6 +969,8 @@ function readSession() {
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
       source_locator: filePath,
       source_fingerprint: versionToken,
+      user_visible: !isSubagentSessionPath(filePath),
+      execution_origin: isSubagentSessionPath(filePath) ? "subagent" : "user",
       turns,
     }];
   });
@@ -842,15 +992,17 @@ function isInternalExecutionPath(cwd) {
 function listSessions() {
   const location = expandPath(input.source?.location);
   if (!location || !existsSync(location)) return [];
-  return collectJsonlFiles(location).map((filePath) => {
-    const stat = statSync(filePath);
-    return {
-      external_id: path.basename(filePath, ".jsonl") || "claude-session",
-      updated_at: stat.mtime.toISOString(),
-      source_locator: filePath,
-      version_token: fileVersionToken(filePath),
-    };
-  });
+  return collectJsonlFiles(location)
+    .filter((filePath) => !isSubagentSessionPath(filePath))
+    .map((filePath) => {
+      const stat = statSync(filePath);
+      return {
+        external_id: path.basename(filePath, ".jsonl") || "claude-session",
+        updated_at: stat.mtime.toISOString(),
+        source_locator: filePath,
+        version_token: fileVersionToken(filePath),
+      };
+    });
 }
 
 function executionTextValue(value, depth = 0) {

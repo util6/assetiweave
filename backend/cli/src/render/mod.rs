@@ -296,6 +296,8 @@ pub fn render_profiles(profiles: &[TargetProfileDescriptor], format: OutputForma
 
 pub mod conversation;
 pub use conversation::*;
+pub mod memory;
+pub use memory::*;
 
 pub fn render_doctor(report: &serde_json::Value, format: OutputFormat) {
     match format {

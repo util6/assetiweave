@@ -204,15 +204,137 @@ pub fn should_merge_into_previous_question(user_text: &str) -> bool {
         || should_auto_merge_micro_follow_up(user_text)
 }
 
-pub fn group_turn_ids_by_question<I>(turns: I) -> Vec<ConversationGroupSeed>
+/// 复合归并判定：子代理轮次、接续轮次或父级链接命中上一组轮次时直接并入上一组，不受文本长度或标点限制。
+pub fn should_merge_turn_with_active_question(
+    prompt: &str,
+    turn_kind: Option<&str>,
+    parent_turn_id: Option<&str>,
+    active_turn_ids: &[&str],
+) -> bool {
+    if let Some(kind) = turn_kind {
+        if matches!(
+            kind,
+            "subagent" | "agent" | "continuation" | "main_continuation"
+        ) {
+            if let Some(parent_id) = parent_turn_id {
+                return active_turn_ids.iter().any(|id| *id == parent_id);
+            }
+            return true;
+        }
+    }
+    if let Some(parent_id) = parent_turn_id {
+        if active_turn_ids.iter().any(|id| *id == parent_id) {
+            return true;
+        }
+    }
+    should_merge_into_previous_question(prompt)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationTurnSeed {
+    pub id: String,
+    pub prompt: String,
+    pub turn_kind: Option<String>,
+    pub parent_turn_id: Option<String>,
+}
+
+impl From<(String, String)> for ConversationTurnSeed {
+    fn from((id, prompt): (String, String)) -> Self {
+        Self {
+            id,
+            prompt,
+            turn_kind: None,
+            parent_turn_id: None,
+        }
+    }
+}
+
+impl From<(&str, &str)> for ConversationTurnSeed {
+    fn from((id, prompt): (&str, &str)) -> Self {
+        Self {
+            id: id.to_string(),
+            prompt: prompt.to_string(),
+            turn_kind: None,
+            parent_turn_id: None,
+        }
+    }
+}
+
+impl From<(String, String, Option<String>, Option<String>)> for ConversationTurnSeed {
+    fn from(
+        (id, prompt, turn_kind, parent_turn_id): (String, String, Option<String>, Option<String>),
+    ) -> Self {
+        Self {
+            id,
+            prompt,
+            turn_kind,
+            parent_turn_id,
+        }
+    }
+}
+
+impl From<(&str, &str, Option<&str>, Option<&str>)> for ConversationTurnSeed {
+    fn from(
+        (id, prompt, turn_kind, parent_turn_id): (&str, &str, Option<&str>, Option<&str>),
+    ) -> Self {
+        Self {
+            id: id.to_string(),
+            prompt: prompt.to_string(),
+            turn_kind: turn_kind.map(str::to_string),
+            parent_turn_id: parent_turn_id.map(str::to_string),
+        }
+    }
+}
+
+impl From<&super::ConversationTurn> for ConversationTurnSeed {
+    fn from(turn: &super::ConversationTurn) -> Self {
+        Self {
+            id: turn.id.clone(),
+            prompt: turn.prompt.clone(),
+            turn_kind: turn.turn_kind.clone(),
+            parent_turn_id: turn.parent_turn_id.clone(),
+        }
+    }
+}
+
+impl From<super::ConversationTurn> for ConversationTurnSeed {
+    fn from(turn: super::ConversationTurn) -> Self {
+        Self {
+            id: turn.id,
+            prompt: turn.prompt,
+            turn_kind: turn.turn_kind,
+            parent_turn_id: turn.parent_turn_id,
+        }
+    }
+}
+
+pub fn group_turn_ids_by_question<I, T>(turns: I) -> Vec<ConversationGroupSeed>
 where
-    I: IntoIterator<Item = (String, String)>,
+    I: IntoIterator<Item = T>,
+    T: Into<ConversationTurnSeed>,
 {
     let mut groups: Vec<ConversationGroupSeed> = Vec::new();
-    for (turn_id, user_text) in turns {
-        if should_merge_into_previous_question(&user_text) {
+    for turn in turns {
+        let seed = turn.into();
+        let should_merge = if let Some(previous) = groups.last() {
+            let active_ids = previous
+                .turn_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            should_merge_turn_with_active_question(
+                &seed.prompt,
+                seed.turn_kind.as_deref(),
+                seed.parent_turn_id.as_deref(),
+                &active_ids,
+            )
+        } else {
+            false
+        };
+
+        if should_merge {
             if let Some(previous) = groups.last_mut() {
-                previous.turn_ids.push(turn_id);
+                previous.turn_ids.push(seed.id);
                 if previous.origin == ConversationGroupingOrigin::Imported {
                     previous.origin = ConversationGroupingOrigin::AutoMerged;
                 }
@@ -220,7 +342,7 @@ where
             }
         }
         groups.push(ConversationGroupSeed {
-            turn_ids: vec![turn_id],
+            turn_ids: vec![seed.id],
             origin: ConversationGroupingOrigin::Imported,
         });
     }
@@ -269,7 +391,35 @@ pub fn derive_question_id_from_turn(turn_id: &str) -> String {
     }
 }
 
-pub fn group_turns_by_dynamic_projection<T, F, I>(
+fn extract_turn_kind<T: 'static>(turn: &T) -> Option<&str> {
+    let any = turn as &dyn std::any::Any;
+    if let Some(t) = any.downcast_ref::<super::ConversationTurn>() {
+        return t.turn_kind.as_deref();
+    }
+    if let Some(t) = any.downcast_ref::<super::NormalizedConversationTurn>() {
+        return t.turn_kind.as_deref();
+    }
+    if let Some(t) = any.downcast_ref::<ConversationTurnSeed>() {
+        return t.turn_kind.as_deref();
+    }
+    None
+}
+
+fn extract_parent_turn_id<T: 'static>(turn: &T) -> Option<&str> {
+    let any = turn as &dyn std::any::Any;
+    if let Some(t) = any.downcast_ref::<super::ConversationTurn>() {
+        return t.parent_turn_id.as_deref();
+    }
+    if let Some(t) = any.downcast_ref::<super::NormalizedConversationTurn>() {
+        return t.parent_external_id.as_deref();
+    }
+    if let Some(t) = any.downcast_ref::<ConversationTurnSeed>() {
+        return t.parent_turn_id.as_deref();
+    }
+    None
+}
+
+pub fn group_turns_by_dynamic_projection<T: 'static, F, I>(
     prefix: &str,
     turns: Vec<T>,
     prompt_extractor: F,
@@ -279,10 +429,48 @@ where
     F: Fn(&T) -> &str,
     I: Fn(&T) -> &str,
 {
+    group_turns_by_dynamic_projection_with_meta(
+        prefix,
+        turns,
+        prompt_extractor,
+        id_extractor,
+        |turn| extract_turn_kind(turn),
+        |turn| extract_parent_turn_id(turn),
+    )
+}
+
+pub fn group_turns_by_dynamic_projection_with_meta<T, F, I, K, P>(
+    prefix: &str,
+    turns: Vec<T>,
+    prompt_extractor: F,
+    id_extractor: I,
+    kind_extractor: K,
+    parent_id_extractor: P,
+) -> Vec<DynamicGroupedTurn<T>>
+where
+    F: Fn(&T) -> &str,
+    I: Fn(&T) -> &str,
+    K: Fn(&T) -> Option<&str>,
+    P: Fn(&T) -> Option<&str>,
+{
     let mut groups: Vec<DynamicGroupedTurn<T>> = Vec::new();
     for turn in turns {
         let prompt = prompt_extractor(&turn);
-        if should_merge_into_previous_question(prompt) {
+        let turn_kind = kind_extractor(&turn);
+        let parent_id = parent_id_extractor(&turn);
+
+        let should_merge = if let Some(prev) = groups.last() {
+            let active_ids = prev
+                .turns
+                .iter()
+                .map(|t| id_extractor(t))
+                .collect::<Vec<_>>();
+            should_merge_turn_with_active_question(prompt, turn_kind, parent_id, &active_ids)
+        } else {
+            false
+        };
+
+        if should_merge {
             if let Some(prev) = groups.last_mut() {
                 prev.origin = ConversationGroupingOrigin::AutoMerged;
                 prev.turns.push(turn);

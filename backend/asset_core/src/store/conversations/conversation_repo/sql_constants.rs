@@ -134,7 +134,9 @@ pub(super) const DELETE_CONVERSATION_ADAPTER_PACKAGE_SQL: &str =
 
 pub(super) const LIST_CONVERSATION_SOURCES_SQL: &str = r#"
     SELECT id, adapter_id, name, kind, location, config_json, enabled,
-           last_synced_at, last_sync_status, created_at, updated_at
+           last_synced_at, last_sync_status, created_at, updated_at,
+           synced_adapter_hash, synced_card_contract_version,
+           synced_payload_policy_version, synced_projection_version
     FROM conversation_sources
     WHERE tenant_id = ?1
     ORDER BY adapter_id ASC, name ASC
@@ -142,7 +144,9 @@ pub(super) const LIST_CONVERSATION_SOURCES_SQL: &str = r#"
 
 pub(super) const LOAD_CONVERSATION_SOURCE_SQL: &str = r#"
     SELECT id, adapter_id, name, kind, location, config_json, enabled,
-           last_synced_at, last_sync_status, created_at, updated_at
+           last_synced_at, last_sync_status, created_at, updated_at,
+           synced_adapter_hash, synced_card_contract_version,
+           synced_payload_policy_version, synced_projection_version
     FROM conversation_sources
     WHERE tenant_id = ?1 AND id = ?2
     "#;
@@ -188,12 +192,4 @@ pub struct ConversationImportResult {
     pub status: crate::backend::domain::ConversationSyncStatus,
     #[serde(default)]
     pub succeeded_external_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, FromRow)]
-pub struct ConversationSyncDelta {
-    pub sync_run_id: String,
-    pub session_id: String,
-    pub change_kind: String,
-    pub observed_at: String,
 }

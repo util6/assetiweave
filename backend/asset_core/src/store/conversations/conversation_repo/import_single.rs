@@ -40,15 +40,6 @@ pub(super) async fn import_single_session_sqlx_tx(
         .await?;
         return Ok(None);
     }
-    sqlx::query(
-        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND session_id = ?3 AND status = 'active'",
-    )
-    .bind(now)
-    .bind(tenant_id)
-    .bind(&session.id)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
     upsert_conversation_session_sqlx_tx(&mut *tx, tenant_id, session).await?;
     for turn in &normalized.turns {
         if turn.user_text.trim().is_empty() {
@@ -76,16 +67,6 @@ pub(super) async fn import_single_session_sqlx_tx(
     )
     .await?;
     prune_conversation_turns_sqlx_tx(&mut *tx, tenant_id, &session.id, normalized).await?;
-    insert_conversation_sync_delta_sqlx_tx(
-        &mut *tx,
-        tenant_id,
-        sync_run_id,
-        "session",
-        &session.id,
-        change_kind,
-        now,
-    )
-    .await?;
 
     upsert_single_session_observation_clean_sqlx_tx(
         &mut *tx,

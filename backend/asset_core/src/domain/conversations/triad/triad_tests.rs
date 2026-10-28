@@ -597,3 +597,173 @@ fn test_roundtrip_merge_and_content_node_projection_equivalence() {
     );
     assert!(all_nodes[1].source_execution_id.is_some());
 }
+
+#[test]
+fn test_subagent_triad_roundtrip_with_commands_cards_and_response() {
+    let adapter_id = "codex";
+    let prefix = "codex";
+    let turn_id = "subagent-turn-001";
+    let card_kinds = sample_card_kinds();
+
+    let subagent_prompt =
+        "Subagent delegation: investigate benchmark bottlenecks across worker threads";
+
+    let raw_parts = vec![
+        NormalizedConversationPart {
+            role: ConversationPartRole::Assistant,
+            kind: ConversationPartKind::Text,
+            text: Some("Analyzing thread allocation and memory locks...".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: None,
+            content_card: Some(ConversationContentCardDescriptor {
+                schema_version: 1,
+                kind: "codex.reasoning".to_string(),
+                renderer: None,
+                semantic_role: None,
+            }),
+            metadata_json: None,
+        },
+        NormalizedConversationPart {
+            role: ConversationPartRole::Tool,
+            kind: ConversationPartKind::Command,
+            text: None,
+            language: None,
+            command: Some("cargo test -p asset_core --release".to_string()),
+            cwd: Some("/workspace".to_string()),
+            status: Some("success".to_string()),
+            exit_code: Some(0),
+            command_label: Some("Execute release tests".to_string()),
+            source_execution_id: Some("subagent-exec-1".to_string()),
+            content_card: Some(ConversationContentCardDescriptor {
+                schema_version: 1,
+                kind: "codex.command".to_string(),
+                renderer: None,
+                semantic_role: None,
+            }),
+            metadata_json: None,
+        },
+        NormalizedConversationPart {
+            role: ConversationPartRole::Tool,
+            kind: ConversationPartKind::Text,
+            text: Some("All 45 tests passed without contention.".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: Some("success".to_string()),
+            exit_code: Some(0),
+            command_label: None,
+            source_execution_id: Some("subagent-exec-1".to_string()),
+            content_card: Some(ConversationContentCardDescriptor {
+                schema_version: 1,
+                kind: "codex.result".to_string(),
+                renderer: None,
+                semantic_role: None,
+            }),
+            metadata_json: None,
+        },
+        NormalizedConversationPart {
+            role: ConversationPartRole::Tool,
+            kind: ConversationPartKind::FileChange,
+            text: Some("Diff summary: thread pool lock contention reduced by 40%".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: None,
+            content_card: Some(ConversationContentCardDescriptor {
+                schema_version: 1,
+                kind: "codex.file-change".to_string(),
+                renderer: None,
+                semantic_role: None,
+            }),
+            metadata_json: None,
+        },
+        NormalizedConversationPart {
+            role: ConversationPartRole::Assistant,
+            kind: ConversationPartKind::Text,
+            text: Some("Subagent report: Bottlenecks resolved and verified.".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: None,
+            content_card: Some(ConversationContentCardDescriptor {
+                schema_version: 1,
+                kind: "codex.answer".to_string(),
+                renderer: None,
+                semantic_role: None,
+            }),
+            metadata_json: None,
+        },
+    ];
+
+    // 1. Split turn triad
+    let triad = split_normalized_turn(adapter_id, subagent_prompt, &raw_parts);
+    assert_eq!(
+        triad.prompt, subagent_prompt,
+        "Subagent delegation prompt preserved"
+    );
+    assert_eq!(
+        triad.response.as_deref(),
+        Some("Subagent report: Bottlenecks resolved and verified."),
+        "Subagent final answer preserved as response"
+    );
+    assert!(triad.process.is_some(), "Process items preserved");
+
+    // 2. Merge turn triad
+    let restored_parts = merge_turn_triad(
+        adapter_id,
+        prefix,
+        turn_id,
+        &triad.prompt,
+        triad.process.as_ref(),
+        triad.response.as_deref(),
+        &triad.parts,
+    );
+    assert_eq!(
+        restored_parts.len(),
+        5,
+        "All 5 subagent parts faithfully restored"
+    );
+
+    // Check indices and IDs
+    for (i, p) in restored_parts.iter().enumerate() {
+        assert_eq!(p.part_index as usize, i);
+        assert_eq!(p.turn_id, turn_id);
+    }
+
+    // Check command and result pairing
+    let cmd = &restored_parts[1];
+    let res = &restored_parts[2];
+    assert_eq!(
+        cmd.command.as_deref(),
+        Some("cargo test -p asset_core --release")
+    );
+    assert_eq!(cmd.source_execution_id, res.source_execution_id);
+
+    // 3. Project content cards
+    let mut all_nodes = Vec::new();
+    for part in &restored_parts {
+        let card = project_conversation_content_card(part, adapter_id, &card_kinds)
+            .expect("Card projection succeeds")
+            .expect("Card exists");
+        let candidate = card.into();
+        let nodes = project_content_nodes_for_part("q-subagent", 0, part, &[candidate]);
+        all_nodes.extend(nodes);
+    }
+    assert_eq!(all_nodes.len(), 5);
+    assert_eq!(all_nodes[0].node_type, "codex.reasoning");
+    assert_eq!(all_nodes[1].node_type, "codex.command");
+    assert_eq!(all_nodes[2].node_type, "codex.result");
+    assert_eq!(all_nodes[3].node_type, "codex.file-change");
+    assert_eq!(all_nodes[4].node_type, "codex.answer");
+}

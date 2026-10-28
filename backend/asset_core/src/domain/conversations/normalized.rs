@@ -22,7 +22,7 @@ pub struct NormalizedConversationSession {
     pub user_visible: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct NormalizedConversationTurn {
     pub external_id: String,
     pub turn_index: i64,
@@ -33,6 +33,38 @@ pub struct NormalizedConversationTurn {
     #[serde(default)]
     pub model: Option<String>,
     pub parts: Vec<NormalizedConversationPart>,
+    #[serde(default, alias = "execution_origin")]
+    pub turn_kind: Option<String>,
+    #[serde(default, alias = "subagent_name")]
+    pub agent_role: Option<String>,
+    #[serde(default, alias = "parent_turn_id", alias = "parent_external_id")]
+    pub parent_external_id: Option<String>,
+}
+
+impl NormalizedConversationTurn {
+    pub fn new(
+        external_id: impl Into<String>,
+        turn_index: i64,
+        user_text: impl Into<String>,
+    ) -> Self {
+        Self {
+            external_id: external_id.into(),
+            turn_index,
+            user_text: user_text.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn is_subagent(&self) -> bool {
+        matches!(self.turn_kind.as_deref(), Some("subagent") | Some("agent"))
+    }
+
+    pub fn is_continuation(&self) -> bool {
+        matches!(
+            self.turn_kind.as_deref(),
+            Some("continuation") | Some("main_continuation")
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

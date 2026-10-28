@@ -304,6 +304,150 @@ fn test_memory_recent_get() {
 }
 
 #[test]
+fn test_memory_recent_get_empty_state_text() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", tmp.path())
+        .args(["memory", "recent", "get"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert_eq!(output.trim(), "暂无记录");
+}
+
+#[test]
+fn test_memory_project_get() {
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .args([
+            "memory",
+            "project",
+            "get",
+            "--current-project",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+}
+
+#[test]
+fn test_memory_project_get_empty_state_text() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", tmp.path())
+        .args(["memory", "project", "get", "--current-project"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert_eq!(output.trim(), "暂无记录");
+}
+
+#[test]
+fn test_memory_rebuild_force_args() {
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .args(["memory", "rebuild", "--force", "--format", "json"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+}
+
+#[test]
+fn test_memory_context_resolve() {
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .args([
+            "memory",
+            "context",
+            "resolve",
+            "--current-project",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+}
+
+#[test]
+fn test_memory_cli_read_path_rendered_markdown() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("default");
+    let recent_dir = root.join("recent");
+    let projects_dir = root.join("projects");
+    std::fs::create_dir_all(&recent_dir).unwrap();
+    std::fs::create_dir_all(&projects_dir).unwrap();
+
+    let recent_md = "# Recent Work\n\n### 🍂 待探索的悬空叶子节点 (Unexplored Branches)\n- [s1#T1](aiwc://session/s1/turn/1): 探索新特性\n\n### ✅ 已完成的闭环任务 (Completed Tasks)\n- [s1#T2](aiwc://session/s1/turn/2): 完成架构升级\n";
+    std::fs::write(recent_dir.join("latest.md"), recent_md).unwrap();
+
+    let project_md = "# 项目记忆: /test-proj\n\n## 🍂 待探索的悬空叶子节点 (Unexplored Branches)\n- [s1#T1](aiwc://session/s1/turn/1): 探索新特性\n";
+    std::fs::write(projects_dir.join("test-proj.md"), project_md).unwrap();
+
+    let memory_md = "# 全局长期记忆与工程准则 (Global Memory)\n\n## 📐 通用工程规范与架构准则\n- 本地优先与 Markdown 优先\n";
+    std::fs::write(root.join("MEMORY.md"), memory_md).unwrap();
+
+    // 1. aiwc memory recent get (text)
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", tmp.path())
+        .args(["memory", "recent", "get"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(output.contains("Recent Work"));
+    assert!(output.contains("[s1#T1](aiwc://session/s1/turn/1)"));
+
+    // 2. aiwc memory project get <project_path>
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", tmp.path())
+        .args(["memory", "project", "get", "/test-proj"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(output.contains("项目记忆: /test-proj"));
+    assert!(output.contains("[s1#T1](aiwc://session/s1/turn/1)"));
+
+    // 3. aiwc memory context resolve
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", tmp.path())
+        .args([
+            "memory",
+            "context",
+            "resolve",
+            "--project",
+            "/test-proj",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert!(json["data"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Global Memory"));
+    assert!(json["data"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Recent Work"));
+}
+
+#[test]
 fn test_completion() {
     let mut cmd = aiwc_command();
     let assert = cmd.args(["completion", "bash"]).assert().success();
@@ -498,8 +642,67 @@ fn test_conversation_outline_and_card_drilldown() {
     let json_so: Value = serde_json::from_str(&out_so).unwrap();
     assert_eq!(json_so["ok"], true);
     assert_eq!(json_so["data"]["level"], "session");
-    assert!(json_so["data"]["turns"]["columns"].is_array());
+    assert_eq!(
+        json_so["data"]["turns"]["columns"],
+        serde_json::json!(["index", "turn_id", "question", "activities", "cards"])
+    );
     assert!(json_so["data"]["turns"]["rows"].is_array());
+
+    // 1.1 Test --questions mode
+    let mut cmd_q = aiwc_command();
+    let assert_q = cmd_q
+        .args(["conversation", "outline", session_id, "--questions"])
+        .assert()
+        .success();
+    let out_q = String::from_utf8(assert_q.get_output().stdout.clone()).unwrap();
+    let json_q: Value = serde_json::from_str(&out_q).unwrap();
+    assert_eq!(json_q["ok"], true);
+    assert_eq!(
+        json_q["data"]["turns"]["columns"],
+        serde_json::json!(["index", "turn_id", "question"])
+    );
+
+    // 1.2 Test --qa mode
+    let mut cmd_qa = aiwc_command();
+    let assert_qa = cmd_qa
+        .args(["conversation", "outline", session_id, "--qa"])
+        .assert()
+        .success();
+    let out_qa = String::from_utf8(assert_qa.get_output().stdout.clone()).unwrap();
+    let json_qa: Value = serde_json::from_str(&out_qa).unwrap();
+    assert_eq!(json_qa["ok"], true);
+    assert_eq!(
+        json_qa["data"]["turns"]["columns"],
+        serde_json::json!(["index", "turn_id", "question", "answer"])
+    );
+
+    // 1.3 Test --full mode
+    let mut cmd_full = aiwc_command();
+    let assert_full = cmd_full
+        .args(["conversation", "outline", session_id, "--full"])
+        .assert()
+        .success();
+    let out_full = String::from_utf8(assert_full.get_output().stdout.clone()).unwrap();
+    let json_full: Value = serde_json::from_str(&out_full).unwrap();
+    assert_eq!(json_full["ok"], true);
+    assert_eq!(
+        json_full["data"]["turns"]["columns"],
+        serde_json::json!([
+            "index",
+            "turn_id",
+            "question",
+            "activities",
+            "cards",
+            "answer"
+        ])
+    );
+
+    // 1.4 Test mutually exclusive flags conflict
+    let mut cmd_conflict = aiwc_command();
+    cmd_conflict
+        .args(["conversation", "outline", session_id, "--questions", "--qa"])
+        .assert()
+        .failure();
 
     // If turns exist in the session, drill down to turn outline
     let rows = json_so["data"]["turns"]["rows"].as_array().unwrap();
@@ -1038,6 +1241,7 @@ fn test_conversation_search_command_keyword_vfox() {
                         metadata_json: None,
                     },
                 ],
+                ..Default::default()
             }],
             ..Default::default()
         };

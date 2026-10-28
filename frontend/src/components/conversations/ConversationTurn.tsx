@@ -1,4 +1,4 @@
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, GitFork } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
@@ -194,6 +194,9 @@ export const ConversationTurn = memo(function ConversationTurn({
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<number | null>(null);
   const promptHighlighted = activeBlockId === model.promptBlockId;
+  const isSubagent =
+    model.turn.turn_kind === "subagent" || model.turn.turn_kind === "agent";
+  const isContinuation = model.turn.turn_kind === "continuation";
 
   useEffect(
     () => () => {
@@ -224,11 +227,17 @@ export const ConversationTurn = memo(function ConversationTurn({
 
   return (
     <section
-      className="conversation-turn mb-6"
+      className={`conversation-turn mb-6 ${
+        isSubagent ? "ml-3 border-l-2 border-primary/25 pl-3" : ""
+      }`}
       data-conversation-turn-id={model.turn.id}
     >
       <div
-        className={`conversation-prompt-block scroll-mt-32 rounded-xl border border-primary/30 bg-primary/[0.055] px-4 py-3 transition-shadow ${
+        className={`conversation-prompt-block scroll-mt-32 rounded-xl border px-4 py-3 transition-shadow ${
+          isSubagent
+            ? "border-primary/20 bg-primary/[0.035]"
+            : "border-primary/30 bg-primary/[0.055]"
+        } ${
           promptHighlighted
             ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]"
             : ""
@@ -238,14 +247,35 @@ export const ConversationTurn = memo(function ConversationTurn({
       >
         <div className="mb-2 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
-            <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
-              <span className="size-2 rounded-full bg-primary" />
-              {t("conversation.question.userPrompt")}
-            </h3>
+            {isSubagent ? (
+              <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
+                <GitFork size={13} className="text-primary/90" />
+                {t("conversation.question.subagentTask")}
+              </h3>
+            ) : isContinuation ? (
+              <h3 className="flex items-center gap-2 text-label-caps text-on-surface-variant shrink-0">
+                <span className="size-2 rounded-full bg-status-info" />
+                {t("conversation.question.continuationPrompt")}
+              </h3>
+            ) : (
+              <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
+                <span className="size-2 rounded-full bg-primary" />
+                {t("conversation.question.userPrompt")}
+              </h3>
+            )}
+            {model.turn.agent_role ? (
+              <Badge
+                tone="neutral"
+                className="rounded-full font-medium text-xs px-2.5 py-0.5 truncate max-w-xs"
+                title={model.turn.agent_role}
+              >
+                {model.turn.agent_role}
+              </Badge>
+            ) : null}
             {model.turn.model ? (
               <Badge
                 tone="neutral"
-                className="font-mono text-xs normal-case tracking-normal px-2.5 py-0.5 truncate max-w-xs"
+                className="rounded-full font-mono text-xs normal-case tracking-normal px-2.5 py-0.5 truncate max-w-xs"
                 title={model.turn.model}
               >
                 {model.turn.model}
@@ -261,6 +291,7 @@ export const ConversationTurn = memo(function ConversationTurn({
             </span>
             <PromptCopyButton
               copied={copied}
+              isSubagent={isSubagent}
               onClick={() => void copyPrompt()}
               t={t}
             />
@@ -296,16 +327,20 @@ export const ConversationTurn = memo(function ConversationTurn({
 
 function PromptCopyButton({
   copied,
+  isSubagent,
   onClick,
   t,
 }: {
   copied: boolean;
+  isSubagent?: boolean;
   onClick: () => void;
   t: Translator;
 }) {
   const label = copied
     ? t("conversation.content.copied")
-    : t("conversation.question.copyPrompt");
+    : isSubagent
+      ? t("conversation.question.copySubagentPrompt")
+      : t("conversation.question.copyPrompt");
   return (
     <button
       aria-label={label}

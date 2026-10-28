@@ -241,6 +241,143 @@ test("OpenCode degrades oversized patch payloads exceeding budget to file paths,
   }
 });
 
+test("OpenCode inlines child session subagent turns, emits continuation turn, and excludes child sessions from list_sessions", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-subagent-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode.db");
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT, parent_id TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
+      "INSERT INTO session VALUES ('session-parent-1', '主任务会话', '/tmp/project', '2026-08-06T00:00:10Z', NULL);",
+      "INSERT INTO session VALUES ('session-sub-1', '代码审查子代理', '/tmp/project', '2026-08-06T00:00:04Z', 'session-parent-1');",
+      `INSERT INTO message VALUES ('message-p1', 'session-parent-1', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-p1', 'message-p1', 'session-parent-1', '${sqlString(JSON.stringify({ type: "text", text: "派发子任务审查代码" }))}');`,
+      `INSERT INTO message VALUES ('message-p2', 'session-parent-1', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:05Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-p2', 'message-p2', 'session-parent-1', '${sqlString(JSON.stringify({ type: "text", text: "主智能体继续：综合子任务审查，PR符合规范。" }))}');`,
+      `INSERT INTO message VALUES ('message-s1', 'session-sub-1', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:01Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-s1', 'message-s1', 'session-sub-1', '${sqlString(JSON.stringify({ type: "text", text: "逐行审查 src/main.ts 的变更" }))}');`,
+      `INSERT INTO message VALUES ('message-s2', 'session-sub-1', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:03Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-s2', 'message-s2', 'session-sub-1', '${sqlString(JSON.stringify({ type: "text", text: "审查完成：没有发现类型安全问题。" }))}');`,
+    ].join("\n"));
+
+    // 1. Verify list_sessions strictly excludes child session
+    const listResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({ method: "list_sessions", source: { location: dbPath }, params: {} }),
+    });
+    assert.equal(listResult.status, 0, listResult.stderr);
+    const listMessages = listResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
+    const items = listMessages.filter((entry) => entry.type === "item");
+    assert.equal(items.length, 1, "Child sessions must be excluded from list_sessions");
+    assert.equal(items[0].item.external_id, "session-parent-1");
+
+    // 2. Verify read_session on parent session inlines subagent turn and continuation turn
+    const parentSession = readFixtureSession(dbPath);
+    assert.equal(parentSession.external_id, "session-parent-1");
+    assert.equal(parentSession.turns.length, 3, "Expected anchor, subagent, and continuation turns");
+
+    const [anchorTurn, subTurn, contTurn] = parentSession.turns;
+
+    // Anchor turn
+    assert.equal(anchorTurn.external_id, "message-p1");
+    assert.equal(anchorTurn.user_text, "派发子任务审查代码");
+    assert.equal(anchorTurn.turn_kind, undefined);
+
+    // Subagent turn
+    assert.equal(subTurn.turn_kind, "subagent");
+    assert.equal(subTurn.agent_role, "代码审查子代理");
+    assert.equal(subTurn.parent_turn_id, anchorTurn.external_id);
+    assert.equal(subTurn.user_text, "逐行审查 src/main.ts 的变更");
+    assert.ok(subTurn.parts.some((p) => p.text?.includes("没有发现类型安全问题")));
+
+    // Continuation turn
+    assert.equal(contTurn.turn_kind, "continuation");
+    assert.equal(contTurn.parent_turn_id, anchorTurn.external_id);
+    assert.equal(contTurn.user_text, "Continue following subagent execution");
+    assert.ok(contTurn.parts.some((p) => p.text?.includes("主智能体继续")));
+
+    // 3. Verify read_session directly on child session marks it as subagent and not user visible
+    const childResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({ method: "read_session", source: { location: dbPath }, params: { session_id: "session-sub-1" } }),
+    });
+    assert.equal(childResult.status, 0, childResult.stderr);
+    const childMessages = childResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
+    const childSession = childMessages.find((entry) => entry.type === "item")?.item?.session;
+    assert.ok(childSession);
+    assert.equal(childSession.execution_origin, "subagent");
+    assert.equal(childSession.user_visible, false);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("OpenCode multi-turn session keeps subsequent question as standard user turn", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-multiturn-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode-multi.db");
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT, parent_id TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
+      // Sessions
+      "INSERT INTO session VALUES ('session-multi', 'Multi-turn session', '/tmp/project', '2026-08-06T00:10:00Z', NULL);",
+      "INSERT INTO session VALUES ('session-child', 'Subtask worker', '/tmp/project', '2026-08-06T00:01:00Z', 'session-multi');",
+      // Question 1
+      `INSERT INTO message VALUES ('msg-q1', 'session-multi', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-q1', 'msg-q1', 'session-multi', '${sqlString(JSON.stringify({ type: "text", text: "Question 1: Fix bug" }))}');`,
+      // Subtask child messages
+      `INSERT INTO message VALUES ('msg-c1', 'session-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:30Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-c1', 'msg-c1', 'session-child', '${sqlString(JSON.stringify({ type: "text", text: "Subtask execution details" }))}');`,
+      `INSERT INTO message VALUES ('msg-c2', 'session-child', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:50Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-c2', 'msg-c2', 'session-child', '${sqlString(JSON.stringify({ type: "text", text: "Subtask finished" }))}');`,
+      // Main agent continuation for Q1
+      `INSERT INTO message VALUES ('msg-a1', 'session-multi', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:01:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-a1', 'msg-a1', 'session-multi', '${sqlString(JSON.stringify({ type: "text", text: "Question 1 resolved" }))}');`,
+      // Question 2
+      `INSERT INTO message VALUES ('msg-q2', 'session-multi', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:05:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-q2', 'msg-q2', 'session-multi', '${sqlString(JSON.stringify({ type: "text", text: "Question 2: What is the weather today in Tokyo?" }))}');`,
+      `INSERT INTO message VALUES ('msg-a2', 'session-multi', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:05:30Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-a2', 'msg-a2', 'session-multi', '${sqlString(JSON.stringify({ type: "text", text: "Tokyo is sunny." }))}');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(dbPath);
+    const q2Turn = session.turns.find((t) => t.user_text && t.user_text.includes("Question 2: What is the weather today in Tokyo?"));
+    assert.ok(q2Turn, "Question 2 turn must exist");
+    assert.equal(q2Turn.turn_kind, undefined, "Question 2 turn_kind must be undefined");
+    assert.equal(q2Turn.parent_turn_id, undefined, "Question 2 parent_turn_id must be undefined");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("OpenCode falls back to valid string when subagent prompt is whitespace-only", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-ws-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode-ws.db");
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT, parent_id TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
+      "INSERT INTO session VALUES ('session-ws-parent', 'Parent session', '/tmp/project', '2026-08-06T00:10:00Z', NULL);",
+      "INSERT INTO session VALUES ('session-ws-child', '   ', '/tmp/project', '2026-08-06T00:01:00Z', 'session-ws-parent');",
+      `INSERT INTO message VALUES ('msg-p1', 'session-ws-parent', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-p1', 'msg-p1', 'session-ws-parent', '${sqlString(JSON.stringify({ type: "text", text: "Parent task" }))}');`,
+      `INSERT INTO message VALUES ('msg-c1', 'session-ws-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:30Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-c1', 'msg-c1', 'session-ws-child', '${sqlString(JSON.stringify({ type: "text", text: "   \t\n  " }))}');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(dbPath);
+    const subTurn = session.turns.find((t) => t.turn_kind === "subagent");
+    assert.ok(subTurn, "Subagent turn must exist");
+    assert.equal(subTurn.user_text, "Subagent execution");
+    assert.ok(subTurn.user_text.trim().length > 0);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 function readFixtureSession(dbPath) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",

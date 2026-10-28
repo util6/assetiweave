@@ -1,4 +1,15 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationOutlineDetailLevel {
+    #[default]
+    Default,
+    Questions,
+    Qa,
+    Full,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatrixView<T> {
@@ -7,13 +18,83 @@ pub struct MatrixView<T> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionTurnRow {
-    pub index: usize,
-    pub turn_id: String,
-    pub question: String,
-    pub activities: Vec<String>,
-    pub cards: usize,
-    pub answer_id: Option<String>,
+pub enum SessionTurnRow {
+    Default {
+        index: usize,
+        turn_id: String,
+        question: String,
+        activities: Vec<String>,
+        cards: usize,
+    },
+    Questions {
+        index: usize,
+        turn_id: String,
+        question: String,
+    },
+    Qa {
+        index: usize,
+        turn_id: String,
+        question: String,
+        answer: Option<String>,
+    },
+    Full {
+        index: usize,
+        turn_id: String,
+        question: String,
+        activities: Vec<String>,
+        cards: usize,
+        answer: Option<String>,
+    },
+}
+
+impl SessionTurnRow {
+    pub fn index(&self) -> usize {
+        match self {
+            Self::Default { index, .. }
+            | Self::Questions { index, .. }
+            | Self::Qa { index, .. }
+            | Self::Full { index, .. } => *index,
+        }
+    }
+
+    pub fn turn_id(&self) -> &str {
+        match self {
+            Self::Default { turn_id, .. }
+            | Self::Questions { turn_id, .. }
+            | Self::Qa { turn_id, .. }
+            | Self::Full { turn_id, .. } => turn_id,
+        }
+    }
+
+    pub fn question(&self) -> &str {
+        match self {
+            Self::Default { question, .. }
+            | Self::Questions { question, .. }
+            | Self::Qa { question, .. }
+            | Self::Full { question, .. } => question,
+        }
+    }
+
+    pub fn activities(&self) -> Option<&[String]> {
+        match self {
+            Self::Default { activities, .. } | Self::Full { activities, .. } => Some(activities),
+            _ => None,
+        }
+    }
+
+    pub fn cards(&self) -> Option<usize> {
+        match self {
+            Self::Default { cards, .. } | Self::Full { cards, .. } => Some(*cards),
+            _ => None,
+        }
+    }
+
+    pub fn answer(&self) -> Option<&str> {
+        match self {
+            Self::Qa { answer, .. } | Self::Full { answer, .. } => answer.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 impl Serialize for SessionTurnRow {
@@ -22,14 +103,64 @@ impl Serialize for SessionTurnRow {
         S: serde::Serializer,
     {
         use serde::ser::SerializeSeq;
-        let mut seq = serializer.serialize_seq(Some(6))?;
-        seq.serialize_element(&self.index)?;
-        seq.serialize_element(&self.turn_id)?;
-        seq.serialize_element(&self.question)?;
-        seq.serialize_element(&self.activities)?;
-        seq.serialize_element(&self.cards)?;
-        seq.serialize_element(&self.answer_id)?;
-        seq.end()
+        match self {
+            Self::Questions {
+                index,
+                turn_id,
+                question,
+            } => {
+                let mut seq = serializer.serialize_seq(Some(3))?;
+                seq.serialize_element(index)?;
+                seq.serialize_element(turn_id)?;
+                seq.serialize_element(question)?;
+                seq.end()
+            }
+            Self::Qa {
+                index,
+                turn_id,
+                question,
+                answer,
+            } => {
+                let mut seq = serializer.serialize_seq(Some(4))?;
+                seq.serialize_element(index)?;
+                seq.serialize_element(turn_id)?;
+                seq.serialize_element(question)?;
+                seq.serialize_element(answer)?;
+                seq.end()
+            }
+            Self::Default {
+                index,
+                turn_id,
+                question,
+                activities,
+                cards,
+            } => {
+                let mut seq = serializer.serialize_seq(Some(5))?;
+                seq.serialize_element(index)?;
+                seq.serialize_element(turn_id)?;
+                seq.serialize_element(question)?;
+                seq.serialize_element(activities)?;
+                seq.serialize_element(cards)?;
+                seq.end()
+            }
+            Self::Full {
+                index,
+                turn_id,
+                question,
+                activities,
+                cards,
+                answer,
+            } => {
+                let mut seq = serializer.serialize_seq(Some(6))?;
+                seq.serialize_element(index)?;
+                seq.serialize_element(turn_id)?;
+                seq.serialize_element(question)?;
+                seq.serialize_element(activities)?;
+                seq.serialize_element(cards)?;
+                seq.serialize_element(answer)?;
+                seq.end()
+            }
+        }
     }
 }
 
@@ -38,47 +169,108 @@ impl<'de> Deserialize<'de> for SessionTurnRow {
     where
         D: serde::Deserializer<'de>,
     {
-        struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = SessionTurnRow;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a 6-element session turn row array")
+        let values = Vec::<serde_json::Value>::deserialize(deserializer)?;
+        match values.len() {
+            3 => {
+                let index = values[0]
+                    .as_u64()
+                    .ok_or_else(|| serde::de::Error::custom("expected integer for index"))?
+                    as usize;
+                let turn_id = values[1]
+                    .as_str()
+                    .ok_or_else(|| serde::de::Error::custom("expected string for turn_id"))?
+                    .to_string();
+                let question = values[2]
+                    .as_str()
+                    .ok_or_else(|| serde::de::Error::custom("expected string for question"))?
+                    .to_string();
+                Ok(Self::Questions {
+                    index,
+                    turn_id,
+                    question,
+                })
             }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
-                let index = seq
-                    .next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
-                let turn_id = seq
-                    .next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
-                let question = seq
-                    .next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
-                let activities = seq
-                    .next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
-                let cards = seq
-                    .next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
-                let answer_id = seq
-                    .next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(5, &self))?;
-                Ok(SessionTurnRow {
+            4 => {
+                let index = values[0]
+                    .as_u64()
+                    .ok_or_else(|| serde::de::Error::custom("expected integer for index"))?
+                    as usize;
+                let turn_id = values[1]
+                    .as_str()
+                    .ok_or_else(|| serde::de::Error::custom("expected string for turn_id"))?
+                    .to_string();
+                let question = values[2]
+                    .as_str()
+                    .ok_or_else(|| serde::de::Error::custom("expected string for question"))?
+                    .to_string();
+                let answer = values[3].as_str().map(|s| s.to_string());
+                Ok(Self::Qa {
+                    index,
+                    turn_id,
+                    question,
+                    answer,
+                })
+            }
+            5 => {
+                let index = values[0]
+                    .as_u64()
+                    .ok_or_else(|| serde::de::Error::custom("expected integer for index"))?
+                    as usize;
+                let turn_id = values[1]
+                    .as_str()
+                    .ok_or_else(|| serde::de::Error::custom("expected string for turn_id"))?
+                    .to_string();
+                let question = values[2]
+                    .as_str()
+                    .ok_or_else(|| serde::de::Error::custom("expected string for question"))?
+                    .to_string();
+                let activities: Vec<String> =
+                    serde_json::from_value(values[3].clone()).map_err(serde::de::Error::custom)?;
+                let cards = values[4]
+                    .as_u64()
+                    .ok_or_else(|| serde::de::Error::custom("expected integer for cards"))?
+                    as usize;
+                Ok(Self::Default {
                     index,
                     turn_id,
                     question,
                     activities,
                     cards,
-                    answer_id,
                 })
             }
+            6 => {
+                let index = values[0]
+                    .as_u64()
+                    .ok_or_else(|| serde::de::Error::custom("expected integer for index"))?
+                    as usize;
+                let turn_id = values[1]
+                    .as_str()
+                    .ok_or_else(|| serde::de::Error::custom("expected string for turn_id"))?
+                    .to_string();
+                let question = values[2]
+                    .as_str()
+                    .ok_or_else(|| serde::de::Error::custom("expected string for question"))?
+                    .to_string();
+                let activities: Vec<String> =
+                    serde_json::from_value(values[3].clone()).map_err(serde::de::Error::custom)?;
+                let cards = values[4]
+                    .as_u64()
+                    .ok_or_else(|| serde::de::Error::custom("expected integer for cards"))?
+                    as usize;
+                let answer = values[5].as_str().map(|s| s.to_string());
+                Ok(Self::Full {
+                    index,
+                    turn_id,
+                    question,
+                    activities,
+                    cards,
+                    answer,
+                })
+            }
+            len => Err(serde::de::Error::custom(format!(
+                "invalid element count for session turn row: expected 3, 4, 5, or 6, got {len}"
+            ))),
         }
-        deserializer.deserialize_seq(Visitor)
     }
 }
 

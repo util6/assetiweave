@@ -263,12 +263,34 @@ pub struct ConversationSessionGetParams {
 pub struct ConversationSessionOutlineParams {
     #[serde(alias = "anyId")]
     pub id: String,
+    #[serde(default)]
+    pub detail_level: crate::backend::domain::conversations::ConversationOutlineDetailLevel,
+}
+
+impl ConversationSessionOutlineParams {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            detail_level: Default::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct ConversationOutlineParams {
     #[serde(alias = "anyId")]
     pub id: String,
+    #[serde(default)]
+    pub detail_level: crate::backend::domain::conversations::ConversationOutlineDetailLevel,
+}
+
+impl ConversationOutlineParams {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            detail_level: Default::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

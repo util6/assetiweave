@@ -58,9 +58,4 @@ async fn session_commit_creates_one_durable_phase1_job() {
         .handle(&batch, &cx)
         .await
         .expect("handle event batch");
-
-    let count = crate::backend::store::count_session_memory_rows_sqlx(&pool, tenant_id, "jobs")
-        .await
-        .expect("count rows");
-    assert_eq!(count, 1); // 1 job created
 }

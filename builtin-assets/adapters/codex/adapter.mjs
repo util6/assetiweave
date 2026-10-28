@@ -851,9 +851,17 @@ function applyTextBudgets(session) {
  * @param {Array<object>} turns - 原始 Turn 列表
  * @returns {Array<object>} 修正后的 Turn 列表
  */
+function resolvePrompt(...candidates) {
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim().length > 0) return c.trim();
+  }
+  return "Subagent execution";
+}
+
 function displayTurns(turns) {
+  const parentTurnIds = new Set(turns.map((turn) => turn.parent_turn_id).filter(Boolean));
   return turns
-    .filter((turn) => Array.isArray(turn.parts) && turn.parts.length > 0)
+    .filter((turn) => (Array.isArray(turn.parts) && turn.parts.length > 0) || turn.turn_kind === "subagent" || parentTurnIds.has(turn.external_id))
     .map((turn, index) => ({
       ...turn,
       turn_index: index,
@@ -1716,14 +1724,11 @@ function normalizeTurns(text) {
         continue;
       }
       if (current) turns.push(current);
-      if (!userMessage.text) {
-        current = null;
-        continue;
-      }
+      const effectiveText = resolvePrompt(userMessage.text, "User prompt");
       current = {
         external_id: payload.id ?? `turn-${turns.length + 1}`,
         turn_index: turns.length,
-        user_text: userMessage.text,
+        user_text: effectiveText,
         title: null,
         started_at: parsed.timestamp ?? payload.timestamp ?? null,
         ended_at: null,
@@ -1992,10 +1997,46 @@ function listSessions() {
  *
  * @returns {Array<object>} 解析并完成卡片映射与配额限制后的 Session 对象数组
  */
+function findChildThreadsForParent(dbPath, parentId) {
+  if (!dbPath || !existsSync(dbPath)) return [];
+  const columns = sqliteJson(dbPath, "PRAGMA table_info(threads)").map((row) => row.name);
+  const idCol = pick(columns, ["id", "thread_id", "session_id"]);
+  const rolloutCol = pick(columns, ["rollout_path", "path", "file_path", "jsonl_path"]);
+  const sourceCol = pick(columns, ["source"]);
+  const threadSourceCol = pick(columns, ["thread_source"]);
+  const updatedCol = pick(columns, ["updated_at", "last_updated_at", "mtime", "created_at"]);
+  if (!idCol || !rolloutCol) return [];
+
+  const isSubagentExpr = threadSourceCol && sourceCol
+    ? `((${quoteIdent(threadSourceCol)} = 'subagent') OR (${quoteIdent(sourceCol)} LIKE '%"subagent"%'))`
+    : threadSourceCol
+      ? `(${quoteIdent(threadSourceCol)} = 'subagent')`
+      : sourceCol
+        ? `(${quoteIdent(sourceCol)} LIKE '%"subagent"%')`
+        : "0";
+
+  const parentRefExpr = sourceCol
+    ? `(${quoteIdent(sourceCol)} LIKE ${quoteSqlString(`%"parent_thread_id":"${parentId}"%`)} OR ${quoteIdent(sourceCol)} LIKE ${quoteSqlString(`%"parent_id":"${parentId}"%`)} OR ${quoteIdent(sourceCol)} LIKE ${quoteSqlString(`%"${parentId}"%`)})`
+    : "0";
+
+  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at FROM threads WHERE (${isSubagentExpr}) AND (${parentRefExpr}) ORDER BY rowid ASC`;
+  return sqliteJson(dbPath, sql).map((row) => ({ ...row, rollout_path: expandPath(row.rollout_path) }));
+}
+
 function readSession() {
   // 1. 获取 Rust 入参中指定的 session_id (若为 null，则代表需要读取全量会话)
   const requestedSessionId = input.params?.session_id ?? null;
   const requestedLocator = expandPath(input.params?.source_locator);
+  const location = expandPath(input.source?.location);
+  let dbPath = location;
+  try {
+    if (existsSync(location) && statSync(location).isDirectory()) {
+      dbPath = path.join(location, "state_5.sqlite");
+    }
+  } catch {
+    dbPath = null;
+  }
+  if (dbPath && !existsSync(dbPath)) dbPath = null;
 
   // 2. 查询 SQLite 获取数据库会话行，按请求 ID 过滤后，对每个 Session 执行格式化流水线
   const rows = sessionRows({ sessionId: requestedSessionId });
@@ -2030,11 +2071,66 @@ function readSession() {
     const parsed = normalizeTurns(text);
 
     // 6. 过滤空 Turn 节点并自动重新建立 0-based 连续索引下标
-    const turns = displayTurns(parsed.turns);
+    let turns = displayTurns(parsed.turns);
     if (!turns.length) return [];
+    const parentAnchorTurnId = turns[0].external_id;
 
     // 7. 组装 Session 基础元数据结构对象
     const isSubagent = Boolean(row.is_subagent === 1 || row.is_subagent === true || row.is_subagent === "1");
+
+    // Inline child threads if parent session
+    if (dbPath && !isSubagent) {
+      const childRows = findChildThreadsForParent(dbPath, String(row.id));
+      const subagentTurns = [];
+      for (const childRow of childRows) {
+        const childRollout = resolveRolloutPath(childRow.rollout_path);
+        if (childRollout && existsSync(childRollout)) {
+          const childFiles = rolloutFilesForSession(childRollout, String(childRow.id));
+          if (childFiles.length > 0) {
+            const { text: childText } = readStableRollout(childFiles, childRow.updated_at);
+            const parsedChild = normalizeTurns(childText);
+            const childTurns = displayTurns(parsedChild.turns);
+            for (let cIdx = 0; cIdx < childTurns.length; cIdx++) {
+              const childTurn = childTurns[cIdx];
+              const childTime = childTurn.started_at || childRow.updated_at;
+              const targetTime = childTime ? new Date(childTime).getTime() : 0;
+              let anchorTurn = turns[0];
+              for (const t of turns) {
+                if (t.started_at && new Date(t.started_at).getTime() <= targetTime) {
+                  anchorTurn = t;
+                }
+              }
+              const anchorId = anchorTurn ? anchorTurn.external_id : parentAnchorTurnId;
+              const prompt = resolvePrompt(childTurn.user_text === "User prompt" ? null : childTurn.user_text, "Subagent execution");
+              subagentTurns.push({
+                ...childTurn,
+                external_id: `${anchorId}-subagent-${childRow.id}-${cIdx}`,
+                turn_kind: "subagent",
+                agent_role: "Subagent",
+                parent_turn_id: anchorId,
+                user_text: prompt,
+              });
+            }
+          }
+        }
+      }
+
+      if (subagentTurns.length > 0) {
+        const allTurns = [...turns, ...subagentTurns];
+        allTurns.sort((a, b) => {
+          const timeA = a.started_at ? new Date(a.started_at).getTime() : 0;
+          const timeB = b.started_at ? new Date(b.started_at).getTime() : 0;
+          if (timeA !== timeB) return timeA - timeB;
+          if (a.turn_kind !== "subagent" && b.turn_kind === "subagent") return -1;
+          if (a.turn_kind === "subagent" && b.turn_kind !== "subagent") return 1;
+          return 0;
+        });
+        for (let i = 0; i < allTurns.length; i++) {
+          allTurns[i].turn_index = i;
+        }
+        turns = allTurns;
+      }
+    }
     const projectPath = parsed.projectPath ?? inferProjectPath(turns);
     if (isInternalExecutionPath(projectPath)) return [];
 

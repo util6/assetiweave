@@ -273,10 +273,28 @@ async fn persist_successful_conversation_observation(
     if dry_run || !read.incremental {
         return Ok(0);
     }
-    let hydrated_external_ids = succeeded_external_ids
+    let mut hydrated_external_ids = succeeded_external_ids
         .iter()
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
+    hydrated_external_ids.extend(read.skipped_clean_external_ids.iter().cloned());
+
+    for failure in &read.session_failures {
+        let kind_str = match record_kind {
+            crate::backend::domain::conversations::ConversationRecordKind::Session => "session",
+            crate::backend::domain::conversations::ConversationRecordKind::Web => "web",
+        };
+        let _ = crate::backend::store::record_conversation_session_failure_sqlx(
+            pool,
+            tenant_id,
+            source_id,
+            kind_str,
+            &failure.session_external_id,
+            None,
+        )
+        .await;
+    }
+
     let observations = persistable_conversation_session_observations(&read.session_descriptors);
     crate::backend::store::persist_conversation_session_observations_sqlx(
         pool,

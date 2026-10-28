@@ -373,7 +373,7 @@ fn default_user_visible() -> bool {
     true
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ConversationTurn {
     pub id: String,
     pub session_id: String,
@@ -393,11 +393,28 @@ pub struct ConversationTurn {
     pub process: Option<String>,
     #[serde(default)]
     pub response: Option<String>,
+    #[serde(default, alias = "execution_origin")]
+    pub turn_kind: Option<String>,
+    #[serde(default, alias = "subagent_name")]
+    pub agent_role: Option<String>,
+    #[serde(default)]
+    pub parent_turn_id: Option<String>,
 }
 
 impl ConversationTurn {
     pub fn user_text(&self) -> &str {
         &self.prompt
+    }
+
+    pub fn is_subagent(&self) -> bool {
+        matches!(self.turn_kind.as_deref(), Some("subagent") | Some("agent"))
+    }
+
+    pub fn is_continuation(&self) -> bool {
+        matches!(
+            self.turn_kind.as_deref(),
+            Some("continuation") | Some("main_continuation")
+        )
     }
 }
 

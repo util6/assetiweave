@@ -4,8 +4,6 @@ use chrono::{DateTime, Utc};
 use std::cmp::Ordering;
 use std::path::{Component, Path, PathBuf};
 
-const RECENT_WINDOW_HOURS: i64 = 72;
-
 #[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RecentConversationView {
@@ -43,12 +41,7 @@ impl AppService {
                 "Recent Memory event id is required".to_string(),
             ));
         }
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(crate::backend::store::load_recent_memory_event_target_sqlx(
-            &pool, &tenant_id, &event_id,
-        )
-        .await?)
+        Ok(None)
     }
 
     pub async fn list_recent_conversation_sessions(
@@ -66,7 +59,13 @@ impl AppService {
     ) -> AppResult<Vec<RecentConversationSession>> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        let cutoff = (now - chrono::Duration::hours(RECENT_WINDOW_HOURS)).to_rfc3339();
+        let settings = self.backend_settings()?;
+        let window_hours = if settings.memory.recent_window_hours > 0 {
+            settings.memory.recent_window_hours as i64
+        } else {
+            48
+        };
+        let cutoff = (now - chrono::Duration::hours(window_hours)).to_rfc3339();
         let now_text = now.to_rfc3339();
         let internal_agent_workspace =
             crate::backend::infrastructure::agent_execution::agent_execution_workspace_root(
@@ -80,23 +79,8 @@ impl AppService {
             &internal_agent_workspace,
         )
         .await?;
-        let session_ids = records
-            .iter()
-            .map(|record| record.session.session.id.clone())
-            .collect::<Vec<_>>();
-        let mut events_by_session =
-            crate::backend::store::list_recent_memory_events_for_sessions_sqlx(
-                &pool,
-                &tenant_id,
-                &session_ids,
-                &cutoff,
-                &now_text,
-            )
-            .await?;
         for record in &mut records {
-            record.recent_events = events_by_session
-                .remove(&record.session.session.id)
-                .unwrap_or_default();
+            record.recent_events = Vec::new();
         }
         // Source.repo_root is the current app-owned registry of project roots.
         let registered_roots = crate::backend::store::load_sources_sqlx(&pool, &tenant_id)
@@ -105,29 +89,46 @@ impl AppService {
             .filter_map(|source| source.repo_root)
             .collect::<Vec<_>>();
 
-        let cutoff = now - chrono::Duration::hours(RECENT_WINDOW_HOURS);
+        let excluded_sessions = &settings.memory.excluded_session_ids;
+        let excluded_sources = &settings.memory.excluded_source_ids;
+        let cutoff_dt = now - chrono::Duration::hours(window_hours);
         let mut sessions = records
             .into_iter()
             .filter_map(|record| {
-                let last_activity_at =
-                    crate::backend::domain::parse_conversation_timestamp(&record.last_activity_at)?;
-                if last_activity_at < cutoff || last_activity_at > now {
+                let session_record = record.session;
+                let session = session_record.session;
+                if excluded_sessions.iter().any(|id| id == &session.id) {
                     return None;
                 }
-                let raw_project_path = record.cwd.as_deref().or(record
-                    .session
-                    .session
-                    .project_path
-                    .as_deref());
+                if excluded_sources.iter().any(|id| id == &session.source_id) {
+                    return None;
+                }
+                if session.execution_origin.starts_with("internal_") {
+                    return None;
+                }
+                if let Some(cwd) = record.cwd.as_deref() {
+                    if !internal_agent_workspace.is_empty()
+                        && (cwd == internal_agent_workspace
+                            || cwd.starts_with(&format!("{internal_agent_workspace}/")))
+                    {
+                        return None;
+                    }
+                }
+                let last_activity_at =
+                    crate::backend::domain::parse_conversation_timestamp(&record.last_activity_at)?;
+                if last_activity_at < cutoff_dt || last_activity_at > now {
+                    return None;
+                }
+                let raw_project_path = record.cwd.as_deref().or(session.project_path.as_deref());
                 let project_path = raw_project_path
                     .and_then(|path| resolve_project_directory(path, &registered_roots));
                 Some(RecentConversationSession {
-                    session: record.session.session,
+                    session,
                     project_path,
                     last_activity_at: last_activity_at.to_rfc3339(),
                     source_agent: record.source_agent,
-                    question_count: record.session.question_count,
-                    turn_count: record.session.turn_count,
+                    question_count: session_record.question_count,
+                    turn_count: session_record.turn_count,
                     recent_events: record.recent_events,
                 })
             })
@@ -139,7 +140,7 @@ impl AppService {
         });
 
         let offset = params.offset.unwrap_or(0);
-        let limit = params.limit.unwrap_or(50).clamp(1, 500);
+        let limit = params.limit.unwrap_or(50).clamp(1, 2000);
         Ok(sessions.into_iter().skip(offset).take(limit).collect())
     }
 }
