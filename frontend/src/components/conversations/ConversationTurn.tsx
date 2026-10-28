@@ -1,4 +1,4 @@
-import { Check, Copy, GitFork } from "lucide-react";
+import { Check, ChevronRight, Copy, GitFork } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
@@ -30,8 +30,12 @@ import type { ConversationCommandProjection } from "../../services/conversationC
 
 export interface ConversationTurnPresentation {
   blocks: ConversationContentBlock[];
+  childCount: number;
+  depth: number;
   displayNodes?: ConversationDisplayNode[];
   hasContent: boolean;
+  isSubagent: boolean;
+  parentTurnId: string | null;
   promptBlockId: string;
   turn: ConversationTurnRecord;
 }
@@ -43,7 +47,7 @@ export function buildConversationTurnPresentations(
   const projectionByPartId = new Map(
     commandProjections.map((projection) => [projection.part_id, projection]),
   );
-  return question.turns.map((turn) => {
+  const presentations = question.turns.map((turn) => {
     const displayNodes = applyConversationCommandProjections(
       buildConversationDisplayNodesFromNodes(
         question.projected_content_nodes.filter(
@@ -55,12 +59,126 @@ export function buildConversationTurnPresentations(
 
     return {
       blocks: [],
+      childCount: 0,
+      depth: 0,
       displayNodes,
       hasContent: displayNodes.length > 0,
+      isSubagent: turn.turn_kind === "subagent" || turn.turn_kind === "agent",
+      parentTurnId: null,
       promptBlockId: `${turn.id}-question`,
       turn,
-    };
+    } satisfies ConversationTurnPresentation;
   });
+
+  linkTurnParents(presentations);
+  return orderTurnTree(presentations);
+}
+
+function linkTurnParents(presentations: ConversationTurnPresentation[]) {
+  const byId = new Map(
+    presentations.map((presentation) => [presentation.turn.id, presentation]),
+  );
+  for (const presentation of presentations) {
+    const parentId = presentation.turn.parent_turn_id ?? null;
+    presentation.parentTurnId =
+      parentId && parentId !== presentation.turn.id && byId.has(parentId)
+        ? parentId
+        : null;
+  }
+  detachTurnCycles(presentations, byId);
+}
+
+function detachTurnCycles(
+  presentations: ConversationTurnPresentation[],
+  byId: ReadonlyMap<string, ConversationTurnPresentation>,
+) {
+  for (const presentation of presentations) {
+    const path: ConversationTurnPresentation[] = [];
+    const indexById = new Map<string, number>();
+    let current: ConversationTurnPresentation | undefined = presentation;
+    while (current) {
+      const cycleStart = indexById.get(current.turn.id);
+      if (cycleStart !== undefined) {
+        for (let index = cycleStart; index < path.length; index += 1)
+          path[index]!.parentTurnId = null;
+        break;
+      }
+      indexById.set(current.turn.id, path.length);
+      path.push(current);
+      current = current.parentTurnId
+        ? byId.get(current.parentTurnId)
+        : undefined;
+    }
+  }
+}
+
+function orderTurnTree(
+  presentations: ConversationTurnPresentation[],
+): ConversationTurnPresentation[] {
+  const childrenByParent = new Map<string, ConversationTurnPresentation[]>();
+  const roots: ConversationTurnPresentation[] = [];
+  for (const presentation of presentations) {
+    if (!presentation.parentTurnId) {
+      roots.push(presentation);
+      continue;
+    }
+    const siblings = childrenByParent.get(presentation.parentTurnId) ?? [];
+    siblings.push(presentation);
+    childrenByParent.set(presentation.parentTurnId, siblings);
+  }
+
+  const ordered: ConversationTurnPresentation[] = [];
+  const visit = (presentation: ConversationTurnPresentation, depth: number) => {
+    presentation.depth = depth;
+    presentation.childCount =
+      childrenByParent.get(presentation.turn.id)?.length ?? 0;
+    ordered.push(presentation);
+    for (const child of childrenByParent.get(presentation.turn.id) ?? [])
+      visit(child, depth + 1);
+  };
+  for (const root of roots) visit(root, 0);
+  return ordered;
+}
+
+/**
+ * Flattens the tree into the virtual list order. Only collapsed subagent
+ * branches hide their children, so main turns keep their delegated work one
+ * level deep and the virtualized collection never lays out hidden subtrees.
+ */
+export function visibleConversationTurnPresentations(
+  models: readonly ConversationTurnPresentation[],
+  expandedTurnIds: ReadonlySet<string>,
+): ConversationTurnPresentation[] {
+  const byId = new Map(models.map((model) => [model.turn.id, model]));
+  const visibleIds = new Set<string>();
+  const visible: ConversationTurnPresentation[] = [];
+  for (const model of models) {
+    if (model.parentTurnId) {
+      if (!visibleIds.has(model.parentTurnId)) continue;
+      const parent = byId.get(model.parentTurnId);
+      if (parent?.isSubagent && !expandedTurnIds.has(model.parentTurnId))
+        continue;
+    }
+    visibleIds.add(model.turn.id);
+    visible.push(model);
+  }
+  return visible;
+}
+
+export function conversationTurnAncestorIds(
+  models: readonly ConversationTurnPresentation[],
+  turnId: string,
+): string[] {
+  const byId = new Map(models.map((model) => [model.turn.id, model]));
+  const seen = new Set<string>([turnId]);
+  const ancestors: string[] = [];
+  let current = byId.get(turnId)?.parentTurnId ?? null;
+  while (current && !seen.has(current)) {
+    ancestors.push(current);
+    seen.add(current);
+    current = byId.get(current)?.parentTurnId ?? null;
+  }
+  return ancestors;
 }
 
 function applyConversationCommandProjections(
@@ -168,9 +286,11 @@ export const ConversationTurn = memo(function ConversationTurn({
   activeBlockId,
   colors,
   controller,
+  expanded: expandedProp = false,
   index,
   onCopyError,
   onCommandPartsVisible,
+  onToggleExpanded,
   recordKind,
   resultPreviewLineLimit,
   t,
@@ -181,10 +301,12 @@ export const ConversationTurn = memo(function ConversationTurn({
   activeBlockId?: string | null;
   colors?: ConversationContentCardColorSettings;
   controller: ConversationContentController;
+  expanded?: boolean;
   index: number;
   model: ConversationTurnPresentation;
   onCopyError?: (message: string) => void;
   onCommandPartsVisible?: (partIds: string[]) => void;
+  onToggleExpanded?: (turnId: string) => void;
   recordKind: ConversationRecordKind;
   resultPreviewLineLimit?: number;
   t: Translator;
@@ -194,9 +316,13 @@ export const ConversationTurn = memo(function ConversationTurn({
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<number | null>(null);
   const promptHighlighted = activeBlockId === model.promptBlockId;
-  const isSubagent =
-    model.turn.turn_kind === "subagent" || model.turn.turn_kind === "agent";
+  const isSubagent = model.isSubagent;
   const isContinuation = model.turn.turn_kind === "continuation";
+  const expanded = isSubagent ? expandedProp : true;
+  const promptSummary = firstPromptLine(model.turn.prompt);
+  const toggleLabel = expanded
+    ? t("conversation.turn.collapseSubagent")
+    : t("conversation.turn.expandSubagent");
 
   useEffect(
     () => () => {
@@ -228,9 +354,16 @@ export const ConversationTurn = memo(function ConversationTurn({
   return (
     <section
       className={`conversation-turn mb-6 ${
-        isSubagent ? "ml-3 border-l-2 border-primary/25 pl-3" : ""
+        isSubagent ? "border-l-2 border-primary/20 pl-3" : ""
       }`}
+      data-conversation-turn-depth={model.depth}
+      data-conversation-turn-expanded={isSubagent ? expanded : undefined}
       data-conversation-turn-id={model.turn.id}
+      style={
+        isSubagent && model.depth > 0
+          ? { marginLeft: `${Math.min(model.depth, 5) * 0.75}rem` }
+          : undefined
+      }
     >
       <div
         className={`conversation-prompt-block scroll-mt-32 rounded-xl border px-4 py-3 transition-shadow ${
@@ -246,7 +379,27 @@ export const ConversationTurn = memo(function ConversationTurn({
         id={conversationCardDomId(model.promptBlockId)}
       >
         <div className="mb-2 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
+          <div
+            className={`flex items-center gap-2.5 min-w-0 ${
+              isSubagent ? "flex-wrap" : ""
+            }`}
+          >
+            {isSubagent ? (
+              <button
+                aria-expanded={expanded}
+                aria-label={toggleLabel}
+                className="grid size-6 shrink-0 place-items-center rounded-full border border-primary/30 bg-theme-card/60 text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+                onClick={() => onToggleExpanded?.(model.turn.id)}
+                title={toggleLabel}
+                type="button"
+              >
+                <ChevronRight
+                  className={`size-3.5 transition-transform ${
+                    expanded ? "rotate-90" : ""
+                  }`}
+                />
+              </button>
+            ) : null}
             {isSubagent ? (
               <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
                 <GitFork size={13} className="text-primary/90" />
@@ -272,6 +425,14 @@ export const ConversationTurn = memo(function ConversationTurn({
                 {model.turn.agent_role}
               </Badge>
             ) : null}
+            {isSubagent && model.turn.title ? (
+              <span
+                className="truncate text-body-sm text-on-surface-variant"
+                title={model.turn.title}
+              >
+                {model.turn.title}
+              </span>
+            ) : null}
             {model.turn.model ? (
               <Badge
                 tone="neutral"
@@ -281,6 +442,17 @@ export const ConversationTurn = memo(function ConversationTurn({
                 {model.turn.model}
               </Badge>
             ) : null}
+            {isSubagent && model.childCount > 0 ? (
+              <Badge
+                tone="neutral"
+                className="shrink-0 rounded-full text-xs normal-case tracking-normal px-2.5 py-0.5"
+              >
+                {t("conversation.turn.childCount", {
+                  count: model.childCount,
+                })}
+              </Badge>
+            ) : null}
+            {isSubagent ? <SubagentStatus turn={model.turn} t={t} /> : null}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <span
@@ -297,33 +469,84 @@ export const ConversationTurn = memo(function ConversationTurn({
             />
           </div>
         </div>
-        <MarkdownContent value={model.turn.prompt} />
-      </div>
-      <div className="mt-3 pl-3">
-        <h3 className="mb-3 text-label-caps text-on-surface-muted">
-          {t("conversation.question.parts")}
-        </h3>
-        {!model.hasContent ? (
-          <EmptyPanel>{t("conversation.markdown.empty")}</EmptyPanel>
+        {isSubagent && !expanded ? (
+          <p
+            className="truncate text-body-sm text-on-surface-variant"
+            title={model.turn.prompt}
+          >
+            {promptSummary}
+          </p>
         ) : (
-          <ConversationContentCards
-            activeBlockId={activeBlockId}
-            colors={colors}
-            controller={controller}
-            nodes={model.displayNodes ?? []}
-            onCopyError={onCopyError}
-            onCommandPartsVisible={onCommandPartsVisible}
-            recordKind={recordKind}
-            resultPreviewLineLimit={resultPreviewLineLimit}
-            t={t}
-            translationSettings={translationSettings}
-            visibility={visibility}
-          />
+          <MarkdownContent value={model.turn.prompt} />
         )}
       </div>
+      {expanded ? (
+        <div className="mt-3 pl-3">
+          <h3 className="mb-3 text-label-caps text-on-surface-muted">
+            {t("conversation.question.parts")}
+          </h3>
+          {!model.hasContent ? (
+            isSubagent ? (
+              <p className="px-2 py-4 text-body-sm text-on-surface-variant">
+                {t("conversation.turn.subagentNoRecords")}
+              </p>
+            ) : (
+              <EmptyPanel>{t("conversation.markdown.empty")}</EmptyPanel>
+            )
+          ) : (
+            <ConversationContentCards
+              activeBlockId={activeBlockId}
+              colors={colors}
+              controller={controller}
+              nodes={model.displayNodes ?? []}
+              onCopyError={onCopyError}
+              onCommandPartsVisible={onCommandPartsVisible}
+              recordKind={recordKind}
+              resultPreviewLineLimit={resultPreviewLineLimit}
+              t={t}
+              translationSettings={translationSettings}
+              visibility={visibility}
+            />
+          )}
+        </div>
+      ) : null}
     </section>
   );
 });
+
+function SubagentStatus({
+  turn,
+  t,
+}: {
+  turn: ConversationTurnRecord;
+  t: Translator;
+}) {
+  const running = Boolean(turn.started_at) && !turn.ended_at;
+  return (
+    <Badge
+      tone={running ? "update" : "neutral"}
+      className="shrink-0 gap-1.5 rounded-full text-xs normal-case tracking-normal px-2.5 py-0.5"
+    >
+      <span
+        className={`size-1.5 rounded-full ${
+          running ? "bg-status-update" : "bg-status-create"
+        }`}
+      />
+      {running
+        ? t("conversation.turn.status.running")
+        : t("conversation.turn.status.completed")}
+    </Badge>
+  );
+}
+
+function firstPromptLine(prompt: string) {
+  return (
+    prompt
+      .split(/\r?\n/)
+      .find((line) => line.trim())
+      ?.trim() ?? ""
+  );
+}
 
 function PromptCopyButton({
   copied,
