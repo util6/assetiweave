@@ -309,14 +309,13 @@ test("CodeBuddy links Agent tool call to subagent child session and discovers su
     // 1. Read main session
     const mainSession = readFixtureSession(mainSessionFile);
     assert.equal(mainSession.turns.length, 2, "main session should contain anchor turn and inlined subagent turn");
-    const agentPart = mainSession.turns[0].parts.find((p) => p.kind === "subagent");
-    assert.ok(agentPart, "subagent part should exist in main session");
-    assert.equal(agentPart.content_card?.kind, "codebuddy.subagent");
-    assert.equal(agentPart.content_card?.renderer, "subagent_tree");
 
-    const meta = JSON.parse(agentPart.metadata_json);
-    assert.equal(meta.child_session_id, subagentId);
-    assert.equal(meta.agent_role, "Explore");
+    const cardParts = mainSession.turns.flatMap((turn) => turn.parts || []).filter(
+      (part) => [part.kind, part.content_card?.kind].some(
+        (kind) => typeof kind === "string" && (kind === "subagent" || kind.endsWith(".subagent")),
+      ),
+    );
+    assert.deepEqual(cardParts, [], "Agent tool calls must not emit subagent JSON cards");
 
     // Verify inlined subagent turn
     const subTurn = mainSession.turns[1];
