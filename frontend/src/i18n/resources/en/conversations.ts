@@ -304,6 +304,8 @@ export const conversationsEn = {
   "conversation.turn.childCount": "{{count}} subagents",
   "conversation.turn.tier": "Tier {{tier}}",
   "conversation.turn.tierCount": "{{count}} subagents",
+  "conversation.turn.railParent": "of {{ordinal}}",
+  "conversation.turn.railToggleSubagents": "Show {{count}} subagents",
   "conversation.turn.expandSubagent": "Expand subagent",
   "conversation.turn.collapseSubagent": "Collapse subagent",
   "conversation.turn.subagentNoRecords": "No execution records",

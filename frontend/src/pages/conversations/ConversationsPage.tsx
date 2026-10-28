@@ -64,6 +64,10 @@ import {
   visibleConversationTurnPresentations,
 } from "../../components/conversations/ConversationTurn";
 import {
+  buildQuestionTurnRail,
+  QuestionTurnRail,
+} from "../../components/conversations/ConversationTurnRail";
+import {
   DEFAULT_TRANSLATION_SETTINGS,
   useConversationContentController,
 } from "../../components/conversations/useConversationContentController";
@@ -2573,11 +2577,29 @@ export function SessionQuestionWorkspace({
       t={t}
     />
   );
+  // 左栏选中某个 Turn 时，右侧只渲染这一个 Turn；为空则回到整个问题视图。
+  const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
+  const [railExpandedQuestionId, setRailExpandedQuestionId] = useState<
+    string | null
+  >(null);
+  const focusedQuestion = useMemo(() => {
+    if (!selectedTurnId || !question) return question;
+    const turn = question.turns.find((item) => item.id === selectedTurnId);
+    if (!turn) return question;
+    return {
+      ...question,
+      turns: [turn],
+      projected_content_nodes: question.projected_content_nodes.filter(
+        (node) => node.turn_id === turn.id,
+      ),
+    };
+  }, [question, selectedTurnId]);
+
   const previewPanel = (
     <section className="h-full min-h-0 min-w-0">
       {session && question ? (
         <QuestionPreview
-          key={`${session.session.id}:${question.question.id}`}
+          key={`${session.session.id}:${question.question.id}:${selectedTurnId ?? "all"}`}
           activeSearchTarget={activeSearchTarget}
           adapterVersion={adapterVersion}
           contentCardColors={contentCardColors}
@@ -2585,7 +2607,7 @@ export function SessionQuestionWorkspace({
           onCopyError={onCopyError}
           onPickOutputRoot={onPickOutputRoot}
           outputRoot={outputRoot}
-          question={question}
+          question={focusedQuestion ?? question}
           questionListToggle={
             questionListCollapsed ? questionListToggle : undefined
           }
@@ -2675,13 +2697,29 @@ export function SessionQuestionWorkspace({
               }
               renderItem={(item) => (
                 <QuestionListItem
-                  onSelect={() => onQuestionSelect(item.question.id)}
+                  onSelect={() => {
+                    onQuestionSelect(item.question.id);
+                    setRailExpandedQuestionId(item.question.id);
+                    setSelectedTurnId(null);
+                  }}
+                  onSelectTurn={(turnId) => {
+                    onQuestionSelect(item.question.id);
+                    setRailExpandedQuestionId(item.question.id);
+                    setSelectedTurnId(turnId);
+                  }}
                   onSelectionChange={(checked) =>
                     onQuestionSelectionChange(item.question.id, checked)
                   }
+                  onToggleRail={() =>
+                    setRailExpandedQuestionId((current) =>
+                      current === item.question.id ? null : item.question.id,
+                    )
+                  }
                   question={item}
+                  railExpanded={railExpandedQuestionId === item.question.id}
                   selected={item.question.id === selectedQuestionId}
                   selectedForExport={selectedQuestionIds.has(item.question.id)}
+                  selectedTurnId={selectedTurnId}
                   t={t}
                 />
               )}
@@ -2758,17 +2796,25 @@ function QuestionListToggleButton({
 
 function QuestionListItem({
   onSelect,
+  onSelectTurn,
   onSelectionChange,
+  onToggleRail,
   question,
+  railExpanded,
   selected,
   selectedForExport,
+  selectedTurnId,
   t,
 }: {
   onSelect: () => void;
+  onSelectTurn: (turnId: string) => void;
   onSelectionChange: (checked: boolean) => void;
+  onToggleRail: () => void;
   question: ConversationQuestionDetail;
+  railExpanded: boolean;
   selected: boolean;
   selectedForExport: boolean;
+  selectedTurnId: string | null;
   t: Translator;
 }) {
   const title =
@@ -2776,10 +2822,25 @@ function QuestionListItem({
     t("conversation.markdown.untitledQuestion");
   const answerPreview =
     conversationQuestionPreview(question) ?? t("conversation.markdown.empty");
+  const railEntries = useMemo(
+    () => buildQuestionTurnRail(question),
+    [question],
+  );
+  const [expandedRailRootIds, setExpandedRailRootIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set<string>());
+  const toggleRailRoot = useCallback((turnId: string) => {
+    setExpandedRailRootIds((current) => {
+      const next = new Set(current);
+      if (next.has(turnId)) next.delete(turnId);
+      else next.add(turnId);
+      return next;
+    });
+  }, []);
 
   return (
     <article
-      className={`conversation-row flex h-48 flex-col overflow-hidden ${selected ? "text-on-surface" : ""}`}
+      className={`conversation-row flex min-h-48 flex-col overflow-hidden ${selected ? "text-on-surface" : ""}`}
       data-selected={selected}
     >
       <div className="grid min-h-0 flex-1 grid-cols-[auto_minmax(0,1fr)]">
@@ -2803,10 +2864,27 @@ function QuestionListItem({
             <h3 className="line-clamp-2 min-w-0 break-words text-body-sm font-semibold text-on-surface">
               {title}
             </h3>
-            <span className="shrink-0 rounded-full bg-theme-control px-2 py-1 text-code-sm text-on-surface-muted">
+            <span
+              aria-expanded={railExpanded}
+              aria-label={t("conversation.question.turnCount", {
+                count: question.turns.length,
+              })}
+              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-theme-control px-2 py-1 text-code-sm text-on-surface-muted"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleRail();
+              }}
+              role="button"
+              tabIndex={0}
+            >
               {t("conversation.question.turnCount", {
                 count: question.turns.length,
               })}
+              <ChevronRight
+                className={`size-3 transition-transform ${
+                  railExpanded ? "rotate-90" : ""
+                }`}
+              />
             </span>
           </div>
           <p className="mt-2 line-clamp-2 text-body-sm text-on-surface-variant">
@@ -2817,6 +2895,18 @@ function QuestionListItem({
           </p>
         </button>
       </div>
+      {railExpanded ? (
+        <div className="px-4 pb-3 pl-11">
+          <QuestionTurnRail
+            entries={railEntries}
+            expandedRootIds={expandedRailRootIds}
+            onSelectTurn={onSelectTurn}
+            onToggleRoot={toggleRailRoot}
+            selectedTurnId={selectedTurnId}
+            t={t}
+          />
+        </div>
+      ) : null}
     </article>
   );
 }

@@ -1550,8 +1550,67 @@ describe("MarkdownContent", () => {
     expect(html).toContain("水平浏览分栏");
     expect(html).toContain('role="scrollbar"');
     expect(html).toContain("sticky bottom-0");
-    expect(html).toContain("flex h-48 flex-col overflow-hidden");
+    expect(html).toContain("flex min-h-48 flex-col overflow-hidden");
     expect(html).toContain("line-clamp-2 min-w-0 break-words");
+  });
+
+  it("lists turns in the left rail and renders only the selected turn on the right", () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        disconnect() {}
+        observe() {}
+        unobserve() {}
+      },
+    );
+    const question = subagentTreeFixture();
+    const { container } = render(
+      <SessionQuestionWorkspace
+        contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
+        onExport={vi.fn()}
+        onPickOutputRoot={async () => null}
+        onQuestionSelect={vi.fn()}
+        onQuestionSelectionChange={vi.fn()}
+        outputRoot="/tmp/conversation-export"
+        question={question}
+        questions={[question]}
+        selectedQuestionId={question.question.id}
+        selectedQuestionIds={new Set()}
+        session={{ ...sessionDetail, questions: [question] }}
+        setOutputRoot={vi.fn()}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    // 左栏一个问题下逐行列 Turn，而不是把子代理塞进右侧正文。
+    fireEvent.click(screen.getByRole("button", { name: "3 个 Turn" }));
+    expect(
+      container.querySelector('[data-turn-rail-id="turn-root"]'),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开 2 个子代理" }));
+    expect(
+      container.querySelector('[data-turn-rail-id="turn-child"]'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('[data-turn-rail-id="turn-grandchild"]'),
+    ).toBeTruthy();
+
+    // 点左栏某一行后，右侧只渲染这一个 Turn。
+    fireEvent.click(
+      container.querySelector('[data-turn-rail-id="turn-child"]')!,
+    );
+    const renderedTurnIds = [
+      ...container.querySelectorAll("[data-conversation-turn-id]"),
+    ].map((node) => node.getAttribute("data-conversation-turn-id"));
+    expect(renderedTurnIds).toEqual(["turn-child"]);
   });
 
   it("renders structured loading surfaces before a session detail arrives", () => {
