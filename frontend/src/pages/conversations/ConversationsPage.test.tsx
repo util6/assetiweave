@@ -268,7 +268,7 @@ describe("MarkdownContent", () => {
     expect(html).toContain("assetiweave-cli conversation sync --dry-run");
   });
 
-  it("nests delegated subagents behind collapse controls inside the question preview", () => {
+  it("shows every subagent tier expanded, with tier headers and collapsible branches", () => {
     const question = subagentTreeFixture();
     const { container } = render(
       <QuestionPreview
@@ -282,6 +282,7 @@ describe("MarkdownContent", () => {
       />,
     );
 
+    // 默认全部展开：子代理的正文与下一层子代理都直接可见。
     expect(
       container.querySelector('[data-conversation-turn-id="turn-child"]'),
     ).toBeTruthy();
@@ -289,21 +290,28 @@ describe("MarkdownContent", () => {
       container.querySelector(
         '[data-conversation-card-id="part-child-node-0"]',
       ),
-    ).toBeNull();
+    ).toBeTruthy();
     expect(
       container.querySelector('[data-conversation-turn-id="turn-grandchild"]'),
-    ).toBeNull();
+    ).toBeTruthy();
+    // 每一层有一个 Tier 分组头。
+    expect(
+      container.querySelector('[data-conversation-tier="1"]'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('[data-conversation-tier="2"]'),
+    ).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "展开子代理" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "收起子代理" })[0]!);
 
     expect(
       container.querySelector(
         '[data-conversation-card-id="part-child-node-0"]',
       ),
-    ).toBeTruthy();
+    ).toBeNull();
     expect(
       container.querySelector('[data-conversation-turn-id="turn-grandchild"]'),
-    ).toBeTruthy();
+    ).toBeNull();
   });
 
   it("auto-expands collapsed ancestors when navigating to a deep subagent card", async () => {

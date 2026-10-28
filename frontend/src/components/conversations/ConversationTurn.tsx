@@ -38,6 +38,11 @@ export interface ConversationTurnPresentation {
   isSubagent: boolean;
   parentTurnId: string | null;
   promptBlockId: string;
+  /**
+   * 该节点是某一 Tier 的首个可见节点时，携带分组头信息。
+   * Tier 即子代理层级深度（Tier 1 = 主代理直接派发）。
+   */
+  tierHeader?: { count: number; tier: number } | null;
   turn: ConversationTurnRecord;
 }
 
@@ -72,7 +77,35 @@ export function buildConversationTurnPresentations(
   });
 
   linkTurnParents(presentations);
-  return orderTurnTree(presentations);
+  const ordered = orderTurnTree(presentations);
+  assignTierHeaders(ordered);
+  return ordered;
+}
+
+/**
+ * 给每一层（Tier）的首个节点标注分组头，供列表渲染分层标题。
+ * 子代理层级即 Tier：主代理直接派发的是 Tier 1。
+ */
+function assignTierHeaders(presentations: ConversationTurnPresentation[]) {
+  const countByTier = new Map<number, number>();
+  for (const presentation of presentations) {
+    if (presentation.depth === 0) continue;
+    countByTier.set(
+      presentation.depth,
+      (countByTier.get(presentation.depth) ?? 0) + 1,
+    );
+  }
+  const emittedTiers = new Set<number>();
+  for (const presentation of presentations) {
+    presentation.tierHeader = null;
+    if (presentation.depth === 0 || emittedTiers.has(presentation.depth))
+      continue;
+    emittedTiers.add(presentation.depth);
+    presentation.tierHeader = {
+      count: countByTier.get(presentation.depth) ?? 1,
+      tier: presentation.depth,
+    };
+  }
 }
 
 function linkTurnParents(presentations: ConversationTurnPresentation[]) {
@@ -129,15 +162,27 @@ function orderTurnTree(
   }
 
   const ordered: ConversationTurnPresentation[] = [];
-  const visit = (presentation: ConversationTurnPresentation, depth: number) => {
-    presentation.depth = depth;
-    presentation.childCount =
-      childrenByParent.get(presentation.turn.id)?.length ?? 0;
-    ordered.push(presentation);
-    for (const child of childrenByParent.get(presentation.turn.id) ?? [])
-      visit(child, depth + 1);
-  };
-  for (const root of roots) visit(root, 0);
+  // 根层排序：主 Turn 在前，没有父节点的孤儿子代理压到最后，避免打断主代理与 Tier 分组的连续性。
+  roots.sort(
+    (left, right) => Number(left.isSubagent) - Number(right.isSubagent),
+  );
+  // 按 Tier 分层遍历：同一层的节点连续排列，先 Tier 1 全部，再 Tier 2 全部。
+  // 这样列表呈现的是「层级分组」，而不是把深层子节点插在父节点后面打断分组。
+  let level = roots;
+  let depth = 0;
+  while (level.length > 0) {
+    for (const presentation of level) {
+      presentation.depth = depth;
+      presentation.childCount =
+        childrenByParent.get(presentation.turn.id)?.length ?? 0;
+      ordered.push(presentation);
+    }
+    const next: ConversationTurnPresentation[] = [];
+    for (const presentation of level)
+      next.push(...(childrenByParent.get(presentation.turn.id) ?? []));
+    level = next;
+    depth += 1;
+  }
   return ordered;
 }
 
@@ -149,13 +194,12 @@ export function buildConversationTurnIndex(
 }
 
 /**
- * Flattens the tree into the virtual list order. Only collapsed subagent
- * branches hide their children, so main turns keep their delegated work one
- * level deep and the virtualized collection never lays out hidden subtrees.
+ * Flattens the tree into the virtual list order. 默认全部展开：只有被显式收起的
+ * 子代理分支会隐藏其后代，因此进入会话即可看到每一层（每个 Tier）的全部子代理。
  */
 export function visibleConversationTurnPresentations(
   models: readonly ConversationTurnPresentation[],
-  expandedTurnIds: ReadonlySet<string>,
+  collapsedTurnIds: ReadonlySet<string>,
   turnIndex: ReadonlyMap<
     string,
     ConversationTurnPresentation
@@ -168,7 +212,7 @@ export function visibleConversationTurnPresentations(
     if (model.parentTurnId) {
       if (!visibleIds.has(model.parentTurnId)) continue;
       const parent = byId.get(model.parentTurnId);
-      if (parent?.isSubagent && !expandedTurnIds.has(model.parentTurnId))
+      if (parent?.isSubagent && collapsedTurnIds.has(model.parentTurnId))
         continue;
     }
     visibleIds.add(model.turn.id);
@@ -302,7 +346,7 @@ export const ConversationTurn = memo(function ConversationTurn({
   activeBlockId,
   colors,
   controller,
-  expanded: expandedProp = false,
+  expanded: expandedProp = true,
   index,
   onCopyError,
   onCommandPartsVisible,
@@ -368,162 +412,188 @@ export const ConversationTurn = memo(function ConversationTurn({
   }
 
   return (
-    <section
-      className={`conversation-turn mb-6 ${
-        isSubagent ? "border-l-2 border-primary/20 pl-3" : ""
-      }`}
-      data-conversation-turn-depth={model.depth}
-      data-conversation-turn-expanded={isSubagent ? expanded : undefined}
-      data-conversation-turn-id={model.turn.id}
-    >
-      <div
-        className={`conversation-prompt-block scroll-mt-32 rounded-xl border px-4 py-3 transition-shadow ${
-          isSubagent
-            ? "border-primary/20 bg-primary/[0.035]"
-            : "border-primary/30 bg-primary/[0.055]"
-        } ${
-          promptHighlighted
-            ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]"
-            : ""
-        }`}
-        data-conversation-card-id={model.promptBlockId}
-        id={conversationCardDomId(model.promptBlockId)}
-      >
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <div
-            className={`flex items-center gap-2.5 min-w-0 ${
-              isSubagent ? "flex-wrap" : ""
-            }`}
-          >
-            {isSubagent ? (
-              <Button
-                aria-expanded={expanded}
-                aria-label={toggleLabel}
-                className="shrink-0 rounded-full border border-primary/30 bg-theme-card/60 text-primary hover:bg-primary/10"
-                onClick={() => onToggleExpanded?.(model.turn.id)}
-                size="icon-sm"
-                title={toggleLabel}
-                type="button"
-                variant="ghost"
-              >
-                <ChevronRight
-                  className={`size-3.5 transition-transform ${
-                    expanded ? "rotate-90" : ""
-                  }`}
-                />
-              </Button>
-            ) : null}
-            {isSubagent ? (
-              <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
-                <GitFork size={13} className="text-primary/90" />
-                {t("conversation.question.subagentTask")}
-              </h3>
-            ) : isContinuation ? (
-              <h3 className="flex items-center gap-2 text-label-caps text-on-surface-variant shrink-0">
-                <span className="size-2 rounded-full bg-status-info" />
-                {t("conversation.question.continuationPrompt")}
-              </h3>
-            ) : (
-              <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
-                <span className="size-2 rounded-full bg-primary" />
-                {t("conversation.question.userPrompt")}
-              </h3>
-            )}
-            {model.turn.agent_role ? (
-              <Badge
-                tone="neutral"
-                className="rounded-full font-medium text-xs px-2.5 py-0.5 truncate max-w-xs"
-                title={model.turn.agent_role}
-              >
-                {model.turn.agent_role}
-              </Badge>
-            ) : null}
-            {isSubagent && model.turn.title ? (
-              <span
-                className="truncate text-body-sm text-on-surface-variant"
-                title={model.turn.title}
-              >
-                {model.turn.title}
-              </span>
-            ) : null}
-            {model.turn.model ? (
-              <Badge
-                tone="neutral"
-                className="rounded-full font-mono text-xs normal-case tracking-normal px-2.5 py-0.5 truncate max-w-xs"
-                title={model.turn.model}
-              >
-                {model.turn.model}
-              </Badge>
-            ) : null}
-            {isSubagent && model.childCount > 0 ? (
-              <Badge
-                tone="neutral"
-                className="shrink-0 rounded-full text-xs normal-case tracking-normal px-2.5 py-0.5"
-              >
-                {t("conversation.turn.childCount", {
-                  count: model.childCount,
-                })}
-              </Badge>
-            ) : null}
-            {isSubagent ? <SubagentStatus turn={model.turn} t={t} /> : null}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span
-              className="select-text rounded-md border border-primary/25 bg-theme-card/45 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
-              title={model.promptBlockId}
-            >
-              {conversationIdFragment(model.promptBlockId)}
-            </span>
-            <PromptCopyButton
-              copied={copied}
-              isSubagent={isSubagent}
-              onClick={() => void copyPrompt()}
-              t={t}
-            />
-          </div>
-        </div>
-        {isSubagent && !expanded ? (
-          <p
-            className="truncate text-body-sm text-on-surface-variant"
-            title={model.turn.prompt}
-          >
-            {promptSummary}
-          </p>
-        ) : (
-          <MarkdownContent value={model.turn.prompt} />
-        )}
-      </div>
-      {expanded ? (
-        <div className="mt-3 pl-3">
-          <h3 className="mb-3 text-label-caps text-on-surface-muted">
-            {t("conversation.question.parts")}
-          </h3>
-          {!model.hasContent ? (
-            isSubagent ? (
-              <p className="px-2 py-4 text-body-sm text-on-surface-variant">
-                {t("conversation.turn.subagentNoRecords")}
-              </p>
-            ) : (
-              <EmptyPanel>{t("conversation.markdown.empty")}</EmptyPanel>
-            )
-          ) : (
-            <ConversationContentCards
-              activeBlockId={activeBlockId}
-              colors={colors}
-              controller={controller}
-              nodes={model.displayNodes ?? []}
-              onCopyError={onCopyError}
-              onCommandPartsVisible={onCommandPartsVisible}
-              recordKind={recordKind}
-              resultPreviewLineLimit={resultPreviewLineLimit}
-              t={t}
-              translationSettings={translationSettings}
-              visibility={visibility}
-            />
-          )}
+    <>
+      {model.tierHeader ? (
+        <div
+          className="mt-5 mb-2 flex items-center gap-2.5"
+          data-conversation-tier={model.tierHeader.tier}
+        >
+          <span className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-label-caps text-primary">
+            {t("conversation.turn.tier", { tier: model.tierHeader.tier })}
+          </span>
+          <span className="shrink-0 text-body-sm text-on-surface-variant">
+            {t("conversation.turn.tierCount", {
+              count: model.tierHeader.count,
+            })}
+          </span>
+          <span className="h-px flex-1 bg-primary/15" />
         </div>
       ) : null}
-    </section>
+      <section
+        className={`conversation-turn mb-6 ${
+          isSubagent ? "border-l-2 border-primary/20 pl-3" : ""
+        }`}
+        data-conversation-turn-depth={model.depth}
+        data-conversation-turn-expanded={isSubagent ? expanded : undefined}
+        data-conversation-turn-id={model.turn.id}
+      >
+        <div
+          className={`conversation-prompt-block scroll-mt-32 rounded-xl border px-4 py-3 transition-shadow ${
+            isSubagent
+              ? "border-primary/20 bg-primary/[0.035]"
+              : "border-primary/30 bg-primary/[0.055]"
+          } ${
+            promptHighlighted
+              ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]"
+              : ""
+          }`}
+          data-conversation-card-id={model.promptBlockId}
+          id={conversationCardDomId(model.promptBlockId)}
+        >
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div
+              className={`flex items-center gap-2.5 min-w-0 ${
+                isSubagent ? "flex-wrap" : ""
+              }`}
+            >
+              {isSubagent ? (
+                <Button
+                  aria-expanded={expanded}
+                  aria-label={toggleLabel}
+                  className="shrink-0 rounded-full border border-primary/30 bg-theme-card/60 text-primary hover:bg-primary/10"
+                  onClick={() => onToggleExpanded?.(model.turn.id)}
+                  size="icon-sm"
+                  title={toggleLabel}
+                  type="button"
+                  variant="ghost"
+                >
+                  <ChevronRight
+                    className={`size-3.5 transition-transform ${
+                      expanded ? "rotate-90" : ""
+                    }`}
+                  />
+                </Button>
+              ) : null}
+              {isSubagent ? (
+                <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
+                  <GitFork size={13} className="text-primary/90" />
+                  {t("conversation.question.subagentTask")}
+                </h3>
+              ) : isContinuation ? (
+                <h3 className="flex items-center gap-2 text-label-caps text-on-surface-variant shrink-0">
+                  <span className="size-2 rounded-full bg-status-info" />
+                  {t("conversation.question.continuationPrompt")}
+                </h3>
+              ) : (
+                <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
+                  <span className="size-2 rounded-full bg-primary" />
+                  {t("conversation.question.userPrompt")}
+                </h3>
+              )}
+              {isSubagent && model.depth > 0 ? (
+                <span
+                  className="shrink-0 rounded-full border border-primary/25 bg-theme-card/60 px-2 py-0.5 font-mono text-xs normal-case text-primary"
+                  title={t("conversation.turn.tier", { tier: model.depth })}
+                >
+                  T{model.depth}
+                </span>
+              ) : null}
+              {model.turn.agent_role ? (
+                <Badge
+                  tone="neutral"
+                  className="rounded-full font-medium text-xs px-2.5 py-0.5 truncate max-w-xs"
+                  title={model.turn.agent_role}
+                >
+                  {model.turn.agent_role}
+                </Badge>
+              ) : null}
+              {isSubagent && model.turn.title ? (
+                <span
+                  className="truncate text-body-sm text-on-surface-variant"
+                  title={model.turn.title}
+                >
+                  {model.turn.title}
+                </span>
+              ) : null}
+              {model.turn.model ? (
+                <Badge
+                  tone="neutral"
+                  className="rounded-full font-mono text-xs normal-case tracking-normal px-2.5 py-0.5 truncate max-w-xs"
+                  title={model.turn.model}
+                >
+                  {model.turn.model}
+                </Badge>
+              ) : null}
+              {isSubagent && model.childCount > 0 ? (
+                <Badge
+                  tone="neutral"
+                  className="shrink-0 rounded-full text-xs normal-case tracking-normal px-2.5 py-0.5"
+                >
+                  {t("conversation.turn.childCount", {
+                    count: model.childCount,
+                  })}
+                </Badge>
+              ) : null}
+              {isSubagent ? <SubagentStatus turn={model.turn} t={t} /> : null}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span
+                className="select-text rounded-md border border-primary/25 bg-theme-card/45 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
+                title={model.promptBlockId}
+              >
+                {conversationIdFragment(model.promptBlockId)}
+              </span>
+              <PromptCopyButton
+                copied={copied}
+                isSubagent={isSubagent}
+                onClick={() => void copyPrompt()}
+                t={t}
+              />
+            </div>
+          </div>
+          {isSubagent && !expanded ? (
+            <p
+              className="truncate text-body-sm text-on-surface-variant"
+              title={model.turn.prompt}
+            >
+              {promptSummary}
+            </p>
+          ) : (
+            <MarkdownContent value={model.turn.prompt} />
+          )}
+        </div>
+        {expanded ? (
+          <div className="mt-3 pl-3">
+            <h3 className="mb-3 text-label-caps text-on-surface-muted">
+              {t("conversation.question.parts")}
+            </h3>
+            {!model.hasContent ? (
+              isSubagent ? (
+                <p className="px-2 py-4 text-body-sm text-on-surface-variant">
+                  {t("conversation.turn.subagentNoRecords")}
+                </p>
+              ) : (
+                <EmptyPanel>{t("conversation.markdown.empty")}</EmptyPanel>
+              )
+            ) : (
+              <ConversationContentCards
+                activeBlockId={activeBlockId}
+                colors={colors}
+                controller={controller}
+                nodes={model.displayNodes ?? []}
+                onCopyError={onCopyError}
+                onCommandPartsVisible={onCommandPartsVisible}
+                recordKind={recordKind}
+                resultPreviewLineLimit={resultPreviewLineLimit}
+                t={t}
+                translationSettings={translationSettings}
+                visibility={visibility}
+              />
+            )}
+          </div>
+        ) : null}
+      </section>
+    </>
   );
 });
 

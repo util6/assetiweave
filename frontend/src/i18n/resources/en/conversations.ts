@@ -302,6 +302,8 @@ export const conversationsEn = {
   "conversation.question.subagentTask": "Subagent task",
   "conversation.question.copySubagentPrompt": "Copy delegation prompt",
   "conversation.turn.childCount": "{{count}} subagents",
+  "conversation.turn.tier": "Tier {{tier}}",
+  "conversation.turn.tierCount": "{{count}} subagents",
   "conversation.turn.expandSubagent": "Expand subagent",
   "conversation.turn.collapseSubagent": "Collapse subagent",
   "conversation.turn.subagentNoRecords": "No execution records",

@@ -2882,7 +2882,8 @@ export function QuestionPreview({
     () => buildConversationTurnPresentations(question, commandProjections),
     [commandProjections, question],
   );
-  const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<string>>(
+  // 默认全部展开：按 Tier 分层全部可见，collapsedTurnIds 只记录用户主动收起的分支。
+  const [collapsedTurnIds, setCollapsedTurnIds] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
   );
   const turnIndex = useMemo(
@@ -2893,13 +2894,13 @@ export function QuestionPreview({
     () =>
       visibleConversationTurnPresentations(
         turnModels,
-        expandedTurnIds,
+        collapsedTurnIds,
         turnIndex,
       ),
-    [expandedTurnIds, turnIndex, turnModels],
+    [collapsedTurnIds, turnIndex, turnModels],
   );
-  const toggleTurnExpanded = useCallback((turnId: string) => {
-    setExpandedTurnIds((current) => {
+  const toggleTurnCollapsed = useCallback((turnId: string) => {
+    setCollapsedTurnIds((current) => {
       const next = new Set(current);
       if (next.has(turnId)) next.delete(turnId);
       else next.add(turnId);
@@ -2991,10 +2992,11 @@ export function QuestionPreview({
       activeTurnId,
       ...conversationTurnAncestorIds(turnModels, activeTurnId, turnIndex),
     ];
-    setExpandedTurnIds((current) => {
-      if (branch.every((turnId) => current.has(turnId))) return current;
+    // 深链定位时把沿途分支从「已收起」集合里移除，保证目标 Turn 可见。
+    setCollapsedTurnIds((current) => {
+      if (!branch.some((turnId) => current.has(turnId))) return current;
       const next = new Set(current);
-      branch.forEach((turnId) => next.add(turnId));
+      branch.forEach((turnId) => next.delete(turnId));
       return next;
     });
   }, [activeTurnId, turnIndex, turnModels]);
@@ -3102,12 +3104,12 @@ export function QuestionPreview({
                   activeBlockId={activeBlockId}
                   colors={contentCardColors}
                   controller={contentController}
-                  expanded={expandedTurnIds.has(model.turn.id)}
+                  expanded={!collapsedTurnIds.has(model.turn.id)}
                   index={index}
                   model={model}
                   onCopyError={onCopyError}
                   onCommandPartsVisible={handleCommandPartsVisible}
-                  onToggleExpanded={toggleTurnExpanded}
+                  onToggleExpanded={toggleTurnCollapsed}
                   recordKind={recordKind}
                   resultPreviewLineLimit={resultPreviewLineLimit}
                   t={t}

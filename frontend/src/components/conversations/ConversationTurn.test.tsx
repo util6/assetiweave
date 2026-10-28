@@ -334,10 +334,10 @@ describe("ConversationTurn subagent tree", () => {
 
     expect(models.map((model) => model.turn.id)).toEqual([
       "turn-root",
+      "turn-orphan",
       "turn-child",
       "turn-grandchild",
       "turn-great-grandchild",
-      "turn-orphan",
     ]);
     const byId = new Map(models.map((model) => [model.turn.id, model]));
     expect(byId.get("turn-root")).toMatchObject({
@@ -403,31 +403,50 @@ describe("ConversationTurn subagent tree", () => {
     expect(models.every((model) => model.parentTurnId === null)).toBe(true);
   });
 
-  it("collapses subagent branches by default and reveals them one level at a time", () => {
+  it("expands every tier by default and only hides a branch the user collapses", () => {
     const models = buildConversationTurnPresentations(subagentTreeQuestion());
 
     expect(
       visibleConversationTurnPresentations(models, new Set()).map(
         (model) => model.turn.id,
       ),
-    ).toEqual(["turn-root", "turn-child", "turn-orphan"]);
+    ).toEqual([
+      "turn-root",
+      "turn-orphan",
+      "turn-child",
+      "turn-grandchild",
+      "turn-great-grandchild",
+    ]);
     expect(
       visibleConversationTurnPresentations(models, new Set(["turn-child"])).map(
         (model) => model.turn.id,
       ),
-    ).toEqual(["turn-root", "turn-child", "turn-grandchild", "turn-orphan"]);
+    ).toEqual(["turn-root", "turn-orphan", "turn-child"]);
     expect(
       visibleConversationTurnPresentations(
         models,
-        new Set(["turn-child", "turn-grandchild", "turn-great-grandchild"]),
+        new Set(["turn-grandchild"]),
       ).map((model) => model.turn.id),
-    ).toEqual([
-      "turn-root",
-      "turn-child",
-      "turn-grandchild",
-      "turn-great-grandchild",
-      "turn-orphan",
-    ]);
+    ).toEqual(["turn-root", "turn-orphan", "turn-child", "turn-grandchild"]);
+  });
+
+  it("labels each tier once at its first visible node", () => {
+    const models = buildConversationTurnPresentations(subagentTreeQuestion());
+    const byId = new Map(models.map((model) => [model.turn.id, model]));
+
+    expect(byId.get("turn-root")?.tierHeader).toBeNull();
+    expect(byId.get("turn-child")?.tierHeader).toEqual({
+      count: 1,
+      tier: 1,
+    });
+    expect(byId.get("turn-grandchild")?.tierHeader).toEqual({
+      count: 1,
+      tier: 2,
+    });
+    expect(byId.get("turn-great-grandchild")?.tierHeader).toEqual({
+      count: 1,
+      tier: 3,
+    });
   });
 
   it("collects blocks only from the visible presentation models", () => {
@@ -478,12 +497,23 @@ describe("ConversationTurn subagent tree", () => {
     };
 
     const models = buildConversationTurnPresentations(question);
-    const collapsedVisible = visibleConversationTurnPresentations(
-      models,
-      new Set(),
+    // 默认全部展开：三层 Turn 的 block 都在索引里。
+    const expandedBlocks = collectConversationTurnBlocks(
+      visibleConversationTurnPresentations(models, new Set()),
     );
-    const collapsedBlocks = collectConversationTurnBlocks(collapsedVisible);
+    expect(expandedBlocks.map((block) => block.id)).toEqual([
+      "part-visible-root",
+      "part-visible-child",
+      "part-hidden-grandchild",
+    ]);
 
+    // 收起中间层后，其后代的 block 必须从索引里消失。
+    const collapsedBlocks = collectConversationTurnBlocks(
+      visibleConversationTurnPresentations(
+        models,
+        new Set(["turn-visible-child"]),
+      ),
+    );
     expect(collapsedBlocks.map((block) => block.id)).toEqual([
       "part-visible-root",
       "part-visible-child",
@@ -491,16 +521,6 @@ describe("ConversationTurn subagent tree", () => {
     expect(
       collapsedBlocks.some((block) => block.id === "part-hidden-grandchild"),
     ).toBe(false);
-
-    const expandedBlocks = collectConversationTurnBlocks(
-      visibleConversationTurnPresentations(
-        models,
-        new Set(["turn-visible-child"]),
-      ),
-    );
-    expect(
-      expandedBlocks.some((block) => block.id === "part-hidden-grandchild"),
-    ).toBe(true);
   });
 
   it("resolves the ancestor chain of a deep turn for deep-link expansion", () => {

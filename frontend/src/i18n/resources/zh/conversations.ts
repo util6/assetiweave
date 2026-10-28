@@ -284,6 +284,8 @@ export const conversationsZh = {
   "conversation.question.subagentTask": "子代理任务",
   "conversation.question.copySubagentPrompt": "复制子代理提示词",
   "conversation.turn.childCount": "{{count}} 个子代理",
+  "conversation.turn.tier": "Tier {{tier}}",
+  "conversation.turn.tierCount": "{{count}} 个子代理",
   "conversation.turn.expandSubagent": "展开子代理",
   "conversation.turn.collapseSubagent": "收起子代理",
   "conversation.turn.subagentNoRecords": "无执行记录",
