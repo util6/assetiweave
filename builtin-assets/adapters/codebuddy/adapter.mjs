@@ -241,7 +241,13 @@ function findSubagentsForSession(filePath, sessionId) {
 
 function isSubagentSessionPath(filePath) {
   if (!filePath) return false;
-  return filePath.includes("/subagents/") || path.basename(path.dirname(filePath)) === "subagents";
+  const norm = filePath.replace(/\\/g, "/");
+  return (
+    norm.includes("/subagents/") ||
+    norm.includes("/subagent/") ||
+    norm.includes(".subagent.") ||
+    path.basename(path.dirname(filePath)) === "subagents"
+  );
 }
 
 function queryWorkbuddyDbTitles(candidateRoots = []) {
@@ -278,6 +284,13 @@ function queryWorkbuddyDbTitles(candidateRoots = []) {
     } catch {}
   }
   return map;
+}
+
+function resolvePrompt(...candidates) {
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim().length > 0) return c.trim();
+  }
+  return "Subagent execution";
 }
 
 function extractToolOutputText(rawOutput) {
@@ -355,6 +368,7 @@ function parseJsonl(text, sessionIdFallback, filePath) {
   const pendingToolCalls = new Map();
   const subagentFiles = findSubagentsForSession(filePath, sessionIdFallback);
   let subagentIndex = 0;
+  let activeContinuationAnchorId = null;
 
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -377,9 +391,10 @@ function parseJsonl(text, sessionIdFallback, filePath) {
       const prompt = extractUserPrompt(rawText);
       if (!prompt) continue;
 
-      if (currentTurn) {
+      if (currentTurn && currentTurn.parts.length > 0) {
         turns.push(currentTurn);
       }
+      activeContinuationAnchorId = null;
       currentTurn = {
         external_id: entry.id || `turn-${turns.length}`,
         turn_index: turns.length,
@@ -406,6 +421,20 @@ function parseJsonl(text, sessionIdFallback, filePath) {
       continue;
     }
 
+    if (!currentTurn && activeContinuationAnchorId) {
+      currentTurn = {
+        external_id: `${activeContinuationAnchorId}-cont-${turns.length}`,
+        turn_index: turns.length,
+        turn_kind: "continuation",
+        parent_turn_id: activeContinuationAnchorId,
+        user_text: "Continue following subagent execution",
+        title: null,
+        started_at: entry.timestamp ? new Date(entry.timestamp).toISOString() : null,
+        ended_at: null,
+        model: null,
+        parts: [],
+      };
+    }
     if (!currentTurn) continue;
 
     if (entry.type === "reasoning") {
@@ -449,18 +478,32 @@ function parseJsonl(text, sessionIdFallback, filePath) {
 
       // Subagent dispatch (Agent tool)
       if (toolName === "Agent") {
+        if (subagentFiles.length === 0 && (sessionId || sessionIdFallback)) {
+          const rechecked = findSubagentsForSession(filePath, sessionId || sessionIdFallback);
+          if (rechecked.length > 0) subagentFiles.push(...rechecked);
+        }
         let matchedChildId = null;
+        let matchedChildPath = null;
         if (subagentFiles.length > 0) {
           const desc = args?.description || "";
           const p = args?.prompt || "";
           const found = subagentFiles.find((s) => (desc && s.prompt.includes(desc)) || (p && s.prompt.includes(p.slice(0, 30))));
           if (found) {
             matchedChildId = found.id;
+            matchedChildPath = found.path;
           } else if (subagentIndex < subagentFiles.length) {
             matchedChildId = subagentFiles[subagentIndex].id;
+            matchedChildPath = subagentFiles[subagentIndex].path;
             subagentIndex += 1;
           }
         }
+        pendingToolCalls.set(callId, {
+          toolName,
+          args,
+          matchedChildId,
+          matchedChildPath,
+          anchorTurnId: currentTurn.external_id,
+        });
         const agentData = {
           agent_role: args?.subagent_type || "Explore",
           description: args?.description || "Subagent Task",
@@ -599,9 +642,74 @@ function parseJsonl(text, sessionIdFallback, filePath) {
         continue;
       }
 
-      // If matchedCall was Agent, the subagent card was already emitted
+      // If matchedCall was Agent, inline subagent turn(s) and setup continuation
       if (matchedTool === "Agent") {
-        if (entry.timestamp) currentTurn.ended_at = new Date(entry.timestamp).toISOString();
+        const anchorTurnId = matchedCall.anchorTurnId || currentTurn?.external_id || `turn-${turns.length}`;
+        if (currentTurn) {
+          if (entry.timestamp) currentTurn.ended_at = new Date(entry.timestamp).toISOString();
+          turns.push(currentTurn);
+          currentTurn = null;
+        }
+
+        let childInlined = false;
+        if (matchedCall.matchedChildPath && existsSync(matchedCall.matchedChildPath)) {
+          try {
+            const childContent = readFileSync(matchedCall.matchedChildPath, "utf8");
+            const childParsed = parseJsonl(childContent, matchedCall.matchedChildId, matchedCall.matchedChildPath);
+            if (childParsed.turns && childParsed.turns.length > 0) {
+              for (const childTurn of childParsed.turns) {
+                turns.push({
+                  ...childTurn,
+                  external_id: childTurn.external_id || `${anchorTurnId}-sub-${turns.length}`,
+                  turn_index: turns.length,
+                  turn_kind: "subagent",
+                  agent_role: matchedCall.args?.subagent_type || "Explore",
+                  parent_turn_id: anchorTurnId,
+                  user_text: resolvePrompt(childTurn.user_text, matchedCall.args?.prompt, matchedCall.args?.description, "Subagent execution"),
+                });
+              }
+              childInlined = true;
+            }
+          } catch {}
+        }
+
+        if (!childInlined) {
+          const outputText = extractToolOutputText(entry.output);
+          turns.push({
+            external_id: `${anchorTurnId}-sub-${turns.length}`,
+            turn_index: turns.length,
+            turn_kind: "subagent",
+            agent_role: matchedCall.args?.subagent_type || "Explore",
+            parent_turn_id: anchorTurnId,
+            user_text: resolvePrompt(matchedCall.args?.prompt, matchedCall.args?.description, "Subagent execution"),
+            title: null,
+            started_at: entry.timestamp ? new Date(entry.timestamp).toISOString() : null,
+            ended_at: entry.timestamp ? new Date(entry.timestamp).toISOString() : null,
+            model: null,
+            parts: [
+              {
+                role: "assistant",
+                kind: "text",
+                text: outputText || "Subagent execution completed.",
+                language: null,
+                command: null,
+                cwd: entry.cwd || null,
+                status: null,
+                exit_code: null,
+                source_execution_id: null,
+                metadata_json: null,
+                content_card: {
+                  schema_version: 1,
+                  kind: `${ADAPTER_ID}.answer`,
+                  semantic_role: "answer",
+                  renderer: "markdown",
+                },
+              },
+            ],
+          });
+        }
+
+        activeContinuationAnchorId = anchorTurnId;
         continue;
       }
 
@@ -742,7 +850,7 @@ function parseJsonl(text, sessionIdFallback, filePath) {
     }
   }
 
-  if (currentTurn) {
+  if (currentTurn && currentTurn.parts.length > 0) {
     turns.push(currentTurn);
   }
 
@@ -751,6 +859,8 @@ function parseJsonl(text, sessionIdFallback, filePath) {
     projectPath,
     sessionTitle,
     turns,
+    isSubagent: isSubagentSessionPath(filePath),
+    executionOrigin: isSubagentSessionPath(filePath) ? "subagent" : null,
   };
 }
 
@@ -783,6 +893,7 @@ function listSessions() {
       const sid = path.basename(filePath, ".jsonl");
       const parsed = parseJsonl(text, sid, filePath);
       if (!parsed.turns.length) continue;
+      if (parsed.isSubagent) continue;
 
       const stat = statSync(filePath);
       const dbInfo = dbTitles.get(parsed.sessionId || sid);

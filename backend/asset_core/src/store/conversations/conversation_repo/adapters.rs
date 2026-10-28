@@ -122,15 +122,6 @@ pub async fn set_app_conversation_adapter_projection_sqlx(
         .execute(&mut *tx)
         .await
         .map_err(StoreError::external)?;
-    sqlx::query(
-        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND source_id IN (SELECT id FROM conversation_sources WHERE tenant_id = ?2 AND adapter_id = ?3)",
-    )
-    .bind(&now)
-    .bind(tenant_id)
-    .bind(adapter_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(StoreError::external)?;
     tx.commit().await.map_err(StoreError::external)
 }
 
@@ -200,15 +191,6 @@ pub async fn delete_conversation_adapter_registration_sqlx(
             .await
             .map_err(StoreError::external)?;
     }
-    sqlx::query(
-        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND source_id IN (SELECT id FROM conversation_sources WHERE tenant_id = ?2 AND adapter_id = ?3)",
-    )
-    .bind(&now)
-    .bind(tenant_id)
-    .bind(adapter_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(StoreError::external)?;
     tx.commit().await.map_err(StoreError::external)?;
     Ok(adapter)
 }
@@ -245,15 +227,6 @@ pub async fn disable_builtin_conversation_adapter_sqlx(
         .execute(&mut *tx)
         .await
         .map_err(StoreError::external)?;
-    sqlx::query(
-        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND source_id IN (SELECT id FROM conversation_sources WHERE tenant_id = ?2 AND adapter_id = ?3)",
-    )
-    .bind(&now)
-    .bind(tenant_id)
-    .bind(adapter_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(StoreError::external)?;
     tx.commit().await.map_err(StoreError::external)?;
 
     adapter.enabled = false;

@@ -27,6 +27,18 @@ pub async fn delete_web_record_session_sqlx_tx(
         .execute(&mut **tx)
         .await
         .map_err(StoreError::external)?;
+    sqlx::query(
+        r#"
+        DELETE FROM conversation_session_observations
+        WHERE tenant_id = ?1 AND record_kind = 'web'
+          AND external_id = (SELECT external_id FROM web_record_sessions WHERE tenant_id = ?1 AND id = ?2)
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
     sqlx::query("DELETE FROM web_record_sessions WHERE tenant_id = ?1 AND id = ?2")
         .bind(tenant_id)
         .bind(session_id)
@@ -43,6 +55,14 @@ pub async fn clear_legacy_conversation_records_for_source_sqlx_tx(
 ) -> StoreResult<()> {
     delete_source_part_index_sqlx_tx(tx, tenant_id, source_id, ConversationRecordKind::Session)
         .await?;
+    sqlx::query(
+        "DELETE FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND record_kind = 'session'",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
     sqlx::query(
         r#"
         DELETE FROM conversation_parts

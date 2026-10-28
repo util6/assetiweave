@@ -38,6 +38,7 @@ fn make_text_turn(ext_id: &str, user_text: &str, bot_text: &str) -> NormalizedCo
             content_card: None,
             metadata_json: None,
         }],
+        ..Default::default()
     }
 }
 

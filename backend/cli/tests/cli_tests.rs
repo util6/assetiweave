@@ -1241,6 +1241,7 @@ fn test_conversation_search_command_keyword_vfox() {
                         metadata_json: None,
                     },
                 ],
+                ..Default::default()
             }],
             ..Default::default()
         };

@@ -128,6 +128,7 @@ async fn test_reproject_conversation_session_materializes_parts_and_derives_exec
             ended_at: Some(now.clone()),
             model: None,
             parts: vec![cmd_part, res_part, subagent_part],
+            ..Default::default()
         }],
     };
 

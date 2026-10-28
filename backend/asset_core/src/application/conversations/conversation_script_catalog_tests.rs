@@ -496,22 +496,16 @@ async fn unregister_preflight_lists_affected_sources_and_running_sync_conflicts(
         .await
         .map_err(AppError::external)
         .expect("seed source");
-    sqlx::query(
-        r#"
-            INSERT INTO conversation_sync_runs (
-                tenant_id, id, source_id, adapter_id, status, started_at,
-                session_count, turn_count, warning_count
-            ) VALUES (?1, 'running-sync', ?2, ?3, 'running',
-                      '2026-07-15T00:00:00Z', 0, 0, 0)
-            "#,
+    let spec = crate::backend::infrastructure::tasks::TaskSpec::new(
+        crate::backend::infrastructure::tasks::TaskKind::ConversationSync,
+        None,
     )
-    .bind(&tenant_id)
-    .bind(&source.id)
-    .bind(&adapter.id)
-    .execute(service.db.pool())
-    .await
-    .map_err(AppError::external)
-    .expect("seed preflight records");
+    .with_tenant_id(tenant_id.clone());
+    let _ = service
+        .runtime
+        .task_runtime()
+        .register_external(spec)
+        .expect("seed preflight records");
     service
         .runtime
         .refresh_conversation_adapter_catalog()
@@ -582,22 +576,16 @@ async fn package_preflight_detects_running_sync_in_another_tenant() {
     crate::backend::store::upsert_conversation_source_sqlx(pool, &other_tenant.id, &source)
         .await
         .expect("seed other tenant source");
-    sqlx::query(
-        r#"
-            INSERT INTO conversation_sync_runs (
-                tenant_id, id, source_id, adapter_id, status, started_at,
-                session_count, turn_count, warning_count
-            ) VALUES (?1, 'running-sync', ?2, ?3, 'running',
-                      '2026-07-15T00:00:00Z', 0, 0, 0)
-            "#,
+    let spec = crate::backend::infrastructure::tasks::TaskSpec::new(
+        crate::backend::infrastructure::tasks::TaskKind::ConversationSync,
+        None,
     )
-    .bind(&other_tenant.id)
-    .bind(&source.id)
-    .bind(&source.adapter_id)
-    .execute(pool)
-    .await
-    .map_err(AppError::external)
-    .expect("seed sync run");
+    .with_tenant_id(other_tenant.id.clone());
+    let _ = service
+        .runtime
+        .task_runtime()
+        .register_external(spec)
+        .expect("seed sync run");
     service
         .runtime
         .refresh_conversation_adapter_catalog()

@@ -73,6 +73,10 @@ pub fn web_record_turn_from_normalized(
     normalized: &crate::backend::domain::NormalizedConversationTurn,
     now: &str,
 ) -> ConversationTurn {
+    let parent_turn_id = normalized
+        .parent_external_id
+        .as_deref()
+        .map(|parent_ext_id| stable_id("web-record-turn", &[session_id, parent_ext_id]));
     ConversationTurn {
         id: stable_id("web-record-turn", &[session_id, &normalized.external_id]),
         session_id: session_id.to_string(),
@@ -88,6 +92,9 @@ pub fn web_record_turn_from_normalized(
         model: normalized.model.clone(),
         process: None,
         response: None,
+        turn_kind: normalized.turn_kind.clone(),
+        agent_role: normalized.agent_role.clone(),
+        parent_turn_id,
     }
 }
 
@@ -164,6 +171,10 @@ pub async fn prepare_web_record_turn_for_import_sqlx_tx(
         .process
         .as_ref()
         .map(|p| serde_json::to_string(p).unwrap_or_default());
+    let parent_turn_id = normalized
+        .parent_external_id
+        .as_deref()
+        .map(|parent_ext_id| stable_id("web-record-turn", &[session_id, parent_ext_id]));
     let turn = ConversationTurn {
         id: turn_id,
         session_id: session_id.to_string(),
@@ -179,6 +190,9 @@ pub async fn prepare_web_record_turn_for_import_sqlx_tx(
         model: normalized.model.clone(),
         process: process_json,
         response: triad.response,
+        turn_kind: normalized.turn_kind.clone(),
+        agent_role: normalized.agent_role.clone(),
+        parent_turn_id,
     };
 
     Ok((turn, triad.parts))

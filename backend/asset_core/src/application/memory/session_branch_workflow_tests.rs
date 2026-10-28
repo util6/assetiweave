@@ -181,6 +181,7 @@ async fn test_session_branch_workflow_incremental_scan_and_watermark_skip() {
                     content_card: None,
                     metadata_json: None,
                 }],
+                ..Default::default()
             },
             NormalizedConversationTurn {
                 external_id: "t1-2".to_string(),
@@ -204,6 +205,7 @@ async fn test_session_branch_workflow_incremental_scan_and_watermark_skip() {
                     content_card: None,
                     metadata_json: None,
                 }],
+                ..Default::default()
             },
         ],
     );
@@ -234,6 +236,7 @@ async fn test_session_branch_workflow_incremental_scan_and_watermark_skip() {
                 content_card: None,
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
     );
 
@@ -333,6 +336,7 @@ async fn test_session_branch_workflow_incremental_scan_and_watermark_skip() {
             content_card: None,
             metadata_json: None,
         }],
+        ..Default::default()
     });
 
     crate::backend::store::import_conversation_sessions_sqlx(
@@ -439,6 +443,7 @@ async fn test_session_branch_workflow_without_extractor_does_not_write_junk_to_d
                 content_card: None,
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
     );
 
@@ -563,6 +568,7 @@ async fn test_session_branch_workflow_filters_expired_and_internal_sessions() {
                 content_card: None,
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
     );
 
@@ -594,6 +600,7 @@ async fn test_session_branch_workflow_filters_expired_and_internal_sessions() {
                 content_card: None,
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
     );
 
@@ -628,6 +635,7 @@ async fn test_session_branch_workflow_filters_expired_and_internal_sessions() {
                 content_card: None,
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
     );
     internal_session.execution_origin = Some("internal_agent".to_string());
@@ -745,6 +753,7 @@ async fn test_session_branch_workflow_normalizes_multiple_subdirectories_to_same
                 content_card: None,
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
     );
 
@@ -774,6 +783,7 @@ async fn test_session_branch_workflow_normalizes_multiple_subdirectories_to_same
                 content_card: None,
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
     );
 

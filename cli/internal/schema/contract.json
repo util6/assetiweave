@@ -1517,6 +1517,11 @@
               "projection_repair"
             ],
             "description": "Rebuild reason: manual, migration, or projection_repair"
+          },
+          "force": {
+            "type": "boolean",
+            "default": false,
+            "description": "force"
           }
         },
         "type": "object",
@@ -2086,6 +2091,11 @@
               "projection_repair"
             ],
             "description": "Rebuild reason: manual, migration, or projection_repair"
+          },
+          "force": {
+            "type": "boolean",
+            "default": false,
+            "description": "force"
           }
         },
         "type": "object",

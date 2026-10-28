@@ -141,7 +141,8 @@ pub(super) async fn load_search_question_groups_sqlx(
     let query = format!(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.prompt, t.process, t.response, t.title,
-               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at
+               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at,
+               t.turn_kind, t.agent_role, t.parent_turn_id
         FROM {turns} t
         JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
         WHERE t.tenant_id = ?1

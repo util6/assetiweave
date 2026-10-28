@@ -45,9 +45,12 @@ impl AppService {
                 return Err(AppError::Validation(format!(
                     "conversation search retrieval mode {} is not supported; supported modes: lexical",
                     match mode {
-                        crate::backend::domain::conversations::SearchRetrievalMode::Lexical => "lexical",
-                        crate::backend::domain::conversations::SearchRetrievalMode::Semantic => "semantic",
-                        crate::backend::domain::conversations::SearchRetrievalMode::Hybrid => "hybrid",
+                        crate::backend::domain::conversations::SearchRetrievalMode::Lexical =>
+                            "lexical",
+                        crate::backend::domain::conversations::SearchRetrievalMode::Semantic =>
+                            "semantic",
+                        crate::backend::domain::conversations::SearchRetrievalMode::Hybrid =>
+                            "hybrid",
                     }
                 )));
             }
@@ -60,55 +63,66 @@ impl AppService {
         let tenant_id = self.tenant_id();
         let adapter_id = params.adapter_id.clone();
         let source_id = params.source_id.clone();
-        let recent_deltas = if let Some(recent_run_limit) = recent_run_limit {
-            crate::backend::store::load_recent_conversation_sync_deltas_sqlx(
-                pool,
-                tenant_id,
-                record_kind,
-                source_id.as_deref(),
-                adapter_id.as_deref(),
-                recent_run_limit,
-            )
-            .await
-            .map_err(AppError::external)?
-        } else {
-            Vec::new()
-        };
-        let incremental_scope = recent_run_limit.map(|recent_runs| {
-            let included_run_count = recent_deltas
-                .iter()
-                .map(|delta| delta.sync_run_id.as_str())
-                .collect::<BTreeSet<_>>()
-                .len();
-            ConversationSearchIncrementalScope {
-                recent_runs,
-                included_run_count,
-                changed_session_count: recent_deltas
-                    .iter()
-                    .map(|delta| delta.session_id.as_str())
-                    .collect::<BTreeSet<_>>()
-                    .len(),
-            }
-        });
-        let allowed_session_ids = recent_run_limit.map(|_| {
-            recent_deltas
-                .iter()
-                .map(|delta| delta.session_id.clone())
-                .collect::<BTreeSet<_>>()
-        });
-        let incremental_match_by_session =
-            recent_deltas
-                .into_iter()
-                .fold(BTreeMap::new(), |mut matches, delta| {
-                    matches.entry(delta.session_id).or_insert_with(|| {
-                        crate::backend::domain::conversations::ConversationSearchIncrementalMatch {
-                            sync_run_id: delta.sync_run_id,
-                            change_kind: delta.change_kind,
-                            observed_at: delta.observed_at,
+        let (allowed_session_ids, incremental_match_by_session, incremental_scope) =
+            if let Some(recent_runs) = recent_run_limit {
+                let recent_sessions: Vec<(String, String, String)> = sqlx::query_as(
+                    r#"
+                    SELECT id, created_at, imported_at
+                    FROM conversation_sessions
+                    WHERE tenant_id = ?1
+                      AND (?2 IS NULL OR adapter_id = ?2)
+                      AND (?3 IS NULL OR source_id = ?3)
+                    ORDER BY imported_at DESC
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(adapter_id.as_deref())
+                .bind(source_id.as_deref())
+                .fetch_all(pool)
+                .await
+                .map_err(AppError::external)?;
+
+                let mut distinct_run_timestamps = Vec::new();
+                for (_, _, imported_at) in &recent_sessions {
+                    if !distinct_run_timestamps.contains(imported_at) {
+                        distinct_run_timestamps.push(imported_at.clone());
+                        if distinct_run_timestamps.len() >= recent_runs {
+                            break;
                         }
-                    });
-                    matches
-                });
+                    }
+                }
+
+                let mut allowed = BTreeSet::new();
+                let mut matches = BTreeMap::new();
+                for (id, created_at, imported_at) in &recent_sessions {
+                    if distinct_run_timestamps.contains(imported_at) {
+                        allowed.insert(id.clone());
+                        let change_kind = if created_at == imported_at {
+                            "new".to_string()
+                        } else {
+                            "updated".to_string()
+                        };
+                        matches.insert(
+                        id.clone(),
+                        crate::backend::domain::conversations::ConversationSearchIncrementalMatch {
+                            sync_run_id: format!("run-{}", imported_at),
+                            change_kind,
+                            observed_at: imported_at.clone(),
+                        },
+                    );
+                    }
+                }
+
+                let scope = ConversationSearchIncrementalScope {
+                    recent_runs,
+                    included_run_count: distinct_run_timestamps.len(),
+                    changed_session_count: allowed.len(),
+                };
+
+                (Some(allowed), matches, Some(scope))
+            } else {
+                (None, BTreeMap::new(), None)
+            };
         let project_path =
             if record_kind == crate::backend::domain::conversations::ConversationRecordKind::Web {
                 None

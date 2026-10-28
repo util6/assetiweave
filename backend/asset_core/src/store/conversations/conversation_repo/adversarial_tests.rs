@@ -162,6 +162,7 @@ async fn bug1_web_record_answer_loses_markdown_renderer() {
                     metadata_json: None,
                 },
             ],
+            ..Default::default()
         }],
         ..Default::default()
     };
@@ -234,6 +235,7 @@ async fn bug2_prefix_resolution_cross_entity_contamination() {
                 }),
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
         ..Default::default()
     };
@@ -375,6 +377,7 @@ async fn bug4_outline_fails_on_10_or_12_char_part_prefix() {
                 }),
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
         ..Default::default()
     };
@@ -434,6 +437,7 @@ async fn bug5_command_part_without_command_flips_text_to_command() {
                 content_card: None,
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
         ..Default::default()
     };
@@ -491,6 +495,7 @@ async fn bug6_attrs_json_signal_tool_name_file_path_wiped_on_import() {
                         .to_string(),
                 ),
             }],
+            ..Default::default()
         }],
         ..Default::default()
     };
@@ -631,6 +636,7 @@ async fn r2_bug1_migration_0005_poisons_normal_command_parts() {
                 content_card: None,
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
         ..Default::default()
     };
@@ -698,6 +704,7 @@ async fn r2_bug2_cross_entity_contamination_still_in_any_id_and_outline_turn() {
                 }),
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
         ..Default::default()
     };
@@ -767,6 +774,7 @@ async fn r2_bug3_web_part_40_char_prefix_short_circuits_unresolved() {
                 content_card: None,
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
         ..Default::default()
     };
@@ -824,6 +832,7 @@ async fn r2_bug4_session_detail_and_id_search_drop_last_cwd() {
                 content_card: None,
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
         ..Default::default()
     };
@@ -890,4 +899,402 @@ async fn r2_bug5_web_maintenance_audit_crashes_when_source_id_provided() {
         res.is_ok(),
         "audit_conversation_data crashed with RowNotFound when source_id was provided! Got: {res:?}"
     );
+}
+
+/// Adversarial stress test for M2:
+/// Verify SQLite round-trip persistence of 10+ chained subagent turns with complex unicode prompts,
+/// continuation turns, multiple distinct user questions, and triad parts integrity.
+#[tokio::test(flavor = "multi_thread")]
+async fn adversarial_stress_test_subagent_sqlite_roundtrip_persistence_and_indices() {
+    let (_dir, pool) = setup_pool().await;
+    let source = seed_source_and_adapter(&pool, "antigravity", "src-antigravity", "[]").await;
+
+    // 1. Build a realistic 20-turn session
+    // Q1: User turn + 12 chained subagents with complex unicode/codeblocks + 2 continuations
+    // Q2: User turn + 3 subagents
+    // Q3: User turn alone
+    let mut turns: Vec<NormalizedConversationTurn> = Vec::new();
+
+    // Turn 0: User turn 1
+    turns.push(NormalizedConversationTurn {
+        external_id: "ext-t00".to_string(),
+        turn_index: 0,
+        user_text: "Please analyze the concurrency bottlenecks in our database layer.".to_string(),
+        title: Some("Concurrency Audit".to_string()),
+        turn_kind: Some("user".to_string()),
+        agent_role: None,
+        parent_external_id: None,
+        model: Some("gemini-2.5-pro".to_string()),
+        parts: vec![NormalizedConversationPart {
+            role: ConversationPartRole::Assistant,
+            kind: ConversationPartKind::Text,
+            text: Some("Dispatching specialists to investigate database locks...".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: None,
+            content_card: None,
+            metadata_json: None,
+        }],
+        ..Default::default()
+    });
+
+    let tricky_subagent_prompts = vec![
+        "子代理任务一：请排查 SQLite 锁竞争。\n```rust\nfn check_lock() -> bool { true }\n```\n是否存在死锁风险？",
+        "日本語タスク（サブエージェント2）：\n- トランザクション分離レベルを検査してください。\n- ロック時間はどのくらいですか？",
+        "Subagent 3: Check WAL checkpointing.\nIs PRAGMA wal_autocheckpoint enabled?\nCheck busy_timeout: 5000ms.",
+        "Subagent 4: Analyze memory pressure ⚡.\nAre connections closed promptly?",
+        "Subagent 5: Evaluate connection pool size matrix:\n| Pool | Min | Max |\n|---|---|---|\n| Main | 1 | 5 |\nIs this optimal?",
+        "Subagent 6: Inspect row mappers for unbounded allocations.",
+        "Subagent 7: 检查索引覆盖度，特别是 `conversation_turns(session_id, turn_index)`。",
+        "Subagent 8: Überprüfen Sie Thread-Sicherheit von Connection Pools.",
+        "Subagent 9: Run stress benchmark script:\n```bash\ncargo test -p asset_core database_tests\n```\nReport results.",
+        "Subagent 10: Hierarchical subagent verification under Subagent 9.",
+        "Subagent 11: Are all mutexes dropping guards before `.await`???",
+        "Subagent 12: Ingest sample JSON transaction record:\n{\n  \"status\": \"committed\"\n}\nVerify consistency.",
+    ];
+
+    for (idx, prompt) in tricky_subagent_prompts.into_iter().enumerate() {
+        let turn_num = idx + 1;
+        let parent_ext_id = if turn_num == 1 {
+            "ext-t00".to_string()
+        } else {
+            format!("ext-t{:02}", turn_num - 1)
+        };
+        turns.push(NormalizedConversationTurn {
+            external_id: format!("ext-t{turn_num:02}"),
+            turn_index: turn_num as i64,
+            user_text: prompt.to_string(),
+            title: None,
+            turn_kind: Some("subagent".to_string()),
+            agent_role: Some(format!("specialist-{turn_num}")),
+            parent_external_id: Some(parent_ext_id),
+            model: Some("gemini-2.5-flash".to_string()),
+            parts: vec![
+                NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Text,
+                    text: Some(format!("Specialist {turn_num} analysis underway.")),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                },
+                NormalizedConversationPart {
+                    role: ConversationPartRole::Tool,
+                    kind: ConversationPartKind::Command,
+                    text: None,
+                    language: None,
+                    command: Some(format!("echo 'audit {turn_num} passed'")),
+                    cwd: Some("/workspace".to_string()),
+                    status: Some("success".to_string()),
+                    exit_code: Some(0),
+                    command_label: Some(format!("Audit step {turn_num}")),
+                    source_execution_id: Some(format!("exec-{turn_num}")),
+                    content_card: None,
+                    metadata_json: None,
+                },
+                NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Text,
+                    text: Some(format!("Specialist {turn_num} report: Check complete.")),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                },
+            ],
+            ..Default::default()
+        });
+    }
+
+    // Turns 13 & 14: Main agent continuation turns
+    turns.push(NormalizedConversationTurn {
+        external_id: "ext-t13".to_string(),
+        turn_index: 13,
+        user_text: "Synthesizing specialist findings: Concurrency benchmarks look solid."
+            .to_string(),
+        title: None,
+        turn_kind: Some("continuation".to_string()),
+        agent_role: None,
+        parent_external_id: Some("ext-t00".to_string()),
+        model: Some("gemini-2.5-pro".to_string()),
+        parts: vec![NormalizedConversationPart {
+            role: ConversationPartRole::Assistant,
+            kind: ConversationPartKind::Text,
+            text: Some("All 12 subagent audits confirmed zero lock contention.".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: None,
+            content_card: None,
+            metadata_json: None,
+        }],
+        ..Default::default()
+    });
+
+    turns.push(NormalizedConversationTurn {
+        external_id: "ext-t14".to_string(),
+        turn_index: 14,
+        user_text: "Final wrap-up for question 1: Ready for caching implementation.".to_string(),
+        title: None,
+        turn_kind: Some("main_continuation".to_string()),
+        agent_role: None,
+        parent_external_id: Some("ext-t00".to_string()),
+        model: Some("gemini-2.5-pro".to_string()),
+        parts: vec![NormalizedConversationPart {
+            role: ConversationPartRole::Assistant,
+            kind: ConversationPartKind::Text,
+            text: Some("Ready for next user directive.".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: None,
+            content_card: None,
+            metadata_json: None,
+        }],
+        ..Default::default()
+    });
+
+    // Turn 15: Distinct user question 2
+    turns.push(NormalizedConversationTurn {
+        external_id: "ext-t15".to_string(),
+        turn_index: 15,
+        user_text: "Now implement the cache layer for query results.".to_string(),
+        title: Some("Cache Layer Implementation".to_string()),
+        turn_kind: Some("user".to_string()),
+        agent_role: None,
+        parent_external_id: None,
+        model: Some("gemini-2.5-pro".to_string()),
+        parts: vec![NormalizedConversationPart {
+            role: ConversationPartRole::Assistant,
+            kind: ConversationPartKind::Text,
+            text: Some("Delegating cache design to cache architects...".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: None,
+            content_card: None,
+            metadata_json: None,
+        }],
+        ..Default::default()
+    });
+
+    // Turns 16..=18: 3 subagents under Question 2
+    for idx in 16..=18 {
+        turns.push(NormalizedConversationTurn {
+            external_id: format!("ext-t{idx:02}"),
+            turn_index: idx as i64,
+            user_text: format!("Cache subagent {idx}: Build cache layer partition {idx}."),
+            title: None,
+            turn_kind: Some("subagent".to_string()),
+            agent_role: Some("cache-architect".to_string()),
+            parent_external_id: Some("ext-t15".to_string()),
+            model: Some("gemini-2.5-flash".to_string()),
+            parts: vec![NormalizedConversationPart {
+                role: ConversationPartRole::Assistant,
+                kind: ConversationPartKind::Text,
+                text: Some(format!("Cache partition {idx} active.")),
+                language: None,
+                command: None,
+                cwd: None,
+                status: None,
+                exit_code: None,
+                command_label: None,
+                source_execution_id: None,
+                content_card: None,
+                metadata_json: None,
+            }],
+            ..Default::default()
+        });
+    }
+
+    // Turn 19: Distinct user question 3
+    turns.push(NormalizedConversationTurn {
+        external_id: "ext-t19".to_string(),
+        turn_index: 19,
+        user_text: "Are all performance targets met?".to_string(),
+        title: None,
+        turn_kind: None,
+        agent_role: None,
+        parent_external_id: None,
+        model: Some("gemini-2.5-pro".to_string()),
+        parts: vec![NormalizedConversationPart {
+            role: ConversationPartRole::Assistant,
+            kind: ConversationPartKind::Text,
+            text: Some("Yes, all targets met.".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: None,
+            content_card: None,
+            metadata_json: None,
+        }],
+        ..Default::default()
+    });
+
+    let session = NormalizedConversationSession {
+        external_id: "sess-adv-stress-01".to_string(),
+        title: Some("Database Concurrency & Caching Deep-Dive".to_string()),
+        project_path: Some("/workspace".to_string()),
+        started_at: Some("2026-10-28T00:00:00Z".to_string()),
+        updated_at: Some("2026-10-28T01:00:00Z".to_string()),
+        source_locator: Some("file:///workspace/session.jsonl".to_string()),
+        source_fingerprint: Some("fp-stress-session-001".to_string()),
+        turns,
+        ..Default::default()
+    };
+
+    // 2. Import session into SQLite
+    import_conversation_sessions_sqlx(&pool, "default", &source, &[session], false)
+        .await
+        .unwrap();
+
+    // 3. Raw SQLite verification of columns, indices, and row counts
+    let total_turns: i64 = sqlx::query_scalar("SELECT count(*) FROM conversation_turns")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(total_turns, 20, "Must persist exactly 20 turns");
+
+    let subagent_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM conversation_turns WHERE turn_kind = 'subagent'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(subagent_count, 15, "Must persist exactly 15 subagent turns");
+
+    let continuation_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM conversation_turns WHERE turn_kind IN ('continuation', 'main_continuation')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        continuation_count, 2,
+        "Must persist exactly 2 continuation turns"
+    );
+
+    // Verify parent_turn_id resolution in SQLite
+    let subagent_rows: Vec<(String, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as(
+            "SELECT external_id, turn_kind, agent_role, parent_turn_id FROM conversation_turns WHERE turn_kind = 'subagent' ORDER BY turn_index ASC",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(subagent_rows.len(), 15);
+    for (ext_id, kind, role, parent_id) in &subagent_rows {
+        assert_eq!(kind.as_deref(), Some("subagent"));
+        assert!(role.is_some(), "agent_role must be persisted for {ext_id}");
+        assert!(
+            parent_id.is_some(),
+            "parent_turn_id must be resolved for {ext_id}"
+        );
+    }
+
+    // Verify index on conversation_turns exists
+    let index_rows: Vec<(i64, String, i64, String, i64)> =
+        sqlx::query_as("PRAGMA index_list(conversation_turns)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(
+        !index_rows.is_empty(),
+        "Indices must exist on conversation_turns"
+    );
+
+    // 4. Domain session detail loading and question grouping
+    let sessions =
+        list_conversation_sessions_sqlx(&pool, "default", None, Some(&source.id), None, 10, 0)
+            .await
+            .unwrap();
+    assert_eq!(sessions.len(), 1);
+    let session_id = &sessions[0].session.id;
+
+    let detail = load_conversation_session_detail_sqlx(&pool, "default", session_id)
+        .await
+        .unwrap();
+
+    // Must group into exactly 3 questions
+    assert_eq!(
+        detail.questions.len(),
+        3,
+        "Must produce exactly 3 questions"
+    );
+
+    // Question 1: 15 turns
+    assert_eq!(detail.questions[0].turns.len(), 15);
+    assert_eq!(
+        detail.questions[0].question.title.as_deref(),
+        Some("Please analyze the concurrency bottlenecks in our database layer."),
+        "Question 1 title must be from root user turn"
+    );
+    assert!(!detail.questions[0].turns[0].is_subagent());
+    for t in &detail.questions[0].turns[1..=12] {
+        assert!(t.is_subagent());
+        assert_eq!(t.turn_kind.as_deref(), Some("subagent"));
+        assert!(t.agent_role.is_some());
+    }
+    assert!(detail.questions[0].turns[13].is_continuation());
+    assert!(detail.questions[0].turns[14].is_continuation());
+
+    // Question 2: 4 turns
+    assert_eq!(detail.questions[1].turns.len(), 4);
+    assert_eq!(
+        detail.questions[1].question.title.as_deref(),
+        Some("Now implement the cache layer for query results."),
+        "Question 2 title must be from second user turn"
+    );
+    assert!(!detail.questions[1].turns[0].is_subagent());
+    for t in &detail.questions[1].turns[1..=3] {
+        assert!(t.is_subagent());
+        assert_eq!(t.turn_kind.as_deref(), Some("subagent"));
+        assert_eq!(t.agent_role.as_deref(), Some("cache-architect"));
+    }
+
+    // Question 3: 1 turn
+    assert_eq!(detail.questions[2].turns.len(), 1);
+    assert_eq!(
+        detail.questions[2].question.title.as_deref(),
+        Some("Are all performance targets met?"),
+        "Question 3 title must be from third user turn"
+    );
+    assert!(!detail.questions[2].turns[0].is_subagent());
+
+    // 5. Verify list_conversation_question_details_sqlx matches
+    let q_details =
+        super::list_conversation_question_details_sqlx(&pool, "default", session_id, None, 10, 0)
+            .await
+            .unwrap();
+    assert_eq!(q_details.len(), 3);
+    assert_eq!(q_details[0].turns.len(), 15);
+    assert_eq!(q_details[1].turns.len(), 4);
+    assert_eq!(q_details[2].turns.len(), 1);
 }

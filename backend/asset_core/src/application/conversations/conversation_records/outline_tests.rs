@@ -139,6 +139,7 @@ async fn test_conversation_outline_and_card_get_full_suite() {
                         metadata_json: None,
                     },
                 ],
+                ..Default::default()
             },
             NormalizedConversationTurn {
                 external_id: "turn-ext-outline-02".to_string(),
@@ -162,6 +163,7 @@ async fn test_conversation_outline_and_card_get_full_suite() {
                     content_card: None,
                     metadata_json: None,
                 }],
+                ..Default::default()
             },
         ],
         ..Default::default()

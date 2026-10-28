@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-25T00:00:00Z",
+  "updated_at": "2026-10-28T00:00:00Z",
   "items": [
     {
       "id": "io.github.util6.codex-session",
@@ -16,7 +16,7 @@
         "codex",
         "node"
       ],
-      "expected_package_hash": "a5c5cb50f9171e7d384ea99789a8e7e5c25798aa6f8f810c089abb9384596b30",
+      "expected_package_hash": "dcfcb8f643557ffac1dcb6d4adcd9c4fd49343b6525804b8d8f6aeefa7795f94",
       "expected_content_hash": "51053c265f4a4c158e2ac6a7f2f0671203e7001452f83b39a2694b832d4bdcc8",
       "source": {
         "type": "github",
@@ -38,7 +38,7 @@
         "sqlite",
         "node"
       ],
-      "expected_package_hash": "e09e981a8a41a34227f1c4be479a779798944bde82f7d7d21baa1a59442e1595",
+      "expected_package_hash": "3ddc0e084e028772025c7a96c7d0552701ccd8c6bfcb8a3f900527d6e1533bd9",
       "expected_content_hash": "c5a17ca30a1cce031528ecea7ed0bfa51ad1d748f098de44a394dac2c1d4e3b5",
       "source": {
         "type": "github",
@@ -59,7 +59,7 @@
         "claude-code",
         "node"
       ],
-      "expected_package_hash": "d41ff056ea3e1536752ff7a5e15ee3bf7e477f7c2c21bda820eac410c4aac7cf",
+      "expected_package_hash": "f4c13a5578bb554552fdaff6c4232127a328837b5986805a984dfdf7f48364f2",
       "expected_content_hash": "17aff181d7013a2f4dd696d582707ec0448aaf8e42db9aa0c71a7b15919553be",
       "source": {
         "type": "github",

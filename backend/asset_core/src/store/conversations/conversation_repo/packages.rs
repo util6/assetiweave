@@ -203,14 +203,6 @@ pub async fn deactivate_conversation_adapter_package_sqlx(
     .await
     .map_err(StoreError::external)?;
     sqlx::query(
-        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE source_id IN (SELECT id FROM conversation_sources WHERE adapter_id = ?2)",
-    )
-    .bind(&now)
-    .bind(adapter_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(StoreError::external)?;
-    sqlx::query(
         r#"
         UPDATE app_conversation_adapter_packages
         SET runtime_ready = 0,
@@ -407,24 +399,4 @@ pub async fn delete_conversation_adapter_package_version_sqlx(
     }
     tx.commit().await.map_err(StoreError::external)?;
     Ok(true)
-}
-
-pub async fn has_running_conversation_sync_for_adapter_sqlx(
-    pool: &SqlitePool,
-    adapter_id: &str,
-) -> StoreResult<bool> {
-    sqlx::query_scalar::<_, i64>(
-        r#"
-        SELECT EXISTS(
-            SELECT 1
-            FROM conversation_sync_runs
-            WHERE adapter_id = ?1 AND status = 'running'
-        )
-        "#,
-    )
-    .bind(adapter_id)
-    .fetch_one(pool)
-    .await
-    .map(|value| value == 1)
-    .map_err(StoreError::external)
 }

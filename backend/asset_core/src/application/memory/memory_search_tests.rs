@@ -95,6 +95,7 @@ async fn insert_test_source_and_session(
                 content_card: None,
                 metadata_json: None,
             }],
+            ..Default::default()
         }],
         ..Default::default()
     };

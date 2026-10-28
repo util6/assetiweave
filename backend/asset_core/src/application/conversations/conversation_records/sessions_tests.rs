@@ -137,6 +137,7 @@ async fn test_conversation_session_outline_folding_and_universal_resolver() {
                         metadata_json: None,
                     },
                 ],
+                ..Default::default()
             },
             NormalizedConversationTurn {
                 external_id: "turn-ext-02".to_string(),
@@ -160,6 +161,7 @@ async fn test_conversation_session_outline_folding_and_universal_resolver() {
                     content_card: None,
                     metadata_json: None,
                 }],
+                ..Default::default()
             },
         ],
         ..Default::default()
@@ -321,6 +323,7 @@ async fn test_conversation_session_get_roles_filter_and_short_id_block_get() {
                     metadata_json: None,
                 },
             ],
+            ..Default::default()
         }],
         ..Default::default()
     };
@@ -469,6 +472,7 @@ fn read_path_turn(
                 r#"{"content_card":{"type":"answer","format":"markdown"}}"#.to_string(),
             ),
         }],
+        ..Default::default()
     }
 }
 

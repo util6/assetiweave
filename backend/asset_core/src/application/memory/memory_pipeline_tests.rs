@@ -337,6 +337,7 @@ async fn test_has_pending_memory_work_respects_window_and_internal_filter() {
             ended_at: Some(ts_expired.clone()),
             model: None,
             parts: vec![],
+            ..Default::default()
         }],
         execution_origin: None,
         execution_purpose: None,
@@ -365,6 +366,7 @@ async fn test_has_pending_memory_work_respects_window_and_internal_filter() {
             ended_at: Some((now - chrono::Duration::hours(1)).to_rfc3339()),
             model: None,
             parts: vec![],
+            ..Default::default()
         }],
         execution_origin: Some("internal_agent".to_string()),
         execution_purpose: None,
@@ -406,6 +408,7 @@ async fn test_has_pending_memory_work_respects_window_and_internal_filter() {
             ended_at: Some(ts_active.clone()),
             model: None,
             parts: vec![],
+            ..Default::default()
         }],
         execution_origin: None,
         execution_purpose: None,
