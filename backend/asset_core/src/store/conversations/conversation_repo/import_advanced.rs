@@ -66,8 +66,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
     .await
     .map_err(StoreError::external)?
     .flatten();
-    let force_reparse =
-        stored_payload_policy_version != Some(i64::from(payload_policy_version));
+    let force_reparse = stored_payload_policy_version != Some(i64::from(payload_policy_version));
     let sync_run_id = stable_id("conversation-sync", &[&source.id, &now]);
     let mut skipped_session_count = 0usize;
     let mut changed_session_count = 0usize;
