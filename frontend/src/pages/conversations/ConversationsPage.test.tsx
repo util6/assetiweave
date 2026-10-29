@@ -1613,6 +1613,47 @@ describe("MarkdownContent", () => {
     expect(renderedTurnIds).toEqual(["turn-child"]);
   });
 
+  it("keeps subagents out of the main turn view because the rail already lists them", () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        disconnect() {}
+        observe() {}
+        unobserve() {}
+      },
+    );
+    const question = subagentTreeFixture();
+    const { container } = render(
+      <SessionQuestionWorkspace
+        contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
+        onExport={vi.fn()}
+        onPickOutputRoot={async () => null}
+        onQuestionSelect={vi.fn()}
+        onQuestionSelectionChange={vi.fn()}
+        outputRoot="/tmp/conversation-export"
+        question={question}
+        questions={[question]}
+        selectedQuestionId={question.question.id}
+        selectedQuestionIds={new Set()}
+        session={{ ...sessionDetail, questions: [question] }}
+        setOutputRoot={vi.fn()}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    const renderedTurnIds = [
+      ...container.querySelectorAll("[data-conversation-turn-id]"),
+    ].map((node) => node.getAttribute("data-conversation-turn-id"));
+    expect(renderedTurnIds).toEqual(["turn-root"]);
+  });
+
   it("renders structured loading surfaces before a session detail arrives", () => {
     const html = renderToStaticMarkup(
       <SessionQuestionWorkspace

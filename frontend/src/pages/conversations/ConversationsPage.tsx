@@ -2583,14 +2583,31 @@ export function SessionQuestionWorkspace({
     string | null
   >(null);
   const focusedQuestion = useMemo(() => {
-    if (!selectedTurnId || !question) return question;
-    const turn = question.turns.find((item) => item.id === selectedTurnId);
-    if (!turn) return question;
+    if (!question) return question;
+    if (selectedTurnId) {
+      const turn = question.turns.find((item) => item.id === selectedTurnId);
+      if (turn) {
+        return {
+          ...question,
+          turns: [turn],
+          projected_content_nodes: question.projected_content_nodes.filter(
+            (node) => node.turn_id === turn.id,
+          ),
+        };
+      }
+    }
+    // 子代理已在左栏独立成行，右侧默认视图只保留主 Turn，避免同一批内容在两处出现。
+    const mainTurns = question.turns.filter(
+      (item) => item.turn_kind !== "subagent" && item.turn_kind !== "agent",
+    );
+    if (mainTurns.length === 0 || mainTurns.length === question.turns.length)
+      return question;
+    const mainTurnIds = new Set(mainTurns.map((item) => item.id));
     return {
       ...question,
-      turns: [turn],
-      projected_content_nodes: question.projected_content_nodes.filter(
-        (node) => node.turn_id === turn.id,
+      turns: mainTurns,
+      projected_content_nodes: question.projected_content_nodes.filter((node) =>
+        mainTurnIds.has(node.turn_id),
       ),
     };
   }, [question, selectedTurnId]);

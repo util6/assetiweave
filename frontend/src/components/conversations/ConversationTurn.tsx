@@ -61,7 +61,7 @@ export function buildConversationTurnPresentations(
         ),
       ),
       projectionByPartId,
-    );
+    ).filter(isRenderableConversationDisplayNode);
 
     return {
       blocks: [],
@@ -106,6 +106,18 @@ function assignTierHeaders(presentations: ConversationTurnPresentation[]) {
       tier: presentation.depth,
     };
   }
+}
+
+/**
+ * 子代理已作为独立 Turn 呈现，早期适配器写入的 *.subagent JSON 卡片属于存量遗留，
+ * 继续渲染会让同一批委派内容在正文里重复出现，这里在展示层直接丢弃。
+ */
+function isRenderableConversationDisplayNode(
+  node: ConversationDisplayNode,
+): boolean {
+  if (node.type !== "card") return true;
+  const kind = (node.block.kind ?? "").trim().toLowerCase();
+  return !kind.includes("subagent");
 }
 
 function linkTurnParents(presentations: ConversationTurnPresentation[]) {
