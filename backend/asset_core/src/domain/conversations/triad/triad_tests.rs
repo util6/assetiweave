@@ -894,3 +894,37 @@ fn test_promote_trailing_assistant_output_recovers_subagent_report() {
     )]);
     assert_eq!(direct.response.as_deref(), Some("子代理汇报"));
 }
+
+#[test]
+fn test_turn_process_sparse_fields_and_is_empty() {
+    let empty_process = TurnProcess::default();
+    assert!(empty_process.is_empty());
+
+    let mut with_title = TurnProcess::default();
+    with_title.title = Some("Subagent Task".to_string());
+    assert!(!with_title.is_empty());
+    let json = serde_json::to_string(&with_title).unwrap();
+    assert_eq!(json, r#"{"title":"Subagent Task"}"#);
+
+    let mut with_subagent = TurnProcess::default();
+    with_subagent.turn_kind = Some("subagent".to_string());
+    with_subagent.agent_role = Some("researcher".to_string());
+    with_subagent.parent_turn_id = Some("turn-parent-1".to_string());
+    assert!(!with_subagent.is_empty());
+    let json_sub = serde_json::to_string(&with_subagent).unwrap();
+    assert!(json_sub.contains(r#""turn_kind":"subagent""#));
+    assert!(json_sub.contains(r#""agent_role":"researcher""#));
+    assert!(json_sub.contains(r#""parent_turn_id":"turn-parent-1""#));
+    assert!(!json_sub.contains(r#""title""#));
+    assert!(!json_sub.contains(r#""cwd""#));
+    assert!(!json_sub.contains(r#""items""#));
+
+    let deserialized: TurnProcess = serde_json::from_str(&json_sub).unwrap();
+    assert_eq!(deserialized.turn_kind.as_deref(), Some("subagent"));
+    assert_eq!(deserialized.agent_role.as_deref(), Some("researcher"));
+    assert_eq!(
+        deserialized.parent_turn_id.as_deref(),
+        Some("turn-parent-1")
+    );
+    assert_eq!(deserialized.title, None);
+}

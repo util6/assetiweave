@@ -169,22 +169,24 @@ pub(super) async fn prepare_turn_for_import_sqlx_tx(
     .await
     .map_err(StoreError::external)?;
 
+    let mut old_process: Option<crate::backend::domain::conversations::triad::TurnProcess> = None;
     if let Some((Some(old_process_json), old_response)) = old_row {
-        if let Ok(old_process) = serde_json::from_str::<
+        if let Ok(parsed_old) = serde_json::from_str::<
             crate::backend::domain::conversations::triad::TurnProcess,
         >(&old_process_json)
         {
             if old_response.as_deref() == triad.response.as_deref() {
-                if let Some(ref mut new_p) = triad.process {
-                    if new_p.response_translated_text.is_none() {
-                        new_p.response_translated_text = old_process.response_translated_text;
+                if let Some(ref old_trans) = parsed_old.response_translated_text {
+                    let p = triad.process.get_or_insert_with(Default::default);
+                    if p.response_translated_text.is_none() {
+                        p.response_translated_text = Some(old_trans.clone());
                     }
                 }
             }
             if let Some(ref mut new_p) = triad.process {
                 for new_item in &mut new_p.items {
                     if new_item.translated_text.is_none() {
-                        if let Some(old_item) = old_process
+                        if let Some(old_item) = parsed_old
                             .items
                             .iter()
                             .find(|i| i.seq == new_item.seq && i.content == new_item.content)
@@ -194,24 +196,59 @@ pub(super) async fn prepare_turn_for_import_sqlx_tx(
                     }
                 }
             }
+            old_process = Some(parsed_old);
+        }
+    }
+
+    let parent_turn_id = normalized
+        .parent_external_id
+        .as_deref()
+        .map(|parent_ext_id| stable_id("conversation-turn", &[session_id, parent_ext_id]))
+        .or_else(|| old_process.as_ref().and_then(|p| p.parent_turn_id.clone()));
+    let title = normalized
+        .title
+        .clone()
+        .or_else(|| old_process.as_ref().and_then(|p| p.title.clone()));
+    let turn_kind = normalized
+        .turn_kind
+        .clone()
+        .or_else(|| old_process.as_ref().and_then(|p| p.turn_kind.clone()));
+    let agent_role = normalized
+        .agent_role
+        .clone()
+        .or_else(|| old_process.as_ref().and_then(|p| p.agent_role.clone()));
+
+    let has_sparse_meta =
+        title.is_some() || turn_kind.is_some() || agent_role.is_some() || parent_turn_id.is_some();
+
+    if has_sparse_meta {
+        let p = triad.process.get_or_insert_with(Default::default);
+        if title.is_some() {
+            p.title = title.clone();
+        }
+        if turn_kind.is_some() {
+            p.turn_kind = turn_kind.clone();
+        }
+        if agent_role.is_some() {
+            p.agent_role = agent_role.clone();
+        }
+        if parent_turn_id.is_some() {
+            p.parent_turn_id = parent_turn_id.clone();
         }
     }
 
     let process_json = triad
         .process
         .as_ref()
+        .filter(|p| !p.is_empty())
         .map(|p| serde_json::to_string(p).unwrap_or_default());
-    let parent_turn_id = normalized
-        .parent_external_id
-        .as_deref()
-        .map(|parent_ext_id| stable_id("conversation-turn", &[session_id, parent_ext_id]));
     let turn = ConversationTurn {
         id: stable_id("conversation-turn", &[session_id, &normalized.external_id]),
         session_id: session_id.to_string(),
         external_id: normalized.external_id.clone(),
         turn_index: normalized.turn_index,
         prompt: triad.prompt,
-        title: normalized.title.clone(),
+        title,
         started_at: normalized.started_at.clone(),
         ended_at: normalized.ended_at.clone(),
         fingerprint: conversation_turn_fingerprint(normalized),
@@ -220,8 +257,8 @@ pub(super) async fn prepare_turn_for_import_sqlx_tx(
         model: normalized.model.clone(),
         process: process_json,
         response: triad.response,
-        turn_kind: normalized.turn_kind.clone(),
-        agent_role: normalized.agent_role.clone(),
+        turn_kind,
+        agent_role,
         parent_turn_id,
     };
 

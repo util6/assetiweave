@@ -247,6 +247,18 @@ pub fn map_sqlx_conversation_session(row: &SqliteRow) -> StoreResult<Conversatio
         .into_domain())
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct TurnProcessSparseMeta {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    turn_kind: Option<String>,
+    #[serde(default)]
+    agent_role: Option<String>,
+    #[serde(default)]
+    parent_turn_id: Option<String>,
+}
+
 #[derive(Debug, Clone, FromRow)]
 pub(crate) struct ConversationTurnRow {
     id: String,
@@ -256,19 +268,12 @@ pub(crate) struct ConversationTurnRow {
     prompt: String,
     process: Option<String>,
     response: Option<String>,
-    title: Option<String>,
     started_at: Option<String>,
     ended_at: Option<String>,
     fingerprint: String,
     missing: i64,
     imported_at: String,
     model: Option<String>,
-    #[sqlx(default)]
-    turn_kind: Option<String>,
-    #[sqlx(default)]
-    agent_role: Option<String>,
-    #[sqlx(default)]
-    parent_turn_id: Option<String>,
 }
 
 impl ConversationTurnRow {
@@ -277,13 +282,20 @@ impl ConversationTurnRow {
     }
 
     fn into_domain(self) -> ConversationTurn {
+        let (title, turn_kind, agent_role, parent_turn_id) = self
+            .process
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<TurnProcessSparseMeta>(s).ok())
+            .map(|m| (m.title, m.turn_kind, m.agent_role, m.parent_turn_id))
+            .unwrap_or_default();
+
         ConversationTurn {
             id: self.id,
             session_id: self.session_id,
             external_id: self.external_id,
             turn_index: self.turn_index,
             prompt: self.prompt,
-            title: self.title,
+            title,
             started_at: self.started_at,
             ended_at: self.ended_at,
             fingerprint: self.fingerprint,
@@ -292,9 +304,9 @@ impl ConversationTurnRow {
             model: self.model,
             process: self.process,
             response: self.response,
-            turn_kind: self.turn_kind,
-            agent_role: self.agent_role,
-            parent_turn_id: self.parent_turn_id,
+            turn_kind,
+            agent_role,
+            parent_turn_id,
         }
     }
 }

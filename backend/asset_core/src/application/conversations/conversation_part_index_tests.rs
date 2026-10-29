@@ -23,9 +23,9 @@ async fn seed_indexed_session(service: &AppService, session_id: &str, body: &str
     sqlx::query(
         r#"
         INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, prompt, title,
+            tenant_id, id, session_id, external_id, turn_index, prompt,
             started_at, ended_at, fingerprint, missing, imported_at
-        ) VALUES (?1, ?2, ?3, ?2, 0, 'index rebuild probe', NULL, NULL, NULL,
+        ) VALUES (?1, ?2, ?3, ?2, 0, 'index rebuild probe', NULL, NULL,
                   'fixture-fingerprint', 0, '2026-10-23T00:00:00Z')
         "#,
     )

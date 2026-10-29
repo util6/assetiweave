@@ -174,16 +174,12 @@ async fn conversation_question_contract_contains_only_stable_metadata() {
         "prompt",
         "process",
         "response",
-        "title",
         "started_at",
         "ended_at",
         "model",
         "fingerprint",
         "missing",
         "imported_at",
-        "turn_kind",
-        "agent_role",
-        "parent_turn_id",
     ];
     for table in ["conversation_turns", "web_record_turns"] {
         let columns = conn
@@ -195,11 +191,15 @@ async fn conversation_question_contract_contains_only_stable_metadata() {
             .expect("query turn columns")
             .collect::<Result<Vec<_>, _>>()
             .expect("collect turn columns");
-        assert_eq!(columns.len(), 18, "{table} 必须严格为 18 列终态结构");
+        assert_eq!(columns.len(), 14, "{table} 必须严格为 14 列终态结构");
         assert_eq!(
             columns, expected_turn_cols,
-            "{table} 列名与顺序必须严格与 18 列终态一致"
+            "{table} 列名与顺序必须严格与 14 列终态一致"
         );
+        assert!(!columns.contains(&"title".to_string()));
+        assert!(!columns.contains(&"turn_kind".to_string()));
+        assert!(!columns.contains(&"agent_role".to_string()));
+        assert!(!columns.contains(&"parent_turn_id".to_string()));
         assert!(!columns.contains(&"question_id".to_string()));
         assert!(!columns.contains(&"question_origin".to_string()));
     }
@@ -340,10 +340,10 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
             );
             INSERT INTO conversation_turns (
                 tenant_id, id, session_id, external_id, turn_index, prompt, user_text,
-                title, started_at, ended_at, fingerprint, missing, imported_at
+                started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 'default', 'legacy-turn', 'legacy-session', 'legacy-turn-external', 0,
-                'Legacy question snapshot', 'Legacy question snapshot', NULL, NULL, NULL, 'legacy-turn-fingerprint', 0,
+                'Legacy question snapshot', 'Legacy question snapshot', NULL, NULL, 'legacy-turn-fingerprint', 0,
                 '2026-08-25T00:00:00Z'
             );
             INSERT INTO conversation_question_turns (
@@ -355,10 +355,10 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
             );
             INSERT INTO web_record_turns (
                 tenant_id, id, session_id, external_id, turn_index, prompt, user_text,
-                title, started_at, ended_at, fingerprint, missing, imported_at
+                started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 'default', 'legacy-web-turn', 'legacy-web-session',
-                'legacy-web-turn-external', 0, 'Legacy web question snapshot', 'Legacy web question snapshot', NULL,
+                'legacy-web-turn-external', 0, 'Legacy web question snapshot', 'Legacy web question snapshot',
                 NULL, NULL, 'legacy-web-turn-fingerprint', 0,
                 '2026-08-25T00:00:00Z'
             );
@@ -1350,11 +1350,11 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, prompt, title,
+                tenant_id, id, session_id, external_id, turn_index, prompt,
                 started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 'default', 'part-index-turn', 'part-index-session', 'part-index-turn-external',
-                0, 'Part index question', NULL, NULL, NULL, 'part-index-fingerprint', 0,
+                0, 'Part index question', NULL, NULL, 'part-index-fingerprint', 0,
                 '2026-10-23T00:00:00Z'
             );
             CREATE TABLE conversation_parts_old (
@@ -1426,11 +1426,11 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO web_record_turns (
-                tenant_id, id, session_id, external_id, turn_index, prompt, title,
+                tenant_id, id, session_id, external_id, turn_index, prompt,
                 started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
                 'default', 'part-index-web-turn', 'part-index-web-session',
-                'part-index-web-turn-external', 0, 'Part index web question', NULL, NULL, NULL,
+                'part-index-web-turn-external', 0, 'Part index web question', NULL, NULL,
                 'part-index-web-fingerprint', 0, '2026-10-23T00:00:00Z'
             );
             INSERT INTO web_record_parts (
@@ -1753,9 +1753,13 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
             .expect("collect columns");
         assert_eq!(
             columns.len(),
-            18,
-            "{table} 必须为 18 列终态 (含子 Agent 字段)"
+            14,
+            "{table} 必须为 14 列终态 (稀疏字段内聚至 process JSON)"
         );
+        assert!(!columns.contains(&"title".to_string()));
+        assert!(!columns.contains(&"turn_kind".to_string()));
+        assert!(!columns.contains(&"agent_role".to_string()));
+        assert!(!columns.contains(&"parent_turn_id".to_string()));
         assert!(!columns.contains(&"question_id".to_string()));
         assert!(!columns.contains(&"question_origin".to_string()));
     }
@@ -2426,15 +2430,16 @@ async fn acceptance_spec_126_turn_triad_schema_and_parts_slimming() {
     };
     assert_eq!(
         turn_cols.len(),
-        18,
-        "conversation_turns 必须严格为 18 列 (包含 turn_kind, agent_role, parent_turn_id)"
+        14,
+        "conversation_turns 必须严格为 14 列终态结构"
     );
     assert!(turn_cols.contains(&"prompt".to_string()));
     assert!(turn_cols.contains(&"process".to_string()));
     assert!(turn_cols.contains(&"response".to_string()));
-    assert!(turn_cols.contains(&"turn_kind".to_string()));
-    assert!(turn_cols.contains(&"agent_role".to_string()));
-    assert!(turn_cols.contains(&"parent_turn_id".to_string()));
+    assert!(!turn_cols.contains(&"title".to_string()));
+    assert!(!turn_cols.contains(&"turn_kind".to_string()));
+    assert!(!turn_cols.contains(&"agent_role".to_string()));
+    assert!(!turn_cols.contains(&"parent_turn_id".to_string()));
     assert!(!turn_cols.contains(&"user_text".to_string()));
     assert!(!turn_cols.contains(&"question_id".to_string()));
     assert!(!turn_cols.contains(&"question_origin".to_string()));
@@ -2705,6 +2710,274 @@ async fn acceptance_spec_126_turn_triad_schema_and_parts_slimming() {
     assert_eq!(p5_kind, "codex.code");
 
     // 6. 幂等性断言：再次运行 migrate_database 零副作用
+    drop(conn);
+    migrate_database(&db_path)
+        .await
+        .expect("idempotent migration");
+
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn acceptance_spec_157_turn_sparse_columns_convergence_and_14_col_slimming() {
+    let db_path = temp_database_path("spec-157-sparse-turns-convergence");
+    migrate_database(&db_path).await.expect("initial migration");
+
+    let conn = Connection::open(&db_path).expect("open database");
+
+    // 1. 验证 PRAGMA table_info 为 14 列纯净终态
+    let turn_cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(conversation_turns)")
+            .expect("prepare pragma");
+        let rows = stmt
+            .query_map([], |row| row.get(1))
+            .expect("query map")
+            .collect::<Result<Vec<String>, _>>()
+            .expect("collect cols");
+        rows
+    };
+    assert_eq!(
+        turn_cols.len(),
+        14,
+        "conversation_turns 必须严格为 14 列终态结构"
+    );
+    assert!(!turn_cols.contains(&"title".to_string()));
+    assert!(!turn_cols.contains(&"turn_kind".to_string()));
+    assert!(!turn_cols.contains(&"agent_role".to_string()));
+    assert!(!turn_cols.contains(&"parent_turn_id".to_string()));
+
+    let web_turn_cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(web_record_turns)")
+            .expect("prepare pragma");
+        let rows = stmt
+            .query_map([], |row| row.get(1))
+            .expect("query map")
+            .collect::<Result<Vec<String>, _>>()
+            .expect("collect cols");
+        rows
+    };
+    assert_eq!(
+        turn_cols, web_turn_cols,
+        "conversation_turns 与 web_record_turns 列结构必须 100% 同构对齐"
+    );
+
+    // 2. 模拟 18 列存量历史数据场景并验证迁移无损转换
+    conn.execute_batch(
+        r#"
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE conversation_turns_pre_157 (
+            tenant_id       TEXT NOT NULL DEFAULT 'default',
+            id              TEXT NOT NULL,
+            session_id      TEXT NOT NULL,
+            external_id     TEXT NOT NULL,
+            turn_index      INTEGER NOT NULL,
+            prompt          TEXT NOT NULL DEFAULT '',
+            process         TEXT,
+            response        TEXT,
+            title           TEXT,
+            started_at      TEXT,
+            ended_at        TEXT,
+            model           TEXT,
+            fingerprint     TEXT NOT NULL,
+            missing         INTEGER NOT NULL DEFAULT 0,
+            imported_at     TEXT NOT NULL,
+            turn_kind       TEXT,
+            agent_role      TEXT,
+            parent_turn_id  TEXT,
+            PRIMARY KEY (tenant_id, id),
+            UNIQUE (tenant_id, session_id, external_id)
+        );
+
+        INSERT INTO conversation_turns_pre_157 VALUES
+          ('default', 'turn-normal', 'sess-1', 'ext-normal', 0, 'Hi', NULL, 'Hello', NULL, NULL, NULL, 'gpt', 'fp-1', 0, '2026-10-29', NULL, NULL, NULL),
+          ('default', 'turn-cont', 'sess-1', 'ext-cont', 1, 'Continue', '{"cwd":"/app"}', 'Done', NULL, NULL, NULL, 'gpt', 'fp-2', 0, '2026-10-29', 'continuation', NULL, NULL),
+          ('default', 'turn-sub-cmd', 'sess-1', 'ext-sub-1', 2, 'Do subtask', '{"cwd":"/repo","items":[{"seq":1,"kind":"cmd"}]}', 'Subdone', 'Subtask 1', NULL, NULL, 'gpt', 'fp-3', 0, '2026-10-29', 'subagent', 'auditor', 'turn-normal'),
+          ('default', 'turn-sub-txt', 'sess-1', 'ext-sub-2', 3, 'Pure text sub', NULL, 'Text report', 'Pure Text', NULL, NULL, 'gpt', 'fp-4', 0, '2026-10-29', 'subagent', 'reviewer', 'turn-normal');
+
+        DROP TABLE conversation_turns;
+        ALTER TABLE conversation_turns_pre_157 RENAME TO conversation_turns;
+        CREATE INDEX idx_conversation_turns_tenant_session ON conversation_turns (tenant_id, session_id);
+
+        CREATE TABLE web_record_turns_pre_157 (
+            tenant_id       TEXT NOT NULL DEFAULT 'default',
+            id              TEXT NOT NULL,
+            session_id      TEXT NOT NULL,
+            external_id     TEXT NOT NULL,
+            turn_index      INTEGER NOT NULL,
+            prompt          TEXT NOT NULL DEFAULT '',
+            process         TEXT,
+            response        TEXT,
+            title           TEXT,
+            started_at      TEXT,
+            ended_at        TEXT,
+            model           TEXT,
+            fingerprint     TEXT NOT NULL,
+            missing         INTEGER NOT NULL DEFAULT 0,
+            imported_at     TEXT NOT NULL,
+            turn_kind       TEXT,
+            agent_role      TEXT,
+            parent_turn_id  TEXT,
+            PRIMARY KEY (tenant_id, id),
+            UNIQUE (tenant_id, session_id, external_id)
+        );
+
+        INSERT INTO web_record_turns_pre_157 VALUES
+          ('default', 'web-turn-normal', 'web-sess-1', 'web-ext-normal', 0, 'Hi web', NULL, 'Hello web', NULL, NULL, NULL, 'gpt', 'fp-w1', 0, '2026-10-29', NULL, NULL, NULL),
+          ('default', 'web-turn-sub', 'web-sess-1', 'web-ext-sub', 1, 'Web subagent', '{"cwd":"/web"}', 'Web done', 'Web Task', NULL, NULL, 'gpt', 'fp-w2', 0, '2026-10-29', 'subagent', 'browser', 'web-turn-normal');
+
+        DROP TABLE web_record_turns;
+        ALTER TABLE web_record_turns_pre_157 RENAME TO web_record_turns;
+        CREATE INDEX idx_web_record_turns_tenant_session ON web_record_turns (tenant_id, session_id);
+        PRAGMA foreign_keys = ON;
+        "#,
+    ).expect("setup pre-157 18-col table");
+
+    // 运行迁移脚本
+    let migration_sql =
+        include_str!("../../migrations/20261029000001_converge_turn_sparse_columns_to_process.sql");
+    conn.execute_batch(migration_sql)
+        .expect("run migration 157");
+
+    // 3. 验证迁移后的行内容
+    // 普通轮次：process 保持 NULL，严禁出现空对象 "{}"
+    let normal_process: Option<String> = conn
+        .query_row(
+            "SELECT process FROM conversation_turns WHERE id = 'turn-normal'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query normal process");
+    assert_eq!(normal_process, None, "普通轮次 process 必须保持 NULL");
+
+    // 续接轮次：保留原有 cwd，并补齐 turn_kind
+    let cont_process_str: String = conn
+        .query_row(
+            "SELECT process FROM conversation_turns WHERE id = 'turn-cont'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query cont process");
+    let cont_val: serde_json::Value = serde_json::from_str(&cont_process_str).unwrap();
+    assert_eq!(cont_val.get("cwd").and_then(|v| v.as_str()), Some("/app"));
+    assert_eq!(
+        cont_val.get("turn_kind").and_then(|v| v.as_str()),
+        Some("continuation")
+    );
+    assert!(cont_val.get("title").is_none());
+    assert!(cont_val.get("agent_role").is_none());
+    assert!(cont_val.get("parent_turn_id").is_none());
+
+    // 子代理有命令项轮次：原有 items/cwd 与稀疏字段协同保留
+    let sub_cmd_str: String = conn
+        .query_row(
+            "SELECT process FROM conversation_turns WHERE id = 'turn-sub-cmd'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query sub cmd process");
+    let sub_cmd_val: serde_json::Value = serde_json::from_str(&sub_cmd_str).unwrap();
+    assert_eq!(
+        sub_cmd_val.get("cwd").and_then(|v| v.as_str()),
+        Some("/repo")
+    );
+    assert_eq!(
+        sub_cmd_val.get("title").and_then(|v| v.as_str()),
+        Some("Subtask 1")
+    );
+    assert_eq!(
+        sub_cmd_val.get("turn_kind").and_then(|v| v.as_str()),
+        Some("subagent")
+    );
+    assert_eq!(
+        sub_cmd_val.get("agent_role").and_then(|v| v.as_str()),
+        Some("auditor")
+    );
+    assert_eq!(
+        sub_cmd_val.get("parent_turn_id").and_then(|v| v.as_str()),
+        Some("turn-normal")
+    );
+    assert_eq!(
+        sub_cmd_val
+            .get("items")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len()),
+        Some(1)
+    );
+
+    // 纯文本子代理轮次（原本 process 为 NULL）：精简生成包含非空元数据的 process JSON
+    let sub_txt_str: String = conn
+        .query_row(
+            "SELECT process FROM conversation_turns WHERE id = 'turn-sub-txt'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query sub txt process");
+    let sub_txt_val: serde_json::Value = serde_json::from_str(&sub_txt_str).unwrap();
+    assert_eq!(
+        sub_txt_val.get("title").and_then(|v| v.as_str()),
+        Some("Pure Text")
+    );
+    assert_eq!(
+        sub_txt_val.get("turn_kind").and_then(|v| v.as_str()),
+        Some("subagent")
+    );
+    assert_eq!(
+        sub_txt_val.get("agent_role").and_then(|v| v.as_str()),
+        Some("reviewer")
+    );
+    assert_eq!(
+        sub_txt_val.get("parent_turn_id").and_then(|v| v.as_str()),
+        Some("turn-normal")
+    );
+    assert!(sub_txt_val.get("cwd").is_none());
+    assert!(sub_txt_val.get("items").is_none());
+
+    // web record 验证：包含旧 title 和子代理字段的行被无损内聚至 process JSON
+    let web_sub_str: String = conn
+        .query_row(
+            "SELECT process FROM web_record_turns WHERE id = 'web-turn-sub'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query web sub process");
+    let web_sub_val: serde_json::Value = serde_json::from_str(&web_sub_str).unwrap();
+    assert_eq!(
+        web_sub_val.get("cwd").and_then(|v| v.as_str()),
+        Some("/web")
+    );
+    assert_eq!(
+        web_sub_val.get("title").and_then(|v| v.as_str()),
+        Some("Web Task")
+    );
+    assert_eq!(
+        web_sub_val.get("turn_kind").and_then(|v| v.as_str()),
+        Some("subagent")
+    );
+    assert_eq!(
+        web_sub_val.get("agent_role").and_then(|v| v.as_str()),
+        Some("browser")
+    );
+    assert_eq!(
+        web_sub_val.get("parent_turn_id").and_then(|v| v.as_str()),
+        Some("web-turn-normal")
+    );
+
+    // web record 普通轮次：process 保持 NULL
+    let web_normal_process: Option<String> = conn
+        .query_row(
+            "SELECT process FROM web_record_turns WHERE id = 'web-turn-normal'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query web normal process");
+    assert_eq!(
+        web_normal_process, None,
+        "Web record 普通轮次 process 必须保持 NULL"
+    );
+
+    // 4. 幂等性断言：再次运行 migrate_database 零副作用
     drop(conn);
     migrate_database(&db_path)
         .await

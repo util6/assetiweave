@@ -323,25 +323,20 @@ pub(super) async fn upsert_conversation_turn_sqlx_tx(
         r#"
         INSERT INTO conversation_turns (
             tenant_id, id, session_id, external_id, turn_index, prompt, process, response,
-            title, started_at, ended_at, fingerprint, missing, imported_at, model,
-            turn_kind, agent_role, parent_turn_id
+            started_at, ended_at, fingerprint, missing, imported_at, model
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         ON CONFLICT(tenant_id, session_id, external_id) DO UPDATE SET
             turn_index = excluded.turn_index,
             prompt = excluded.prompt,
             process = excluded.process,
             response = excluded.response,
-            title = excluded.title,
             started_at = excluded.started_at,
             ended_at = excluded.ended_at,
             fingerprint = excluded.fingerprint,
             missing = 0,
             imported_at = excluded.imported_at,
-            model = excluded.model,
-            turn_kind = excluded.turn_kind,
-            agent_role = excluded.agent_role,
-            parent_turn_id = excluded.parent_turn_id
+            model = excluded.model
         "#,
     )
     .bind(tenant_id)
@@ -352,16 +347,12 @@ pub(super) async fn upsert_conversation_turn_sqlx_tx(
     .bind(&turn.prompt)
     .bind(&turn.process)
     .bind(&turn.response)
-    .bind(&turn.title)
     .bind(&turn.started_at)
     .bind(&turn.ended_at)
     .bind(&turn.fingerprint)
     .bind(if turn.missing { 1_i64 } else { 0_i64 })
     .bind(&turn.imported_at)
     .bind(&turn.model)
-    .bind(&turn.turn_kind)
-    .bind(&turn.agent_role)
-    .bind(&turn.parent_turn_id)
     .execute(&mut **tx)
     .await
     .map_err(StoreError::external)?;

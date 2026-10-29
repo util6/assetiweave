@@ -1183,14 +1183,14 @@ async fn adversarial_stress_test_subagent_sqlite_roundtrip_persistence_and_indic
     assert_eq!(total_turns, 20, "Must persist exactly 20 turns");
 
     let subagent_count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM conversation_turns WHERE turn_kind = 'subagent'")
+        sqlx::query_scalar("SELECT count(*) FROM conversation_turns WHERE json_extract(process, '$.turn_kind') = 'subagent'")
             .fetch_one(&pool)
             .await
             .unwrap();
     assert_eq!(subagent_count, 15, "Must persist exactly 15 subagent turns");
 
     let continuation_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM conversation_turns WHERE turn_kind IN ('continuation', 'main_continuation')",
+        "SELECT count(*) FROM conversation_turns WHERE json_extract(process, '$.turn_kind') IN ('continuation', 'main_continuation')",
     )
     .fetch_one(&pool)
     .await
@@ -1203,7 +1203,7 @@ async fn adversarial_stress_test_subagent_sqlite_roundtrip_persistence_and_indic
     // Verify parent_turn_id resolution in SQLite
     let subagent_rows: Vec<(String, Option<String>, Option<String>, Option<String>)> =
         sqlx::query_as(
-            "SELECT external_id, turn_kind, agent_role, parent_turn_id FROM conversation_turns WHERE turn_kind = 'subagent' ORDER BY turn_index ASC",
+            "SELECT external_id, json_extract(process, '$.turn_kind'), json_extract(process, '$.agent_role'), json_extract(process, '$.parent_turn_id') FROM conversation_turns WHERE json_extract(process, '$.turn_kind') = 'subagent' ORDER BY turn_index ASC",
         )
         .fetch_all(&pool)
         .await

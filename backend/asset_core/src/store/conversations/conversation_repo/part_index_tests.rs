@@ -69,8 +69,8 @@ async fn seed_turn(
         r#"
         INSERT INTO {turns} (
             tenant_id, id, session_id, external_id, turn_index, prompt,
-            title, started_at, ended_at, fingerprint, missing, imported_at
-        ) VALUES (?1, ?2, ?3, ?2, ?4, 'how does indexing work', NULL, NULL, NULL,
+            started_at, ended_at, fingerprint, missing, imported_at
+        ) VALUES (?1, ?2, ?3, ?2, ?4, 'how does indexing work', NULL, NULL,
                   'fixture-fingerprint', 0, '2026-10-23T00:00:00Z')
         "#
     );

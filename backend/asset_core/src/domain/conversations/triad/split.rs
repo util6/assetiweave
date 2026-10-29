@@ -364,6 +364,10 @@ pub fn split_turn_triad(
     } else {
         Some(TurnProcess {
             cwd: common_cwd,
+            title: None,
+            turn_kind: None,
+            agent_role: None,
+            parent_turn_id: None,
             response_seq,
             response_translated_text,
             response_card,

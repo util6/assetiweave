@@ -13,6 +13,14 @@ pub struct TurnProcess {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_seq: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_translated_text: Option<String>,
@@ -24,6 +32,22 @@ pub struct TurnProcess {
     pub response_signal: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<TurnProcessItem>,
+}
+
+impl TurnProcess {
+    pub fn is_empty(&self) -> bool {
+        self.cwd.is_none()
+            && self.title.is_none()
+            && self.turn_kind.is_none()
+            && self.agent_role.is_none()
+            && self.parent_turn_id.is_none()
+            && self.response_seq.is_none()
+            && self.response_translated_text.is_none()
+            && self.response_card.is_none()
+            && self.response_card_kind.is_none()
+            && self.response_signal.is_none()
+            && self.items.is_empty()
+    }
 }
 
 /// A compact command execution node within a turn's process chain.

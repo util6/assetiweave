@@ -3484,10 +3484,10 @@ async fn seed_grouped_turns_without_question_rows(pool: &SqlitePool, source_id: 
         sqlx::query(
             r#"
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, prompt, title,
+                tenant_id, id, session_id, external_id, turn_index, prompt,
                 started_at, ended_at, fingerprint, missing, imported_at
             ) VALUES (
-                ?1, ?2, 'count-session', ?3, ?4, ?5, NULL, NULL, NULL, ?6, 0,
+                ?1, ?2, 'count-session', ?3, ?4, ?5, NULL, NULL, ?6, 0,
                 '2026-10-23T00:00:00Z'
             )
             "#,
@@ -4269,10 +4269,10 @@ async fn test_subagent_turns_save_and_load_persistence_intact() {
         .await
         .unwrap();
 
-    // 1. Direct SQLite column assertions
+    // 1. Direct SQLite process JSON assertions
     let (turn_kind, agent_role, parent_turn_id): (Option<String>, Option<String>, Option<String>) =
         sqlx::query_as(
-            "SELECT turn_kind, agent_role, parent_turn_id FROM conversation_turns WHERE external_id = ?1",
+            "SELECT json_extract(process, '$.turn_kind'), json_extract(process, '$.agent_role'), json_extract(process, '$.parent_turn_id') FROM conversation_turns WHERE external_id = ?1",
         )
         .bind("turn-subagent-worker")
         .fetch_one(pool)

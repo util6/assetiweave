@@ -252,10 +252,9 @@ pub async fn insert_web_record_turn_sqlx_tx(
         r#"
         INSERT INTO web_record_turns (
             tenant_id, id, session_id, external_id, turn_index, prompt, process, response,
-            title, started_at, ended_at, fingerprint, missing, imported_at, model,
-            turn_kind, agent_role, parent_turn_id
+            started_at, ended_at, fingerprint, missing, imported_at, model
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         "#,
     )
     .bind(tenant_id)
@@ -266,16 +265,12 @@ pub async fn insert_web_record_turn_sqlx_tx(
     .bind(&turn.prompt)
     .bind(&turn.process)
     .bind(&turn.response)
-    .bind(&turn.title)
     .bind(&turn.started_at)
     .bind(&turn.ended_at)
     .bind(&turn.fingerprint)
     .bind(if turn.missing { 1_i64 } else { 0_i64 })
     .bind(&turn.imported_at)
     .bind(&turn.model)
-    .bind(&turn.turn_kind)
-    .bind(&turn.agent_role)
-    .bind(&turn.parent_turn_id)
     .execute(&mut **tx)
     .await
     .map_err(StoreError::external)?;
