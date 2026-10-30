@@ -118,9 +118,14 @@ function isRenderableConversationDisplayNode(
   if (node.type !== "card") return true;
   const kind = (node.block.kind ?? "").trim().toLowerCase();
   const presentation = (node.block.type ?? "").trim().toLowerCase();
-  // kind 可能是 antigravity.tool / codex.tool，真正的子代理语义在 presentation 上；
-  // 只有 codebuddy.subagent 这类直接写在 kind 里，两种情况都要拦。
-  return presentation !== "subagent" && !kind.includes("subagent");
+  const renderer = (node.block.renderer ?? "").trim().toLowerCase();
+  // 子代理卡片的实际形态：renderer=subagent_tree（codex/antigravity 把语义放在工具卡上），
+  // 或 codebuddy.subagent 这类直接写在 kind 里。三者都拦，避免正文重复渲染子代理。
+  return (
+    presentation !== "subagent" &&
+    renderer !== "subagent_tree" &&
+    !kind.includes("subagent")
+  );
 }
 
 function linkTurnParents(presentations: ConversationTurnPresentation[]) {
