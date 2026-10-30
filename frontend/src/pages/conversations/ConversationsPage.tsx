@@ -2597,9 +2597,13 @@ export function SessionQuestionWorkspace({
       }
     }
     // 子代理已在左栏独立成行，右侧默认视图只保留主 Turn，避免同一批内容在两处出现。
-    const mainTurns = question.turns.filter(
-      (item) => item.turn_kind !== "subagent" && item.turn_kind !== "agent",
-    );
+    // 早期数据里部分子代理的 turn_kind 为空、只有 parent_turn_id，这里一并按子代理处理。
+    const turnIds = new Set(question.turns.map((item) => item.id));
+    const isSubagentTurn = (item: (typeof question.turns)[number]) =>
+      item.turn_kind === "subagent" ||
+      item.turn_kind === "agent" ||
+      Boolean(item.parent_turn_id && turnIds.has(item.parent_turn_id));
+    const mainTurns = question.turns.filter((item) => !isSubagentTurn(item));
     if (mainTurns.length === 0 || mainTurns.length === question.turns.length)
       return question;
     const mainTurnIds = new Set(mainTurns.map((item) => item.id));

@@ -117,7 +117,10 @@ function isRenderableConversationDisplayNode(
 ): boolean {
   if (node.type !== "card") return true;
   const kind = (node.block.kind ?? "").trim().toLowerCase();
-  return !kind.includes("subagent");
+  const presentation = (node.block.type ?? "").trim().toLowerCase();
+  // kind 可能是 antigravity.tool / codex.tool，真正的子代理语义在 presentation 上；
+  // 只有 codebuddy.subagent 这类直接写在 kind 里，两种情况都要拦。
+  return presentation !== "subagent" && !kind.includes("subagent");
 }
 
 function linkTurnParents(presentations: ConversationTurnPresentation[]) {
@@ -424,188 +427,162 @@ export const ConversationTurn = memo(function ConversationTurn({
   }
 
   return (
-    <>
-      {model.tierHeader ? (
-        <div
-          className="mt-5 mb-2 flex items-center gap-2.5"
-          data-conversation-tier={model.tierHeader.tier}
-        >
-          <span className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-label-caps text-primary">
-            {t("conversation.turn.tier", { tier: model.tierHeader.tier })}
-          </span>
-          <span className="shrink-0 text-body-sm text-on-surface-variant">
-            {t("conversation.turn.tierCount", {
-              count: model.tierHeader.count,
-            })}
-          </span>
-          <span className="h-px flex-1 bg-primary/15" />
-        </div>
-      ) : null}
-      <section
-        className={`conversation-turn mb-6 ${
-          isSubagent ? "border-l-2 border-primary/20 pl-3" : ""
+    <section
+      className={`conversation-turn mb-6 ${
+        isSubagent ? "border-l-2 border-primary/20 pl-3" : ""
+      }`}
+      data-conversation-turn-depth={model.depth}
+      data-conversation-turn-expanded={isSubagent ? expanded : undefined}
+      data-conversation-turn-id={model.turn.id}
+    >
+      <div
+        className={`conversation-prompt-block scroll-mt-32 rounded-xl border px-4 py-3 transition-shadow ${
+          isSubagent
+            ? "border-primary/20 bg-primary/[0.035]"
+            : "border-primary/30 bg-primary/[0.055]"
+        } ${
+          promptHighlighted
+            ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]"
+            : ""
         }`}
-        data-conversation-turn-depth={model.depth}
-        data-conversation-turn-expanded={isSubagent ? expanded : undefined}
-        data-conversation-turn-id={model.turn.id}
+        data-conversation-card-id={model.promptBlockId}
+        id={conversationCardDomId(model.promptBlockId)}
       >
-        <div
-          className={`conversation-prompt-block scroll-mt-32 rounded-xl border px-4 py-3 transition-shadow ${
-            isSubagent
-              ? "border-primary/20 bg-primary/[0.035]"
-              : "border-primary/30 bg-primary/[0.055]"
-          } ${
-            promptHighlighted
-              ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]"
-              : ""
-          }`}
-          data-conversation-card-id={model.promptBlockId}
-          id={conversationCardDomId(model.promptBlockId)}
-        >
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div
-              className={`flex items-center gap-2.5 min-w-0 ${
-                isSubagent ? "flex-wrap" : ""
-              }`}
-            >
-              {isSubagent ? (
-                <Button
-                  aria-expanded={expanded}
-                  aria-label={toggleLabel}
-                  className="shrink-0 rounded-full border border-primary/30 bg-theme-card/60 text-primary hover:bg-primary/10"
-                  onClick={() => onToggleExpanded?.(model.turn.id)}
-                  size="icon-sm"
-                  title={toggleLabel}
-                  type="button"
-                  variant="ghost"
-                >
-                  <ChevronRight
-                    className={`size-3.5 transition-transform ${
-                      expanded ? "rotate-90" : ""
-                    }`}
-                  />
-                </Button>
-              ) : null}
-              {isSubagent ? (
-                <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
-                  <GitFork size={13} className="text-primary/90" />
-                  {t("conversation.question.subagentTask")}
-                </h3>
-              ) : isContinuation ? (
-                <h3 className="flex items-center gap-2 text-label-caps text-on-surface-variant shrink-0">
-                  <span className="size-2 rounded-full bg-status-info" />
-                  {t("conversation.question.continuationPrompt")}
-                </h3>
-              ) : (
-                <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
-                  <span className="size-2 rounded-full bg-primary" />
-                  {t("conversation.question.userPrompt")}
-                </h3>
-              )}
-              {isSubagent && model.depth > 0 ? (
-                <span
-                  className="shrink-0 rounded-full border border-primary/25 bg-theme-card/60 px-2 py-0.5 font-mono text-xs normal-case text-primary"
-                  title={t("conversation.turn.tier", { tier: model.depth })}
-                >
-                  T{model.depth}
-                </span>
-              ) : null}
-              {model.turn.agent_role ? (
-                <Badge
-                  tone="neutral"
-                  className="rounded-full font-medium text-xs px-2.5 py-0.5 truncate max-w-xs"
-                  title={model.turn.agent_role}
-                >
-                  {model.turn.agent_role}
-                </Badge>
-              ) : null}
-              {isSubagent && model.turn.title ? (
-                <span
-                  className="truncate text-body-sm text-on-surface-variant"
-                  title={model.turn.title}
-                >
-                  {model.turn.title}
-                </span>
-              ) : null}
-              {model.turn.model ? (
-                <Badge
-                  tone="neutral"
-                  className="rounded-full font-mono text-xs normal-case tracking-normal px-2.5 py-0.5 truncate max-w-xs"
-                  title={model.turn.model}
-                >
-                  {model.turn.model}
-                </Badge>
-              ) : null}
-              {isSubagent && model.childCount > 0 ? (
-                <Badge
-                  tone="neutral"
-                  className="shrink-0 rounded-full text-xs normal-case tracking-normal px-2.5 py-0.5"
-                >
-                  {t("conversation.turn.childCount", {
-                    count: model.childCount,
-                  })}
-                </Badge>
-              ) : null}
-              {isSubagent ? <SubagentStatus turn={model.turn} t={t} /> : null}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <span
-                className="select-text rounded-md border border-primary/25 bg-theme-card/45 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
-                title={model.promptBlockId}
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div
+            className={`flex items-center gap-2.5 min-w-0 ${
+              isSubagent ? "flex-wrap" : ""
+            }`}
+          >
+            {isSubagent ? (
+              <Button
+                aria-expanded={expanded}
+                aria-label={toggleLabel}
+                className="shrink-0 rounded-full border border-primary/30 bg-theme-card/60 text-primary hover:bg-primary/10"
+                onClick={() => onToggleExpanded?.(model.turn.id)}
+                size="icon-sm"
+                title={toggleLabel}
+                type="button"
+                variant="ghost"
               >
-                {conversationIdFragment(model.promptBlockId)}
+                <ChevronRight
+                  className={`size-3.5 transition-transform ${
+                    expanded ? "rotate-90" : ""
+                  }`}
+                />
+              </Button>
+            ) : null}
+            {isSubagent ? (
+              <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
+                <GitFork size={13} className="text-primary/90" />
+                {t("conversation.question.subagentTask")}
+              </h3>
+            ) : isContinuation ? (
+              <h3 className="flex items-center gap-2 text-label-caps text-on-surface-variant shrink-0">
+                <span className="size-2 rounded-full bg-status-info" />
+                {t("conversation.question.continuationPrompt")}
+              </h3>
+            ) : (
+              <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
+                <span className="size-2 rounded-full bg-primary" />
+                {t("conversation.question.userPrompt")}
+              </h3>
+            )}
+            {model.turn.agent_role ? (
+              <Badge
+                tone="neutral"
+                className="rounded-full font-medium text-xs px-2.5 py-0.5 truncate max-w-xs"
+                title={model.turn.agent_role}
+              >
+                {model.turn.agent_role}
+              </Badge>
+            ) : null}
+            {isSubagent && model.turn.title ? (
+              <span
+                className="truncate text-body-sm text-on-surface-variant"
+                title={model.turn.title}
+              >
+                {model.turn.title}
               </span>
-              <PromptCopyButton
-                copied={copied}
-                isSubagent={isSubagent}
-                onClick={() => void copyPrompt()}
-                t={t}
-              />
-            </div>
+            ) : null}
+            {model.turn.model ? (
+              <Badge
+                tone="neutral"
+                className="rounded-full font-mono text-xs normal-case tracking-normal px-2.5 py-0.5 truncate max-w-xs"
+                title={model.turn.model}
+              >
+                {model.turn.model}
+              </Badge>
+            ) : null}
+            {isSubagent && model.childCount > 0 ? (
+              <Badge
+                tone="neutral"
+                className="shrink-0 rounded-full text-xs normal-case tracking-normal px-2.5 py-0.5"
+              >
+                {t("conversation.turn.childCount", {
+                  count: model.childCount,
+                })}
+              </Badge>
+            ) : null}
+            {isSubagent ? <SubagentStatus turn={model.turn} t={t} /> : null}
           </div>
-          {isSubagent && !expanded ? (
-            <p
-              className="truncate text-body-sm text-on-surface-variant"
-              title={model.turn.prompt}
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              className="select-text rounded-md border border-primary/25 bg-theme-card/45 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
+              title={model.promptBlockId}
             >
-              {promptSummary}
-            </p>
+              {conversationIdFragment(model.promptBlockId)}
+            </span>
+            <PromptCopyButton
+              copied={copied}
+              isSubagent={isSubagent}
+              onClick={() => void copyPrompt()}
+              t={t}
+            />
+          </div>
+        </div>
+        {isSubagent && !expanded ? (
+          <p
+            className="truncate text-body-sm text-on-surface-variant"
+            title={model.turn.prompt}
+          >
+            {promptSummary}
+          </p>
+        ) : (
+          <MarkdownContent value={model.turn.prompt} />
+        )}
+      </div>
+      {expanded ? (
+        <div className="mt-3 pl-3">
+          <h3 className="mb-3 text-label-caps text-on-surface-muted">
+            {t("conversation.question.parts")}
+          </h3>
+          {!model.hasContent ? (
+            isSubagent ? (
+              <p className="px-2 py-4 text-body-sm text-on-surface-variant">
+                {t("conversation.turn.subagentNoRecords")}
+              </p>
+            ) : (
+              <EmptyPanel>{t("conversation.markdown.empty")}</EmptyPanel>
+            )
           ) : (
-            <MarkdownContent value={model.turn.prompt} />
+            <ConversationContentCards
+              activeBlockId={activeBlockId}
+              colors={colors}
+              controller={controller}
+              nodes={model.displayNodes ?? []}
+              onCopyError={onCopyError}
+              onCommandPartsVisible={onCommandPartsVisible}
+              recordKind={recordKind}
+              resultPreviewLineLimit={resultPreviewLineLimit}
+              t={t}
+              translationSettings={translationSettings}
+              visibility={visibility}
+            />
           )}
         </div>
-        {expanded ? (
-          <div className="mt-3 pl-3">
-            <h3 className="mb-3 text-label-caps text-on-surface-muted">
-              {t("conversation.question.parts")}
-            </h3>
-            {!model.hasContent ? (
-              isSubagent ? (
-                <p className="px-2 py-4 text-body-sm text-on-surface-variant">
-                  {t("conversation.turn.subagentNoRecords")}
-                </p>
-              ) : (
-                <EmptyPanel>{t("conversation.markdown.empty")}</EmptyPanel>
-              )
-            ) : (
-              <ConversationContentCards
-                activeBlockId={activeBlockId}
-                colors={colors}
-                controller={controller}
-                nodes={model.displayNodes ?? []}
-                onCopyError={onCopyError}
-                onCommandPartsVisible={onCommandPartsVisible}
-                recordKind={recordKind}
-                resultPreviewLineLimit={resultPreviewLineLimit}
-                t={t}
-                translationSettings={translationSettings}
-                visibility={visibility}
-              />
-            )}
-          </div>
-        ) : null}
-      </section>
-    </>
+      ) : null}
+    </section>
   );
 });
 

@@ -268,7 +268,7 @@ describe("MarkdownContent", () => {
     expect(html).toContain("assetiweave-cli conversation sync --dry-run");
   });
 
-  it("shows every subagent tier expanded, with tier headers and collapsible branches", () => {
+  it("shows subagent branches expanded by default and collapsible", () => {
     const question = subagentTreeFixture();
     const { container } = render(
       <QuestionPreview
@@ -294,13 +294,8 @@ describe("MarkdownContent", () => {
     expect(
       container.querySelector('[data-conversation-turn-id="turn-grandchild"]'),
     ).toBeTruthy();
-    // 每一层有一个 Tier 分组头。
-    expect(
-      container.querySelector('[data-conversation-tier="1"]'),
-    ).toBeTruthy();
-    expect(
-      container.querySelector('[data-conversation-tier="2"]'),
-    ).toBeTruthy();
+    // 子代理已在左栏分层列出，正文不再重复 Tier 分组头。
+    expect(container.querySelector("[data-conversation-tier]")).toBeNull();
 
     fireEvent.click(screen.getAllByRole("button", { name: "收起子代理" })[0]!);
 
