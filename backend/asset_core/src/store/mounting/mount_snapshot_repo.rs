@@ -1,7 +1,5 @@
 use crate::backend::{
-    domain::{
-        Asset, AssetMountObservation, AssetMountStatus, PhysicalMountStateDto, TargetProfile,
-    },
+    domain::{Asset, AssetMountStatus, PhysicalMountStateDto, TargetProfile},
     store::{StoreError, StoreResult},
 };
 use chrono::Utc;
@@ -13,7 +11,6 @@ use super::{codec::encode_enum_app, sql};
 pub async fn persist_asset_mount_snapshot_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-    _observations: &[AssetMountObservation],
     assets: &[Asset],
     profiles: &[TargetProfile],
     statuses: &[AssetMountStatus],
@@ -37,25 +34,34 @@ pub async fn persist_asset_mount_snapshot_sqlx(
             .ok_or_else(|| {
                 StoreError::NotFound(format!("profile not found: {}", status.profile_id))
             })?;
-        let enabled = matches!(status.state, PhysicalMountStateDto::Mounted);
 
         let now = Utc::now().to_rfc3339();
-        let created_at: Option<String> = sqlx::query_scalar(sql::GET_ASSET_MOUNT_CREATED_AT)
-            .bind(tenant_id)
-            .bind(&asset.id)
-            .bind(&profile.id)
-            .fetch_optional(&mut *tx)
-            .await?;
-        sqlx::query(sql::UPSERT_ASSET_MOUNT)
-            .bind(tenant_id)
-            .bind(&asset.id)
-            .bind(&profile.id)
-            .bind(enabled)
-            .bind(encode_enum_app(profile.deployment_strategy)?)
-            .bind(created_at.unwrap_or_else(|| now.clone()))
-            .bind(now)
-            .execute(&mut *tx)
-            .await?;
+        if matches!(status.state, PhysicalMountStateDto::Mounted) {
+            let created_at: Option<String> = sqlx::query_scalar(sql::GET_ASSET_MOUNT_CREATED_AT)
+                .bind(tenant_id)
+                .bind(&asset.id)
+                .bind(&profile.id)
+                .fetch_optional(&mut *tx)
+                .await?;
+            sqlx::query(sql::UPSERT_ASSET_MOUNT)
+                .bind(tenant_id)
+                .bind(&asset.id)
+                .bind(&profile.id)
+                .bind(true)
+                .bind(encode_enum_app(profile.deployment_strategy)?)
+                .bind(created_at.unwrap_or_else(|| now.clone()))
+                .bind(now)
+                .execute(&mut *tx)
+                .await?;
+        } else {
+            sqlx::query(sql::DISABLE_ASSET_MOUNT_IF_ENABLED)
+                .bind(tenant_id)
+                .bind(&asset.id)
+                .bind(&profile.id)
+                .bind(now)
+                .execute(&mut *tx)
+                .await?;
+        }
     }
 
     tx.commit().await?;
@@ -63,5 +69,5 @@ pub async fn persist_asset_mount_snapshot_sqlx(
 }
 
 #[cfg(test)]
-#[path = "mount_observation_repo_tests.rs"]
+#[path = "mount_snapshot_repo_tests.rs"]
 mod tests;

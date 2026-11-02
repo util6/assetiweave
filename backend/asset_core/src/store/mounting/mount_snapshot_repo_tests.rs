@@ -20,28 +20,16 @@ async fn sqlx_mount_snapshot_persists_mounts_directly() {
         .expect("insert asset");
     let asset = test_asset("asset-a");
     let profile = test_profile("profile-a");
-    let observation = test_observation(
+    let status = test_status(
         "asset-a",
         "profile-a",
         PhysicalMountStateDto::Mounted,
         Some("/source/a"),
     );
-    let status = AssetMountStatus {
-        asset_id: observation.asset_id.clone(),
-        profile_id: observation.profile_id.clone(),
-        target_dir: observation.target_dir.clone(),
-        target_path: observation.target_path.clone(),
-        display_target_dir: observation.target_dir.clone(),
-        display_target_path: observation.target_path.clone(),
-        display_linked_source: observation.linked_source.clone(),
-        state: observation.state,
-        linked_source: observation.linked_source.clone(),
-    };
 
     persist_asset_mount_snapshot_sqlx(
         database.pool(),
         "default",
-        std::slice::from_ref(&observation),
         std::slice::from_ref(&asset),
         std::slice::from_ref(&profile),
         std::slice::from_ref(&status),
@@ -65,7 +53,6 @@ async fn sqlx_mount_snapshot_persists_mounts_directly() {
     persist_asset_mount_snapshot_sqlx(
         database.pool(),
         "default",
-        std::slice::from_ref(&observation),
         std::slice::from_ref(&asset),
         std::slice::from_ref(&profile),
         std::slice::from_ref(&unmounted_status),
@@ -85,6 +72,103 @@ async fn sqlx_mount_snapshot_persists_mounts_directly() {
 }
 
 #[tokio::test]
+async fn sqlx_mount_snapshot_does_not_insert_unmounted_asset_into_mounts() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-mount-snapshot-no-cartesian-sqlx-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_async(&db_path)
+        .await
+        .expect("open database");
+
+    insert_asset(database.pool(), "asset-unmounted")
+        .await
+        .expect("insert asset");
+    let asset = test_asset("asset-unmounted");
+    let profile = test_profile("profile-a");
+    let unmounted_status = test_status(
+        "asset-unmounted",
+        "profile-a",
+        PhysicalMountStateDto::NotMounted,
+        None,
+    );
+
+    // 未挂载资产扫描到 NotMounted 时，不应无脑插入 enabled = false，避免笛卡尔积膨胀
+    persist_asset_mount_snapshot_sqlx(
+        database.pool(),
+        "default",
+        std::slice::from_ref(&asset),
+        std::slice::from_ref(&profile),
+        std::slice::from_ref(&unmounted_status),
+    )
+    .await
+    .expect("persist unmounted snapshot");
+
+    let mounts = crate::backend::store::load_asset_mounts_sqlx(
+        database.pool(),
+        "default",
+        Some("asset-unmounted"),
+    )
+    .await
+    .expect("load mounts");
+    assert!(
+        mounts.is_empty(),
+        "unmounted asset must not be inserted into asset_mounts if not previously mounted"
+    );
+
+    // 挂载后生成 enabled = true 记录
+    let mounted_status = test_status(
+        "asset-unmounted",
+        "profile-a",
+        PhysicalMountStateDto::Mounted,
+        Some("/source/asset-unmounted"),
+    );
+    persist_asset_mount_snapshot_sqlx(
+        database.pool(),
+        "default",
+        std::slice::from_ref(&asset),
+        std::slice::from_ref(&profile),
+        std::slice::from_ref(&mounted_status),
+    )
+    .await
+    .expect("persist mounted snapshot");
+
+    let mounts_after_mount = crate::backend::store::load_asset_mounts_sqlx(
+        database.pool(),
+        "default",
+        Some("asset-unmounted"),
+    )
+    .await
+    .expect("load mounts");
+    assert_eq!(mounts_after_mount.len(), 1);
+    assert!(mounts_after_mount[0].enabled);
+
+    // 再次变更为 NotMounted 时，已存在的记录更新为 enabled = false
+    persist_asset_mount_snapshot_sqlx(
+        database.pool(),
+        "default",
+        std::slice::from_ref(&asset),
+        std::slice::from_ref(&profile),
+        std::slice::from_ref(&unmounted_status),
+    )
+    .await
+    .expect("persist unmounted snapshot after mounted");
+
+    let mounts_after_unmount = crate::backend::store::load_asset_mounts_sqlx(
+        database.pool(),
+        "default",
+        Some("asset-unmounted"),
+    )
+    .await
+    .expect("load mounts");
+    assert_eq!(mounts_after_unmount.len(), 1);
+    assert!(!mounts_after_unmount[0].enabled);
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
 async fn sqlx_mount_snapshot_rolls_back_when_status_references_missing_asset() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-mount-snapshot-rollback-sqlx-{}.sqlite",
@@ -93,28 +177,16 @@ async fn sqlx_mount_snapshot_rolls_back_when_status_references_missing_asset() {
     let database = crate::backend::store::Database::open_async(&db_path)
         .await
         .expect("open database");
-    let observation = test_observation(
+    let status = test_status(
         "missing-asset",
         "profile-a",
         PhysicalMountStateDto::Mounted,
         Some("/source/a"),
     );
-    let status = AssetMountStatus {
-        asset_id: observation.asset_id.clone(),
-        profile_id: observation.profile_id.clone(),
-        target_dir: observation.target_dir.clone(),
-        target_path: observation.target_path.clone(),
-        display_target_dir: observation.target_dir.clone(),
-        display_target_path: observation.target_path.clone(),
-        display_linked_source: observation.linked_source.clone(),
-        state: observation.state,
-        linked_source: observation.linked_source.clone(),
-    };
 
     let error = persist_asset_mount_snapshot_sqlx(
         database.pool(),
         "default",
-        std::slice::from_ref(&observation),
         &[],
         &[],
         std::slice::from_ref(&status),
@@ -154,20 +226,22 @@ async fn sqlx_asset_mount_observations_table_is_dropped() {
     cleanup_database(&db_path);
 }
 
-fn test_observation(
+fn test_status(
     asset_id: &str,
     profile_id: &str,
     state: PhysicalMountStateDto,
     linked_source: Option<&str>,
-) -> AssetMountObservation {
-    AssetMountObservation {
+) -> AssetMountStatus {
+    AssetMountStatus {
         asset_id: asset_id.to_string(),
         profile_id: profile_id.to_string(),
         target_dir: "/target".to_string(),
         target_path: format!("/target/{asset_id}"),
+        display_target_dir: "/target".to_string(),
+        display_target_path: format!("/target/{asset_id}"),
+        display_linked_source: linked_source.map(str::to_string),
         state,
         linked_source: linked_source.map(str::to_string),
-        observed_at: "2026-06-18T00:00:00Z".to_string(),
     }
 }
 

@@ -99,17 +99,6 @@ pub struct TargetProfile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DeploymentState {
-    pub profile_id: String,
-    pub asset_id: String,
-    pub target_path: String,
-    pub strategy: DeploymentStrategy,
-    pub source_hash: String,
-    pub deployed_at: String,
-    pub managed_by: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AssetMount {
     pub asset_id: String,
     pub profile_id: String,

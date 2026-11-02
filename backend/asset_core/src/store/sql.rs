@@ -100,6 +100,12 @@ ON CONFLICT(tenant_id, asset_id, profile_id) DO UPDATE SET
     updated_at = excluded.updated_at
 "#;
 
+pub const DISABLE_ASSET_MOUNT_IF_ENABLED: &str = r#"
+UPDATE asset_mounts
+SET enabled = 0, updated_at = ?4
+WHERE tenant_id = ?1 AND asset_id = ?2 AND profile_id = ?3 AND enabled = 1
+"#;
+
 pub const LIST_ASSET_GROUPS_BY_KIND: &str = r#"
 SELECT id, name, description, color, asset_kind, display_icon, icon_svg, enabled, sort_order, rules_payload,
        created_at, updated_at

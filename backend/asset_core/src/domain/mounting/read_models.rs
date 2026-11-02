@@ -35,17 +35,6 @@ pub struct AssetMountStatus {
     pub linked_source: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct AssetMountObservation {
-    pub asset_id: String,
-    pub profile_id: String,
-    pub target_dir: String,
-    pub target_path: String,
-    pub state: PhysicalMountStateDto,
-    pub linked_source: Option<String>,
-    pub observed_at: String,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct AssetMountUpdateResult {
     pub mount: AssetMount,

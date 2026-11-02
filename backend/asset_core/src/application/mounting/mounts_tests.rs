@@ -1,6 +1,12 @@
 use super::*;
 use crate::backend::application::AppError;
 
+#[path = "mounts_test_support.rs"]
+pub(super) mod test_support;
+
+#[path = "mounts_e2e_tests.rs"]
+mod e2e;
+
 fn run_batch_items<T, BeforeItem, ApplyItem>(
     asset_ids: &[String],
     before_item: &mut BeforeItem,

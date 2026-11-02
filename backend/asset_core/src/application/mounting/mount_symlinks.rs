@@ -2,11 +2,9 @@ use crate::backend::application::catalog::catalog_ops::*;
 use crate::backend::application::{AppError, AppResult};
 use crate::backend::domain::catalog::Asset;
 use crate::backend::domain::mounting::{
-    AssetMountObservation, AssetMountStatus, DeploymentStrategy, PhysicalMountStateDto,
-    TargetProfile,
+    AssetMountStatus, DeploymentStrategy, PhysicalMountStateDto, TargetProfile,
 };
 use crate::backend::infrastructure::path_utils::display_path_or_original;
-use chrono::Utc;
 use sqlx::SqlitePool;
 use std::{
     fs,
@@ -233,31 +231,13 @@ pub async fn persist_asset_mount_observation_snapshot(
     tenant_id: &str,
     statuses: &[AssetMountStatus],
 ) -> AppResult<()> {
-    let observed_at = Utc::now().to_rfc3339();
-    let observations = statuses
-        .iter()
-        .map(|status| AssetMountObservation {
-            asset_id: status.asset_id.clone(),
-            profile_id: status.profile_id.clone(),
-            target_dir: status.target_dir.clone(),
-            target_path: status.target_path.clone(),
-            state: status.state,
-            linked_source: status.linked_source.clone(),
-            observed_at: observed_at.clone(),
-        })
-        .collect::<Vec<_>>();
     let assets = crate::backend::store::load_assets_sqlx(pool, tenant_id, None).await?;
     let profiles = crate::backend::application::mounting::profile_ops::load_target_profiles_sqlx(
         pool, tenant_id,
     )
     .await?;
     Ok(crate::backend::store::persist_asset_mount_snapshot_sqlx(
-        pool,
-        tenant_id,
-        &observations,
-        &assets,
-        &profiles,
-        statuses,
+        pool, tenant_id, &assets, &profiles, statuses,
     )
     .await?)
 }

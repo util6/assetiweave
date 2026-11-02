@@ -208,7 +208,3 @@ pub async fn load_mount_asset_and_profile(
 #[cfg(test)]
 #[path = "mounts_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "mounts_e2e_tests.rs"]
-mod e2e_tests;

@@ -2,8 +2,8 @@ use super::prelude::*;
 use crate::backend::domain::{
     AssetFormat, AssetGroupRules, ConversationAdapterKind, ConversationAdapterTrustState,
     ConversationGroupingOrigin, ConversationPartKind, ConversationPartRole, ConversationSource,
-    ConversationSourceKind, DeploymentState, NormalizedConversationPart,
-    NormalizedConversationSession, NormalizedConversationTurn, SourceKind,
+    ConversationSourceKind, NormalizedConversationPart, NormalizedConversationSession,
+    NormalizedConversationTurn, SourceKind,
 };
 use sqlx::AssertSqlSafe;
 use std::fs;
