@@ -5,7 +5,6 @@ pub mod app_settings_canonical;
 pub mod app_settings_io;
 pub mod backup;
 pub mod conversations;
-pub mod deployment;
 pub mod error;
 pub mod events;
 pub mod extensions;

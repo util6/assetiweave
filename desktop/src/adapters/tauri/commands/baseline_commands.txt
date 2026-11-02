@@ -183,8 +183,6 @@ get_conversation_question
 list_conversation_blocks
 get_conversation_block
 update_conversation_part_translation
-create_plan
-execute_plan
 get_cli_tools_status
 install_cli_tools
 logs_get_snapshot

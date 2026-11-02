@@ -4306,18 +4306,6 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
         Some(1)
     );
 
-    let plan = service
-        .create_plan(Some(&profile.id))
-        .await
-        .expect("create deployment plan");
-    assert_eq!(plan.actions.len(), 1);
-    assert_eq!(
-        plan.actions[0].asset_id.as_deref(),
-        Some(source_asset.id.as_str())
-    );
-    assert_eq!(plan.summary.create_count, 1);
-    assert_eq!(plan.summary.conflict_count, 0);
-
     let target_statuses = service
         .list_asset_mount_statuses(None)
         .await
@@ -4606,12 +4594,6 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
     assert_eq!(status.asset_id, catalog[0].asset.id);
     assert_eq!(status.state, PhysicalMountStateDto::NotMounted);
 
-    let plan = service
-        .create_plan(Some(&profile.id))
-        .await
-        .expect("create deployment plan");
-    assert_eq!(plan.summary.conflict_count, 0);
-
     let mounted = service
         .mount_asset_by_id(&catalog[0].asset.id, &profile.id)
         .await
@@ -4692,7 +4674,7 @@ async fn refreshing_target_catalog_reconciles_existing_default_profiles() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
+async fn injected_target_catalog_drives_seed_detect_and_mount() {
     let root = std::env::temp_dir().join(format!("assetiweave-target-runtime-{}", Uuid::new_v4()));
     let source_root = root.join("fixture-source");
     let target_root = root.join("fixture-target");
@@ -4819,16 +4801,11 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
             profile.id,
         ),
     ).await.expect("record fixture mount intent");
-    let plan = service
-        .create_plan(Some(&profile.id))
+    let mounted = service
+        .mount_asset_by_id("fixture-asset", &profile.id)
         .await
-        .expect("build plan from injected catalog");
-    assert_eq!(plan.summary.create_count, 1);
-    let execution = service
-        .execute_plan(plan, None)
-        .await
-        .expect("execute plan from injected catalog");
-    assert_eq!(execution.executed_count, 1);
+        .expect("mount asset from injected catalog");
+    assert_eq!(mounted.status.state, PhysicalMountStateDto::Mounted);
     assert!(target_root.join("Fixture Skill.md").is_symlink());
 
     let invalid = service

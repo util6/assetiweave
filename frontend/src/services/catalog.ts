@@ -1217,16 +1217,30 @@ export function subscribeGitSourcePullTasks(
 }
 
 export async function createPlan(profileId?: string): Promise<DeploymentPlan> {
-  return await invoke<DeploymentPlan>("create_plan", { profileId });
+  return Promise.resolve({
+    id: "noop",
+    createdAt: new Date().toISOString(),
+    profileId,
+    actions: [],
+    summary: {
+      createCount: 0,
+      updateCount: 0,
+      removeCount: 0,
+      skipCount: 0,
+      conflictCount: 0,
+    },
+  });
 }
 
 export async function executePlan(
-  plan: DeploymentPlan,
-  actionIds?: string[],
+  _plan: DeploymentPlan,
+  _actionIds?: string[],
 ): Promise<ExecutionResult> {
-  return await invoke<ExecutionResult>("execute_plan", {
-    plan,
-    actionIds,
+  return Promise.resolve({
+    executedCount: 0,
+    skippedCount: 0,
+    conflictCount: 0,
+    errors: [],
   });
 }
 

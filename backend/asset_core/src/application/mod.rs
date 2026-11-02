@@ -65,7 +65,7 @@ pub use mounting::{
     mounts::BatchMountWorkflowInput,
     params::{
         ApplySkillGroupMountParams, AssetProfileParams, CreateProfileParams,
-        CreateSkillGroupParams, ExecutePlanParams, GroupIdParams, IdParams, ProfileIdParams,
+        CreateSkillGroupParams, GroupIdParams, IdParams,
         SetAssetMountParams, SetSkillGroupManualMembersParams, SkillGroupExclusiveMountParams,
         SkillGroupMountParams, UpdateProfileParams, UpdateSkillGroupParams,
     },
