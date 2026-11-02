@@ -1,8 +1,5 @@
 use sqlx::SqlitePool;
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    path::Path,
-};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::*;
 use crate::backend::application::{AppError, AppResult};
@@ -45,22 +42,11 @@ pub async fn build_skill_group_exclusive_mount_preview_sqlx(
         &skill_assets,
     )
     .await?;
-    let managed_targets = crate::backend::store::load_managed_deployment_targets_by_profile_sqlx(
-        pool, tenant_id, profile_id,
-    )
-    .await?;
 
     let group_details_by_id = group_details
         .into_iter()
         .map(|detail| (detail.group.id.clone(), detail))
         .collect::<HashMap<_, _>>();
-    let mut managed_targets_by_asset = HashMap::<String, HashSet<String>>::new();
-    for (asset_id, target_path) in managed_targets {
-        managed_targets_by_asset
-            .entry(asset_id)
-            .or_default()
-            .insert(target_path);
-    }
 
     build_skill_group_exclusive_mount_preview_with_loaders(
         input,
@@ -74,26 +60,19 @@ pub async fn build_skill_group_exclusive_mount_preview_sqlx(
                 .cloned()
                 .ok_or_else(|| AppError::NotFound(format!("asset group not found: {group_id}")))
         },
-        move |asset_id, target_path| {
-            Ok(managed_targets_by_asset
-                .get(asset_id)
-                .is_some_and(|targets| targets.contains(target_path)))
-        },
     )
 }
 
-pub(super) fn build_skill_group_exclusive_mount_preview_with_loaders<LoadGroup, IsManaged>(
+pub(super) fn build_skill_group_exclusive_mount_preview_with_loaders<LoadGroup>(
     input: &SkillGroupExclusiveMountInput,
     profile: &TargetProfile,
     skill_assets: Vec<Asset>,
     sources: Vec<Source>,
     enabled_mounts: Vec<AssetMount>,
     mut load_group: LoadGroup,
-    mut is_managed_deployment: IsManaged,
 ) -> AppResult<SkillGroupExclusiveMountPreview>
 where
     LoadGroup: FnMut(&str, &[Asset]) -> AppResult<AssetGroupDetail>,
-    IsManaged: FnMut(&str, &str) -> AppResult<bool>,
 {
     if !input.mount_selected {
         return Err(AppError::Validation(
@@ -186,17 +165,7 @@ where
             crate::backend::application::mounting::targeting::inspect_mount(profile, asset)?;
         match inspection.state {
             crate::backend::domain::PhysicalMountState::Mounted => {
-                if is_managed_deployment(&asset.id, &inspection.target_path)? {
-                    unmount.push(exclusive_item(asset));
-                } else {
-                    skipped.push(exclusive_skipped_item(
-                        asset,
-                        format!(
-                            "target is mounted but not managed by AssetIWeave: {}",
-                            inspection.target_path
-                        ),
-                    ));
-                }
+                unmount.push(exclusive_item(asset));
             }
             crate::backend::domain::PhysicalMountState::NotMounted => {
                 if enabled_mount_asset_ids.contains(&asset.id) {
