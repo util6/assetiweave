@@ -54,8 +54,6 @@ fn test_conversations_module_exports_expected_commands() {
     let _ = list_conversation_data_maintenance_tasks;
     let _ = cancel_conversation_data_maintenance;
     let _ = rollback_conversation_data;
-    let _ = create_plan;
-    let _ = execute_plan;
     let _ = list_conversation_sessions;
     let _ = get_conversation_session;
     let _ = get_conversation_session_outline;

@@ -295,39 +295,4 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         ],
         None
     ),
-    command!(
-        "create_plan",
-        "create_plan",
-        "Create a deployment plan",
-        Read,
-        App,
-        false,
-        crate::backend::application::ProfileIdParams,
-        ServiceAsync => |service, params| service.create_plan(params.profile_id.as_deref()).await,
-        &[param!(
-            "profile_id",
-            "Optional target profile identifier",
-            ["profileId"]
-        )],
-        None
-    ),
-    command!(
-        "execute_plan",
-        "execute_plan",
-        "Execute deployment plan actions",
-        HighRiskWrite,
-        App,
-        false,
-        crate::backend::application::ExecutePlanParams,
-        ServiceAsync => |service, params| service.execute_plan(params.plan, params.action_ids).await,
-        &[
-            param!("plan", "Deployment plan"),
-            param!(
-                "action_ids",
-                "Optional selected action identifiers",
-                ["actionIds"]
-            ),
-        ],
-        None
-    ),
 ];

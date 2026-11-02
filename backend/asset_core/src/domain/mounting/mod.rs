@@ -2,10 +2,8 @@ use super::catalog::AssetKind;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-mod planning;
 pub mod read_models;
 
-pub use planning::{build_deployment_plan, DeploymentPlanCandidate};
 pub use read_models::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,24 +66,6 @@ pub struct TargetProfileDescriptor {
     pub icon: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DeploymentActionType {
-    Create,
-    Update,
-    Remove,
-    Skip,
-    Conflict,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RiskLevel {
-    Low,
-    Medium,
-    High,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RuleSet {
     pub kinds: Vec<AssetKind>,
@@ -116,42 +96,6 @@ pub struct TargetProfile {
     pub include: RuleSet,
     pub exclude: RuleSet,
     pub safety: ProfileSafety,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DeploymentAction {
-    pub id: String,
-    pub action_type: DeploymentActionType,
-    pub asset_id: Option<String>,
-    pub profile_id: String,
-    pub source_path: Option<String>,
-    pub target_path: String,
-    #[serde(default)]
-    pub display_source_path: Option<String>,
-    #[serde(default)]
-    pub display_target_path: Option<String>,
-    pub strategy: DeploymentStrategy,
-    pub reason: String,
-    pub risk: RiskLevel,
-    pub selectable: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DeploymentPlanSummary {
-    pub create_count: u32,
-    pub update_count: u32,
-    pub remove_count: u32,
-    pub skip_count: u32,
-    pub conflict_count: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DeploymentPlan {
-    pub id: String,
-    pub created_at: String,
-    pub profile_id: Option<String>,
-    pub actions: Vec<DeploymentAction>,
-    pub summary: DeploymentPlanSummary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

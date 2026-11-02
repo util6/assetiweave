@@ -24,7 +24,7 @@ pub use crate::backend::{
     },
     domain::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
-        ConversationAdapterPackage, ConversationSource, DeploymentPlan, DeploymentStrategy,
+        ConversationAdapterPackage, ConversationSource, DeploymentStrategy,
         MemoryRecallContentReference, MemoryRecallQuestionRef, MemoryRecallSearchHit,
         MemoryRecallSearchResult, MemoryRecallSession, MemoryRecallSessionReference,
         MemoryRecallSessionStatus, MemoryRecallStructuredOutput, MemoryRecallTurn,

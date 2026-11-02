@@ -4,14 +4,12 @@ use crate::adapters::app_state::AppState;
 use crate::adapters::tauri::background_tasks::{
     BackgroundTaskRegistry, BackgroundTaskStatus, ConversationDataMaintenanceTaskSnapshot,
 };
-use crate::backend::application::mounting::ExecutionResult;
 use crate::backend::application::prelude::*;
 use crate::backend::application::AppResult as RuntimeAppResult;
 use crate::backend::application::{
     BackgroundTaskGetParams, ConversationDataAuditParams, ConversationDataRepairParams,
     ConversationDataRollbackParams,
 };
-use crate::backend::domain::{AppOverview, DeploymentPlan};
 
 fn start_conversation_data_maintenance_background(
     app: AppHandle,
@@ -204,89 +202,4 @@ pub(crate) async fn rollback_conversation_data(
     AppService::from_runtime(&state.runtime)
         .rollback_conversation_data(params)
         .await
-}
-
-#[tauri::command]
-pub(crate) async fn create_plan(
-    state: State<'_, AppState>,
-    profile_id: Option<String>,
-) -> RuntimeAppResult<DeploymentPlan> {
-    let result = AppService::from_runtime(&state.runtime)
-        .create_plan(profile_id.as_deref())
-        .await;
-
-    match &result {
-        Ok(plan) => {
-            tracing::info!(
-                action = "deployment_plan.create",
-                profile_id = ?profile_id,
-                plan_id = %plan.id,
-                action_count = plan.actions.len(),
-                create_count = plan.summary.create_count,
-                skip_count = plan.summary.skip_count,
-                conflict_count = plan.summary.conflict_count,
-                "创建部署计划成功"
-            );
-        }
-        Err(error) => tracing::error!(
-            action = "deployment_plan.create",
-            profile_id = ?profile_id,
-            error = %error,
-            "创建部署计划失败"
-        ),
-    }
-    result
-}
-
-#[tauri::command]
-pub(crate) async fn execute_plan(
-    state: State<'_, AppState>,
-    plan: DeploymentPlan,
-    action_ids: Option<Vec<String>>,
-) -> RuntimeAppResult<ExecutionResult> {
-    let plan_id = plan.id.clone();
-    let action_count = plan.actions.len();
-    let requested_action_count = action_ids.as_ref().map(Vec::len).unwrap_or(0);
-    let result = AppService::from_runtime(&state.runtime)
-        .execute_plan(plan, action_ids)
-        .await;
-
-    match &result {
-        Ok(result) => {
-            if result.conflict_count > 0 || !result.errors.is_empty() {
-                tracing::warn!(
-                    action = "deployment_plan.execute",
-                    plan_id = %plan_id,
-                    action_count = action_count,
-                    requested_action_count = requested_action_count,
-                    executed_count = result.executed_count,
-                    skipped_count = result.skipped_count,
-                    conflict_count = result.conflict_count,
-                    error_count = result.errors.len(),
-                    "执行部署计划完成但存在冲突或失败"
-                );
-            } else {
-                tracing::info!(
-                    action = "deployment_plan.execute",
-                    plan_id = %plan_id,
-                    action_count = action_count,
-                    requested_action_count = requested_action_count,
-                    executed_count = result.executed_count,
-                    skipped_count = result.skipped_count,
-                    conflict_count = result.conflict_count,
-                    error_count = result.errors.len(),
-                    "执行部署计划成功"
-                );
-            }
-        }
-        Err(error) => tracing::error!(
-            action = "deployment_plan.execute",
-            plan_id = %plan_id,
-            action_count = action_count,
-            requested_action_count = requested_action_count,
-            error = %error,
-            "执行部署计划失败"
-        ),
-    }
-    result
 }
