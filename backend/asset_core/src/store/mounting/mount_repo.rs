@@ -1,4 +1,4 @@
-use crate::backend::domain::{AssetMount, DeploymentState, DeploymentStrategy};
+use crate::backend::domain::{AssetMount, DeploymentStrategy};
 use crate::backend::store::StoreResult;
 use chrono::Utc;
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, Sqlite, SqlitePool, Transaction};
@@ -75,20 +75,13 @@ pub async fn set_asset_mount_sqlx(
 pub async fn persist_verified_mount_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-    state: &DeploymentState,
+    asset_id: &str,
+    profile_id: &str,
     strategy: DeploymentStrategy,
 ) -> StoreResult<AssetMount> {
     let mut tx = pool.begin().await?;
-    upsert_deployment_state_tx(&mut tx, tenant_id, state).await?;
-    let mount = set_asset_mount_tx(
-        &mut tx,
-        tenant_id,
-        &state.asset_id,
-        &state.profile_id,
-        true,
-        strategy,
-    )
-    .await?;
+    let mount =
+        set_asset_mount_tx(&mut tx, tenant_id, asset_id, profile_id, true, strategy).await?;
     tx.commit().await?;
     Ok(mount)
 }
@@ -98,11 +91,9 @@ pub async fn persist_verified_unmount_sqlx(
     tenant_id: &str,
     asset_id: &str,
     profile_id: &str,
-    target_path: &str,
     strategy: DeploymentStrategy,
 ) -> StoreResult<AssetMount> {
     let mut tx = pool.begin().await?;
-    delete_deployment_state_tx(&mut tx, tenant_id, profile_id, asset_id, target_path).await?;
     let mount =
         set_asset_mount_tx(&mut tx, tenant_id, asset_id, profile_id, false, strategy).await?;
     tx.commit().await?;
@@ -197,42 +188,6 @@ async fn upsert_asset_mount_tx(
         .bind(encode_enum_app(mount.strategy)?)
         .bind(&mount.created_at)
         .bind(&mount.updated_at)
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
-}
-
-async fn upsert_deployment_state_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    state: &DeploymentState,
-) -> StoreResult<()> {
-    sqlx::query(sql::UPSERT_DEPLOYMENT_STATE)
-        .bind(tenant_id)
-        .bind(&state.profile_id)
-        .bind(&state.asset_id)
-        .bind(&state.target_path)
-        .bind(encode_enum_app(state.strategy)?)
-        .bind(&state.source_hash)
-        .bind(&state.deployed_at)
-        .bind(&state.managed_by)
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
-}
-
-async fn delete_deployment_state_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    profile_id: &str,
-    asset_id: &str,
-    target_path: &str,
-) -> StoreResult<()> {
-    sqlx::query(sql::DELETE_DEPLOYMENT_STATE)
-        .bind(tenant_id)
-        .bind(profile_id)
-        .bind(asset_id)
-        .bind(target_path)
         .execute(&mut **tx)
         .await?;
     Ok(())
