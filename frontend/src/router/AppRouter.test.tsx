@@ -33,7 +33,6 @@ vi.mock("../hooks/catalog/useCatalogController", async () => {
         applyAssetUpdate: vi.fn(),
         assetMountStatuses: [],
         assets: [],
-        clearDeploymentPlan: vi.fn(),
         createLocalTenant: vi.fn(),
         dismissNotification: vi.fn(),
         error: null,

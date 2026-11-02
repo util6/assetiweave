@@ -53,9 +53,7 @@ import type {
   AssetMount,
   AssetMountUpdateResult,
   AssetMountStatus,
-  DeploymentPlan,
   DeploymentStrategy,
-  ExecutionResult,
   Source,
   SourceInput,
   SourceProbeResult,
@@ -1214,34 +1212,6 @@ export function subscribeGitSourcePullTasks(
       listener(event.payload);
     },
   );
-}
-
-export async function createPlan(profileId?: string): Promise<DeploymentPlan> {
-  return Promise.resolve({
-    id: "noop",
-    createdAt: new Date().toISOString(),
-    profileId,
-    actions: [],
-    summary: {
-      createCount: 0,
-      updateCount: 0,
-      removeCount: 0,
-      skipCount: 0,
-      conflictCount: 0,
-    },
-  });
-}
-
-export async function executePlan(
-  _plan: DeploymentPlan,
-  _actionIds?: string[],
-): Promise<ExecutionResult> {
-  return Promise.resolve({
-    executedCount: 0,
-    skippedCount: 0,
-    conflictCount: 0,
-    errors: [],
-  });
 }
 
 export async function revealPath(path: string): Promise<void> {

@@ -1,6 +1,5 @@
 import type {
   AssetKind,
-  DeploymentActionType,
   DeploymentStrategy,
   SourceKind,
   SourceOrigin,
@@ -10,13 +9,6 @@ import type { TranslationKey } from "./messages";
 
 export function assetKindLabel(kind: AssetKind, t: Translator) {
   return t(`assetKind.${kind}` as TranslationKey);
-}
-
-export function deploymentActionLabel(
-  actionType: DeploymentActionType,
-  t: Translator,
-) {
-  return t(`deploymentAction.${actionType}` as TranslationKey);
 }
 
 export function deploymentStrategyLabel(
@@ -78,87 +70,4 @@ export function translateScanStatus(
   }
 
   return normalized;
-}
-
-export function translatePlanReason(reason: string, t: Translator) {
-  if (
-    reason === "目标路径已存在，MVP 默认不覆盖非本应用管理的文件" ||
-    reason === "目标路径已存在，当前版本默认不覆盖非本应用管理的文件"
-  ) {
-    return t("plan.reason.conflictExisting");
-  }
-
-  const unsupportedMatch = reason.match(
-    /^(.+) 不支持 ([A-Za-z]+) 或未命中 include 规则$/,
-  );
-  if (unsupportedMatch) {
-    return t("plan.reason.unsupported", {
-      profile: unsupportedMatch[1],
-      kind: formatDebugAssetKind(unsupportedMatch[2], t),
-    });
-  }
-
-  const projectMatch = reason.match(
-    /^(.+) 支持 ([A-Za-z]+)，将以 ([A-Za-z]+) 投影到目标目录$/,
-  );
-  if (projectMatch) {
-    return t("plan.reason.project", {
-      profile: projectMatch[1],
-      kind: formatDebugAssetKind(projectMatch[2], t),
-      strategy: formatDebugDeploymentStrategy(projectMatch[3], t),
-    });
-  }
-
-  const missingAssetMatch = reason.match(/^asset not found: (.+)$/);
-  if (missingAssetMatch) {
-    return t("error.assetNotFound", { assetId: missingAssetMatch[1] });
-  }
-
-  return reason;
-}
-
-function formatDebugAssetKind(value: string, t: Translator) {
-  const normalized = normalizeRustDebugEnum(value);
-  if (isAssetKind(normalized)) {
-    return assetKindLabel(normalized, t);
-  }
-  return value;
-}
-
-function formatDebugDeploymentStrategy(value: string, t: Translator) {
-  const normalized = normalizeRustDebugEnum(value);
-  if (isDeploymentStrategy(normalized)) {
-    return deploymentStrategyLabel(normalized, t);
-  }
-  return value;
-}
-
-function normalizeRustDebugEnum(value: string) {
-  return value.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-}
-
-function isAssetKind(value: string): value is AssetKind {
-  return [
-    "prompt",
-    "rule",
-    "memory",
-    "skill",
-    "mcp",
-    "agent",
-    "command",
-    "workflow",
-    "profile",
-    "custom",
-    "unclassified",
-  ].includes(value);
-}
-
-function isDeploymentStrategy(value: string): value is DeploymentStrategy {
-  return [
-    "symlink_to_source",
-    "copy_to_target",
-    "render",
-    "append",
-    "config_merge",
-  ].includes(value);
 }

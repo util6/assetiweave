@@ -85,7 +85,6 @@ function SourcesView() {
       onAssetReveal={(path) => void catalog.revealPath(path)}
       onApplyAssetUpdate={catalog.applyAssetUpdate}
       onCatalogRefresh={catalog.refreshOverview}
-      onClearDeploymentPlan={catalog.clearDeploymentPlan}
       onManualOpen={onManualOpen}
       onNotifyError={(message) =>
         catalog.showNotification({ tone: "error", message })

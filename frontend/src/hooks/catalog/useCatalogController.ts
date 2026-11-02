@@ -51,7 +51,6 @@ export function useCatalogController() {
   const tenantController = useTenantController({
     onTenantChanged: async () => {
       await catalogData.reloadCatalogData();
-      operations.clearDeploymentPlan();
       setQuery("");
     },
   });
@@ -132,7 +131,6 @@ export function useCatalogController() {
   ) {
     try {
       const refreshedStatuses = await catalogData.refreshMountState();
-      operations.clearDeploymentPlan();
       if (task.status !== "completed") {
         setNotification({
           id: `mount-batch-error-${pending.profileId}-${Date.now()}`,
@@ -266,7 +264,6 @@ export function useCatalogController() {
     try {
       const statuses = await catalogData.refreshCatalogAndMountState();
       const summary = summarizeMountStatusRefresh(statuses);
-      operations.clearDeploymentPlan();
       setNotification({
         id: `mount-status-refreshed-${Date.now()}`,
         tone: summary.issueCount > 0 ? "warning" : "success",
@@ -289,7 +286,7 @@ export function useCatalogController() {
     }
   }
 
-  async function toggleMountAndClearPlan(assetId: string, profileId: string) {
+  async function toggleMount(assetId: string, profileId: string) {
     const asset = assetById.get(assetId);
     if (
       isDirectMountBlockedSource(
@@ -302,7 +299,6 @@ export function useCatalogController() {
     try {
       await toggleMountProfile(assetId, profileId);
       const refreshedStatuses = await catalogData.refreshMountState();
-      operations.clearDeploymentPlan();
       const mountNotification = buildAssetMountNotification({
         assetId,
         assetName: asset?.name ?? assetId,
@@ -325,7 +321,7 @@ export function useCatalogController() {
     }
   }
 
-  async function setMountProfilesAndClearPlan(
+  async function setMountProfilesBatch(
     assetIds: string[],
     profileId: string,
     enabled: boolean,
@@ -356,7 +352,6 @@ export function useCatalogController() {
         return;
       }
       const refreshedStatuses = await catalogData.refreshMountState();
-      operations.clearDeploymentPlan();
       setNotification({
         id: `mount-batch-sync-${profileId}-${Date.now()}`,
         tone: "success",
@@ -385,7 +380,7 @@ export function useCatalogController() {
     }
   }
 
-  async function setGroupMountProfileAndClearPlan(
+  async function setGroupMountProfile(
     groupId: string,
     assetIds: string[],
     profileId: string,
@@ -425,7 +420,6 @@ export function useCatalogController() {
 
       await setMountProfiles(mountableAssetIds, profileId, enabled);
       const refreshedStatuses = await catalogData.refreshMountState();
-      operations.clearDeploymentPlan();
       setNotification({
         id: `mount-group-preview-sync-${groupId}-${profileId}-${Date.now()}`,
         tone: "success",
@@ -468,7 +462,7 @@ export function useCatalogController() {
     });
   }
 
-  async function applyGroupExclusiveMountAndClearPlan(
+  async function applyGroupExclusiveMount(
     groupIds: string[],
     profileId: string,
   ) {
@@ -493,7 +487,6 @@ export function useCatalogController() {
         dry_run: false,
       });
       const refreshedStatuses = await catalogData.refreshMountState();
-      operations.clearDeploymentPlan();
       setNotification({
         id: `mount-group-exclusive-sync-${profileId}-${Date.now()}`,
         tone:
@@ -532,16 +525,16 @@ export function useCatalogController() {
     query,
     refreshingMountStatus,
     revealPath,
-    applyGroupExclusiveMount: applyGroupExclusiveMountAndClearPlan,
+    applyGroupExclusiveMount,
     previewGroupExclusiveMount,
     refreshMountStatus,
-    setGroupMountProfile: setGroupMountProfileAndClearPlan,
-    setMountProfiles: setMountProfilesAndClearPlan,
+    setGroupMountProfile,
+    setMountProfiles: setMountProfilesBatch,
     setQuery,
     showNotification,
     ...tenantController,
     toggleAsset,
-    toggleMountProfile: toggleMountAndClearPlan,
+    toggleMountProfile: toggleMount,
   };
 }
 
