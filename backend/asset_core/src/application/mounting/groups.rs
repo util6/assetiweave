@@ -1,10 +1,6 @@
 use chrono::Utc;
 use sqlx::SqlitePool;
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    fs,
-    path::{Path, PathBuf},
-};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::groups_exclusive_preview::*;
@@ -16,7 +12,7 @@ use crate::backend::application::{AppError, AppResult};
 use crate::backend::domain::catalog::AssetKind;
 use crate::backend::domain::mounting::{
     ApplyAssetGroupMountResult, ApplySkillGroupExclusiveMountResult, AssetGroup,
-    AssetGroupMountError, AssetGroupRules, PhysicalMountState, SkillGroupExclusiveMountError,
+    AssetGroupMountError, AssetGroupRules, SkillGroupExclusiveMountError,
 };
 
 pub async fn apply_skill_group_mount_record(
@@ -154,10 +150,6 @@ where
     )
     .await?
     .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
-    let managed_targets = crate::backend::store::load_managed_deployment_targets_by_profile_sqlx(
-        pool, tenant_id, profile_id,
-    )
-    .await?;
     let asset_by_id = assets
         .iter()
         .map(|asset| (asset.id.as_str(), asset))
@@ -166,9 +158,6 @@ where
         .iter()
         .map(|source| (source.id.as_str(), source))
         .collect::<HashMap<_, _>>();
-    let managed_targets = managed_targets
-        .into_iter()
-        .collect::<HashSet<(String, String)>>();
     let mut statuses = Vec::new();
     let mut errors = Vec::new();
 
@@ -216,30 +205,7 @@ where
         change_index += 1;
         let result = match asset_by_id.get(item.asset_id.as_str()) {
             Some(asset) => {
-                let inspection = crate::backend::application::mounting::targeting::inspect_mount(
-                    &profile, asset,
-                )?;
-                match inspection.state {
-                    crate::backend::domain::PhysicalMountState::Mounted
-                        if !managed_targets
-                            .contains(&(asset.id.clone(), inspection.target_path.clone())) =>
-                    {
-                        Err(AppError::Conflict(format!(
-                            "target is mounted but not managed by AssetIWeave: {}",
-                            inspection.target_path
-                        )))
-                    }
-                    crate::backend::domain::PhysicalMountState::Conflict
-                    | crate::backend::domain::PhysicalMountState::Broken => {
-                        Err(AppError::Conflict(format!(
-                            "target is not a managed mount for this asset: {}",
-                            inspection.target_path
-                        )))
-                    }
-                    _ => {
-                        unmount_preloaded_asset_mount_record(pool, tenant_id, asset, &profile).await
-                    }
-                }
+                unmount_preloaded_asset_mount_record(pool, tenant_id, asset, &profile).await
             }
             None => Err(AppError::NotFound(format!(
                 "asset not found: {}",
