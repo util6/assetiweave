@@ -6,7 +6,6 @@ import type { BatchMountTaskSnapshot } from "../../services/catalog";
 
 const fixtures = vi.hoisted(() => ({
   batchMount: null as BatchMountTaskSnapshot | null,
-  clearDeploymentPlan: vi.fn(),
   refreshMountState: vi.fn(),
   setMountProfiles: vi.fn(),
 }));
@@ -53,7 +52,8 @@ vi.mock("./useCatalogData", () => ({
 }));
 vi.mock("./useCatalogOperations", () => ({
   useCatalogOperations: () => ({
-    clearDeploymentPlan: fixtures.clearDeploymentPlan,
+    busy: false,
+    scan: vi.fn(),
   }),
 }));
 vi.mock("./useExpandedAssets", () => ({
@@ -106,7 +106,6 @@ describe("useCatalogController background mounts", () => {
     await waitFor(() =>
       expect(result.current.notification?.tone).toBe("success"),
     );
-    expect(fixtures.clearDeploymentPlan).toHaveBeenCalledTimes(1);
   });
 
   it("settles a task that is already terminal when start returns", async () => {

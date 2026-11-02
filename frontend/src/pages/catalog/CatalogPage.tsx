@@ -6,7 +6,6 @@ import {
   FolderOpen,
   Grid3X3,
   LayoutList,
-  Plus,
   RefreshCw,
   Settings,
   Sparkles,
@@ -30,7 +29,6 @@ import {
   useCollapsibleHeaderState,
 } from "../../components/common/CollapsibleHeader";
 import { AppSkeleton } from "../../components/foundation/skeleton";
-import { DeploymentPlanPanel } from "../../components/plans/DeploymentPlanPanel";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import type { CatalogController } from "../../hooks/catalog/useCatalogController";
 import {
@@ -163,7 +161,6 @@ export function CatalogPage({
         description,
       );
       catalog.applyAssetUpdate({ ...editingAsset, ...savedAsset });
-      catalog.clearDeploymentPlan();
       catalog.showNotification({
         tone: "success",
         messageKey: "asset.notification.updated",
@@ -186,7 +183,6 @@ export function CatalogPage({
     try {
       const deletedAsset = await deleteAsset(deletingAsset.id, unmount);
       catalog.removeAsset(deletedAsset.id);
-      catalog.clearDeploymentPlan();
       catalog.showNotification({
         tone: "success",
         messageKey: "asset.notification.deleted",
@@ -303,15 +299,6 @@ export function CatalogPage({
         actionGroups={[
           [
             {
-              disabled: catalog.busy,
-              icon: <Plus size={22} />,
-              label: t("toolbar.createDeploymentPlan"),
-              onClick: catalog.createDeploymentPlan,
-              primary: true,
-            },
-          ],
-          [
-            {
               disabled: catalog.busy || catalog.refreshingMountStatus,
               icon: <RefreshCw size={17} />,
               label: t("toolbar.refreshMountStatus"),
@@ -424,23 +411,20 @@ export function CatalogPage({
             scope="content"
           />
         ) : (
-          <>
-            <DeploymentPlanPanel plan={catalog.plan} />
-            <AssetList
-              appShortcuts={catalog.appShortcuts}
-              assetMountStatuses={catalog.assetMountStatuses}
-              assets={visibleAssets}
-              expandedIds={catalog.expandedIds}
-              onDeleteAsset={setDeletingAsset}
-              onEditAsset={setEditingAsset}
-              onRevealPath={(path) => void catalog.revealPath(path)}
-              onToggleAsset={catalog.toggleAsset}
-              onToggleMount={catalog.toggleMountProfile}
-              profiles={catalog.profiles}
-              sources={catalog.sources}
-              viewMode={assetViewMode}
-            />
-          </>
+          <AssetList
+            appShortcuts={catalog.appShortcuts}
+            assetMountStatuses={catalog.assetMountStatuses}
+            assets={visibleAssets}
+            expandedIds={catalog.expandedIds}
+            onDeleteAsset={setDeletingAsset}
+            onEditAsset={setEditingAsset}
+            onRevealPath={(path) => void catalog.revealPath(path)}
+            onToggleAsset={catalog.toggleAsset}
+            onToggleMount={catalog.toggleMountProfile}
+            profiles={catalog.profiles}
+            sources={catalog.sources}
+            viewMode={assetViewMode}
+          />
         )}
       </RenderSafeScrollSurface>
       <AssetEditDialog

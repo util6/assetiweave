@@ -3,10 +3,8 @@ import type {
   AppKind,
   AssetFormat,
   AssetKind,
-  DeploymentActionType,
   DeploymentStrategy,
   PhysicalMountState,
-  RiskLevel,
   SourceKind,
   SourceOrigin,
   SourceScannerKind,
@@ -95,20 +93,6 @@ export const physicalMountStateValues = [
   "broken",
 ] as const satisfies readonly PhysicalMountState[];
 
-export const deploymentActionTypeValues = [
-  "create",
-  "update",
-  "remove",
-  "skip",
-  "conflict",
-] as const satisfies readonly DeploymentActionType[];
-
-export const riskLevelValues = [
-  "low",
-  "medium",
-  "high",
-] as const satisfies readonly RiskLevel[];
-
 export const assetKindSchema = z.enum(assetKindValues);
 export const assetFormatSchema = z.enum(assetFormatValues);
 export const sourceKindSchema = z.enum(sourceKindValues);
@@ -121,8 +105,6 @@ export const appKindSchema = z.preprocess((value) => {
 }, z.enum(appKindValues));
 export const deploymentStrategySchema = z.enum(deploymentStrategyValues);
 export const physicalMountStateSchema = z.enum(physicalMountStateValues);
-export const deploymentActionTypeSchema = z.enum(deploymentActionTypeValues);
-export const riskLevelSchema = z.enum(riskLevelValues);
 
 type ExactType<Actual, Expected> =
   (<Value>() => Value extends Actual ? 1 : 2) extends <
@@ -166,12 +148,4 @@ const _deploymentStrategyMatchesType: ExactType<
 const _physicalMountStateMatchesType: ExactType<
   z.infer<typeof physicalMountStateSchema>,
   PhysicalMountState
-> = true;
-const _deploymentActionTypeMatchesType: ExactType<
-  z.infer<typeof deploymentActionTypeSchema>,
-  DeploymentActionType
-> = true;
-const _riskLevelMatchesType: ExactType<
-  z.infer<typeof riskLevelSchema>,
-  RiskLevel
 > = true;
