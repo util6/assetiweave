@@ -124,15 +124,6 @@ pub async fn ensure_profile_can_be_deleted_sqlx(
         )));
     }
 
-    let deployment_count =
-        crate::backend::store::count_deployment_state_by_profile_sqlx(pool, tenant_id, profile_id)
-            .await?;
-    if deployment_count > 0 {
-        return Err(AppError::Conflict(format!(
-            "profile has managed deployments: {profile_id}"
-        )));
-    }
-
     if scan_asset_mount_statuses_sqlx(pool, tenant_id, None)
         .await?
         .iter()
