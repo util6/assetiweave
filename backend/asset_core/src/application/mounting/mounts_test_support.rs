@@ -22,7 +22,7 @@ pub(super) fn fixture_asset(id: &str, source_id: &str, dir: &Path) -> Asset {
         detector_version: 1,
         format: AssetFormat::Directory,
         relative_path: id.to_string(),
-        absolute_path: dir.to_string_lossy().to_string(),
+        stored_path: dir.to_string_lossy().to_string(),
         entry_file: Some(dir.join("SKILL.md").to_string_lossy().to_string()),
         description: None,
         content_hash: None,

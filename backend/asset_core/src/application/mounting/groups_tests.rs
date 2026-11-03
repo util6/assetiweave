@@ -165,7 +165,7 @@ async fn exclusive_mount_cleans_unmanaged_physical_symlinks_and_skips_conflicts(
         detector_version: 1,
         format: AssetFormat::Directory,
         relative_path: id.to_string(),
-        absolute_path: dir.to_string_lossy().to_string(),
+        stored_path: dir.to_string_lossy().to_string(),
         entry_file: Some(format!("{id}/SKILL.md")),
         description: None,
         content_hash: None,

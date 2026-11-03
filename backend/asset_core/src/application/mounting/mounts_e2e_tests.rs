@@ -33,7 +33,7 @@ async fn test_e2e_mount_and_unmount_closed_loop() {
         .is_symlink());
     assert_eq!(
         fs::read_link(&target_a).unwrap().canonicalize().unwrap(),
-        PathBuf::from(&ctx.asset_a.absolute_path)
+        PathBuf::from(&ctx.asset_a.stored_path)
             .canonicalize()
             .unwrap()
     );
@@ -61,7 +61,7 @@ async fn test_e2e_external_manual_symlink_consistency_and_unmount() {
 
     // 预先通过 symlink 手动创建指向源资产目录的软链接
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&ctx.asset_b.absolute_path, &target_b).unwrap();
+    std::os::unix::fs::symlink(&ctx.asset_b.stored_path, &target_b).unwrap();
     assert!(fs::symlink_metadata(&target_b)
         .unwrap()
         .file_type()
@@ -103,7 +103,7 @@ async fn test_e2e_external_manual_symlink_consistency_and_unmount() {
 
     // 重新创建外部手动软链接
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&ctx.asset_b.absolute_path, &target_b).unwrap();
+    std::os::unix::fs::symlink(&ctx.asset_b.stored_path, &target_b).unwrap();
     assert!(fs::symlink_metadata(&target_b).is_ok());
 
     // 创建仅包含 asset_a 的分组

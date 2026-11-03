@@ -94,7 +94,7 @@ fi
 require_path "$BACKEND_ROOT/infrastructure/runtime"
 require_path "$BACKEND_ROOT/infrastructure/extensions"
 require_path "$BACKEND_ROOT/domain/memory/evidence"
-require_path "$BACKEND_ROOT/domain/mounting/planning.rs"
+require_path "$BACKEND_ROOT/domain/mounting/read_models.rs"
 
 # Enable only for the final structural acceptance; the migration phase keeps
 # this disabled until the legacy roots have actually been retired.

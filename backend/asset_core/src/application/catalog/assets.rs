@@ -103,7 +103,6 @@ impl AppService {
         .await
     }
 
-
     pub async fn mount_asset_by_id(
         &self,
         asset_id: &str,
