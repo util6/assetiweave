@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   FolderOpen,
+  RefreshCw,
   Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -30,7 +31,11 @@ import { PillTabs, type PillTabItem } from "../common/PillTabs";
 import { EmptyState } from "../foundation/EmptyState";
 import { Panel } from "../foundation/Panel";
 import { AppSkeleton } from "../foundation/skeleton";
+import { Button } from "../ui/button";
 import { MarkdownContent } from "../conversations/ConversationMarkdown";
+import { RecentTopicTree, parseNodeAnchor } from "./RecentTopicTree";
+
+export { parseNodeAnchor };
 
 export interface MemoryRecentWorkspaceProps {
   onEventOpen?: (event: RecentMemoryEvent) => void;
@@ -48,6 +53,7 @@ export function MemoryRecentWorkspace({
     null,
   );
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(
     new Set(),
   );
@@ -65,6 +71,7 @@ export function MemoryRecentWorkspace({
   }, []);
 
   const loadSnapshot = useCallback(async () => {
+    setRefreshing(true);
     try {
       const res = await getRecentMemorySnapshot();
       setStateView(res);
@@ -72,9 +79,30 @@ export function MemoryRecentWorkspace({
       // 容错处理，不弹阻断性弹窗 (M35-UI-06)
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
+  // Tier 1: Window focus revalidation with 1000ms throttle guard
+  useEffect(() => {
+    let lastFocusTime = 0;
+    const THROTTLE_MS = 1000;
+
+    const handleWindowFocus = () => {
+      const now = Date.now();
+      if (now - lastFocusTime >= THROTTLE_MS) {
+        lastFocusTime = now;
+        void loadSnapshot();
+      }
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    return () => {
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, [loadSnapshot]);
+
+  // Tier 3: subscribeMemoryTasks / background pipeline task completion listener
   useEffect(() => {
     void loadSnapshot();
     const unsubPromise = subscribeMemoryTasks(() => {
@@ -205,7 +233,7 @@ export function MemoryRecentWorkspace({
   if (!snapshot || snapshot.projects.length === 0) {
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-        {/* 顶部控制栏 (M35-UI-05: 仅投影切换与状态展示，DOM 绝对无刷新/生成/窗口输入) */}
+        {/* 顶部控制栏 */}
         <div className="flex shrink-0 items-center justify-between gap-3 px-1">
           <div className="flex items-center gap-3">
             <PillTabs<"time" | "project">
@@ -219,7 +247,27 @@ export function MemoryRecentWorkspace({
             </span>
           </div>
 
-          <div>{renderStatusBadge(stateView, t)}</div>
+          <div className="flex items-center gap-2">
+            <Button
+              aria-label={t("common.refresh") || "刷新"}
+              className="h-8 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/70 px-2.5 text-caption font-medium hover:bg-theme-control shadow-xs"
+              disabled={refreshing}
+              onClick={() => void loadSnapshot()}
+              size="sm"
+              variant="outline"
+            >
+              <RefreshCw
+                className={clsx(
+                  "size-3.5 text-on-surface-variant",
+                  refreshing && "animate-spin text-primary",
+                )}
+              />
+              <span className="hidden sm:inline">
+                {t("common.refresh") || "刷新"}
+              </span>
+            </Button>
+            {renderStatusBadge(stateView, t)}
+          </div>
         </div>
 
         {/* 视图内容区 (空状态手账 Date Rail 导轨) */}
@@ -314,7 +362,7 @@ export function MemoryRecentWorkspace({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-      {/* 顶部控制栏 (M35-UI-05: 仅投影切换与状态展示，DOM 绝对无刷新/生成/窗口输入) */}
+      {/* 顶部控制栏 */}
       <div className="flex shrink-0 items-center justify-between gap-3 px-1">
         <div className="flex items-center gap-3">
           <PillTabs<"time" | "project">
@@ -328,7 +376,27 @@ export function MemoryRecentWorkspace({
           </span>
         </div>
 
-        <div>{renderStatusBadge(stateView, t)}</div>
+        <div className="flex items-center gap-2">
+          <Button
+            aria-label={t("common.refresh") || "刷新"}
+            className="h-8 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/70 px-2.5 text-caption font-medium hover:bg-theme-control shadow-xs"
+            disabled={refreshing}
+            onClick={() => void loadSnapshot()}
+            size="sm"
+            variant="outline"
+          >
+            <RefreshCw
+              className={clsx(
+                "size-3.5 text-on-surface-variant",
+                refreshing && "animate-spin text-primary",
+              )}
+            />
+            <span className="hidden sm:inline">
+              {t("common.refresh") || "刷新"}
+            </span>
+          </Button>
+          {renderStatusBadge(stateView, t)}
+        </div>
       </div>
 
       {/* 视图内容区 */}
@@ -485,35 +553,43 @@ export function MemoryRecentWorkspace({
           </div>
         ) : (
           <div className="flex flex-col gap-5">
-            {projectViewData.map(({ project, items }) => (
-              <Panel
-                className="flex flex-col gap-3.5 p-4.5 rounded-2xl border border-theme-control-border/70 bg-surface/85 backdrop-blur-md shadow-xs"
-                key={project.projectKey}
-                variant="default"
-              >
-                {/* 项目标题与元数据 */}
-                <div className="flex items-center justify-between gap-3 border-b border-theme-control-border/60 pb-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="grid size-7 shrink-0 place-items-center rounded-xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
-                      <FolderOpen size={14} />
-                    </span>
-                    <span className="truncate text-body-md font-bold text-on-surface">
-                      {project.projectTitle}
-                    </span>
-                    {project.projectPath && (
-                      <span className="hidden sm:inline-block max-w-[260px] truncate rounded-md border border-theme-control-border/60 bg-theme-control/30 px-1.5 py-0.5 font-mono text-[11px] text-on-surface-variant">
-                        {project.projectPath}
+            {projectViewData.map(({ project, items }) =>
+              project.topics && project.topics.length > 0 ? (
+                <RecentTopicTree
+                  key={project.projectKey}
+                  onNavigateSession={onNavigateSession}
+                  project={project}
+                  t={t}
+                />
+              ) : (
+                <Panel
+                  className="flex flex-col gap-3.5 p-4.5 rounded-2xl border border-theme-control-border/70 bg-surface/85 backdrop-blur-md shadow-xs"
+                  key={project.projectKey}
+                  variant="default"
+                >
+                  {/* 项目标题与元数据 */}
+                  <div className="flex items-center justify-between gap-3 border-b border-theme-control-border/60 pb-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="grid size-7 shrink-0 place-items-center rounded-xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
+                        <FolderOpen size={14} />
                       </span>
-                    )}
+                      <span className="truncate text-body-md font-bold text-on-surface">
+                        {project.projectTitle}
+                      </span>
+                      {project.projectPath && (
+                        <span className="hidden sm:inline-block max-w-[260px] truncate rounded-full border border-theme-control-border/60 bg-theme-control/30 px-2 py-0.5 font-mono text-[11px] text-on-surface-variant">
+                          {project.projectPath}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2 text-caption text-on-surface-variant">
+                      <span>{formatTime(project.latestActivityAt)}</span>
+                      <span>·</span>
+                      <span>
+                        {items.length} {t("memory.recent.items")}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2 text-caption text-on-surface-variant">
-                    <span>{formatTime(project.latestActivityAt)}</span>
-                    <span>·</span>
-                    <span>
-                      {items.length} {t("memory.recent.items")}
-                    </span>
-                  </div>
-                </div>
 
                 {project.summary && (
                   <div className="flex flex-col gap-1.5 rounded-xl border border-theme-control-border/50 bg-theme-control/15 p-3">

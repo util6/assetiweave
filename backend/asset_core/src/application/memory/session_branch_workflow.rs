@@ -1,15 +1,18 @@
+use crate::backend::application::memory::project_path_to_slug;
+use crate::backend::application::memory::reasoning_loop::{
+    execute_inspect_commit_loop, format_topic_tree_summary,
+};
 use crate::backend::application::memory::recent::{
     RecentConversationSessionListParams, RecentConversationView,
 };
 use crate::backend::application::{AppError, AppResult, AppService, ConversationOutlineParams};
+use crate::backend::domain::agents::{ActionId, AgentId};
 use crate::backend::domain::conversations::outline::ConversationOutlineDetailLevel;
 use crate::backend::domain::conversations::ConversationOutline;
+use crate::backend::infrastructure::agent_execution::AgentExecutionRuntime;
 use crate::backend::infrastructure::memory::storage::MemoryStorage;
-use crate::backend::store::memory::watermark_repo::{
-    load_watermarks_sqlx, upsert_watermark_sqlx, MemorySessionWatermarkRecord,
-};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionBranchWorkflowReport {
     pub scanned_count: usize,
     pub processed_count: usize,
@@ -45,33 +48,28 @@ pub trait SessionBranchExtractorAgent: Send + Sync {
 impl AppService {
     pub async fn run_session_branch_workflow(
         &self,
-        extractor: Option<&dyn SessionBranchExtractorAgent>,
+        runtime_override: Option<&dyn AgentExecutionRuntime>,
         storage_override: Option<&MemoryStorage>,
     ) -> AppResult<SessionBranchWorkflowReport> {
-        self.run_session_branch_workflow_at(extractor, storage_override, chrono::Utc::now())
+        self.run_session_branch_workflow_at(runtime_override, storage_override, chrono::Utc::now())
             .await
     }
 
     pub async fn run_session_branch_workflow_at(
         &self,
-        extractor: Option<&dyn SessionBranchExtractorAgent>,
+        runtime_override: Option<&dyn AgentExecutionRuntime>,
         storage_override: Option<&MemoryStorage>,
         now: chrono::DateTime<chrono::Utc>,
     ) -> AppResult<SessionBranchWorkflowReport> {
-        let pool = self.pool();
-        let tenant_id = self.tenant_id();
-
         let owned_storage;
-        let storage = match storage_override {
+        let storage: &MemoryStorage = match storage_override {
             Some(s) => s,
             None => {
-                owned_storage = MemoryStorage::new(tenant_id);
+                owned_storage = MemoryStorage::new(self.tenant_id());
                 &owned_storage
             }
         };
-
-        let watermarks = load_watermarks_sqlx(pool, tenant_id).await?;
-        let recent_sessions = self
+        let mut recent_sessions = self
             .list_recent_conversation_sessions_at(
                 RecentConversationSessionListParams {
                     view: RecentConversationView::Time,
@@ -82,36 +80,51 @@ impl AppService {
             )
             .await?;
 
+        // Oldest-First (升序排序：早发生的会话先演化分支，后发生的会话在其上继续演化或闭环)
+        recent_sessions.sort_by(|left, right| {
+            left.last_activity_at
+                .cmp(&right.last_activity_at)
+                .then_with(|| left.session.id.cmp(&right.session.id))
+        });
+
         let mut report = SessionBranchWorkflowReport {
             scanned_count: recent_sessions.len(),
             processed_count: 0,
             skipped_count: 0,
         };
 
-        let extractor = match extractor {
-            Some(e) => e,
+        // 确定执行运行时与 AgentId / Model
+        let (runtime, agent_id, model) = match runtime_override {
+            Some(rt) => {
+                let resolved =
+                    self.resolve_available_agent_for(&ActionId::new("memory.generation"));
+                let (agent_id, model) = match resolved {
+                    Ok((a, m)) => (a, m),
+                    Err(_) => (
+                        AgentId::parse("memory-generation").expect("static agent id is valid"),
+                        None,
+                    ),
+                };
+                (rt, agent_id, model)
+            }
             None => {
-                // 无提取器注入时，止血关停机械复读，不向磁盘写入任何会话产物
-                report.skipped_count = recent_sessions.len();
-                return Ok(report);
+                let resolved =
+                    self.resolve_available_agent_for(&ActionId::new("memory.generation"));
+                match resolved {
+                    Ok((agent_id, model)) => (self.agent_runtime.as_ref(), agent_id, model),
+                    Err(_) => {
+                        // 无可用认知 Agent，止血关停，不向磁盘写入任何产物
+                        report.skipped_count = recent_sessions.len();
+                        return Ok(report);
+                    }
+                }
             }
         };
 
         for item in recent_sessions {
             let session = item.session;
-            let session_updated_at = session.updated_at.clone().unwrap_or_default();
             let short_id = crate::backend::domain::conversation_id_fragment(&session.id);
-
-            // 水位比对：若 updated_at 一致且磁盘摘要文件存在，直接跳过（0 LLM 调用）
-            if let Some(wm) = watermarks.get(&session.id) {
-                if wm.source_updated_at == session_updated_at && !session_updated_at.is_empty() {
-                    let disk_path = storage.root_dir().join(&wm.summary_rel_path);
-                    if disk_path.exists() {
-                        report.skipped_count += 1;
-                        continue;
-                    }
-                }
-            }
+            let project_slug = project_path_to_slug(item.project_path.as_deref().unwrap_or(""));
 
             // 拉取 --qa 问答主干
             let outline = self
@@ -121,111 +134,78 @@ impl AppService {
                 })
                 .await?;
 
-            let mut qa_turns = Vec::new();
+            let mut turns_outline = Vec::new();
+            let mut qa_map = std::collections::HashMap::new();
+            let mut max_turn = 0u32;
+
             if let ConversationOutline::Session(s) = outline {
                 for row in s.turns.rows {
                     if let crate::backend::domain::conversations::outline::SessionTurnRow::Qa {
                         index,
-                        turn_id,
                         question,
                         answer,
                         ..
                     } = row
                     {
-                        qa_turns.push((index, turn_id, question, answer));
+                        let idx_u32 = index as u32;
+                        if idx_u32 > max_turn {
+                            max_turn = idx_u32;
+                        }
+                        let ans_str = answer.unwrap_or_default();
+                        turns_outline.push((index, question.clone(), ans_str.clone()));
+                        qa_map.insert(idx_u32, (question, ans_str));
                     }
                 }
             }
 
-            if qa_turns.is_empty() {
-                upsert_watermark_sqlx(
-                    pool,
-                    &MemorySessionWatermarkRecord {
-                        tenant_id: tenant_id.to_string(),
-                        session_id: session.id.clone(),
-                        project_path: item.project_path.clone(),
-                        source_updated_at: session_updated_at,
-                        summary_rel_path: String::new(),
-                        has_signal: false,
-                        updated_at: chrono::Utc::now().to_rfc3339(),
-                    },
-                )
+            // 水位短路比对（0 LLM 调用）：
+            // 若 .state/projects/<slug>.json 中的水位已到达或超过当前会话的最大轮次，直接跳过
+            let watermark = self
+                .check_memory_session_watermark_in(&project_slug, &session.id, storage)
                 .await?;
+            if let Some(wm) = watermark {
+                if wm >= max_turn && max_turn > 0 {
+                    report.skipped_count += 1;
+                    continue;
+                }
+            }
+
+            if turns_outline.is_empty() {
+                self.advance_memory_session_watermark_in(&project_slug, &session.id, 0, storage)
+                    .await?;
                 report.skipped_count += 1;
                 continue;
             }
 
-            let extracted = extractor
-                .extract_branches(
-                    &session.id,
-                    &short_id,
-                    item.project_path.as_deref(),
-                    &qa_turns,
-                )
+            // 读取既有主题树概要注入 Prompt 上下文
+            let project_state = self
+                .get_project_memory_state_in(&project_slug, storage)
                 .await?;
+            let existing_summary = project_state
+                .as_ref()
+                .map(|s| format_topic_tree_summary(&s.topic_trees))
+                .unwrap_or_default();
 
-            let date_str = session
-                .started_at
-                .as_deref()
-                .or(session.updated_at.as_deref())
-                .and_then(|ts| ts.split('T').next())
-                .unwrap_or("unknown");
-
-            let rel_path = format!("sessions/{}_{}.md", date_str, short_id);
-
-            let mut md = String::new();
-            md.push_str("---\n");
-            md.push_str(&format!("session_id: {}\n", session.id));
-            if let Some(ref proj) = item.project_path {
-                md.push_str(&format!("project_path: {}\n", proj));
-            }
-            md.push_str(&format!("updated_at: {}\n", session_updated_at));
-            md.push_str("---\n\n");
-            md.push_str(&format!("# 会话 {} 思维分叉与任务进展\n\n", short_id));
-
-            md.push_str("## 🍂 待探索的悬空叶子节点 (Unexplored Branches)\n");
-            if extracted.unexplored_branches.is_empty() {
-                md.push_str("- 无待探索分支\n");
-            } else {
-                for branch in &extracted.unexplored_branches {
-                    md.push_str(&format!(
-                        "- [{}#T{}](aiwc://session/{}/turn/{}): {}\n",
-                        short_id, branch.turn_index, short_id, branch.turn_index, branch.detail
-                    ));
-                }
-            }
-            md.push('\n');
-
-            md.push_str("## ✅ 已完成的闭环任务 (Completed Tasks)\n");
-            if extracted.completed_tasks.is_empty() {
-                md.push_str("- 无已完成任务\n");
-            } else {
-                for task in &extracted.completed_tasks {
-                    md.push_str(&format!(
-                        "- [{}#T{}](aiwc://session/{}/turn/{}): {}\n",
-                        short_id, task.turn_index, short_id, task.turn_index, task.detail
-                    ));
-                }
-            }
-
-            storage
-                .write_markdown_atomic(&rel_path, &md)
-                .map_err(AppError::from)?;
-
-            upsert_watermark_sqlx(
-                pool,
-                &MemorySessionWatermarkRecord {
-                    tenant_id: tenant_id.to_string(),
-                    session_id: session.id.clone(),
-                    project_path: item.project_path.clone(),
-                    source_updated_at: session_updated_at,
-                    summary_rel_path: rel_path,
-                    has_signal: extracted.has_signal,
-                    updated_at: chrono::Utc::now().to_rfc3339(),
-                },
+            // 执行 2 步轻量 Agent 循环（含 JSON 脱壳与单次重试）
+            let payload = execute_inspect_commit_loop(
+                runtime,
+                &agent_id,
+                model.as_deref(),
+                &session.id,
+                &short_id,
+                &project_slug,
+                max_turn,
+                &turns_outline,
+                &existing_summary,
+                |turn| qa_map.get(&turn).cloned(),
             )
             .await?;
 
+            // 提交主题演进（自动维护多叉树并原子写入 .state/ 与 Markdown 投影）
+            self.commit_memory_topic_evolution_to(payload, storage)
+                .await?;
+            self.advance_memory_session_watermark_in(&project_slug, &session.id, max_turn, storage)
+                .await?;
             report.processed_count += 1;
         }
 

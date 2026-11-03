@@ -1100,13 +1100,13 @@ async fn creating_tenant_seeds_isolated_skill_backup_library_root() {
         settings
             .expanded_root_path
             .replace('\\', "/")
-            .ends_with(".assetiweave/tenants/client-a/library/skills"),
+            .ends_with(".assetiweave/tenants/client-a/skills"),
         "unexpected tenant skill root: {}",
         settings.expanded_root_path
     );
     assert_eq!(
         settings.default_root_path,
-        "~/.assetiweave/tenants/client-a/library/skills"
+        "~/.assetiweave/tenants/client-a/skills"
     );
     assert!(settings.is_default_root);
 
@@ -1319,7 +1319,7 @@ async fn system_skill_cannot_be_copied_into_the_user_backup_library() {
         detector_version: 1,
         format: AssetFormat::Directory,
         relative_path: "system-skill-a".to_string(),
-        absolute_path: root.join("system-skill-a").to_string_lossy().to_string(),
+        stored_path: root.join("system-skill-a").to_string_lossy().to_string(),
         entry_file: Some("SKILL.md".to_string()),
         description: None,
         content_hash: Some("system-skill-a-hash".to_string()),
@@ -3704,7 +3704,7 @@ async fn skill_group_crud_and_members_use_sqlx_path() {
             detector_version: 1,
             format: AssetFormat::Directory,
             relative_path: "frontend/ui".to_string(),
-            absolute_path: root
+            stored_path: root
                 .join("source-a/frontend/ui")
                 .to_string_lossy()
                 .to_string(),
@@ -3723,7 +3723,7 @@ async fn skill_group_crud_and_members_use_sqlx_path() {
             detector_version: 1,
             format: AssetFormat::Directory,
             relative_path: "backend/api".to_string(),
-            absolute_path: root
+            stored_path: root
                 .join("source-a/backend/api")
                 .to_string_lossy()
                 .to_string(),
@@ -3981,7 +3981,7 @@ async fn disabled_mount_preference_persists_through_sqlx_path() {
         detector_version: 1,
         format: AssetFormat::Directory,
         relative_path: "skill-a".to_string(),
-        absolute_path: skill_root.to_string_lossy().to_string(),
+        stored_path: skill_root.to_string_lossy().to_string(),
         entry_file: Some(skill_root.join("SKILL.md").to_string_lossy().to_string()),
         description: None,
         content_hash: Some("hash-a".to_string()),
@@ -4083,7 +4083,7 @@ async fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
         detector_version: 1,
         format: AssetFormat::Directory,
         relative_path: "skill-a".to_string(),
-        absolute_path: skill_root.to_string_lossy().to_string(),
+        stored_path: skill_root.to_string_lossy().to_string(),
         entry_file: Some(skill_root.join("SKILL.md").to_string_lossy().to_string()),
         description: None,
         content_hash: Some("hash-a".to_string()),
@@ -4500,7 +4500,7 @@ async fn stale_backup_record_outside_current_root_does_not_mark_git_skill_backed
         detector_version: 1,
         format: AssetFormat::Directory,
         relative_path: "skills/canvas-design".to_string(),
-        absolute_path: source_skill_path.to_string_lossy().to_string(),
+        stored_path: source_skill_path.to_string_lossy().to_string(),
         entry_file: Some("skills/canvas-design/SKILL.md".to_string()),
         description: Some("Canvas design".to_string()),
         content_hash: Some("same-content".to_string()),
@@ -4516,7 +4516,7 @@ async fn stale_backup_record_outside_current_root_does_not_mark_git_skill_backed
         detector_version: 1,
         format: AssetFormat::Directory,
         relative_path: "backed-up/source-a/canvas-design".to_string(),
-        absolute_path: stale_backup_path.to_string_lossy().to_string(),
+        stored_path: stale_backup_path.to_string_lossy().to_string(),
         entry_file: Some("backed-up/source-a/canvas-design/SKILL.md".to_string()),
         description: Some("Canvas design".to_string()),
         content_hash: Some("same-content".to_string()),
@@ -4650,7 +4650,7 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
             .expect("read target symlink")
             .canonicalize()
             .expect("canonical target symlink"),
-        PathBuf::from(&catalog[0].asset.absolute_path)
+        PathBuf::from(&catalog[0].asset.stored_path)
             .canonicalize()
             .expect("canonical backup path")
     );
@@ -4820,7 +4820,7 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
             detector_version: 1,
             format: crate::backend::domain::AssetFormat::Markdown,
             relative_path: "SKILL.md".to_string(),
-            absolute_path: source_file.to_string_lossy().to_string(),
+            stored_path: source_file.to_string_lossy().to_string(),
             entry_file: Some("SKILL.md".to_string()),
             description: Some("fixture".to_string()),
             content_hash: None,

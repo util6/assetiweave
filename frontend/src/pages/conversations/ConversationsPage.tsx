@@ -79,6 +79,7 @@ import {
   useConversationCardKindRegistry,
 } from "../../components/conversations/ConversationCardKindRegistry";
 import { ConversationContentFilter } from "../../components/conversations/ConversationToolbarControls";
+import { SessionShortIdChip } from "../../components/conversations/SessionShortIdChip";
 import { ConversationImportDialog } from "../../components/conversations/ConversationImportDialog";
 import {
   ConversationLoadingState,
@@ -741,7 +742,10 @@ export function ConversationsPage({
       return;
     }
     const targetSession = sessions.find(
-      (session) => session.id === navigationTarget.sessionId,
+      (session) =>
+        session.id === navigationTarget.sessionId ||
+        conversationIdFragment(session.id) === navigationTarget.sessionId ||
+        session.id.startsWith(navigationTarget.sessionId),
     );
     if (!targetSession) {
       onNotifyError(t("conversation.navigation.sessionMissing"));
@@ -1288,13 +1292,14 @@ export function ConversationsPage({
             aria-label={t("conversation.content.filterAria")}
             className="conversation-section-header flex min-w-0 flex-nowrap items-center gap-3 overflow-x-auto px-[var(--app-page-x)] py-3"
           >
-            <ToolbarTextButton
+            <ToolbarActionButton
               icon={<ArrowLeft size={16} />}
               label={t("conversation.session.backToBrowser")}
               onClick={() => {
                 clearSessionDetail();
                 showSessionBrowser();
               }}
+              text={t("conversation.session.back")}
             />
             <ConversationContentFilter
               availableTypes={availableContentTypes}
@@ -1487,9 +1492,26 @@ export function resolveConversationNavigationTarget(
   }
 
   for (const question of candidateQuestions) {
-    if (
-      question.turns.some((turn) => `${turn.id}-question` === target.blockId)
-    ) {
+    const turnBlockMatch = question.turns.some((turn) => {
+      if (`${turn.id}-question` === target.blockId || turn.id === target.blockId) {
+        return true;
+      }
+      if (target.blockId != null) {
+        const numeric = Number(target.blockId);
+        if (!Number.isNaN(numeric) && turn.turn_index === numeric) {
+          return true;
+        }
+        if (target.blockId.startsWith("T")) {
+          const tNum = Number(target.blockId.slice(1));
+          if (!Number.isNaN(tNum) && turn.turn_index === tNum) {
+            return true;
+          }
+        }
+      }
+      return false;
+    });
+
+    if (turnBlockMatch) {
       return {
         blockFound: true,
         blockId: target.blockId,
@@ -1577,6 +1599,7 @@ export function ConversationShell(props: {
 
 function ColumnPanel({
   actions,
+  badge,
   children,
   className = "",
   icon,
@@ -1584,6 +1607,7 @@ function ColumnPanel({
   title,
 }: {
   actions?: ReactNode;
+  badge?: ReactNode;
   children: ReactNode;
   className?: string;
   icon: ReactNode;
@@ -1602,6 +1626,7 @@ function ColumnPanel({
           <h2 className="truncate text-label-caps text-on-surface-variant">
             {title}
           </h2>
+          {badge ? <span className="shrink-0">{badge}</span> : null}
         </div>
         {actions ? (
           <div className="flex shrink-0 items-center gap-1">{actions}</div>
@@ -2678,6 +2703,11 @@ export function SessionQuestionWorkspace({
     >
       <ColumnPanel
         actions={questionListToggle}
+        badge={
+          session ? (
+            <SessionShortIdChip sessionId={session.session.id} t={t} />
+          ) : null
+        }
         className="max-[920px]:border-r-0 max-[920px]:border-b"
         title={t("conversation.column.questions")}
         icon={<Layers3 size={16} />}
@@ -2716,8 +2746,9 @@ export function SessionQuestionWorkspace({
                   ? new Set([selectedQuestionListKey])
                   : undefined
               }
-              renderItem={(item) => (
+              renderItem={(item, index) => (
                 <QuestionListItem
+                  index={index + 1}
                   onSelect={() => {
                     onQuestionSelect(item.question.id);
                     setRailExpandedQuestionId(item.question.id);
@@ -2816,6 +2847,7 @@ function QuestionListToggleButton({
 }
 
 function QuestionListItem({
+  index,
   onSelect,
   onSelectTurn,
   onSelectionChange,
@@ -2827,6 +2859,7 @@ function QuestionListItem({
   selectedTurnId,
   t,
 }: {
+  index?: number;
   onSelect: () => void;
   onSelectTurn: (turnId: string) => void;
   onSelectionChange: (checked: boolean) => void;
@@ -2883,6 +2916,11 @@ function QuestionListItem({
         >
           <div className="flex min-w-0 items-start justify-between gap-3">
             <h3 className="line-clamp-2 min-w-0 break-words text-body-sm font-semibold text-on-surface">
+              {typeof index === "number" ? (
+                <span className="mr-1.5 inline-flex items-center justify-center rounded-full bg-theme-control px-1.5 py-0.5 font-mono text-code-xs font-semibold text-on-surface-muted align-middle">
+                  #{index}
+                </span>
+              ) : null}
               {title}
             </h3>
             <span

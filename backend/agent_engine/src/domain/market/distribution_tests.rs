@@ -14,15 +14,6 @@ fn recommends_platform_binary_when_no_system_distribution_exists() {
         arch: "aarch64".to_string(),
         node_available: true,
         npm_available: true,
-        uv_available: false,
-        system: HashMap::from([(
-            "opencode".to_string(),
-            SystemObservation {
-                resolved_program: Some(PathBuf::from("/usr/local/bin/opencode")),
-                version: Some("1.2.0".to_string()),
-                error_code: None,
-            },
-        )]),
     };
     let candidates = DistributionSelector::select(&item, &context, None).unwrap();
     assert_eq!(candidates[0].distribution_id, "binary-darwin-aarch64");
@@ -45,8 +36,6 @@ fn rust_macos_host_name_matches_darwin_catalog_target() {
         arch: normalized_arch("aarch64"),
         node_available: false,
         npm_available: false,
-        uv_available: false,
-        system: HashMap::new(),
     };
 
     let candidate = DistributionSelector::select(&item, &context, None)

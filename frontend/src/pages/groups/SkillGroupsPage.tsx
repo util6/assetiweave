@@ -1020,7 +1020,7 @@ function GroupColumnView({
                     </div>
                     <button
                       className="mt-1 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
-                      onClick={() => onAssetReveal(asset.absolute_path)}
+                      onClick={() => onAssetReveal(asset.stored_path)}
                       title={t("asset.revealPath")}
                       type="button"
                     >

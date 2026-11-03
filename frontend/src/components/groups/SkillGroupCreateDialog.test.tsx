@@ -129,7 +129,7 @@ function mockAsset(id: string, name?: string): Asset {
     kind: "skill",
     format: "directory",
     relative_path: id,
-    absolute_path: `/tmp/${id}`,
+    stored_path: `/tmp/${id}`,
     entry_file: null,
     description: null,
     content_hash: null,

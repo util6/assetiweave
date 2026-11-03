@@ -131,9 +131,9 @@ export async function getSkillBackupSettings(): Promise<SkillBackupSettings> {
     }
 
     return {
-      root_path: "~/.assetiweave/library/skills",
-      expanded_root_path: "~/.assetiweave/library/skills",
-      default_root_path: "~/.assetiweave/library/skills",
+      root_path: "~/.assetiweave/skills",
+      expanded_root_path: "~/.assetiweave/skills",
+      default_root_path: "~/.assetiweave/skills",
       is_default_root: true,
       exists: true,
     };
@@ -1674,7 +1674,7 @@ function fallbackMountStatus(
     target_dir: targetDir,
     target_path: [targetDir, asset?.name ?? assetId].filter(Boolean).join("/"),
     state: enabled ? "mounted" : "not_mounted",
-    linked_source: enabled ? (asset?.absolute_path ?? null) : null,
+    linked_source: enabled ? (asset?.stored_path ?? null) : null,
   };
 }
 
@@ -1801,15 +1801,15 @@ function fallbackSkillAcquire(params: {
       : `${params.url.replace(/\/tree\/.*$/, "")}.git`,
     security_notice:
       "Review the remote Skill contents before importing; AssetIWeave does not execute or trust remote code automatically.",
-    skill_path: `~/.assetiweave/library/skills/staging/${inferredName}`,
-    staging_path: `~/.assetiweave/library/skills/staging/${inferredName}`,
+    skill_path: `~/.assetiweave/skills/staging/${inferredName}`,
+    staging_path: `~/.assetiweave/skills/staging/${inferredName}`,
     url: params.url,
     import: params.dry_run
       ? undefined
       : {
           dry_run: false,
           asset: {
-            absolute_path: `~/.assetiweave/library/skills/downloaded/${inferredName}`,
+            stored_path: `~/.assetiweave/skills/downloaded/${inferredName}`,
             content_hash: null,
             discovered_at: new Date().toISOString(),
             entry_file: "SKILL.md",

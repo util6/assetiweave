@@ -301,12 +301,19 @@ impl AppService {
             if !installation.enabled || !installation.execution_ready() {
                 return Err(AppError::Conflict(format!("agent_not_ready: {agent_id}")));
             }
-            let catalog =
-                crate::backend::infrastructure::agent_market::CatalogCache::best_available()
-                    .map_err(AppError::external)?;
-            let item = catalog.item(agent_id).ok_or_else(|| {
-                AppError::Validation(format!("agent_capability_unsupported: {agent_id}"))
-            })?;
+            let repo = crate::backend::store::system::ExtensionCatalogReleaseRepository::new(
+                self.db.pool().clone(),
+            );
+            let item = if let Ok(Some((_, meta))) = repo.get_latest_agent_meta(agent_id).await {
+                meta.item
+            } else {
+                let catalog =
+                    crate::backend::domain::agents::market::catalog::CatalogService::bundled()
+                        .map_err(AppError::external)?;
+                catalog.item(agent_id).cloned().ok_or_else(|| {
+                    AppError::Validation(format!("agent_capability_unsupported: {agent_id}"))
+                })?
+            };
             let purpose = match action_id.as_str() {
                 "translation.card" => "card_translation",
                 "memory.extraction" | "memory.generation" | "memory.project" | "memory.global"

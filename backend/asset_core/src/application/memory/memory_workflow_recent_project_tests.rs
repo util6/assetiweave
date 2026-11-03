@@ -1,4 +1,8 @@
 use super::*;
+use crate::backend::domain::memory::{
+    MemoryTreeNode, NodeStatus, ProjectMemoryState, RecentMemoryState, TopicTree,
+};
+use uuid::Uuid;
 
 #[test]
 fn test_project_path_to_slug() {
@@ -9,28 +13,6 @@ fn test_project_path_to_slug() {
     );
     assert_eq!(project_path_to_slug("///"), "unspecified");
     assert_eq!(project_path_to_slug("   "), "unspecified");
-}
-
-#[test]
-fn test_leaf_ablation_logic() {
-    let existing_leaves = vec![
-        "- [s1#T1](aiwc://session/s1/turn/1): explore redis caching options".to_string(),
-        "- [s1#T2](aiwc://session/s1/turn/2): explore grpc benchmark".to_string(),
-    ];
-    let completed_tasks = vec![
-        "- [s2#T1](aiwc://session/s2/turn/1): implemented redis caching and verified".to_string(),
-    ];
-    let new_leaves =
-        vec!["- [s2#T2](aiwc://session/s2/turn/2): check sqlite wal mode performance".to_string()];
-
-    let remaining = ablate_and_merge_leaves(&existing_leaves, &new_leaves, &completed_tasks);
-
-    // Redis caching leaf should be ablated (removed) because it's now completed!
-    assert!(!remaining.iter().any(|l| l.contains("redis caching")));
-    // GRPC benchmark was not touched, should remain
-    assert!(remaining.iter().any(|l| l.contains("grpc benchmark")));
-    // New WAL leaf should be added
-    assert!(remaining.iter().any(|l| l.contains("sqlite wal mode")));
 }
 
 #[test]
@@ -111,7 +93,6 @@ updated_at: 2026-10-27T02:00:00Z
     );
     assert_eq!(parsed.updated_at, "2026-10-27T02:00:00Z");
 
-    // 验证待探索悬空叶子：严格只有 2 条合法项，所有解释、子列表、无关小节均被防御忽略
     assert_eq!(parsed.unexplored_branches.len(), 2);
     assert_eq!(
         parsed.unexplored_branches[0],
@@ -122,7 +103,6 @@ updated_at: 2026-10-27T02:00:00Z
         "- [xyz#T2](aiwc://session/xyz/turn/2): 调研 Tantivy 分面索引在资产搜索中的剪枝潜力"
     );
 
-    // 验证已完成任务：严格只有 2 条合法项，验证子项、备注和占位符均被防御过滤
     assert_eq!(parsed.completed_tasks.len(), 2);
     assert_eq!(
         parsed.completed_tasks[0],
@@ -135,10 +115,8 @@ updated_at: 2026-10-27T02:00:00Z
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_real_sample_node2_node3_workflow_simulation() {
-    use uuid::Uuid;
-
-    let base = std::env::temp_dir().join(format!("assetiweave-real-sample-{}", Uuid::new_v4()));
+async fn test_recent_and_project_workflow_projects_state_files() {
+    let base = std::env::temp_dir().join(format!("assetiweave-proj-state-{}", Uuid::new_v4()));
     let db_dir = base.join("db");
     let mem_dir = base.join("memories");
     std::fs::create_dir_all(&db_dir).unwrap();
@@ -149,263 +127,97 @@ async fn test_real_sample_node2_node3_workflow_simulation() {
         .unwrap();
     let storage = MemoryStorage::new_with_root(mem_dir.clone(), "default");
 
-    let proj_path = "/Users/util6/code-space/assetiweave";
-    let proj_slug = project_path_to_slug(proj_path);
-
-    // 1. 初始化既有项目记忆文件 projects/<slug>.md，含有历史遗留叶子
-    let initial_project_md = format!(
-        r#"---
-project_path: {proj_path}
-updated_at: 2026-10-23T10:00:00Z
----
-
-# 项目记忆: {proj_path}
-
-## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-- [old#T1](aiwc://session/old/turn/1): 确认 Ticket 03 细粒度重构拆分可行性
-- [old#T2](aiwc://session/old/turn/2): 探索 Tantivy 分面索引在资产过滤中的性能表现
-"#
-    );
-    storage
-        .write_markdown_atomic(format!("projects/{proj_slug}.md"), &initial_project_md)
-        .unwrap();
-
     let now = chrono::Utc::now();
-    let sess1_updated_at = (now - chrono::Duration::hours(2)).to_rfc3339();
-    let sess2_updated_at = (now - chrono::Duration::hours(12)).to_rfc3339();
+    let now_str = now.to_rfc3339();
 
-    // 2. 模拟由节点 1 提炼并写入的真实会话产物 sessions/2026-10-26_5ab333d1.md
-    //    包含合法的锚点条目，同时混入自由多行文本和说明子列表进行解析防御压力测试
-    let sess1_md = format!(
-        r#"---
-session_id: conversation-session-5ab333d1
-short_id: 5ab333d1
-project_path: {proj_path}
-updated_at: {sess1_updated_at}
-turn_count: 15
-has_signal: true
----
+    // 1. Prepare ProjectMemoryState in .state/projects/proj-alpha.json
+    let mut proj_state = ProjectMemoryState::new("proj-alpha");
+    let mut tree = TopicTree::new("arch-design", "Architecture Design");
+    let node1 = MemoryTreeNode {
+        id: "alpha#T1".to_string(),
+        parent_id: None,
+        topic_id: "arch-design".to_string(),
+        summary: "Decoupled MCP stdio across desktop and engine".to_string(),
+        status: NodeStatus::Completed,
+        source_session_id: "sess-alpha-1".to_string(),
+        turn_index: 1,
+        created_at: now_str.clone(),
+        updated_at: now_str.clone(),
+    };
+    let node2 = MemoryTreeNode {
+        id: "alpha#T1.1".to_string(),
+        parent_id: Some("alpha#T1".to_string()),
+        topic_id: "arch-design".to_string(),
+        summary: "Explore ACP streaming latency optimization".to_string(),
+        status: NodeStatus::Unexplored,
+        source_session_id: "sess-alpha-1".to_string(),
+        turn_index: 1,
+        created_at: now_str.clone(),
+        updated_at: now_str.clone(),
+    };
+    tree.insert_node(node1, true);
+    tree.insert_node(node2, false);
+    proj_state
+        .topic_trees
+        .insert("arch-design".to_string(), tree);
+    proj_state
+        .session_watermarks
+        .insert("sess-alpha-1".to_string(), 1);
 
-# 会话 5ab333d1 思维分叉与任务进展
-
-这是一段会话背景概览。
-
-## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-- [5ab333d1#T11](aiwc://session/5ab333d1/turn/11): 评估 Ticket 03 读路径拆分为详情列表与定位导出两个子任务
-  - 说明: 细分拆分可降低单票认知负担
-- [5ab333d1#T11](aiwc://session/5ab333d1/turn/11): 评估 web 镜像表族是否独立拆为镜像票串行推进
-- 备注: 这是杂音文本，不应收录
-
-## ✅ 已完成的闭环任务 (Completed Tasks)
-- [5ab333d1#T12](aiwc://session/5ab333d1/turn/12): 确认 Ticket 03 细粒度重构拆分方案
-  - 效果: 用户已明确拍板拆分 03
-"#
-    );
     storage
-        .write_markdown_atomic("sessions/2026-10-26_5ab333d1.md", &sess1_md)
+        .write_project_state_atomic("proj-alpha", &proj_state)
         .unwrap();
 
-    // 3. 模拟真实会话产物 sessions/2026-10-24_b75930a3.md
-    let sess2_md = format!(
-        r#"---
-session_id: conversation-session-b75930a3
-short_id: b75930a3
-project_path: {proj_path}
-updated_at: {sess2_updated_at}
-turn_count: 2
-has_signal: true
----
+    // 2. Prepare RecentMemoryState in .state/recent.json
+    let mut recent_state = RecentMemoryState::new();
+    recent_state.upsert_project(proj_state.clone());
+    storage.write_recent_state_atomic(&recent_state).unwrap();
 
-# 会话 b75930a3 思维分叉与任务进展
-
-## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-- [b75930a3#T1](aiwc://session/b75930a3/turn/1): 调研纯服务器无 GUI 环境下独立安装和运行 CLI 服务的打包分发方案
-
-## ✅ 已完成的闭环任务 (Completed Tasks)
-- [b75930a3#T2](aiwc://session/b75930a3/turn/2): 确定无 GUI 环境下 CLI 二进制独立运行与客户端捆绑安装的双轨定位
-"#
-    );
-    storage
-        .write_markdown_atomic("sessions/2026-10-24_b75930a3.md", &sess2_md)
-        .unwrap();
-
-    // 4. 执行节点 2 工作流：Recent 窗口聚合与 Project 悬空叶子消融
-    let node2_report = service
-        .run_recent_and_project_workflow_at(&storage, now)
-        .await
-        .expect("run node 2 workflow");
-
-    assert_eq!(node2_report.session_count, 2);
-    assert_eq!(node2_report.project_count, 1);
-
-    // 验证 recent/latest.md 产物
-    let recent_latest = storage
-        .read_markdown("recent/latest.md")
-        .unwrap()
-        .expect("recent/latest.md must exist");
-    assert!(recent_latest.contains(&format!("## 项目: {proj_path}")));
-    assert!(recent_latest.contains("评估 web 镜像表族"));
-    assert!(recent_latest.contains("调研纯服务器无 GUI 环境下独立安装"));
-    assert!(recent_latest.contains("确认 Ticket 03 细粒度重构拆分方案"));
-    assert!(!recent_latest.contains("- 备注: 这是杂音文本"));
-    assert!(!recent_latest.contains("细分拆分可降低单票认知负担"));
-
-    // 验证归档文件 recent/<date>.md 同样存在
-    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let archive_path = format!("recent/{today}.md");
-    let recent_archive = storage
-        .read_markdown(&archive_path)
-        .unwrap()
-        .expect("recent archive file must exist");
-    assert_eq!(recent_latest, recent_archive);
-
-    // 验证 projects/<slug>.md 经过语义消融后的状态：
-    let project_md_after = storage
-        .read_markdown(format!("projects/{proj_slug}.md"))
-        .unwrap()
-        .expect("project markdown must exist");
-
-    // 1) 旧叶子 old#T1 因与 5ab333d1#T12 (确认 Ticket 03 细粒度重构拆分) 闭环而被消融剔除！
-    assert!(
-        !project_md_after.contains("old#T1"),
-        "old#T1 must be ablated because ticket 03 split was resolved"
-    );
-
-    // 2) 未触及的旧叶子 old#T2 (Tantivy 分面索引) 必须安全保留！
-    assert!(
-        project_md_after.contains("old#T2"),
-        "old#T2 must remain in project leaves pool"
-    );
-
-    // 3) 本轮新增的叶子应当合入
-    assert!(project_md_after.contains("5ab333d1#T11"));
-    assert!(project_md_after.contains("b75930a3#T1"));
-
-    // 4) 严格单行锚点，不含二级缩进与非锚点杂音
-    assert!(!project_md_after.contains("细分拆分可降低"));
-    assert!(!project_md_after.contains("- 备注:"));
-
-    // 5. 执行节点 3 工作流：Global MEMORY.md 长期记忆沉淀
-    let node3_report = service
-        .run_global_memory_workflow(&storage)
-        .await
-        .expect("run node 3 workflow");
-    assert!(node3_report.updated);
-
-    let global_mem = storage
-        .read_markdown("MEMORY.md")
-        .unwrap()
-        .expect("MEMORY.md must exist");
-    assert!(global_mem.contains("# 全局长期记忆与工程准则 (Global Memory)"));
-    assert!(global_mem.contains("通用工程规范与架构准则"));
-    assert!(global_mem.contains("近期研发沉淀事实与决策焦点"));
-    // 包含提炼出来的最新闭环事实
-    assert!(global_mem.contains("确认 Ticket 03 细粒度重构拆分方案"));
-
-    // 验证文件体积在合理基线内 (< 3KB)
-    assert!(recent_latest.len() < 3000);
-    assert!(project_md_after.len() < 3000);
-    assert!(global_mem.len() < 3000);
-
-    drop(service);
-    std::fs::remove_dir_all(base).ok();
-}
-
-#[tokio::test]
-async fn test_recent_window_hours_skips_expired_sessions() {
-    let tmp = std::env::temp_dir().join(format!("aiwc_test_window_{}", uuid::Uuid::new_v4()));
-    let db_dir = tmp.join("db");
-    let mem_dir = tmp.join("memories/default");
-    std::fs::create_dir_all(&db_dir).unwrap();
-    std::fs::create_dir_all(&mem_dir).unwrap();
-
-    let service = AppService::open_with_db_path(db_dir.join("app.db"))
-        .await
-        .unwrap();
-    let storage = MemoryStorage::new_with_root(mem_dir.clone(), "default");
-
-    let now = chrono::Utc::now();
-    let proj_path = "/Users/util6/code-space/assetiweave";
-
-    // 1. 窗口内的活跃会话 (2小时前，符合 48h 窗口)
-    let recent_time = (now - chrono::Duration::hours(2)).to_rfc3339();
-    let recent_sess = format!(
-        r#"---
-session_id: sess-recent
-short_id: recent01
-project_path: {proj_path}
-updated_at: {recent_time}
-turn_count: 5
-has_signal: true
----
-
-# 最近活跃会话
-
-## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-- [recent01#T1](aiwc://session/recent01/turn/1): 探索流式传输背压机制
-
-## ✅ 已完成的闭环任务 (Completed Tasks)
-- [recent01#T2](aiwc://session/recent01/turn/2): 实现基础流水线事件通道
-"#
-    );
-    storage
-        .write_markdown_atomic("sessions/2026-10-27_recent01.md", &recent_sess)
-        .unwrap();
-
-    // 2. 超期历史会话 (120小时前，远超 48h / 72h 窗口)
-    let expired_time = (now - chrono::Duration::hours(120)).to_rfc3339();
-    let expired_sess = format!(
-        r#"---
-session_id: sess-expired
-short_id: expire01
-project_path: {proj_path}
-updated_at: {expired_time}
-turn_count: 3
-has_signal: true
----
-
-# 远古过期历史会话
-
-## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-- [expire01#T1](aiwc://session/expire01/turn/1): 远古时代遗留的待探索分支
-
-## ✅ 已完成的闭环任务 (Completed Tasks)
-- [expire01#T2](aiwc://session/expire01/turn/2): 远古时代已完成的任务
-"#
-    );
-    storage
-        .write_markdown_atomic("sessions/2026-10-20_expire01.md", &expired_sess)
-        .unwrap();
-
-    // 3. 执行 Recent 聚合
+    // 3. Run node 2 workflow
     let report = service
         .run_recent_and_project_workflow_at(&storage, now)
         .await
-        .expect("run recent workflow");
+        .expect("run recent & project workflow");
 
-    // 验证：超期会话被跳过，只有 1 个会话被纳入统计
+    assert_eq!(report.project_count, 1);
     assert_eq!(report.session_count, 1);
 
-    // 验证 recent/latest.md 产物
+    // 4. Verify projects/proj-alpha.md is projected
+    let proj_md = storage
+        .read_markdown("projects/proj-alpha.md")
+        .unwrap()
+        .expect("projects/proj-alpha.md must exist");
+    assert!(proj_md.contains("# 项目记忆: proj-alpha"));
+    assert!(proj_md.contains("Decoupled MCP stdio"));
+    assert!(proj_md.contains("Explore ACP streaming latency"));
+
+    // 5. Verify recent/latest.md and recent/<date>.md are projected
     let recent_latest = storage
         .read_markdown("recent/latest.md")
         .unwrap()
         .expect("recent/latest.md must exist");
+    assert!(recent_latest.contains("proj-alpha"));
+    assert!(recent_latest.contains("Decoupled MCP stdio"));
 
-    // 窗口内的会话内容必须存在
-    assert!(recent_latest.contains("探索流式传输背压机制"));
-    assert!(recent_latest.contains("实现基础流水线事件通道"));
+    let today_str = now.format("%Y-%m-%d").to_string();
+    let recent_date = storage
+        .read_markdown(format!("recent/{today_str}.md"))
+        .unwrap()
+        .expect("recent/<date>.md must exist");
+    assert_eq!(recent_latest, recent_date);
 
-    // 窗口外的超期会话内容严禁混入！
+    // 6. Verify ZERO sessions/*.md generated
+    let sessions_dir = storage.sessions_dir();
     assert!(
-        !recent_latest.contains("远古时代遗留的待探索分支"),
-        "Expired session unexplored branch must NOT be in recent/latest.md"
-    );
-    assert!(
-        !recent_latest.contains("远古时代已完成的任务"),
-        "Expired session completed task must NOT be in recent/latest.md"
+        !sessions_dir.exists()
+            || std::fs::read_dir(&sessions_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .count()
+                == 0,
+        "No sessions/*.md must be created"
     );
 
     drop(service);
-    std::fs::remove_dir_all(tmp).ok();
+    std::fs::remove_dir_all(base).ok();
 }

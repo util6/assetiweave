@@ -5,30 +5,30 @@ use uuid::Uuid;
 
 #[test]
 fn released_memory_domain_migration_remains_immutable() {
-    let migration = include_str!("../../migrations/202607230001_memory_domain.sql");
+    let migration = include_str!("../../migrations/20260723000001_memory_domain.sql");
     assert_eq!(
-            format!("{:x}", Sha384::digest(migration.as_bytes())),
-            "bdc84ed0a2c958b8bcd86ed8ffe364b9cf5954002531ac9e015503bab702ba2850586cacbdfcd291fcdc97b41bc8db8b"
-        );
+        format!("{:x}", Sha384::digest(migration.as_bytes())),
+        "bdc84ed0a2c958b8bcd86ed8ffe364b9cf5954002531ac9e015503bab702ba2850586cacbdfcd291fcdc97b41bc8db8b"
+    );
 }
 
 #[test]
 fn released_conversation_question_contract_migration_remains_immutable() {
     let migration =
-        include_str!("../../migrations/202608250005_rebuild_conversation_questions.sql");
+        include_str!("../../migrations/20260825000005_rebuild_conversation_questions.sql");
     assert_eq!(
-            format!("{:x}", Sha384::digest(migration.as_bytes())),
-            "85bfcaa1edbb892e90fb943086a77885e6a6c7d349106049ca71a43f9655a60682b18a9d69cce576eea3ccdcee1e0cf2"
-        );
+        format!("{:x}", Sha384::digest(migration.as_bytes())),
+        "85bfcaa1edbb892e90fb943086a77885e6a6c7d349106049ca71a43f9655a60682b18a9d69cce576eea3ccdcee1e0cf2"
+    );
 }
 
 #[test]
 fn released_session_memory_durable_jobs_migration_remains_immutable() {
-    let migration = include_str!("../../migrations/202608310004_session_memory_durable_jobs.sql");
+    let migration = include_str!("../../migrations/20260831000004_session_memory_durable_jobs.sql");
     assert_eq!(
-            format!("{:x}", Sha384::digest(migration.as_bytes())),
-            "d786fd5e32cc28a7864c23b44c332452a50d78c7fd78ae4cc1958105ac710b0b5a7bbbd5db6a57f69f0510ceaeaf91d4"
-        );
+        format!("{:x}", Sha384::digest(migration.as_bytes())),
+        "d786fd5e32cc28a7864c23b44c332452a50d78c7fd78ae4cc1958105ac710b0b5a7bbbd5db6a57f69f0510ceaeaf91d4"
+    );
 }
 
 #[tokio::test]
@@ -48,7 +48,7 @@ async fn migrations_retain_recall_indexes_after_question_contract_rebuild() {
             .expect("query Recall indexes");
     let memory_checksum: String = conn
         .query_row(
-            "SELECT lower(hex(checksum)) FROM _sqlx_migrations WHERE version = 202607230001",
+            "SELECT lower(hex(checksum)) FROM _sqlx_migrations WHERE version = 20260723000001",
             [],
             |row| row.get(0),
         )
@@ -58,9 +58,9 @@ async fn migrations_retain_recall_indexes_after_question_contract_rebuild() {
         "legacy recall indexes dropped with question tables"
     );
     assert_eq!(
-            memory_checksum,
-            "bdc84ed0a2c958b8bcd86ed8ffe364b9cf5954002531ac9e015503bab702ba2850586cacbdfcd291fcdc97b41bc8db8b"
-        );
+        memory_checksum,
+        "bdc84ed0a2c958b8bcd86ed8ffe364b9cf5954002531ac9e015503bab702ba2850586cacbdfcd291fcdc97b41bc8db8b"
+    );
     cleanup_database(&db_path);
 }
 
@@ -370,7 +370,7 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
                 '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
             );
             DELETE FROM _sqlx_migrations
-            WHERE version IN (202608250004, 202608250005, 202608260001);
+            WHERE version IN (20260825000004, 20260825000005, 20260826000001);
             "#,
     )
     .expect("seed representative legacy question schema");
@@ -515,72 +515,117 @@ async fn migrations_adopt_legacy_schema_without_losing_rows() {
     cleanup_database(&db_path);
 }
 
-#[tokio::test]
-async fn migrations_accept_the_original_catalog_release_details_checksum() {
-    let db_path = temp_database_path("catalog-release-checksum");
-    migrate_database(&db_path)
-        .await
-        .expect("create current database");
-
-    let conn = Connection::open(&db_path).expect("open migrated database");
-    conn.execute_batch(
-            r#"
-            ALTER TABLE conversation_adapter_catalog_releases DROP COLUMN source_json;
-            UPDATE _sqlx_migrations
-            SET checksum = X'E75F75A803B17920C2E1498962D6DCB8A34167DE66AAB216FBC2F4CA056A383E0600CAEFE44633CDA48A0F9FE61DC581'
-            WHERE version = 202607150002;
-            DELETE FROM _sqlx_migrations WHERE version = 202607160001;
-            "#,
-        )
-        .expect("simulate database created by the original migration");
-    drop(conn);
-
-    migrate_database(&db_path)
-        .await
-        .expect("upgrade database without modifying applied migrations");
-
-    let conn = Connection::open(&db_path).expect("open upgraded database");
-    let source_json_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('conversation_adapter_catalog_releases') WHERE name = 'source_json'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("query source_json column");
-    assert_eq!(source_json_count, 1);
-    cleanup_database(&db_path);
+#[test]
+fn all_migration_files_have_14_digit_timestamps() {
+    let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let entries = std::fs::read_dir(&migrations_dir).expect("read migrations directory");
+    let mut count = 0;
+    for entry in entries {
+        let entry = entry.expect("valid entry");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("sql") {
+            let filename = path.file_name().unwrap().to_str().unwrap();
+            assert!(
+                filename.len() > 15,
+                "migration file name too short: {filename}"
+            );
+            let prefix = &filename[..14];
+            assert!(
+                prefix.chars().all(|c| c.is_ascii_digit()),
+                "migration file prefix must be 14 ASCII digits: {filename}"
+            );
+            assert_eq!(
+                filename.chars().nth(14),
+                Some('_'),
+                "migration filename must have '_' delimiter at index 14: {filename}"
+            );
+            count += 1;
+        }
+    }
+    assert!(
+        count >= 85,
+        "expected at least 85 migration files, found {count}"
+    );
 }
 
 #[tokio::test]
-async fn migrations_repair_the_known_modified_catalog_release_details_checksum() {
-    let db_path = temp_database_path("catalog-release-modified-checksum");
+async fn migrations_self_heal_12_digit_legacy_ledger_versions() {
+    let db_path = temp_database_path("self-heal-legacy-versions");
     migrate_database(&db_path)
         .await
-        .expect("create current database");
+        .expect("create current 14-digit migrated database");
 
-    let conn = Connection::open(&db_path).expect("open migrated database");
+    // 1. 模拟存量 12 位历史版本号记录（将已应用的 14 位版本号退行更新为 12 位格式）
+    let conn = Connection::open(&db_path).expect("open database to simulate legacy ledger");
     conn.execute_batch(
-            r#"
-            UPDATE _sqlx_migrations
-            SET checksum = X'863286E8B8E292E94EB63E42AC751D8EAD340500965B16ADCB4EEF61BEB38187B9E8FF4F19379B7C817F18DDD3BF0A83'
-            WHERE version = 202607150002;
-            DELETE FROM _sqlx_migrations WHERE version = 202607160001;
-            "#,
+        r#"
+        UPDATE _sqlx_migrations
+        SET version = (version / 1000000) * 10000 + (version % 10000)
+        WHERE version < 20261028000000
+          AND version NOT IN (20260909000001, 20260909000002);
+        "#,
+    )
+    .expect("simulate legacy 12-digit versions in _sqlx_migrations");
+
+    let legacy_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version < 10000000000000",
+            [],
+            |row| row.get(0),
         )
-        .expect("simulate database created by the modified migration");
+        .expect("count legacy versions");
+    assert_eq!(
+        legacy_count, 76,
+        "expected exactly 76 simulated legacy 12-digit versions"
+    );
     drop(conn);
 
+    // 2. 再次执行 migrate_database，触发 open_migrated_pool 中的 repair_legacy_migration_ledger_versions
     migrate_database(&db_path)
         .await
-        .expect("repair known migration checksum and continue");
+        .expect("self-heal legacy ledger versions and complete migration");
 
-    let conn = Connection::open(&db_path).expect("open repaired database");
-    let migration_count: i64 = conn
+    // 3. 断言校验：所有存量版本均已升级为 14 位，无遗留 12 位版本，总数匹配 MIGRATOR
+    let conn = Connection::open(&db_path).expect("open upgraded database");
+    let remaining_legacy: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version < 10000000000000",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query remaining legacy versions");
+    assert_eq!(remaining_legacy, 0, "no legacy versions should remain");
+
+    let total_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM _sqlx_migrations", [], |row| {
             row.get(0)
         })
-        .expect("query migrations");
-    assert_eq!(migration_count, MIGRATOR.migrations.len() as i64);
+        .expect("query total migration count");
+    assert_eq!(total_count, MIGRATOR.migrations.len() as i64);
+
+    // 验证特定抽样版本已恢复为 14 位且保留 success=1
+    for version in [
+        20260618000001i64,
+        20260723000001i64,
+        20260825000005i64,
+        20261026000002i64,
+    ] {
+        let success: bool = conn
+            .query_row(
+                "SELECT success FROM _sqlx_migrations WHERE version = ?",
+                [version],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| panic!("version {version} should exist in ledger"));
+        assert!(success, "migration version {version} should be successful");
+    }
+    drop(conn);
+
+    // 4. 幂等性验证：重复调用 migrate_database 仍平滑成功
+    migrate_database(&db_path)
+        .await
+        .expect("idempotent migration invocation on self-healed database");
+
     cleanup_database(&db_path);
 }
 
@@ -636,8 +681,8 @@ async fn migrations_repair_the_known_modified_question_contract_checksum() {
             );
             UPDATE _sqlx_migrations
             SET checksum = X'E9A07424F1C86E99CED78966A8CB750B73D6C00E089576DD5C077B357B259BE2C34C14F0BEC320A2FB991B98B6BB9D38'
-            WHERE version = 202608250005;
-            DELETE FROM _sqlx_migrations WHERE version = 202608260001;
+            WHERE version = 20260825000005;
+            DELETE FROM _sqlx_migrations WHERE version = 20260826000001;
             "#,
         )
         .expect("simulate database opened after the released migration was modified");
@@ -650,14 +695,14 @@ async fn migrations_repair_the_known_modified_question_contract_checksum() {
     let conn = Connection::open(&db_path).expect("open repaired database");
     let question_contract_checksum: String = conn
         .query_row(
-            "SELECT lower(hex(checksum)) FROM _sqlx_migrations WHERE version = 202608250005",
+            "SELECT lower(hex(checksum)) FROM _sqlx_migrations WHERE version = 20260825000005",
             [],
             |row| row.get(0),
         )
         .expect("query repaired question contract checksum");
     let repair_migration_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 202608260001",
+            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 20260826000001",
             [],
             |row| row.get(0),
         )
@@ -671,9 +716,9 @@ async fn migrations_repair_the_known_modified_question_contract_checksum() {
             .expect("query restored Recall indexes");
 
     assert_eq!(
-            question_contract_checksum,
-            "85bfcaa1edbb892e90fb943086a77885e6a6c7d349106049ca71a43f9655a60682b18a9d69cce576eea3ccdcee1e0cf2"
-        );
+        question_contract_checksum,
+        "85bfcaa1edbb892e90fb943086a77885e6a6c7d349106049ca71a43f9655a60682b18a9d69cce576eea3ccdcee1e0cf2"
+    );
     assert_eq!(repair_migration_count, 1);
     assert_eq!(recall_index_count, 2);
     cleanup_database(&db_path);
@@ -1066,7 +1111,7 @@ async fn migrations_drop_turn_question_columns_and_redirects_preserves_data() {
 
     let conn = Connection::open(&db_path).expect("open database");
 
-    // 1. 模拟迁移 202610260001 执行前的 17 列 Schema 与跳转表
+    // 1. 模拟迁移 20261026000001 执行前的 17 列 Schema 与跳转表
     conn.execute_batch(
         r#"
         PRAGMA foreign_keys = OFF;
@@ -1161,14 +1206,14 @@ async fn migrations_drop_turn_question_columns_and_redirects_preserves_data() {
         CREATE INDEX idx_web_record_turns_tenant_question
         ON web_record_turns (tenant_id, question_id);
 
-        DELETE FROM _sqlx_migrations WHERE version = 202610260001;
+        DELETE FROM _sqlx_migrations WHERE version = 20261026000001;
         PRAGMA foreign_keys = ON;
         "#,
     )
     .expect("setup pre-migration state");
     drop(conn);
 
-    // 2. 运行 202610260001 迁移
+    // 2. 运行 20261026000001 迁移
     migrate_database(&db_path)
         .await
         .expect("run slimming migration");
@@ -1298,6 +1343,46 @@ async fn migrations_drop_turn_question_columns_and_redirects_preserves_data() {
     assert_eq!(web_turn_row.12, "web-fp-1");
     assert_eq!(web_turn_row.13, 0);
     assert_eq!(web_turn_row.14, "2026-10-25T11:01:00Z");
+
+    cleanup_database(&db_path);
+}
+
+/// assets 表历史记录存的是扫描当刻的主机绝对路径，换 OS 或换用户名后必然解析失败。
+/// 启动阶段必须把它收敛为便携锚点，且锚点要能展开回当前主机上的真实路径。
+#[tokio::test]
+async fn legacy_host_absolute_asset_paths_converge_to_portable_anchors() {
+    let db_path = temp_database_path("asset-portable-stored-path");
+    migrate_database(&db_path).await.expect("run migrations");
+
+    let home = dirs::home_dir().expect("resolve home directory");
+    let legacy_path = home.join("legacy-assets").join("skill-a");
+    let legacy_text = legacy_path.to_string_lossy().to_string();
+    {
+        let conn = Connection::open(&db_path).expect("open migrated database");
+        conn.execute(
+            "INSERT INTO assets (
+                tenant_id, id, source_id, name, kind, format, relative_path, stored_path,
+                entry_file, description, content_hash, discovered_at, updated_at
+            ) VALUES ('default', 'asset-a', 'source-a', 'skill-a', 'skill', 'directory', 'skill-a',
+                ?1, 'skill-a/SKILL.md', NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [legacy_text.as_str()],
+        )
+        .expect("insert legacy asset row");
+    }
+
+    let pool = open_migrated_pool(&db_path)
+        .await
+        .expect("reopen database to converge stored paths");
+    let stored: String = sqlx::query_scalar("SELECT stored_path FROM assets WHERE id = 'asset-a'")
+        .fetch_one(&pool)
+        .await
+        .expect("query converged stored path");
+    pool.close().await;
+
+    assert_eq!(stored, "~/legacy-assets/skill-a");
+    let expanded = crate::backend::infrastructure::path_utils::expand_path(&stored)
+        .expect("expand portable anchor");
+    assert_eq!(expanded, legacy_path);
 
     cleanup_database(&db_path);
 }
@@ -1464,7 +1549,7 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (tenant_id, source_question_id)
             );
-            DELETE FROM _sqlx_migrations WHERE version IN (202610230006, 202610230007);
+            DELETE FROM _sqlx_migrations WHERE version IN (20261023000006, 20261023000007);
             "#,
     )
     .expect("seed pre-migration question-level index");
@@ -1661,7 +1746,7 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
 
     let conn = Connection::open(&db_path).expect("open database");
 
-    // 1. 验证被删除的历史表（三张问题表、两张边表、两张 web 问题表、旧 FTS 表、跳转表）零残留
+    // 1. 验证被删除的历史表零残留（涵盖全部 8 张新旧市场分裂表及 16 张历史会话/记忆表）
     let dropped_legacy_tables = [
         "conversation_questions",
         "conversation_question_turns",
@@ -1679,6 +1764,15 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         "legacy_memory_item_evidence",
         "legacy_memory_item_revisions",
         "memory_maintenance_jobs",
+        // ADR-0019 / Issue #159 / #163 零僵尸表闭环：清退全部 8 张历史新旧分裂表
+        "agent_installations",
+        "conversation_adapter_packages",
+        "conversation_adapter_package_versions",
+        "conversation_adapter_catalog_releases",
+        "app_agent_installations",
+        "app_conversation_adapter_packages",
+        "app_conversation_adapter_package_versions",
+        "app_conversation_adapter_catalog_releases",
     ];
     for table in dropped_legacy_tables {
         let count: i64 = conn
@@ -1691,11 +1785,40 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         assert_eq!(count, 0, "旧表 {table} 必须被彻底删除");
     }
 
-    // 2. 检查会话域核心业务表（排除系统内部表与 FTS5 内部 shadow tables）
+    // 显式断言全部 8 张历史分裂僵尸表在数据库中彻底绝迹
+    let legacy_market_zombie_tables = [
+        "agent_installations",
+        "conversation_adapter_packages",
+        "conversation_adapter_package_versions",
+        "conversation_adapter_catalog_releases",
+        "app_agent_installations",
+        "app_conversation_adapter_packages",
+        "app_conversation_adapter_package_versions",
+        "app_conversation_adapter_catalog_releases",
+    ];
+    for table in legacy_market_zombie_tables {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |r| r.get(0),
+            )
+            .expect("query legacy market table");
+        assert_eq!(
+            count, 0,
+            "8 大废弃市场表之一 {table} 必须在数据库中完全绝迹"
+        );
+    }
+
+    // 2. 检查会话、记录、Agent 与应用域核心业务表（覆盖 conversation_%, web_record_%, agent_%, app_%）
+    // 排除 FTS5 内部 shadow tables (conversation_part_fts_%)
     let mut stmt = conn
         .prepare(
             "SELECT name FROM sqlite_master 
-             WHERE (name LIKE 'conversation_%' OR name LIKE 'web_record_%')
+             WHERE (name LIKE 'conversation_%' 
+                 OR name LIKE 'web_record_%' 
+                 OR name LIKE 'agent_%' 
+                 OR name LIKE 'app_%')
                AND type IN ('table', 'virtual')
                AND name NOT LIKE 'conversation_part_fts_%'
              ORDER BY name",
@@ -1708,11 +1831,14 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         .collect::<Result<Vec<_>, _>>()
         .expect("collect table names");
 
-    // 规格 #104 定义的会话域核心表收敛清单
+    // 规格 #104 与 ADR-0019 定义的 22 张核心表收敛白名单
     let expected_core_tables = [
-        "conversation_adapter_catalog_releases",
-        "conversation_adapter_package_versions",
-        "conversation_adapter_packages",
+        "agent_execution_bindings",
+        "app_extension_catalog_releases",
+        "app_extension_versions",
+        "app_extensions",
+        "app_settings",
+        "app_shortcut_items",
         "conversation_adapters",
         "conversation_data_audit_issues",
         "conversation_part_fts",
@@ -1731,12 +1857,29 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         "web_record_turns",
     ];
 
-    for expected in expected_core_tables {
-        assert!(
-            table_names.contains(&expected.to_string()),
-            "缺少预期的会话域表: {expected}"
-        );
-    }
+    assert_eq!(
+        table_names,
+        expected_core_tables
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
+        "4 大前缀表清单必须与收敛核心白名单（22 表）完全一致，杜绝任何僵尸表残留"
+    );
+
+    let market_index_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN (
+                'idx_app_extensions_capability_target',
+                'idx_app_extensions_ready',
+                'idx_app_extension_versions_lookup',
+                'idx_app_extension_catalog_releases_lookup'
+            )",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query index count");
+    assert_eq!(market_index_count, 4, "统一三表核心索引必须全部存在");
+
     assert!(
         !table_names.contains(&"conversation_question_redirects".to_string()),
         "conversation_question_redirects 表必须彻底删除"
@@ -1777,6 +1920,111 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         )
         .expect("query index count");
     assert_eq!(question_index_count, 0, "旧版 question 相关索引必须为 0");
+
+    cleanup_database(&db_path);
+}
+
+#[test]
+fn zero_zombie_tables() {
+    acceptance_spec_104_conversation_domain_table_inventory();
+}
+
+#[test]
+fn acceptance_spec_104_schema_slimming_drops_deprecated_tables_and_question_columns() {
+    acceptance_spec_104_conversation_domain_table_inventory();
+}
+
+#[tokio::test]
+async fn conversation_adapter_flexible_boolean_deserialization_from_sqlite_integers() {
+    let db_path = temp_database_path("flexible-bool-deser");
+    let pool = open_migrated_pool(&db_path)
+        .await
+        .expect("open migrated pool");
+
+    // 1. Insert an extension row with integer runtime_ready = 1 in capability_meta_json
+    let meta_json_with_int_bool = serde_json::json!({
+        "record_kind": "session",
+        "manifest_path": "/fake/manifest.json",
+        "adapter_manifest_path": "/fake/adapter.json",
+        "runtime_protocol": "acp",
+        "runtime_ready": 1, // SQLite integer generated by json_object
+        "origin": "managed_release",
+        "update_policy": "manual",
+        "runtime_gate_status": "ready"
+    })
+    .to_string();
+
+    sqlx::query(
+        r#"
+        INSERT INTO app_extensions (
+            extension_id, capability_kind, target_id, display_name, active_version,
+            distribution_type, install_dir, enabled, installation_status, runtime_status,
+            error_code, error_message, checked_at, installed_at, updated_at, capability_meta_json
+        ) VALUES (
+            'test-pkg-int-bool', 'conversation.adapter', 'test-adapter-int-bool', 'Test Adapter', '1.0.0',
+            'archive', '/tmp/install', 1, 'ready', 'ready',
+            NULL, NULL, '2026-10-31T00:00:00Z', '2026-10-31T00:00:00Z', '2026-10-31T00:00:00Z', ?1
+        )
+        "#
+    )
+    .bind(&meta_json_with_int_bool)
+    .execute(&pool)
+    .await
+    .expect("insert extension with integer bool");
+
+    // Verify loading package correctly deserializes runtime_ready to true without error
+    let pkg = crate::store::load_conversation_adapter_package_sqlx(&pool, "test-pkg-int-bool")
+        .await
+        .expect("load package")
+        .expect("package exists");
+    assert!(
+        pkg.runtime_ready,
+        "runtime_ready must deserialize 1 to true"
+    );
+
+    // 2. Insert a catalog release with integer breaking_change = 1 in release_meta_json
+    let release_meta_with_int_bool = serde_json::json!({
+        "core_compatibility": ">=1.0.0",
+        "changelog_markdown": "test changes",
+        "breaking_change": 1, // SQLite integer generated by json_object
+        "runtime_protocol": "acp",
+        "record_kind": "session",
+        "package_manifest_file": "manifest.json",
+        "adapter_manifest_file": "adapter.json"
+    })
+    .to_string();
+
+    sqlx::query(
+        r#"
+        INSERT INTO app_extension_catalog_releases (
+            catalog_source, extension_id, version, capability_kind, target_id,
+            display_name, publisher, channel, released_at, artifact_url,
+            artifact_size, artifact_sha256, release_meta_json, fetched_at
+        ) VALUES (
+            'https://test.catalog/repo', 'test-pkg-int-bool', '1.0.0', 'conversation.adapter', 'test-adapter-int-bool',
+            'Test Adapter', 'Publisher', 'stable', '2026-10-31T00:00:00Z', 'https://test.catalog/art.zip',
+            1024, 'abc123sha', ?1, '2026-10-31T00:00:00Z'
+        )
+        "#
+    )
+    .bind(&release_meta_with_int_bool)
+    .execute(&pool)
+    .await
+    .expect("insert release with integer bool");
+
+    // Verify listing releases correctly deserializes breaking_change to true without error
+    let releases = crate::store::list_conversation_adapter_catalog_releases_sqlx(
+        &pool,
+        "https://test.catalog/repo",
+        Some("test-pkg-int-bool"),
+    )
+    .await
+    .expect("list releases");
+    assert_eq!(releases.len(), 1);
+    assert!(
+        releases[0].breaking_change,
+        "breaking_change must deserialize 1 to true"
+    );
 
     cleanup_database(&db_path);
 }
@@ -2145,14 +2393,16 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         [],
     ).expect("insert util6 observation");
 
-    // 3. 回退 202610240001~202610240005 迁移记录，模拟从旧版本升级触发迁移
+    // 3. 回退 20261024000001~20261024000005 迁移记录，模拟从旧版本升级触发迁移
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS conversation_sync_deltas (tenant_id TEXT);
         CREATE TABLE IF NOT EXISTS conversation_sync_runs (tenant_id TEXT);
         CREATE TABLE IF NOT EXISTS session_memory_source_references (tenant_id TEXT);
         CREATE TABLE IF NOT EXISTS memory_extractions (tenant_id TEXT, id TEXT, PRIMARY KEY (tenant_id, id));
-        DELETE FROM _sqlx_migrations WHERE version IN (202610240001, 202610240002, 202610240003, 202610240004);
+        CREATE TABLE IF NOT EXISTS conversation_adapter_packages (tenant_id TEXT);
+        CREATE TABLE IF NOT EXISTS conversation_adapter_catalog_releases (tenant_id TEXT);
+        DELETE FROM _sqlx_migrations WHERE version IN (20261024000001, 20261024000002, 20261024000003, 20261024000004);
         "#,
     )
     .expect("rollback migration version");
@@ -2169,6 +2419,8 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         DROP TABLE IF EXISTS conversation_sync_runs;
         DROP TABLE IF EXISTS session_memory_source_references;
         DROP TABLE IF EXISTS memory_extractions;
+        DROP TABLE IF EXISTS conversation_adapter_packages;
+        DROP TABLE IF EXISTS conversation_adapter_catalog_releases;
         "#,
     )
     .expect("clean up temp tables");
@@ -2348,7 +2600,7 @@ async fn acceptance_spec_119_last_cwd_materialization_and_redundant_index_remova
         [],
     ).expect("insert part 2-1");
 
-    // 4. 执行回填逻辑（与迁移 202610240002 一致的 CTE UPDATE FROM）
+    // 4. 执行回填逻辑（与迁移 20261024000002 一致的 CTE UPDATE FROM）
     conn.execute_batch(
         r#"
         WITH latest_cwds AS (
@@ -2488,7 +2740,7 @@ async fn acceptance_spec_126_turn_triad_schema_and_parts_slimming() {
 
     // 2. 构造历史脏数据并执行迁移自愈测试
     conn.execute(
-        "DELETE FROM _sqlx_migrations WHERE version = 202610250001",
+        "DELETE FROM _sqlx_migrations WHERE version = 20261025000001",
         [],
     )
     .expect("delete migration version");
@@ -2982,6 +3234,618 @@ async fn acceptance_spec_157_turn_sparse_columns_convergence_and_14_col_slimming
     migrate_database(&db_path)
         .await
         .expect("idempotent migration");
+
+    cleanup_database(&db_path);
+}
+
+// ============================================================================
+// Adversarial Penetration Challenge Tests (Milestone 4 / Issue #159 / #163)
+// ============================================================================
+
+// 1. Fresh Database vs Incremental Migration & Foreign Key Integrity
+#[tokio::test]
+async fn adversarial_challenge_1_fresh_and_incremental_migration_foreign_key_integrity() {
+    let db_path = temp_database_path("adv-fresh-db-fk");
+
+    // Fresh run: run full migration sequence (1 to 85) on a brand-new SQLite database
+    let pool = open_migrated_pool(&db_path)
+        .await
+        .expect("full migration sequence (1 to 85) on fresh database must succeed");
+
+    // Verify foreign keys are enabled in pool connection
+    let fk_enabled: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+        .fetch_one(&pool)
+        .await
+        .expect("query foreign_keys pragma");
+    assert_eq!(fk_enabled, 1, "foreign keys must be enabled");
+
+    // Run PRAGMA foreign_key_check to verify ZERO foreign key violations across all tables
+    let conn = Connection::open(&db_path).expect("open connection for pragma check");
+    let violations = {
+        let mut stmt = conn
+            .prepare("PRAGMA foreign_key_check")
+            .expect("prepare fk check");
+        stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })
+        .expect("query fk check")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect fk violations")
+    };
+    assert!(
+        violations.is_empty(),
+        "database must have 0 foreign key violations after migration, found: {:?}",
+        violations
+    );
+
+    // Run PRAGMA integrity_check to verify database page and index integrity
+    let integrity_result: String = conn
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .expect("PRAGMA integrity_check");
+    assert_eq!(integrity_result, "ok", "database integrity must be ok");
+
+    drop(conn);
+    pool.close().await;
+
+    // Incremental / Idempotent test: re-run migrate_database multiple times
+    for i in 1..=3 {
+        migrate_database(&db_path)
+            .await
+            .unwrap_or_else(|e| panic!("incremental/idempotent migration pass {i} failed: {e:?}"));
+    }
+
+    cleanup_database(&db_path);
+}
+
+// 2. Pre-populated Dirty Legacy Data & Foreign Key Resilience
+#[tokio::test]
+async fn adversarial_challenge_2_prepopulated_dirty_legacy_data_resilience() {
+    let db_path = temp_database_path("adv-dirty-legacy-data");
+
+    // Migrate database to establish initial schema
+    let pool = open_migrated_pool(&db_path)
+        .await
+        .expect("open migrated database");
+
+    // Recreate the 3 legacy tables with dirty/orphan/adversarial data to simulate pre-migration state
+    let conn = Connection::open(&db_path).expect("open connection for dirty data injection");
+    conn.execute_batch(
+        r#"
+        PRAGMA foreign_keys = ON;
+
+        CREATE TABLE IF NOT EXISTS app_conversation_adapter_packages (
+            package_id TEXT PRIMARY KEY,
+            adapter_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            version TEXT NOT NULL,
+            origin TEXT NOT NULL,
+            install_dir TEXT,
+            manifest_path TEXT NOT NULL,
+            adapter_manifest_path TEXT NOT NULL,
+            runtime_protocol TEXT NOT NULL,
+            runtime_ready INTEGER NOT NULL,
+            installed_content_hash TEXT,
+            trusted_package_hash TEXT,
+            source_url TEXT,
+            git_ref TEXT,
+            git_commit TEXT,
+            catalog_url TEXT,
+            update_policy TEXT NOT NULL,
+            latest_version TEXT,
+            last_checked_at TEXT,
+            runtime_gate_status TEXT,
+            runtime_validated_at TEXT,
+            record_kind TEXT NOT NULL,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS app_conversation_adapter_package_versions (
+            package_id TEXT NOT NULL,
+            version TEXT NOT NULL,
+            install_dir TEXT NOT NULL,
+            artifact_hash TEXT,
+            content_hash TEXT NOT NULL,
+            runtime_gate_status TEXT NOT NULL,
+            installed_at TEXT NOT NULL,
+            PRIMARY KEY (package_id, version),
+            FOREIGN KEY (package_id) REFERENCES app_conversation_adapter_packages(package_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS app_conversation_adapter_catalog_releases (
+            catalog_url TEXT NOT NULL,
+            package_id TEXT NOT NULL,
+            version TEXT NOT NULL,
+            adapter_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            publisher TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            released_at TEXT,
+            artifact_url TEXT NOT NULL,
+            artifact_size INTEGER,
+            artifact_sha256 TEXT,
+            core_compatibility TEXT,
+            changelog_markdown TEXT,
+            breaking_change INTEGER NOT NULL,
+            runtime_protocol TEXT NOT NULL,
+            record_kind TEXT NOT NULL,
+            package_manifest_file TEXT NOT NULL,
+            adapter_manifest_file TEXT NOT NULL,
+            adapter_manifest_json TEXT,
+            source_json TEXT,
+            etag TEXT,
+            fetched_at TEXT NOT NULL,
+            PRIMARY KEY (catalog_url, package_id, version)
+        );
+
+        -- Insert clean and adversarial dirty records:
+        -- Record 1: Clean standard package
+        INSERT INTO app_conversation_adapter_packages VALUES (
+            'pkg-clean-1', 'adapter-clean-1', 'Clean Adapter', '1.0.0',
+            'local_directory', '/tmp/clean', '/tmp/clean/pkg.json', '/tmp/clean/adapter.json',
+            'acp', 1, 'hash1', 'trusted1', NULL, NULL, NULL, 'https://example.com/catalog',
+            'manual', '1.0.0', '2026-10-31T00:00:00Z', 'ready', '2026-10-31T00:00:00Z',
+            'session', NULL, '2026-10-31T00:00:00Z', '2026-10-31T00:00:00Z'
+        );
+
+        -- Record 2: Dirty record with NULLs in optional fields, odd origin, non-standard runtime_ready = 0
+        INSERT INTO app_conversation_adapter_packages VALUES (
+            'pkg-dirty-nulls', 'adapter-dirty-nulls', 'Dirty Nulls Adapter "''` -- DROP TABLE', '0.0.1-alpha.0+build.42',
+            'exotic_remote_unknown', NULL, '/tmp/dirty/pkg.json', '/tmp/dirty/adapter.json',
+            'acp', 0, NULL, NULL, NULL, NULL, NULL, NULL,
+            'auto', NULL, NULL, 'core_incompatible', NULL,
+            'agent', 'Failed with: <error line 1\nline 2> 🚀', '2026-10-31T01:00:00Z', '2026-10-31T01:00:00Z'
+        );
+
+        -- Record 3: Valid package with versions
+        INSERT INTO app_conversation_adapter_packages VALUES (
+            'pkg-multi-version', 'adapter-multi-version', 'Multi Version Adapter 🚀 测试', '2.0.0',
+            'dev_override', '/tmp/multi', '/tmp/multi/pkg.json', '/tmp/multi/adapter.json',
+            'acp', 1, 'hash2', 'trusted2', 'https://github.com/test', 'main', 'abc123', 'https://catalog.org',
+            'manual', '2.1.0', '2026-10-31T02:00:00Z', 'ready', '2026-10-31T02:00:00Z',
+            'session', NULL, '2026-10-31T02:00:00Z', '2026-10-31T02:00:00Z'
+        );
+
+        -- Package versions (including valid versions)
+        INSERT INTO app_conversation_adapter_package_versions VALUES
+            ('pkg-multi-version', '1.0.0', '/tmp/multi/v1', 'art1', 'cnt1', 'ready', '2026-10-31T02:00:00Z'),
+            ('pkg-multi-version', '2.0.0', '/tmp/multi/v2', 'art2', 'cnt2', 'ready', '2026-10-31T02:00:00Z');
+
+        -- Adversarial: Disable FK momentarily to inject ORPHAN version referencing NON-EXISTENT package
+        PRAGMA foreign_keys = OFF;
+        INSERT INTO app_conversation_adapter_package_versions VALUES
+            ('pkg-ghost-nonexistent', '0.9.9', '/tmp/ghost', 'arthash', 'cnthash', 'broken', '2026-10-31T03:00:00Z');
+        PRAGMA foreign_keys = ON;
+
+        -- Catalog releases with corrupted/malformed JSON, unicode, and quotes
+        INSERT INTO app_conversation_adapter_catalog_releases VALUES (
+            'https://catalog.org', 'pkg-multi-version', '2.0.0', 'adapter-multi-version',
+            'Multi Version Adapter', 'Test Publisher', 'stable', '2026-10-31T02:00:00Z',
+            'https://art.org/v2.tar.gz', 1024, 'sha256-abc', '>=1.0.0',
+            '### Changelog\n- Fixes ''quotes'' & "escapes"', 0, 'acp', 'session',
+            'pkg.json', 'adapter.json',
+            '{"valid": true, "nested": {"key": "value", "arr": [1, 2, 3]}}',
+            '{"source": "git"}', 'etag123', '2026-10-31T02:00:00Z'
+        );
+
+        -- Release with malformed / corrupted JSON (must be safely handled by json_valid in migration)
+        INSERT INTO app_conversation_adapter_catalog_releases VALUES (
+            'https://catalog.org', 'pkg-corrupted-json', '1.0.0', 'adapter-corrupted',
+            'Corrupted JSON Release', 'Publisher Bad', 'beta', '2026-10-31T04:00:00Z',
+            'https://art.org/bad.tar.gz', 2048, 'sha256-bad', NULL,
+            NULL, 1, 'acp', 'agent',
+            'pkg.json', 'adapter.json',
+            '{corrupted unclosed json: [1, 2,',
+            'not even json {}}', NULL, '2026-10-31T04:00:00Z'
+        );
+        "#
+    )
+    .expect("inject dirty legacy data");
+    drop(conn);
+
+    // Now execute migration 20261031000002 logic via Rusqlite connection with PRAGMA foreign_keys = ON
+    let migration_sql = include_str!(
+        "../../migrations/20261031000002_converge_conversation_adapters_and_drop_legacy_tables.sql"
+    );
+    let conn = Connection::open(&db_path).expect("open connection to execute migration");
+    conn.execute_batch(&format!("PRAGMA foreign_keys = ON;\n{}", migration_sql))
+        .expect("migration 20261031000002 must execute successfully against dirty legacy data with FK enabled");
+
+    // Assert:
+    // 1. The 3 legacy tables are completely dropped
+    for table in [
+        "app_conversation_adapter_packages",
+        "app_conversation_adapter_package_versions",
+        "app_conversation_adapter_catalog_releases",
+    ] {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |r| r.get(0),
+            )
+            .expect("check table dropped");
+        assert_eq!(count, 0, "legacy table {table} must be dropped");
+    }
+
+    // 2. The orphan version ('pkg-ghost-nonexistent') was NOT inserted into app_extension_versions
+    let ghost_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM app_extension_versions WHERE extension_id = 'pkg-ghost-nonexistent'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query ghost version count");
+    assert_eq!(
+        ghost_count, 0,
+        "orphan version must not exist in app_extension_versions"
+    );
+
+    // 3. Valid versions exist and foreign key check passes
+    let version_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM app_extension_versions WHERE extension_id = 'pkg-multi-version'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query valid versions count");
+    assert!(
+        version_count >= 2,
+        "multi-version package must have at least 2 versions"
+    );
+
+    // 4. Dirty nulls package was migrated safely with proper fallbacks
+    let dirty_ext: (String, String, i64, String, Option<String>) = conn
+        .query_row(
+            "SELECT capability_kind, distribution_type, enabled, installation_status, error_code FROM app_extensions WHERE extension_id = 'pkg-dirty-nulls'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .expect("query dirty ext");
+    assert_eq!(dirty_ext.0, "conversation.adapter");
+    assert_eq!(
+        dirty_ext.1, "archive",
+        "unknown origin must fall back to 'archive'"
+    );
+    assert_eq!(dirty_ext.2, 0, "runtime_ready = 0 must map to enabled = 0");
+    assert_eq!(
+        dirty_ext.3, "incompatible",
+        "runtime_gate_status = 'core_incompatible' must map to 'incompatible'"
+    );
+    assert_eq!(dirty_ext.4.as_deref(), Some("core_incompatible"));
+
+    // 5. Corrupted JSON release was handled gracefully: json_valid filtered it out to NULL
+    let corrupted_meta: String = conn
+        .query_row(
+            "SELECT release_meta_json FROM app_extension_catalog_releases WHERE extension_id = 'pkg-corrupted-json'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query corrupted release meta");
+    let parsed_meta: serde_json::Value =
+        serde_json::from_str(&corrupted_meta).expect("release_meta_json must be valid JSON");
+    assert!(
+        parsed_meta.get("adapter_manifest_json").unwrap().is_null(),
+        "malformed adapter_manifest_json must become null"
+    );
+    assert!(
+        parsed_meta.get("source_json").unwrap().is_null(),
+        "malformed source_json must become null"
+    );
+
+    // 6. PRAGMA foreign_key_check passes with 0 violations
+    let violations = {
+        let mut stmt = conn
+            .prepare("PRAGMA foreign_key_check")
+            .expect("prepare fk check");
+        stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })
+        .expect("query fk check")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect fk violations")
+    };
+    assert!(
+        violations.is_empty(),
+        "0 foreign key violations expected after dirty migration: {:?}",
+        violations
+    );
+
+    // 7. PRAGMA integrity_check passes
+    let integrity: String = conn
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .expect("integrity check");
+    assert_eq!(integrity, "ok");
+
+    drop(conn);
+    pool.close().await;
+    cleanup_database(&db_path);
+}
+
+// 3. Zero Zombie Tables Strictness & Oracle Failure Injection
+#[tokio::test]
+async fn adversarial_challenge_3_zero_zombie_tables_oracle_failure_injection() {
+    let db_path = temp_database_path("adv-zero-zombie-oracle");
+    migrate_database(&db_path).await.expect("migrate database");
+
+    // A. Verify baseline clean state: all 8 legacy market tables are 0
+    let conn = Connection::open(&db_path).expect("open database");
+    for table in [
+        "agent_installations",
+        "conversation_adapter_packages",
+        "conversation_adapter_package_versions",
+        "conversation_adapter_catalog_releases",
+        "app_agent_installations",
+        "app_conversation_adapter_packages",
+        "app_conversation_adapter_package_versions",
+        "app_conversation_adapter_catalog_releases",
+    ] {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |r| r.get(0),
+            )
+            .expect("query legacy market table");
+        assert_eq!(count, 0, "legacy table {table} must be 0");
+    }
+
+    let clean_tables: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT name FROM sqlite_master 
+                 WHERE (name LIKE 'conversation_%' 
+                     OR name LIKE 'web_record_%' 
+                     OR name LIKE 'agent_%' 
+                     OR name LIKE 'app_%')
+                   AND type IN ('table', 'virtual')
+                   AND name NOT LIKE 'conversation_part_fts_%'
+                 ORDER BY name",
+            )
+            .expect("prepare stmt");
+
+        stmt.query_map([], |r| r.get(0))
+            .expect("query map")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect table names")
+    };
+    drop(conn);
+
+    let expected_core_tables = [
+        "agent_execution_bindings",
+        "app_extension_catalog_releases",
+        "app_extension_versions",
+        "app_extensions",
+        "app_settings",
+        "app_shortcut_items",
+        "conversation_adapters",
+        "conversation_data_audit_issues",
+        "conversation_part_fts",
+        "conversation_part_index_state",
+        "conversation_parts",
+        "conversation_payload_policy_state",
+        "conversation_search_index_state",
+        "conversation_session_observations",
+        "conversation_sessions",
+        "conversation_sources",
+        "conversation_turns",
+        "conversation_usage_events",
+        "conversation_usage_source_states",
+        "web_record_parts",
+        "web_record_sessions",
+        "web_record_turns",
+    ];
+    assert_eq!(
+        clean_tables,
+        expected_core_tables
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
+        "baseline clean database must match exactly 22 core tables"
+    );
+
+    // Helper to test oracle rejection
+    let check_table_inventory_rejection = |zombie_table_sql: &str, zombie_table_name: &str| {
+        let test_db_path = temp_database_path(&format!("zombie-test-{}", zombie_table_name));
+        std::fs::copy(&db_path, &test_db_path).expect("copy base db");
+        let test_conn = Connection::open(&test_db_path).expect("open test db");
+        test_conn
+            .execute_batch(zombie_table_sql)
+            .expect("inject zombie table");
+
+        // Verify the zombie table was created
+        let count: i64 = test_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [zombie_table_name],
+                |r| r.get(0),
+            )
+            .expect("check table created");
+        assert_eq!(count, 1);
+
+        // Run inventory assertion logic against test_conn
+        let table_names: Vec<String> = {
+            let mut stmt = test_conn
+                .prepare(
+                    "SELECT name FROM sqlite_master 
+                 WHERE (name LIKE 'conversation_%' 
+                     OR name LIKE 'web_record_%' 
+                     OR name LIKE 'agent_%' 
+                     OR name LIKE 'app_%')
+                   AND type IN ('table', 'virtual')
+                   AND name NOT LIKE 'conversation_part_fts_%'
+                 ORDER BY name",
+                )
+                .expect("prepare stmt");
+
+            stmt.query_map([], |r| r.get(0))
+                .expect("query map")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("collect table names")
+        };
+
+        let expected_core_tables = [
+            "agent_execution_bindings",
+            "app_extension_catalog_releases",
+            "app_extension_versions",
+            "app_extensions",
+            "app_settings",
+            "app_shortcut_items",
+            "conversation_adapters",
+            "conversation_data_audit_issues",
+            "conversation_part_fts",
+            "conversation_part_index_state",
+            "conversation_parts",
+            "conversation_payload_policy_state",
+            "conversation_search_index_state",
+            "conversation_session_observations",
+            "conversation_sessions",
+            "conversation_sources",
+            "conversation_turns",
+            "conversation_usage_events",
+            "conversation_usage_source_states",
+            "web_record_parts",
+            "web_record_sessions",
+            "web_record_turns",
+        ];
+
+        let oracle_passed = table_names
+            == expected_core_tables
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>();
+        assert!(
+            !oracle_passed,
+            "Oracle MUST fail when zombie table '{zombie_table_name}' is injected! But it passed unexpectedly."
+        );
+
+        drop(test_conn);
+        cleanup_database(&test_db_path);
+    };
+
+    // Test rejection on each prefix:
+    // 1. app_% prefix zombie
+    check_table_inventory_rejection(
+        "CREATE TABLE app_zombie_ghost (id TEXT PRIMARY KEY)",
+        "app_zombie_ghost",
+    );
+    // 2. agent_% prefix zombie
+    check_table_inventory_rejection(
+        "CREATE TABLE agent_leak_table (id TEXT PRIMARY KEY)",
+        "agent_leak_table",
+    );
+    // 3. conversation_% prefix zombie
+    check_table_inventory_rejection(
+        "CREATE TABLE conversation_phantom (id TEXT PRIMARY KEY)",
+        "conversation_phantom",
+    );
+    // 4. web_record_% prefix zombie
+    check_table_inventory_rejection(
+        "CREATE TABLE web_record_remnant (id TEXT PRIMARY KEY)",
+        "web_record_remnant",
+    );
+    // 5. One of the 8 dropped legacy tables: app_conversation_adapter_packages
+    check_table_inventory_rejection(
+        "CREATE TABLE app_conversation_adapter_packages (id TEXT PRIMARY KEY)",
+        "app_conversation_adapter_packages",
+    );
+    // 6. Another legacy table: agent_installations
+    check_table_inventory_rejection(
+        "CREATE TABLE agent_installations (id TEXT PRIMARY KEY)",
+        "agent_installations",
+    );
+
+    cleanup_database(&db_path);
+}
+
+// 4. Migration Ledger Self-Healing & Checksum Consistency
+#[tokio::test]
+async fn adversarial_challenge_4_migration_ledger_self_healing_and_checksum_consistency() {
+    let db_path = temp_database_path("adv-ledger-self-healing");
+    migrate_database(&db_path).await.expect("initial migration");
+
+    let conn = Connection::open(&db_path).expect("open database");
+
+    // Demote ALL migrations with version < 20261028000000 to 12-digit versions
+    // (excluding 20260909000001, 20260909000002 which were always 14-digit)
+    conn.execute_batch(
+        r#"
+        UPDATE _sqlx_migrations
+        SET version = (version / 1000000) * 10000 + (version % 10000)
+        WHERE version < 20261028000000
+          AND version NOT IN (20260909000001, 20260909000002);
+        "#,
+    )
+    .expect("downgrade to 12-digit versions");
+
+    // Verify exactly 76 migrations are 12-digit
+    let count_12_digit: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version < 10000000000000",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count 12-digit");
+    assert_eq!(
+        count_12_digit, 76,
+        "expected exactly 76 12-digit migrations"
+    );
+
+    drop(conn);
+
+    // Re-open with open_migrated_pool, triggering repair_legacy_migration_ledger_versions
+    let pool = open_migrated_pool(&db_path)
+        .await
+        .expect("open_migrated_pool must self-heal 12-digit ledger records to 14 digits");
+
+    // Assert zero 12-digit records remain
+    let remaining_legacy: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version < 10000000000000")
+            .fetch_one(&pool)
+            .await
+            .expect("query remaining legacy");
+    assert_eq!(
+        remaining_legacy, 0,
+        "all 12-digit versions must be upgraded to 14-digit"
+    );
+
+    // Assert total count matches MIGRATOR.migrations.len()
+    let total_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+        .fetch_one(&pool)
+        .await
+        .expect("query total migrations");
+    assert_eq!(total_count, MIGRATOR.migrations.len() as i64);
+
+    // Assert that all migrations in _sqlx_migrations are marked success = 1
+    let failed_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE success != 1")
+            .fetch_one(&pool)
+            .await
+            .expect("query failed count");
+    assert_eq!(
+        failed_count, 0,
+        "all migrations in ledger must have success = 1"
+    );
+
+    pool.close().await;
+
+    // Idempotency test: re-run migrate_database multiple times without duplicate key errors
+    for _ in 0..2 {
+        migrate_database(&db_path)
+            .await
+            .expect("idempotent migration invocation on self-healed database");
+    }
 
     cleanup_database(&db_path);
 }

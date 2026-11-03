@@ -309,7 +309,7 @@ fn artifact_production_paths_no_longer_use_ureq_or_buffered_extract() {
     ] {
         assert!(!source.contains(concat!("ur", "eq::")));
     }
-    let source = include_str!("agent_market/installers/binary.rs");
+    let source = include_str!("extensions/installers/binary.rs");
     assert!(source.contains("materialize_file"));
 }
 

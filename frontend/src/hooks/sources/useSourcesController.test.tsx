@@ -151,7 +151,7 @@ function createAsset(id: string, sourceId: string): Asset {
     kind: "skill",
     format: "directory",
     relative_path: "assetiweave-memory",
-    absolute_path: "~/.assetiweave/skills/.system/assetiweave-memory",
+    stored_path: "~/.assetiweave/skills/.system/assetiweave-memory",
     entry_file: "SKILL.md",
     description: null,
     content_hash: "same-content",

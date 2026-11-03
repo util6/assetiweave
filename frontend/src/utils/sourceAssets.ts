@@ -42,7 +42,7 @@ export function groupSourceDisplayAssets(assets: Asset[], sources: Source[]) {
       ...asset,
       id: hiddenBackupId,
       source_id: backupSource.id,
-      absolute_path: backupPath,
+      stored_path: backupPath,
       relative_path: backupRelativePath(backupPath, backupSource.root_path),
       repository: null,
       backup_status: {

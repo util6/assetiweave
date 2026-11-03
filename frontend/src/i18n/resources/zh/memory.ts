@@ -28,6 +28,7 @@ export const memoryZh = {
   "memory.recent.expandItem": "展开条目",
   "memory.recent.collapseItem": "收起条目",
   "memory.recent.items": "条目",
+  "memory.recent.topics": "个主题",
   "memory.recent.latestUpdate": "最近更新",
   "memory.recent.today": "今天",
   "memory.recent.yesterday": "昨天",

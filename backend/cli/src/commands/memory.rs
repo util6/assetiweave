@@ -1,6 +1,7 @@
 use crate::args::memory::{
     MemoryArgs, MemoryCommand, MemoryContextCommand, MemoryProjectCommand, MemoryRecallCommand,
-    MemoryRecallSessionCommand, MemoryRecallTurnCommand, MemoryRecentCommand, MemoryTaskCommand,
+    MemoryRecallSessionCommand, MemoryRecallTurnCommand, MemoryRecentCommand, MemoryStateCommand,
+    MemoryTaskCommand, MemoryWatermarkCommand,
 };
 use crate::args::OutputFormat;
 use crate::render;
@@ -144,6 +145,104 @@ pub async fn handle_memory(args: MemoryArgs, format: OutputFormat) -> Result<()>
                     render::render_json_value(&res);
                 }
             },
+        },
+        MemoryCommand::State(s) => match s.command {
+            MemoryStateCommand::Get(g) => {
+                let res = service.memory().get_state(g.project).await?;
+                if g.raw {
+                    println!("{}", serde_json::to_string_pretty(&res)?);
+                } else {
+                    render::render_json_value(&res);
+                }
+            }
+        },
+        MemoryCommand::Commit(c) => {
+            let payload: asset_core::domain::TopicEvolutionCommitPayload = if let Some(file_path) =
+                c.file
+            {
+                let json_str = std::fs::read_to_string(&file_path).map_err(|e| {
+                    anyhow::anyhow!("failed to read payload file {}: {e}", file_path.display())
+                })?;
+                serde_json::from_str(&json_str)
+                    .map_err(|e| anyhow::anyhow!("invalid commit JSON payload: {e}"))?
+            } else if let Some(raw) = c.payload {
+                let json_str = if let Some(stripped) = raw.strip_prefix('@') {
+                    std::fs::read_to_string(stripped).map_err(|e| {
+                        anyhow::anyhow!("failed to read payload file {stripped}: {e}")
+                    })?
+                } else {
+                    raw
+                };
+                serde_json::from_str(&json_str)
+                    .map_err(|e| anyhow::anyhow!("invalid commit JSON payload: {e}"))?
+            } else {
+                let project_slug = c.project.ok_or_else(|| {
+                    anyhow::anyhow!("--project is required when not providing --payload")
+                })?;
+                let topic_id = c.topic.ok_or_else(|| {
+                    anyhow::anyhow!("--topic is required when not providing --payload")
+                })?;
+                let summary = c.summary.ok_or_else(|| {
+                    anyhow::anyhow!("--summary is required when not providing --payload")
+                })?;
+                let session_id = c.session_id.ok_or_else(|| {
+                    anyhow::anyhow!("--session-id is required when not providing --payload")
+                })?;
+                let turn = c.turn.ok_or_else(|| {
+                    anyhow::anyhow!("--turn is required when not providing --payload")
+                })?;
+                let short_id = c
+                    .short_id
+                    .unwrap_or_else(|| session_id.chars().take(8).collect::<String>());
+                let status: asset_core::domain::NodeStatus =
+                    c.status.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
+                let parent_new_status = c
+                    .parent_status
+                    .as_deref()
+                    .map(|s| s.parse())
+                    .transpose()
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                let now = chrono::Utc::now().to_rfc3339();
+                let node_id = asset_core::domain::MemoryTreeNode::format_id(&short_id, turn, None);
+                let new_node = asset_core::domain::MemoryTreeNode {
+                    id: node_id,
+                    parent_id: c.parent_id.clone(),
+                    topic_id: topic_id.clone(),
+                    summary,
+                    status,
+                    source_session_id: session_id,
+                    turn_index: turn,
+                    created_at: now.clone(),
+                    updated_at: now,
+                };
+                asset_core::domain::TopicEvolutionCommitPayload {
+                    project_slug,
+                    topic_id,
+                    topic_name: c.topic_name,
+                    parent_node_id: c.parent_id,
+                    parent_new_status,
+                    new_node,
+                    unexplored_siblings: vec![],
+                }
+            };
+            let res = service.memory().commit_evolution(payload).await?;
+            render::render_json_value(&res);
+        }
+        MemoryCommand::Watermark(w) => match w.command {
+            MemoryWatermarkCommand::Check(chk) => {
+                let res = service
+                    .memory()
+                    .check_watermark(&chk.project, &chk.session_id)
+                    .await?;
+                render::render_json_value(&res);
+            }
+            MemoryWatermarkCommand::Advance(adv) => {
+                let res = service
+                    .memory()
+                    .advance_watermark(&adv.project, &adv.session_id, adv.turn)
+                    .await?;
+                render::render_json_value(&res);
+            }
         },
     }
     Ok(())

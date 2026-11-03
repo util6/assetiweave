@@ -27,6 +27,18 @@ async fn test_generation_skill_lifecycle_and_work_order() {
     assert!(!default_binding.content_hash.is_empty());
     assert!(!default_binding.entry_hash.is_empty());
 
+    // 隔离测试 Skill Library，避免泄漏到用户宿主环境 ~/.assetiweave/
+    let test_library_dir = root.join("library").join("skills");
+    service
+        .update_skill_backup_settings(
+            crate::backend::application::UpdateSkillBackupSettingsParams {
+                root_path: test_library_dir.to_string_lossy().to_string(),
+                migrate: false,
+            },
+        )
+        .await
+        .expect("configure test backup root");
+
     // 2. 复制内置模板到用户 Library
     let duplicated_asset = service
         .duplicate_generation_skill_to_library()

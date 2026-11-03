@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
+use super::agent_installation_mappers::{row_to_installation, AgentCapabilityMeta};
 use crate::backend::domain::agents::{
     AgentInstallation, AgentMarketProtocol, DistributionType, InstallationStatus, Ownership,
     ProtocolStatus, RuntimeStatus,
 };
-use crate::backend::store::{StoreError, StoreResult};
+use crate::backend::store::StoreResult;
 
 #[derive(Clone, Debug)]
 pub struct AgentInstallationRepository {
@@ -18,71 +19,169 @@ impl AgentInstallationRepository {
         Self { pool }
     }
 
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     pub async fn get(&self, agent_id: &str) -> StoreResult<Option<AgentInstallation>> {
-        let row = sqlx::query("SELECT * FROM app_agent_installations WHERE agent_id = ?1")
-            .bind(agent_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query(
+            r#"
+            SELECT
+                extension_id, capability_kind, target_id, display_name, active_version,
+                distribution_type, install_dir, enabled, installation_status, runtime_status,
+                error_code, error_message, checked_at, installed_at, updated_at, capability_meta_json
+            FROM app_extensions
+            WHERE capability_kind = 'agent' AND extension_id = ?1
+            "#,
+        )
+        .bind(agent_id)
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(row_to_installation).transpose()
     }
 
     pub async fn list(&self) -> StoreResult<Vec<AgentInstallation>> {
-        let rows = sqlx::query("SELECT * FROM app_agent_installations ORDER BY agent_id")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                extension_id, capability_kind, target_id, display_name, active_version,
+                distribution_type, install_dir, enabled, installation_status, runtime_status,
+                error_code, error_message, checked_at, installed_at, updated_at, capability_meta_json
+            FROM app_extensions
+            WHERE capability_kind = 'agent'
+            ORDER BY target_id
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter().map(row_to_installation).collect()
     }
 
     pub async fn list_registry_candidates(&self) -> StoreResult<Vec<AgentInstallation>> {
-        let rows = sqlx::query("SELECT * FROM app_agent_installations WHERE enabled = 1 AND installation_status = 'ready' AND runtime_status = 'ready' AND protocol_status = 'ready' ORDER BY agent_id")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                extension_id, capability_kind, target_id, display_name, active_version,
+                distribution_type, install_dir, enabled, installation_status, runtime_status,
+                error_code, error_message, checked_at, installed_at, updated_at, capability_meta_json
+            FROM app_extensions
+            WHERE capability_kind = 'agent'
+              AND enabled = 1
+              AND installation_status = 'ready'
+              AND runtime_status = 'ready'
+              AND json_extract(capability_meta_json, '$.protocol_status') = 'ready'
+            ORDER BY target_id
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter().map(row_to_installation).collect()
     }
 
     pub async fn upsert_active(&self, installation: &AgentInstallation) -> StoreResult<()> {
-        let args_json = crate::backend::store::codec::encode_json(&installation.args)?;
-        let definition_json = installation.definition_json.to_string();
-        let integrity_json = installation
-            .integrity_json
-            .as_ref()
-            .map(ToString::to_string);
+        let meta = AgentCapabilityMeta::from(installation);
+        let meta_json = crate::backend::store::codec::encode_json(&meta)?;
+        let install_dir_str = installation.install_dir.as_ref().map(|path| {
+            let s = path.to_string_lossy();
+            crate::backend::store::normalize_path_for_storage(&s).unwrap_or_else(|_| s.to_string())
+        });
+        let error_code = installation
+            .runtime_error_code
+            .as_deref()
+            .or(installation.protocol_error_code.as_deref());
+        let error_message = installation
+            .runtime_error_message
+            .as_deref()
+            .or(installation.protocol_error_message.as_deref());
+        let checked_at = installation
+            .runtime_checked_at
+            .as_deref()
+            .or(installation.protocol_checked_at.as_deref());
+
+        let mut tx = self.pool.begin().await?;
+
         sqlx::query(
-            "INSERT INTO app_agent_installations (agent_id, installation_id, display_name, catalog_item_version, agent_version, protocol, distribution_id, distribution_type, ownership, install_dir, resolved_program, args_json, definition_json, integrity_json, source_registry, catalog_version, enabled, installation_status, runtime_status, runtime_error_code, runtime_error_message, runtime_checked_at, protocol_status, protocol_error_code, protocol_error_message, protocol_checked_at, model_status, model_error_code, model_checked_at, installed_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31) ON CONFLICT (agent_id) DO UPDATE SET installation_id=excluded.installation_id, display_name=excluded.display_name, catalog_item_version=excluded.catalog_item_version, agent_version=excluded.agent_version, protocol=excluded.protocol, distribution_id=excluded.distribution_id, distribution_type=excluded.distribution_type, ownership=excluded.ownership, install_dir=excluded.install_dir, resolved_program=excluded.resolved_program, args_json=excluded.args_json, definition_json=excluded.definition_json, integrity_json=excluded.integrity_json, source_registry=excluded.source_registry, catalog_version=excluded.catalog_version, enabled=excluded.enabled, installation_status=excluded.installation_status, runtime_status=excluded.runtime_status, runtime_error_code=excluded.runtime_error_code, runtime_error_message=excluded.runtime_error_message, runtime_checked_at=excluded.runtime_checked_at, protocol_status=excluded.protocol_status, protocol_error_code=excluded.protocol_error_code, protocol_error_message=excluded.protocol_error_message, protocol_checked_at=excluded.protocol_checked_at, model_status=excluded.model_status, model_error_code=excluded.model_error_code, model_checked_at=excluded.model_checked_at, installed_at=excluded.installed_at, updated_at=excluded.updated_at"
+            r#"
+            INSERT INTO app_extensions (
+                extension_id, capability_kind, target_id, display_name, active_version,
+                distribution_type, install_dir, enabled, installation_status, runtime_status,
+                error_code, error_message, checked_at, installed_at, updated_at, capability_meta_json
+            ) VALUES (
+                ?1, 'agent', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+            )
+            ON CONFLICT (extension_id) DO UPDATE SET
+                capability_kind = excluded.capability_kind,
+                target_id = excluded.target_id,
+                display_name = excluded.display_name,
+                active_version = excluded.active_version,
+                distribution_type = excluded.distribution_type,
+                install_dir = excluded.install_dir,
+                enabled = excluded.enabled,
+                installation_status = excluded.installation_status,
+                runtime_status = excluded.runtime_status,
+                error_code = excluded.error_code,
+                error_message = excluded.error_message,
+                checked_at = excluded.checked_at,
+                installed_at = excluded.installed_at,
+                updated_at = excluded.updated_at,
+                capability_meta_json = excluded.capability_meta_json
+            "#,
         )
         .bind(&installation.agent_id)
-        .bind(&installation.installation_id)
+        .bind(&installation.agent_id)
         .bind(&installation.display_name)
-        .bind(&installation.catalog_item_version)
         .bind(&installation.agent_version)
-        .bind(installation.protocol.as_str())
-        .bind(&installation.distribution_id)
         .bind(installation.distribution_type.as_str())
-        .bind(installation.ownership.as_str())
-        .bind(installation.install_dir.as_ref().map(|path| path.to_string_lossy().to_string()))
-        .bind(installation.resolved_program.to_string_lossy().to_string())
-        .bind(args_json)
-        .bind(definition_json)
-        .bind(integrity_json)
-        .bind(&installation.source_registry)
-        .bind(&installation.catalog_version)
+        .bind(&install_dir_str)
         .bind(installation.enabled as i64)
         .bind(installation.installation_status.as_str())
         .bind(installation.runtime_status.as_str())
-        .bind(&installation.runtime_error_code)
-        .bind(&installation.runtime_error_message)
-        .bind(&installation.runtime_checked_at)
-        .bind(installation.protocol_status.as_str())
-        .bind(&installation.protocol_error_code)
-        .bind(&installation.protocol_error_message)
-        .bind(&installation.protocol_checked_at)
-        .bind(&installation.model_status)
-        .bind(&installation.model_error_code)
-        .bind(&installation.model_checked_at)
+        .bind(error_code)
+        .bind(error_message)
+        .bind(checked_at)
         .bind(&installation.installed_at)
         .bind(&installation.updated_at)
-        .execute(&self.pool)
+        .bind(&meta_json)
+        .execute(&mut *tx)
         .await?;
+
+        let artifact_sha256 = installation
+            .integrity_json
+            .as_ref()
+            .and_then(|v| v.get("sha256").and_then(serde_json::Value::as_str));
+        let content_hash = installation
+            .integrity_json
+            .as_ref()
+            .and_then(|v| v.get("content_hash").and_then(serde_json::Value::as_str))
+            .unwrap_or_default();
+
+        sqlx::query(
+            r#"
+            INSERT INTO app_extension_versions (
+                extension_id, version, install_dir, artifact_sha256, content_hash,
+                verification_status, installed_at
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7
+            )
+            ON CONFLICT (extension_id, version) DO UPDATE SET
+                install_dir = excluded.install_dir,
+                artifact_sha256 = COALESCE(excluded.artifact_sha256, app_extension_versions.artifact_sha256),
+                content_hash = COALESCE(excluded.content_hash, app_extension_versions.content_hash),
+                verification_status = COALESCE(excluded.verification_status, app_extension_versions.verification_status),
+                installed_at = excluded.installed_at
+            "#,
+        )
+        .bind(&installation.agent_id)
+        .bind(&installation.agent_version)
+        .bind(install_dir_str.as_deref().unwrap_or_default())
+        .bind(artifact_sha256)
+        .bind(content_hash)
+        .bind("tested")
+        .bind(&installation.installed_at)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -93,7 +192,7 @@ impl AgentInstallationRepository {
         updated_at: &str,
     ) -> StoreResult<()> {
         sqlx::query(
-            "UPDATE app_agent_installations SET enabled = ?1, updated_at = ?2 WHERE agent_id = ?3",
+            "UPDATE app_extensions SET enabled = ?1, updated_at = ?2 WHERE capability_kind = 'agent' AND extension_id = ?3",
         )
         .bind(enabled as i64)
         .bind(updated_at)
@@ -104,31 +203,89 @@ impl AgentInstallationRepository {
     }
 
     pub async fn update_health(&self, installation: &AgentInstallation) -> StoreResult<()> {
-        sqlx::query("UPDATE app_agent_installations SET installation_status = ?1, runtime_status = ?2, runtime_error_code = ?3, runtime_error_message = ?4, runtime_checked_at = ?5, protocol_status = ?6, protocol_error_code = ?7, protocol_error_message = ?8, protocol_checked_at = ?9, model_status = ?10, model_error_code = ?11, model_checked_at = ?12, updated_at = ?13 WHERE agent_id = ?14")
-            .bind(installation.installation_status.as_str())
-            .bind(installation.runtime_status.as_str())
-            .bind(&installation.runtime_error_code)
-            .bind(&installation.runtime_error_message)
-            .bind(&installation.runtime_checked_at)
-            .bind(installation.protocol_status.as_str())
-            .bind(&installation.protocol_error_code)
-            .bind(&installation.protocol_error_message)
-            .bind(&installation.protocol_checked_at)
-            .bind(&installation.model_status)
-            .bind(&installation.model_error_code)
-            .bind(&installation.model_checked_at)
-            .bind(&installation.updated_at)
-            .bind(&installation.agent_id)
-            .execute(&self.pool)
-            .await?;
+        let error_code = installation
+            .runtime_error_code
+            .as_deref()
+            .or(installation.protocol_error_code.as_deref());
+        let error_message = installation
+            .runtime_error_message
+            .as_deref()
+            .or(installation.protocol_error_message.as_deref());
+        let checked_at = installation
+            .runtime_checked_at
+            .as_deref()
+            .or(installation.protocol_checked_at.as_deref());
+
+        sqlx::query(
+            r#"
+            UPDATE app_extensions
+            SET installation_status = ?1,
+                runtime_status = ?2,
+                error_code = ?3,
+                error_message = ?4,
+                checked_at = ?5,
+                updated_at = ?6,
+                capability_meta_json = json_set(
+                    capability_meta_json,
+                    '$.protocol_status', ?7,
+                    '$.protocol_error_code', ?8,
+                    '$.protocol_error_message', ?9,
+                    '$.protocol_checked_at', ?10,
+                    '$.model_status', ?11,
+                    '$.model_error_code', ?12,
+                    '$.model_checked_at', ?13,
+                    '$.runtime_error_code', ?14,
+                    '$.runtime_error_message', ?15,
+                    '$.runtime_checked_at', ?16
+                )
+            WHERE capability_kind = 'agent' AND extension_id = ?17
+            "#,
+        )
+        .bind(installation.installation_status.as_str())
+        .bind(installation.runtime_status.as_str())
+        .bind(error_code)
+        .bind(error_message)
+        .bind(checked_at)
+        .bind(&installation.updated_at)
+        .bind(installation.protocol_status.as_str())
+        .bind(&installation.protocol_error_code)
+        .bind(&installation.protocol_error_message)
+        .bind(&installation.protocol_checked_at)
+        .bind(&installation.model_status)
+        .bind(&installation.model_error_code)
+        .bind(&installation.model_checked_at)
+        .bind(&installation.runtime_error_code)
+        .bind(&installation.runtime_error_message)
+        .bind(&installation.runtime_checked_at)
+        .bind(&installation.agent_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
     pub async fn mark_health_unchecked(&self, updated_at: &str) -> StoreResult<u64> {
-        let result = sqlx::query("UPDATE app_agent_installations SET protocol_status = 'unchecked', protocol_error_code = NULL, protocol_error_message = NULL, protocol_checked_at = NULL, model_status = 'unchecked', model_error_code = NULL, model_checked_at = NULL, updated_at = ?1 WHERE enabled = 1 AND installation_status IN ('ready', 'broken')")
-            .bind(updated_at)
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query(
+            r#"
+            UPDATE app_extensions
+            SET updated_at = ?1,
+                capability_meta_json = json_set(
+                    capability_meta_json,
+                    '$.protocol_status', 'unchecked',
+                    '$.protocol_error_code', NULL,
+                    '$.protocol_error_message', NULL,
+                    '$.protocol_checked_at', NULL,
+                    '$.model_status', 'unchecked',
+                    '$.model_error_code', NULL,
+                    '$.model_checked_at', NULL
+                )
+            WHERE capability_kind = 'agent'
+              AND enabled = 1
+              AND installation_status IN ('ready', 'broken')
+            "#,
+        )
+        .bind(updated_at)
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected())
     }
 
@@ -140,15 +297,32 @@ impl AgentInstallationRepository {
         error_message: &str,
         updated_at: &str,
     ) -> StoreResult<()> {
-        sqlx::query("UPDATE app_agent_installations SET installation_status = 'broken', runtime_status = ?1, runtime_error_code = ?2, runtime_error_message = ?3, runtime_checked_at = ?4, updated_at = ?5 WHERE agent_id = ?6")
-            .bind(runtime_status.as_str())
-            .bind(error_code)
-            .bind(error_message)
-            .bind(updated_at)
-            .bind(updated_at)
-            .bind(agent_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            r#"
+            UPDATE app_extensions
+            SET installation_status = 'broken',
+                runtime_status = ?1,
+                error_code = ?2,
+                error_message = ?3,
+                checked_at = ?4,
+                updated_at = ?5,
+                capability_meta_json = json_set(
+                    capability_meta_json,
+                    '$.runtime_error_code', ?2,
+                    '$.runtime_error_message', ?3,
+                    '$.runtime_checked_at', ?4
+                )
+            WHERE capability_kind = 'agent' AND extension_id = ?6
+            "#,
+        )
+        .bind(runtime_status.as_str())
+        .bind(error_code)
+        .bind(error_message)
+        .bind(updated_at)
+        .bind(updated_at)
+        .bind(agent_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -159,155 +333,47 @@ impl AgentInstallationRepository {
         error_message: &str,
         updated_at: &str,
     ) -> StoreResult<()> {
-        sqlx::query("UPDATE app_agent_installations SET installation_status = 'incompatible', runtime_error_code = ?1, runtime_error_message = ?2, runtime_checked_at = ?3, updated_at = ?4 WHERE agent_id = ?5")
-            .bind(error_code)
-            .bind(error_message)
-            .bind(updated_at)
-            .bind(updated_at)
-            .bind(agent_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            r#"
+            UPDATE app_extensions
+            SET installation_status = 'incompatible',
+                error_code = ?1,
+                error_message = ?2,
+                checked_at = ?3,
+                updated_at = ?4,
+                capability_meta_json = json_set(
+                    capability_meta_json,
+                    '$.runtime_error_code', ?1,
+                    '$.runtime_error_message', ?2,
+                    '$.runtime_checked_at', ?3
+                )
+            WHERE capability_kind = 'agent' AND extension_id = ?5
+            "#,
+        )
+        .bind(error_code)
+        .bind(error_message)
+        .bind(updated_at)
+        .bind(updated_at)
+        .bind(agent_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
     pub async fn delete(&self, agent_id: &str) -> StoreResult<()> {
-        sqlx::query("DELETE FROM app_agent_installations WHERE agent_id = ?1")
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM app_extension_versions WHERE extension_id = ?1")
             .bind(agent_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+        sqlx::query(
+            "DELETE FROM app_extensions WHERE capability_kind = 'agent' AND extension_id = ?1",
+        )
+        .bind(agent_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         Ok(())
-    }
-}
-
-fn row_to_installation(row: sqlx::sqlite::SqliteRow) -> StoreResult<AgentInstallation> {
-    let protocol_value: String = row.try_get("protocol")?;
-    let distribution_value: String = row.try_get("distribution_type")?;
-    let ownership_value: String = row.try_get("ownership")?;
-    let installation_status_value: String = row.try_get("installation_status")?;
-    let runtime_status_value: String = row.try_get("runtime_status")?;
-    let protocol_status_value: String = row.try_get("protocol_status")?;
-    let protocol = match protocol_value.as_str() {
-        "acp" => AgentMarketProtocol::Acp,
-        "native" => AgentMarketProtocol::Native,
-        value => {
-            return Err(StoreError::Storage(format!(
-                "invalid installation protocol: {value}"
-            )))
-        }
-    };
-    let distribution_type =
-        parse_distribution(distribution_value.as_str()).map_err(StoreError::Storage)?;
-    let ownership = match ownership_value.as_str() {
-        "system" => Ownership::System,
-        "managed" => Ownership::Managed,
-        value => return Err(StoreError::Storage(format!("invalid ownership: {value}"))),
-    };
-    let installation_status = match installation_status_value.as_str() {
-        "ready" => InstallationStatus::Ready,
-        "incompatible" => InstallationStatus::Incompatible,
-        "broken" => InstallationStatus::Broken,
-        value => {
-            return Err(StoreError::Storage(format!(
-                "invalid installation status: {value}"
-            )))
-        }
-    };
-    let runtime_status = match runtime_status_value.as_str() {
-        "unchecked" => RuntimeStatus::Unchecked,
-        "ready" => RuntimeStatus::Ready,
-        "runtime_missing" => RuntimeStatus::RuntimeMissing,
-        "entry_missing" => RuntimeStatus::EntryMissing,
-        "failed" => RuntimeStatus::Failed,
-        value => {
-            return Err(StoreError::Storage(format!(
-                "invalid runtime status: {value}"
-            )))
-        }
-    };
-    let protocol_status = match protocol_status_value.as_str() {
-        "unchecked" => ProtocolStatus::Unchecked,
-        "ready" => ProtocolStatus::Ready,
-        "auth_required" => ProtocolStatus::AuthRequired,
-        "failed" => ProtocolStatus::Failed,
-        "unsupported" => ProtocolStatus::Unsupported,
-        value => {
-            return Err(StoreError::Storage(format!(
-                "invalid protocol status: {value}"
-            )))
-        }
-    };
-    let args_json: String = row.try_get("args_json")?;
-    let definition_json_string: String = row.try_get("definition_json")?;
-    let args = crate::backend::store::codec::decode_json(&args_json)?;
-    let definition_json = crate::backend::store::codec::decode_json(&definition_json_string)?;
-    let integrity_string: Option<String> = row.try_get("integrity_json")?;
-    let integrity_json = integrity_string
-        .map(crate::backend::store::codec::decode_json)
-        .transpose()?;
-    let agent_id: String = row.try_get("agent_id")?;
-    let installation_id: String = row.try_get("installation_id")?;
-    let display_name: String = row.try_get("display_name")?;
-    let catalog_item_version: String = row.try_get("catalog_item_version")?;
-    let agent_version: String = row.try_get("agent_version")?;
-    let distribution_id: String = row.try_get("distribution_id")?;
-    let install_dir_string: Option<String> = row.try_get("install_dir")?;
-    let resolved_program: String = row.try_get("resolved_program")?;
-    let source_registry: String = row.try_get("source_registry")?;
-    let catalog_version: String = row.try_get("catalog_version")?;
-    let enabled: i64 = row.try_get("enabled")?;
-    let runtime_error_code: Option<String> = row.try_get("runtime_error_code")?;
-    let runtime_error_message: Option<String> = row.try_get("runtime_error_message")?;
-    let runtime_checked_at: Option<String> = row.try_get("runtime_checked_at")?;
-    let protocol_error_code: Option<String> = row.try_get("protocol_error_code")?;
-    let protocol_error_message: Option<String> = row.try_get("protocol_error_message")?;
-    let protocol_checked_at: Option<String> = row.try_get("protocol_checked_at")?;
-    let model_status: Option<String> = row.try_get("model_status")?;
-    let model_error_code: Option<String> = row.try_get("model_error_code")?;
-    let model_checked_at: Option<String> = row.try_get("model_checked_at")?;
-    let installed_at: String = row.try_get("installed_at")?;
-    let updated_at: String = row.try_get("updated_at")?;
-    Ok(AgentInstallation {
-        agent_id,
-        installation_id,
-        display_name,
-        catalog_item_version,
-        agent_version,
-        protocol,
-        distribution_id,
-        distribution_type,
-        ownership,
-        install_dir: install_dir_string.map(PathBuf::from),
-        resolved_program: PathBuf::from(resolved_program),
-        args,
-        definition_json,
-        integrity_json,
-        source_registry,
-        catalog_version,
-        enabled: enabled != 0,
-        installation_status,
-        runtime_status,
-        runtime_error_code,
-        runtime_error_message,
-        runtime_checked_at,
-        protocol_status,
-        protocol_error_code,
-        protocol_error_message,
-        protocol_checked_at,
-        model_status,
-        model_error_code,
-        model_checked_at,
-        installed_at,
-        updated_at,
-    })
-}
-
-fn parse_distribution(value: &str) -> Result<DistributionType, String> {
-    match value {
-        "system" => Ok(DistributionType::System),
-        "binary" => Ok(DistributionType::Binary),
-        "npx" => Ok(DistributionType::Npx),
-        "uvx" => Ok(DistributionType::Uvx),
-        value => Err(format!("invalid distribution type: {value}")),
     }
 }
 

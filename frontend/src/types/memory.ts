@@ -235,6 +235,24 @@ export interface RecentMemoryItemView {
   sessionReferences: RecentSessionReferenceView[];
 }
 
+export type RecentNodeStatus = "completed" | "continued" | "unexplored";
+
+export interface RecentTreeNodeView {
+  id: string;
+  parentId: string | null;
+  status: RecentNodeStatus;
+  label: string;
+  summary: string;
+  recordedAt?: string | null;
+}
+
+export interface RecentTopicView {
+  topicId: string;
+  topic: string;
+  updatedAt: string;
+  nodes: RecentTreeNodeView[];
+}
+
 export interface RecentProjectView {
   projectKey: string;
   projectTitle: string;
@@ -244,6 +262,7 @@ export interface RecentProjectView {
   latestActivityAt: string;
   sourceSessionCount: number;
   items: RecentMemoryItemView[];
+  topics?: RecentTopicView[];
 }
 
 export interface RecentMemorySnapshotView {

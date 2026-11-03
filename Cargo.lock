@@ -226,7 +226,6 @@ dependencies = [
 name = "asset_core"
 version = "0.7.0"
 dependencies = [
- "agent-client-protocol",
  "agent_engine",
  "anyhow",
  "arc-swap",

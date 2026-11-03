@@ -91,7 +91,7 @@ fn test_asset() -> Asset {
         detector_version: 1,
         format: AssetFormat::Directory,
         relative_path: "skill-a".to_string(),
-        absolute_path: "/tmp/source-a/skill-a".to_string(),
+        stored_path: "/tmp/source-a/skill-a".to_string(),
         entry_file: Some("/tmp/source-a/skill-a/SKILL.md".to_string()),
         description: None,
         content_hash: Some("hash-a".to_string()),

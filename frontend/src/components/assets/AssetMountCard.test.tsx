@@ -62,7 +62,7 @@ const skillAsset: Asset = {
   kind: "skill",
   format: "directory",
   relative_path: "skill-a",
-  absolute_path: "/tmp/source-a/skill-a",
+  stored_path: "/tmp/source-a/skill-a",
   entry_file: null,
   description: null,
   content_hash: null,
@@ -76,7 +76,7 @@ const mountedStatus: AssetMountStatus = {
   target_dir: "/tmp/codex/skills",
   target_path: "/tmp/codex/skills/skill-a",
   state: "mounted",
-  linked_source: skillAsset.absolute_path,
+  linked_source: skillAsset.stored_path,
 };
 
 const profile: TargetProfile = {

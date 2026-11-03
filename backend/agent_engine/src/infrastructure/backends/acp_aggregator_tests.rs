@@ -222,24 +222,19 @@ fn recall_evt_02_permission_is_still_denied() {
 }
 
 #[test]
-fn memory_generation_evt_01_only_declared_mcp_tools_are_allowed() {
+fn recall_tools_evt_01_only_declared_mcp_tools_are_allowed() {
     let session = session();
     let mut aggregator = ReadOnlyToolTextAggregator::new(
         session.clone(),
         64,
-        [
-            "get_session_outline",
-            "search_session_content",
-            "read_question_content",
-            "read_content_node",
-        ],
+        ["memory_recall_search", "memory_recall_block"],
     );
 
     assert!(matches!(
         aggregator.apply(AcpRuntimeEvent::ToolCall {
             session_id: session.clone(),
-            tool_call_id: "outline".to_string(),
-            title: "assetiweave-memory-generation/get_session_outline".to_string(),
+            tool_call_id: "search".to_string(),
+            title: "memory_recall_search".to_string(),
             status: crate::infrastructure::protocol::acp::AcpToolStatus::Pending,
             raw_input: None,
             raw_output: None,
@@ -249,7 +244,7 @@ fn memory_generation_evt_01_only_declared_mcp_tools_are_allowed() {
     assert!(matches!(
         aggregator.apply(AcpRuntimeEvent::ToolCallUpdate {
             session_id: session,
-            tool_call_id: "outline".to_string(),
+            tool_call_id: "search".to_string(),
             title: None,
             status: Some(crate::infrastructure::protocol::acp::AcpToolStatus::Completed),
             raw_input: None,
@@ -260,17 +255,12 @@ fn memory_generation_evt_01_only_declared_mcp_tools_are_allowed() {
 }
 
 #[test]
-fn memory_generation_evt_02_builtin_exec_is_denied() {
+fn recall_tools_evt_02_builtin_exec_is_denied() {
     let session = session();
     let mut aggregator = ReadOnlyToolTextAggregator::new(
         session.clone(),
         64,
-        [
-            "get_session_outline",
-            "search_session_content",
-            "read_question_content",
-            "read_content_node",
-        ],
+        ["memory_recall_search", "memory_recall_block"],
     );
 
     assert!(matches!(
@@ -287,10 +277,10 @@ fn memory_generation_evt_02_builtin_exec_is_denied() {
 }
 
 #[test]
-fn memory_generation_evt_03_unknown_update_is_denied() {
+fn recall_tools_evt_03_unknown_update_is_denied() {
     let session = session();
     let mut aggregator =
-        ReadOnlyToolTextAggregator::new(session.clone(), 64, ["get_session_outline"]);
+        ReadOnlyToolTextAggregator::new(session.clone(), 64, ["memory_recall_search"]);
 
     assert!(matches!(
         aggregator.apply(AcpRuntimeEvent::ToolCallUpdate {
@@ -306,17 +296,16 @@ fn memory_generation_evt_03_unknown_update_is_denied() {
 }
 
 #[test]
-fn memory_generation_evt_04_namespaced_tool_with_args_is_allowed() {
+fn recall_tools_evt_04_namespaced_tool_with_args_is_allowed() {
     let session = session();
     let mut aggregator =
-        ReadOnlyToolTextAggregator::new(session.clone(), 64, ["get_session_outline"]);
+        ReadOnlyToolTextAggregator::new(session.clone(), 64, ["memory_recall_search"]);
 
     assert!(matches!(
         aggregator.apply(AcpRuntimeEvent::ToolCall {
             session_id: session.clone(),
             tool_call_id: "call-1".to_string(),
-            title: "assetiweave_memory_generation_get_session_outline(sessionId: \"abc\")"
-                .to_string(),
+            title: "memory_recall_search(query: \"abc\")".to_string(),
             status: crate::infrastructure::protocol::acp::AcpToolStatus::Pending,
             raw_input: None,
             raw_output: None,
@@ -328,7 +317,7 @@ fn memory_generation_evt_04_namespaced_tool_with_args_is_allowed() {
         aggregator.apply(AcpRuntimeEvent::ToolCall {
             session_id: session,
             tool_call_id: "call-2".to_string(),
-            title: "assetiweave-memory-generation:get_session_outline: {\"id\":\"s1\"}".to_string(),
+            title: "memory_recall_search: {\"query\":\"s1\"}".to_string(),
             status: crate::infrastructure::protocol::acp::AcpToolStatus::Pending,
             raw_input: None,
             raw_output: None,

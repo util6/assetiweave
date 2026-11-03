@@ -42,7 +42,7 @@ const skillAsset: Asset = {
   kind: "skill",
   format: "directory",
   relative_path: "skill-a",
-  absolute_path: "/tmp/source-a/skill-a",
+  stored_path: "/tmp/source-a/skill-a",
   entry_file: null,
   description: null,
   content_hash: null,

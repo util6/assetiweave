@@ -87,34 +87,6 @@ fn request_forwards_session_events_through_the_existing_progress_sink() {
     assert_eq!(events[0].identity.item_id, "item");
 }
 
-#[test]
-fn memory_generation_tools_are_scoped_to_memory_generation_requests() {
-    let tools = AiMemoryGenerationTools {
-        tenant_id: "tenant-fixture".to_string(),
-        job_id: "recent-job-fixture".to_string(),
-        ownership_token: "lease-fixture".to_string(),
-        database_path: "/tmp/fixture.db".to_string(),
-    };
-
-    let mut generation = request("generate memory", None);
-    generation.purpose = AiExecutionPurpose::MemoryGeneration;
-    generation.memory_generation_tools = Some(tools.clone());
-    assert!(generation.validate().is_ok());
-
-    let mut translation = request("translate", None);
-    translation.memory_generation_tools = Some(tools);
-    assert!(matches!(
-        translation.validate(),
-        Err(AiExecutionError::Protocol {
-            operation: "memory_generation_tools_scope"
-        })
-    ));
-
-    let debug = format!("{generation:?}");
-    assert!(!debug.contains("lease-fixture"));
-    assert!(!debug.contains("/tmp/fixture.db"));
-}
-
 #[derive(Default)]
 struct CaptureProgressSink {
     events: Mutex<Vec<SessionEvent>>,
@@ -145,7 +117,6 @@ fn request(prompt: &str, model: Option<&str>) -> AiExecutionRequest {
         replay: false,
         restore_only: false,
         recall_tools: None,
-        memory_generation_tools: None,
         account: None,
     }
 }

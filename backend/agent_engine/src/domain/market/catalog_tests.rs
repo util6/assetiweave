@@ -1,4 +1,4 @@
-use super::super::types::{AgentMarketProtocol, VerificationStatus};
+use super::super::types::{AgentMarketProtocol, Distribution, VerificationStatus};
 use super::*;
 use std::collections::HashSet;
 

@@ -3,7 +3,7 @@ import type { Asset } from "../../types";
 import { filterAssets } from "./useAssetFilter";
 
 const baseAsset: Asset = {
-  absolute_path: "/Users/util6/.assetiweave/assets/base.md",
+  stored_path: "/Users/util6/.assetiweave/assets/base.md",
   discovered_at: "2026-01-01T00:00:00Z",
   format: "markdown",
   id: "base",

@@ -18,7 +18,7 @@ fn catalog_assets_expose_portable_display_paths_without_replacing_runtime_paths(
         detector_version: 1,
         format: crate::backend::domain::AssetFormat::Directory,
         relative_path: "review".to_string(),
-        absolute_path: absolute_path.clone(),
+        stored_path: absolute_path.clone(),
         entry_file: Some("SKILL.md".to_string()),
         description: None,
         content_hash: None,
@@ -28,7 +28,7 @@ fn catalog_assets_expose_portable_display_paths_without_replacing_runtime_paths(
 
     let catalog_asset = catalog_asset(asset, None);
 
-    assert_eq!(catalog_asset.asset.absolute_path, absolute_path);
+    assert_eq!(catalog_asset.asset.stored_path, absolute_path);
     assert_eq!(catalog_asset.display_path, "~/.codex/skills/review");
 }
 
@@ -99,7 +99,7 @@ fn test_skill_asset(id: &str, source_id: &str) -> Asset {
         detector_version: 1,
         format: crate::backend::domain::AssetFormat::Directory,
         relative_path: "same-skill".to_string(),
-        absolute_path: format!("/tmp/{source_id}/same-skill"),
+        stored_path: format!("/tmp/{source_id}/same-skill"),
         entry_file: Some("SKILL.md".to_string()),
         description: None,
         content_hash: Some("same-content".to_string()),

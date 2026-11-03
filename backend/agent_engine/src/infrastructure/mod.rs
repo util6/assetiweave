@@ -1,6 +1,7 @@
 pub mod backends;
 pub mod error;
 pub mod executor;
+pub mod executor_probes;
 pub mod executor_support;
 pub mod executor_traits;
 pub mod host_process;

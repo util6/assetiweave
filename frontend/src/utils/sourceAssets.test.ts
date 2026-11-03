@@ -11,7 +11,7 @@ describe("groupSourceDisplayAssets", () => {
           backup_status: {
             state: "backed_up",
             backup_path:
-              "/Users/util6/.assetiweave/library/skills/backed-up/source-a/canvas-design",
+              "/Users/util6/.assetiweave/skills/backed-up/source-a/canvas-design",
             hidden_asset_ids: ["backup-canvas"],
           },
         }),
@@ -34,8 +34,8 @@ describe("groupSourceDisplayAssets", () => {
         id: "backup-canvas",
         source_id: "assetiweave-library-skills",
         name: "canvas-design",
-        absolute_path:
-          "/Users/util6/.assetiweave/library/skills/backed-up/source-a/canvas-design",
+        stored_path:
+          "/Users/util6/.assetiweave/skills/backed-up/source-a/canvas-design",
         backup_status: {
           state: "backed_up",
           hidden_asset_ids: [],
@@ -55,7 +55,7 @@ describe("groupSourceDisplayAssets", () => {
           backup_status: {
             state: "backed_up",
             backup_path:
-              "/Users/util6/.assetiweave/library/skills/backed-up/source-a/canvas-design",
+              "/Users/util6/.assetiweave/skills/backed-up/source-a/canvas-design",
             hidden_asset_ids: ["backup-canvas"],
           },
         }),
@@ -90,7 +90,7 @@ function asset(
     kind: "skill",
     format: "directory",
     relative_path: id,
-    absolute_path: `/tmp/${id}`,
+    stored_path: `/tmp/${id}`,
     entry_file: null,
     description: null,
     content_hash: null,
@@ -111,7 +111,7 @@ function source(
     kind: "local",
     root_path:
       id === "assetiweave-library-skills"
-        ? "/Users/util6/.assetiweave/library/skills"
+        ? "/Users/util6/.assetiweave/skills"
         : `/tmp/${id}`,
     scanner_kind: "skill",
     source_origin: sourceOrigin,

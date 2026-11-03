@@ -1,6 +1,5 @@
 use super::history_replay::HistoryReplayPort;
 use agent_client_protocol::schema::v1::{EnvVariable, McpServer, McpServerStdio, SessionId};
-use serde_json::Value;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -12,7 +11,7 @@ use crate::{
         protocol::acp as acp_protocol,
         types::{
             AgentSessionMode, AiExecutionCleanupReport, AiExecutionPhase, AiExecutionRequest,
-            AiExecutionResult, AiMemoryGenerationTools, AiRecallTools, SessionCleanupStatus,
+            AiExecutionResult, AiRecallTools, SessionCleanupStatus,
         },
     },
 };
@@ -226,9 +225,6 @@ async fn run_execution(
     let mut mcp_servers = Vec::new();
     if protocol.supports_stdio_mcp(&definition.id) {
         mcp_servers.extend(recall_mcp_servers(request.recall_tools.as_ref())?);
-        mcp_servers.extend(memory_generation_mcp_servers(
-            request.memory_generation_tools.as_ref(),
-        )?);
     }
     let (session, new_session_resp) = if let Some(bound_session) = guard.bound_session.clone() {
         let session_id = SessionId::new(bound_session);
@@ -404,33 +400,6 @@ fn recall_mcp_servers(
                 EnvVariable::new(
                     "ASSETIWEAVE_MEMORY_RECALL_SESSION_ID",
                     recall_tools.recall_session_id.clone(),
-                ),
-            ]),
-    )])
-}
-
-fn memory_generation_mcp_servers(
-    tools: Option<&AiMemoryGenerationTools>,
-) -> Result<Vec<McpServer>, AiExecutionError> {
-    let Some(tools) = tools else {
-        return Ok(Vec::new());
-    };
-    let executable = std::env::current_exe().map_err(|_| AiExecutionError::Protocol {
-        operation: "memory_generation_mcp_executable",
-    })?;
-    Ok(vec![McpServer::Stdio(
-        McpServerStdio::new("assetiweave-memory-generation", executable)
-            .args(vec!["--memory-generation-mcp-stdio".to_string()])
-            .env(vec![
-                EnvVariable::new("ASSETIWEAVE_DB_PATH", tools.database_path.clone()),
-                EnvVariable::new(
-                    "ASSETIWEAVE_MEMORY_GENERATION_TENANT_ID",
-                    tools.tenant_id.clone(),
-                ),
-                EnvVariable::new("ASSETIWEAVE_MEMORY_GENERATION_JOB_ID", tools.job_id.clone()),
-                EnvVariable::new(
-                    "ASSETIWEAVE_MEMORY_GENERATION_OWNERSHIP_TOKEN",
-                    tools.ownership_token.clone(),
                 ),
             ]),
     )])

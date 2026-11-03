@@ -63,9 +63,9 @@ async fn sqlx_asset_repo_isolates_source_replacement_by_tenant() {
         .await
         .expect("open database");
     let mut default_asset = test_asset("skill-a", AssetKind::Skill);
-    default_asset.absolute_path = "/tmp/default-skill-a.md".to_string();
+    default_asset.stored_path = "/tmp/default-skill-a.md".to_string();
     let mut tenant_asset = test_asset("skill-a", AssetKind::Skill);
-    tenant_asset.absolute_path = "/tmp/tenant-skill-a.md".to_string();
+    tenant_asset.stored_path = "/tmp/tenant-skill-a.md".to_string();
 
     replace_source_assets_sqlx(database.pool(), "default", "source-a", &[default_asset])
         .await
@@ -85,7 +85,7 @@ async fn sqlx_asset_repo_isolates_source_replacement_by_tenant() {
 
     assert!(default_assets.is_empty());
     assert_eq!(tenant_assets.len(), 1);
-    assert_eq!(tenant_assets[0].absolute_path, "/tmp/tenant-skill-a.md");
+    assert_eq!(tenant_assets[0].stored_path, "/tmp/tenant-skill-a.md");
     drop(database);
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
@@ -102,7 +102,7 @@ fn test_asset(name: &str, kind: AssetKind) -> Asset {
         detector_version: 1,
         format: AssetFormat::Markdown,
         relative_path: format!("{name}.md"),
-        absolute_path: format!("/tmp/{name}.md"),
+        stored_path: format!("/tmp/{name}.md"),
         entry_file: None,
         description: None,
         content_hash: None,

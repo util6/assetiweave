@@ -1,8 +1,9 @@
 use super::memory_workflow_global::GlobalMemoryWorkflowReport;
 use super::memory_workflow_recent_project::RecentAndProjectWorkflowReport;
-use super::session_branch_workflow::{SessionBranchExtractorAgent, SessionBranchWorkflowReport};
+use super::session_branch_workflow::SessionBranchWorkflowReport;
 use crate::backend::application::AppResult;
 use crate::backend::application::AppService;
+use crate::backend::infrastructure::agent_execution::AgentExecutionRuntime;
 use crate::backend::infrastructure::memory::storage::MemoryStorage;
 
 #[derive(Debug, Clone, Default)]
@@ -15,7 +16,7 @@ pub struct MemoryMarkdownPipelineReport {
 impl AppService {
     pub async fn run_memory_full_pipeline(
         &self,
-        extractor: Option<&dyn SessionBranchExtractorAgent>,
+        runtime_override: Option<&dyn AgentExecutionRuntime>,
         storage_override: Option<&MemoryStorage>,
     ) -> AppResult<MemoryMarkdownPipelineReport> {
         let tenant_id = self.tenant_id();
@@ -28,27 +29,12 @@ impl AppService {
             }
         };
 
-        let ext = match extractor {
-            Some(e) => e,
-            None => {
-                // 无提取器注入时，不覆写磁盘产物，防止机械复读垃圾污染
-                let session_report = self
-                    .run_session_branch_workflow(None, Some(storage))
-                    .await?;
-                return Ok(MemoryMarkdownPipelineReport {
-                    session_report,
-                    recent_project_report: RecentAndProjectWorkflowReport::default(),
-                    global_report: GlobalMemoryWorkflowReport::default(),
-                });
-            }
-        };
-
-        // 节点 1：单会话思维分叉提取
+        // 节点 1：单会话认知提炼与多叉树演进
         let session_report = self
-            .run_session_branch_workflow(Some(ext), Some(storage))
+            .run_session_branch_workflow(runtime_override, Some(storage))
             .await?;
 
-        // 节点 2：Recent 汇总与 Project 悬空叶子池动态消融
+        // 节点 2：Recent 汇总与 Project 状态同步
         let recent_project_report = self.run_recent_and_project_workflow(storage).await?;
 
         // 节点 3：Global 长期记忆沉淀

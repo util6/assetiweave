@@ -43,7 +43,13 @@ pub fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
             .and_then(|path| {
                 crate::backend::infrastructure::path_utils::normalize_std_path_for_storage(&path)
             })
-            .unwrap_or_else(|_| format!("~/.assetiweave/tenants/{tenant_id}/library/skills"));
+            .unwrap_or_else(|_| {
+                if tenant_id == "default" {
+                    "~/.assetiweave/skills".to_string()
+                } else {
+                    format!("~/.assetiweave/tenants/{tenant_id}/skills")
+                }
+            });
     let candidates = [
         (
             "assetiweave-library-skills",
@@ -98,12 +104,22 @@ pub fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
             origin_app_kind: None,
             origin_provider_id: None,
             include_globs: includes.into_iter().map(str::to_string).collect(),
-            exclude_globs: vec![
-                "**/.git/**".to_string(),
-                "**/node_modules/**".to_string(),
-                "**/target/**".to_string(),
-                "**/dist/**".to_string(),
-            ],
+            exclude_globs: if id == "assetiweave-library-skills" {
+                vec![
+                    "**/.git/**".to_string(),
+                    "**/.system/**".to_string(),
+                    "**/node_modules/**".to_string(),
+                    "**/target/**".to_string(),
+                    "**/dist/**".to_string(),
+                ]
+            } else {
+                vec![
+                    "**/.git/**".to_string(),
+                    "**/node_modules/**".to_string(),
+                    "**/target/**".to_string(),
+                    "**/dist/**".to_string(),
+                ]
+            },
             default_kind,
             enabled: true,
             priority: priority as i32 * 10,

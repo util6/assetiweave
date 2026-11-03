@@ -152,7 +152,7 @@ export function SkillBackupLibraryDialog({
                 settings?.display_default_root_path ??
                 (settings?.default_root_path
                   ? abbreviateHomePath(settings.default_root_path)
-                  : "~/.assetiweave/library/skills")
+                  : "~/.assetiweave/skills")
               }
               ref={inputRef}
               value={rootPath}

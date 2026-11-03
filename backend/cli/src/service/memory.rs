@@ -153,4 +153,66 @@ impl<'a> MemoryOperations<'a> {
             .context("failed to cancel memory recall turn")?;
         Ok(serde_json::to_value(result)?)
     }
+
+    pub async fn get_state(&self, project: Option<String>) -> Result<Value> {
+        if let Some(slug) = project {
+            let state = self
+                .app_service
+                .get_project_memory_state(&slug)
+                .await
+                .context("failed to get project memory state")?;
+            Ok(serde_json::to_value(state)?)
+        } else {
+            let state = self
+                .app_service
+                .get_recent_memory_state()
+                .await
+                .context("failed to get recent memory state")?;
+            Ok(serde_json::to_value(state)?)
+        }
+    }
+
+    pub async fn commit_evolution(
+        &self,
+        payload: asset_core::domain::TopicEvolutionCommitPayload,
+    ) -> Result<Value> {
+        let result = self
+            .app_service
+            .commit_memory_topic_evolution(payload)
+            .await
+            .context("failed to commit memory topic evolution")?;
+        Ok(serde_json::to_value(result)?)
+    }
+
+    pub async fn check_watermark(&self, project: &str, session_id: &str) -> Result<Value> {
+        let turn = self
+            .app_service
+            .check_memory_session_watermark(project, session_id)
+            .await
+            .context("failed to check memory session watermark")?;
+        Ok(serde_json::json!({
+            "project_slug": project,
+            "session_id": session_id,
+            "watermark": turn,
+            "has_watermark": turn.is_some(),
+        }))
+    }
+
+    pub async fn advance_watermark(
+        &self,
+        project: &str,
+        session_id: &str,
+        turn: u32,
+    ) -> Result<Value> {
+        self.app_service
+            .advance_memory_session_watermark(project, session_id, turn)
+            .await
+            .context("failed to advance memory session watermark")?;
+        Ok(serde_json::json!({
+            "project_slug": project,
+            "session_id": session_id,
+            "advanced_to_turn": turn,
+            "success": true,
+        }))
+    }
 }

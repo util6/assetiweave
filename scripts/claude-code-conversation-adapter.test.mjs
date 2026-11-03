@@ -620,6 +620,253 @@ test("Claude Code multi-turn session keeps subsequent question as standard user 
   }
 });
 
+test("Claude Code extracts single Turn usage and first response UTC timestamp", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-usage-single-"));
+  try {
+    const sessionId = "claude-session-1";
+    const sessionFile = path.join(fixtureRoot, `${sessionId}.jsonl`);
+    writeFileSync(
+      sessionFile,
+      [
+        message("2026-10-30T04:00:00Z", "user", [{ type: "text", text: "Explain rust ownership" }]),
+        JSON.stringify({
+          timestamp: "2026-10-30T04:00:02.123Z",
+          type: "assistant",
+          message: {
+            role: "assistant",
+            model: "claude-3-7-sonnet-20250219",
+            content: [{ type: "text", text: "Rust ownership ensures memory safety..." }],
+            usage: {
+              input_tokens: 120,
+              output_tokens: 65,
+              cache_read_input_tokens: 40,
+              cache_creation_input_tokens: 15,
+              reasoning_tokens: 25,
+            },
+          },
+        }),
+      ].join("\n")
+    );
+
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.snapshot_complete, true);
+    assert.equal(complete.usage_event_count, 1);
+    assert.equal(complete.decoder_profile, "claude-code-transcript-v1");
+    assert.equal(events.length, 1);
+
+    const event = events[0];
+    assert.equal(event.session_id, sessionId);
+    assert.equal(event.turn_id, "turn-0");
+    assert.equal(event.external_event_id, `${sessionId}-turn-0`);
+    assert.equal(event.logical_request_id, `${sessionId}-turn-0`);
+    assert.equal(event.attempt_index, 0);
+    assert.equal(event.provider, "anthropic");
+    assert.equal(event.model, "claude-3-7-sonnet-20250219");
+    assert.equal(event.timestamp, "2026-10-30T04:00:02.123Z");
+    assert.equal(event.input_tokens, 120);
+    assert.equal(event.output_tokens, 65);
+    assert.equal(event.cache_read_tokens, 40);
+    assert.equal(event.cache_write_tokens, 15);
+    assert.equal(event.reasoning_tokens, 25);
+    assert.equal(event.total_tokens, 265);
+    assert.equal(event.status, "success");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Claude Code accumulates multi-step tool calls / thinking tokens within single Turn", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-usage-multi-step-"));
+  try {
+    const sessionId = "claude-multi-step";
+    const sessionFile = path.join(fixtureRoot, `${sessionId}.jsonl`);
+    writeFileSync(
+      sessionFile,
+      [
+        message("2026-10-30T04:10:00Z", "user", [{ type: "text", text: "Refactor database query" }]),
+        JSON.stringify({
+          timestamp: "2026-10-30T04:10:01.500Z",
+          type: "assistant",
+          message: {
+            role: "assistant",
+            model: "claude-3-7-sonnet-20250219",
+            content: [{ type: "tool_use", id: "tool-read", name: "Read", input: { file_path: "db.ts" } }],
+            usage: {
+              input_tokens: 100,
+              output_tokens: 30,
+              cache_read_input_tokens: 10,
+              cache_creation_input_tokens: 5,
+              reasoning_tokens: 15,
+            },
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-10-30T04:10:02.000Z",
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "tool-read", content: "export function query() {}" }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-10-30T04:10:05.800Z",
+          type: "assistant",
+          message: {
+            role: "assistant",
+            model: "claude-3-7-sonnet-20250219",
+            content: [{ type: "text", text: "Refactoring complete." }],
+            usage: {
+              input_tokens: 150,
+              output_tokens: 40,
+              cache_read_input_tokens: 20,
+              cache_creation_input_tokens: 0,
+              reasoning_tokens: 10,
+            },
+          },
+        }),
+      ].join("\n")
+    );
+
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.usage_event_count, 1);
+    assert.equal(events.length, 1);
+
+    const event = events[0];
+    assert.equal(event.turn_id, "turn-0");
+    assert.equal(event.external_event_id, `${sessionId}-turn-0`);
+    assert.equal(event.timestamp, "2026-10-30T04:10:01.500Z"); // First response timestamp preserved
+    assert.equal(event.input_tokens, 250);
+    assert.equal(event.output_tokens, 70);
+    assert.equal(event.cache_read_tokens, 30);
+    assert.equal(event.cache_write_tokens, 5);
+    assert.equal(event.reasoning_tokens, 25);
+    assert.equal(event.total_tokens, 380);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Claude Code preserves separate historical UTC timestamps for cross-day multi-turn sessions", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-usage-cross-day-"));
+  try {
+    const sessionId = "claude-cross-day";
+    const sessionFile = path.join(fixtureRoot, `${sessionId}.jsonl`);
+    writeFileSync(
+      sessionFile,
+      [
+        message("2026-10-28T10:00:00Z", "user", [{ type: "text", text: "Day 1 query" }]),
+        JSON.stringify({
+          timestamp: "2026-10-28T10:00:01.100Z",
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Day 1 answer" }],
+            usage: { input_tokens: 50, output_tokens: 25 },
+          },
+        }),
+        message("2026-10-29T11:00:00Z", "user", [{ type: "text", text: "Day 2 query" }]),
+        JSON.stringify({
+          timestamp: "2026-10-29T11:00:03.200Z",
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Day 2 answer" }],
+            usage: { input_tokens: 60, output_tokens: 30 },
+          },
+        }),
+      ].join("\n")
+    );
+
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.usage_event_count, 2);
+    assert.equal(events.length, 2);
+
+    assert.equal(events[0].turn_id, "turn-0");
+    assert.equal(events[0].external_event_id, `${sessionId}-turn-0`);
+    assert.equal(events[0].timestamp, "2026-10-28T10:00:01.100Z");
+    assert.equal(events[0].input_tokens, 50);
+    assert.equal(events[0].output_tokens, 25);
+
+    assert.equal(events[1].turn_id, "turn-1");
+    assert.equal(events[1].external_event_id, `${sessionId}-turn-1`);
+    assert.equal(events[1].timestamp, "2026-10-29T11:00:03.200Z");
+    assert.equal(events[1].input_tokens, 60);
+    assert.equal(events[1].output_tokens, 30);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Claude Code filters out empty zero-token turns from usage event stream", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-usage-zero-token-"));
+  try {
+    const sessionId = "claude-zero-token";
+    const sessionFile = path.join(fixtureRoot, `${sessionId}.jsonl`);
+    writeFileSync(
+      sessionFile,
+      [
+        message("2026-10-30T05:00:00Z", "user", [{ type: "text", text: "Turn 0 has no tokens" }]),
+        message("2026-10-30T05:00:01Z", "assistant", [{ type: "text", text: "No usage info" }]),
+        message("2026-10-30T05:01:00Z", "user", [{ type: "text", text: "Turn 1 has real tokens" }]),
+        JSON.stringify({
+          timestamp: "2026-10-30T05:01:02.500Z",
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Here are tokens" }],
+            usage: { input_tokens: 80, output_tokens: 40 },
+          },
+        }),
+      ].join("\n")
+    );
+
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.usage_event_count, 1);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].turn_id, "turn-1");
+    assert.equal(events[0].external_event_id, `${sessionId}-turn-1`);
+    assert.equal(events[0].total_tokens, 120);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Claude Code supports incremental cursor skipping for unchanged files", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-usage-cursor-"));
+  try {
+    const sessionId = "claude-cursor-sess";
+    const sessionFile = path.join(fixtureRoot, `${sessionId}.jsonl`);
+    writeFileSync(
+      sessionFile,
+      [
+        message("2026-10-30T05:20:00Z", "user", [{ type: "text", text: "Initial question" }]),
+        JSON.stringify({
+          timestamp: "2026-10-30T05:20:01.000Z",
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Initial answer" }],
+            usage: { input_tokens: 40, output_tokens: 20 },
+          },
+        }),
+      ].join("\n")
+    );
+
+    const firstRun = readFixtureUsage(fixtureRoot);
+    assert.equal(firstRun.events.length, 1);
+    const cursor = JSON.parse(firstRun.complete.next_cursor);
+    assert.ok(cursor.last_mtime > 0);
+    assert.ok(cursor.processed_files.includes(sessionFile));
+
+    // Second run with cursor should skip file
+    const secondRun = readFixtureUsage(fixtureRoot, { cursor: firstRun.complete.next_cursor });
+    assert.equal(secondRun.events.length, 0);
+    assert.equal(secondRun.complete.usage_event_count, 0);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 function message(timestamp, role, content, extra = {}) {
   return JSON.stringify({ timestamp, type: role, message: { role, content }, ...extra });
 }
@@ -634,4 +881,22 @@ function readFixtureSession(fixtureRoot) {
   const session = messages.find((entry) => entry.type === "item")?.item?.session;
   assert.ok(session);
   return session;
+}
+
+function readFixtureUsage(location, params = {}) {
+  const result = spawnSync(process.execPath, [adapterPath], {
+    encoding: "utf8",
+    input: JSON.stringify({
+      method: "read_usage",
+      source: { location },
+      params,
+    }),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const messages = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const events = messages
+    .filter((message) => message.type === "usage_event")
+    .map((message) => message.usage_event);
+  const complete = messages.find((message) => message.type === "complete")?.item ?? null;
+  return { messages, events, complete };
 }

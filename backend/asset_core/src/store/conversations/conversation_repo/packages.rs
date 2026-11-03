@@ -1,3 +1,4 @@
+use super::common::begin_immediate_with_retry;
 use super::*;
 
 pub async fn list_conversation_adapter_packages_sqlx(
@@ -54,32 +55,74 @@ pub(super) async fn upsert_conversation_adapter_package_with_executor<'e, E>(
 where
     E: Executor<'e, Database = Sqlite>,
 {
+    let meta = row_mappers::ConversationAdapterCapabilityMeta {
+        record_kind: package.record_kind,
+        manifest_path: package.manifest_path.clone(),
+        adapter_manifest_path: package.adapter_manifest_path.clone(),
+        runtime_protocol: package.runtime_protocol.clone(),
+        runtime_ready: package.runtime_ready,
+        installed_content_hash: package.installed_content_hash.clone(),
+        trusted_package_hash: package.trusted_package_hash.clone(),
+        origin: package.origin,
+        source_url: package.source_url.clone(),
+        git_ref: package.git_ref.clone(),
+        git_commit: package.git_commit.clone(),
+        catalog_url: package.catalog_url.clone(),
+        update_policy: package.update_policy,
+        latest_version: package.latest_version.clone(),
+        last_checked_at: package.last_checked_at.clone(),
+        runtime_gate_status: package.runtime_gate_status,
+        runtime_validated_at: package.runtime_validated_at.clone(),
+    };
+    let meta_json = serde_json::to_string(&meta).map_err(|e| {
+        StoreError::external(format!(
+            "failed to serialize conversation adapter capability meta: {e}"
+        ))
+    })?;
+
+    let distribution_type = match package.origin {
+        ConversationAdapterPackageOrigin::LocalDirectory
+        | ConversationAdapterPackageOrigin::DevOverride => "workspace",
+        _ => "archive",
+    };
+    let enabled = if package.runtime_ready { 1 } else { 0 };
+    let installation_status = match package.runtime_gate_status {
+        ConversationAdapterRuntimeGateStatus::CoreIncompatible => "incompatible",
+        _ if !package.runtime_ready => "broken",
+        _ => "ready",
+    };
+    let runtime_status = if package.runtime_ready {
+        "ready"
+    } else {
+        "failed"
+    };
+    let error_code = if !package.runtime_ready {
+        Some(encode_enum(package.runtime_gate_status)?)
+    } else {
+        None
+    };
+    let checked_at = package
+        .last_checked_at
+        .as_deref()
+        .or(package.runtime_validated_at.as_deref())
+        .unwrap_or(&package.updated_at);
+
     sqlx::query(UPSERT_CONVERSATION_ADAPTER_PACKAGE_SQL)
         .bind(&package.package_id)
         .bind(&package.adapter_id)
         .bind(&package.name)
         .bind(&package.version)
-        .bind(encode_enum(package.record_kind)?)
+        .bind(distribution_type)
         .bind(&package.install_dir)
-        .bind(&package.manifest_path)
-        .bind(&package.adapter_manifest_path)
-        .bind(&package.runtime_protocol)
-        .bind(if package.runtime_ready { 1 } else { 0 })
-        .bind(encode_enum(package.origin)?)
-        .bind(&package.source_url)
-        .bind(&package.git_ref)
-        .bind(&package.git_commit)
-        .bind(&package.catalog_url)
-        .bind(encode_enum(package.update_policy)?)
-        .bind(&package.latest_version)
-        .bind(&package.last_checked_at)
-        .bind(encode_enum(package.runtime_gate_status)?)
-        .bind(&package.runtime_validated_at)
-        .bind(&package.installed_content_hash)
-        .bind(&package.trusted_package_hash)
+        .bind(enabled)
+        .bind(installation_status)
+        .bind(runtime_status)
+        .bind(error_code)
         .bind(&package.error_message)
+        .bind(checked_at)
         .bind(&package.created_at)
         .bind(&package.updated_at)
+        .bind(&meta_json)
         .execute(executor)
         .await
         .map_err(StoreError::external)?;
@@ -92,7 +135,7 @@ pub async fn activate_conversation_adapter_package_sqlx(
     package: &ConversationAdapterPackage,
     version: &ConversationAdapterPackageVersion,
 ) -> StoreResult<()> {
-    let mut tx = pool.begin().await.map_err(StoreError::external)?;
+    let mut tx = begin_immediate_with_retry(pool, 8).await?;
     #[derive(Debug, FromRow)]
     struct AdapterPackageVersionHashRow {
         artifact_hash: Option<String>,
@@ -101,9 +144,9 @@ pub async fn activate_conversation_adapter_package_sqlx(
 
     let existing = sqlx::query_as::<_, AdapterPackageVersionHashRow>(
         r#"
-        SELECT artifact_hash, content_hash
-        FROM app_conversation_adapter_package_versions
-        WHERE package_id = ?1 AND version = ?2
+        SELECT artifact_sha256 AS artifact_hash, content_hash
+        FROM app_extension_versions
+        WHERE extension_id = ?1 AND version = ?2
         "#,
     )
     .bind(&version.package_id)
@@ -126,13 +169,13 @@ pub async fn activate_conversation_adapter_package_sqlx(
     upsert_conversation_adapter_package_with_executor(&mut *tx, package).await?;
     sqlx::query(
         r#"
-        INSERT INTO app_conversation_adapter_package_versions (
-            package_id, version, install_dir, artifact_hash,
-            content_hash, runtime_gate_status, installed_at
+        INSERT INTO app_extension_versions (
+            extension_id, version, install_dir, artifact_sha256,
+            content_hash, verification_status, installed_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-        ON CONFLICT(package_id, version) DO UPDATE SET
+        ON CONFLICT(extension_id, version) DO UPDATE SET
             install_dir = excluded.install_dir,
-            runtime_gate_status = excluded.runtime_gate_status
+            verification_status = excluded.verification_status
         "#,
     )
     .bind(&version.package_id)
@@ -153,10 +196,10 @@ pub async fn activate_conversation_adapter_workspace_sqlx(
     adapter: &ConversationAdapter,
     package: &ConversationAdapterPackage,
 ) -> StoreResult<()> {
-    let mut tx = pool.begin().await.map_err(StoreError::external)?;
+    let mut tx = begin_immediate_with_retry(pool, 8).await?;
     upsert_conversation_adapter_for_all_tenants(&mut tx, adapter).await?;
     upsert_conversation_adapter_package_with_executor(&mut *tx, package).await?;
-    sqlx::query("DELETE FROM app_conversation_adapter_package_versions WHERE package_id = ?1")
+    sqlx::query("DELETE FROM app_extension_versions WHERE extension_id = ?1")
         .bind(&package.package_id)
         .execute(&mut *tx)
         .await
@@ -188,7 +231,7 @@ pub async fn deactivate_conversation_adapter_package_sqlx(
     }
 
     let now = Utc::now().to_rfc3339();
-    let mut tx = pool.begin().await.map_err(StoreError::external)?;
+    let mut tx = begin_immediate_with_retry(pool, 8).await?;
     sqlx::query("DELETE FROM conversation_adapters WHERE id = ?1")
         .bind(adapter_id)
         .execute(&mut *tx)
@@ -202,29 +245,16 @@ pub async fn deactivate_conversation_adapter_package_sqlx(
     .execute(&mut *tx)
     .await
     .map_err(StoreError::external)?;
-    sqlx::query(
-        r#"
-        UPDATE app_conversation_adapter_packages
-        SET runtime_ready = 0,
-            runtime_gate_status = 'runtime_missing',
-            runtime_validated_at = ?1,
-            error_message = 'conversation adapter package is uninstalled',
-            updated_at = ?1
-        WHERE package_id = ?2
-        "#,
-    )
-    .bind(&now)
-    .bind(package_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(StoreError::external)?;
-    tx.commit().await.map_err(StoreError::external)?;
 
     package.runtime_ready = false;
     package.runtime_gate_status = ConversationAdapterRuntimeGateStatus::RuntimeMissing;
     package.runtime_validated_at = Some(now.clone());
     package.error_message = Some("conversation adapter package is uninstalled".to_string());
     package.updated_at = now;
+
+    upsert_conversation_adapter_package_with_executor(&mut *tx, &package).await?;
+    tx.commit().await.map_err(StoreError::external)?;
+
     Ok(package)
 }
 
@@ -232,62 +262,62 @@ pub async fn upsert_conversation_adapter_catalog_release_sqlx(
     pool: &SqlitePool,
     release: &ConversationAdapterCatalogRelease,
 ) -> StoreResult<()> {
+    let meta = package_releases::ConversationAdapterReleaseMeta {
+        core_compatibility: release.core_compatibility.clone(),
+        changelog_markdown: release.changelog_markdown.clone(),
+        breaking_change: release.breaking_change,
+        runtime_protocol: release.runtime_protocol.clone(),
+        record_kind: release.record_kind,
+        package_manifest_file: release.package_manifest_file.clone(),
+        adapter_manifest_file: release.adapter_manifest_file.clone(),
+        adapter_manifest_json: release.adapter_manifest_json.clone(),
+        source_json: release.source_json.clone(),
+        etag: release.etag.clone(),
+    };
+    let meta_json = serde_json::to_string(&meta).map_err(|e| {
+        StoreError::external(format!(
+            "failed to serialize conversation adapter release meta: {e}"
+        ))
+    })?;
+
     sqlx::query(
         r#"
-        INSERT INTO app_conversation_adapter_catalog_releases (
-            catalog_url, package_id, version, channel, released_at,
-            core_compatibility, artifact_url, artifact_size, artifact_sha256,
-            changelog_markdown, breaking_change, runtime_protocol,
-            adapter_manifest_json, etag, fetched_at, adapter_id, name, publisher,
-            record_kind, package_manifest_file, adapter_manifest_file, source_json
+        INSERT INTO app_extension_catalog_releases (
+            catalog_source, extension_id, version, capability_kind, target_id,
+            display_name, publisher, channel, released_at, artifact_url,
+            artifact_size, artifact_sha256, release_meta_json, fetched_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-            ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22
+            ?1, ?2, ?3, 'conversation.adapter', ?4,
+            ?5, ?6, ?7, ?8, ?9,
+            ?10, ?11, ?12, ?13
         )
-        ON CONFLICT(catalog_url, package_id, version) DO UPDATE SET
+        ON CONFLICT(catalog_source, extension_id, version) DO UPDATE SET
+            capability_kind = excluded.capability_kind,
+            target_id = excluded.target_id,
+            display_name = excluded.display_name,
+            publisher = excluded.publisher,
             channel = excluded.channel,
             released_at = excluded.released_at,
-            core_compatibility = excluded.core_compatibility,
             artifact_url = excluded.artifact_url,
             artifact_size = excluded.artifact_size,
             artifact_sha256 = excluded.artifact_sha256,
-            changelog_markdown = excluded.changelog_markdown,
-            breaking_change = excluded.breaking_change,
-            runtime_protocol = excluded.runtime_protocol,
-            adapter_manifest_json = excluded.adapter_manifest_json,
-            etag = excluded.etag,
-            fetched_at = excluded.fetched_at,
-            adapter_id = excluded.adapter_id,
-            name = excluded.name,
-            publisher = excluded.publisher,
-            record_kind = excluded.record_kind,
-            package_manifest_file = excluded.package_manifest_file,
-            adapter_manifest_file = excluded.adapter_manifest_file,
-            source_json = excluded.source_json
+            release_meta_json = excluded.release_meta_json,
+            fetched_at = excluded.fetched_at
         "#,
     )
     .bind(&release.catalog_url)
     .bind(&release.package_id)
     .bind(&release.version)
-    .bind(encode_enum(release.channel)?)
-    .bind(&release.released_at)
-    .bind(&release.core_compatibility)
-    .bind(&release.artifact_url)
-    .bind(release.artifact_size)
-    .bind(&release.artifact_sha256)
-    .bind(&release.changelog_markdown)
-    .bind(if release.breaking_change { 1 } else { 0 })
-    .bind(&release.runtime_protocol)
-    .bind(&release.adapter_manifest_json)
-    .bind(&release.etag)
-    .bind(&release.fetched_at)
     .bind(&release.adapter_id)
     .bind(&release.name)
     .bind(&release.publisher)
-    .bind(encode_enum(release.record_kind)?)
-    .bind(&release.package_manifest_file)
-    .bind(&release.adapter_manifest_file)
-    .bind(&release.source_json)
+    .bind(encode_enum(release.channel)?)
+    .bind(&release.released_at)
+    .bind(&release.artifact_url)
+    .bind(release.artifact_size)
+    .bind(&release.artifact_sha256)
+    .bind(&meta_json)
+    .bind(&release.fetched_at)
     .execute(pool)
     .await
     .map_err(StoreError::external)?;
@@ -300,24 +330,24 @@ pub async fn list_conversation_adapter_package_versions_sqlx(
 ) -> StoreResult<Vec<ConversationAdapterPackageVersion>> {
     #[derive(Debug, FromRow)]
     struct AdapterPackageVersionRow {
-        package_id: String,
+        extension_id: String,
         version: String,
         install_dir: String,
-        artifact_hash: Option<String>,
+        artifact_sha256: Option<String>,
         content_hash: String,
-        runtime_gate_status: String,
+        verification_status: String,
         installed_at: String,
     }
 
     impl AdapterPackageVersionRow {
         fn into_domain(self) -> StoreResult<ConversationAdapterPackageVersion> {
             Ok(ConversationAdapterPackageVersion {
-                package_id: self.package_id,
+                package_id: self.extension_id,
                 version: self.version,
                 install_dir: self.install_dir,
-                artifact_hash: self.artifact_hash,
+                artifact_hash: self.artifact_sha256,
                 content_hash: self.content_hash,
-                runtime_gate_status: decode_enum(self.runtime_gate_status)?,
+                runtime_gate_status: decode_enum(self.verification_status)?,
                 installed_at: self.installed_at,
             })
         }
@@ -325,10 +355,10 @@ pub async fn list_conversation_adapter_package_versions_sqlx(
 
     let rows = sqlx::query_as::<_, AdapterPackageVersionRow>(
         r#"
-        SELECT package_id, version, install_dir, artifact_hash, content_hash,
-               runtime_gate_status, installed_at
-        FROM app_conversation_adapter_package_versions
-        WHERE package_id = ?1
+        SELECT extension_id, version, install_dir, artifact_sha256, content_hash,
+               verification_status, installed_at
+        FROM app_extension_versions
+        WHERE extension_id = ?1
         ORDER BY installed_at DESC, version DESC
         "#,
     )
@@ -349,9 +379,9 @@ pub async fn update_conversation_adapter_package_version_install_dir_sqlx(
 ) -> StoreResult<()> {
     sqlx::query(
         r#"
-        UPDATE app_conversation_adapter_package_versions
+        UPDATE app_extension_versions
         SET install_dir = ?1
-        WHERE package_id = ?2 AND version = ?3
+        WHERE extension_id = ?2 AND version = ?3
         "#,
     )
     .bind(install_dir)
@@ -375,15 +405,14 @@ pub async fn delete_conversation_adapter_package_version_sqlx(
             "package version deletion cannot replace and delete the package record".to_string(),
         ));
     }
-    let mut tx = pool.begin().await.map_err(StoreError::external)?;
-    let result = sqlx::query(
-        "DELETE FROM app_conversation_adapter_package_versions WHERE package_id = ?1 AND version = ?2",
-    )
-    .bind(package_id)
-    .bind(version)
-    .execute(&mut *tx)
-    .await
-    .map_err(StoreError::external)?;
+    let mut tx = begin_immediate_with_retry(pool, 8).await?;
+    let result =
+        sqlx::query("DELETE FROM app_extension_versions WHERE extension_id = ?1 AND version = ?2")
+            .bind(package_id)
+            .bind(version)
+            .execute(&mut *tx)
+            .await
+            .map_err(StoreError::external)?;
     if result.rows_affected() != 1 {
         tx.rollback().await.map_err(StoreError::external)?;
         return Ok(false);

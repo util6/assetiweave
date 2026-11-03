@@ -110,7 +110,7 @@ export function AssetGridView({
               <div className="flex shrink-0 items-center gap-1.5">
                 <GridIconButton
                   label={t("asset.revealPath")}
-                  onClick={() => onRevealPath(asset.absolute_path)}
+                  onClick={() => onRevealPath(asset.stored_path)}
                 >
                   <FolderOpen size={16} />
                 </GridIconButton>
@@ -136,7 +136,7 @@ export function AssetGridView({
 
             <button
               className="mt-3 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/55 px-3 py-2 text-left font-mono text-body-sm text-on-surface-variant transition-[transform,background-color,border-color,color] duration-200 hover:-translate-y-px hover:border-theme-nav-active-border hover:text-primary active:translate-y-0"
-              onClick={() => onRevealPath(asset.absolute_path)}
+              onClick={() => onRevealPath(asset.stored_path)}
               title={t("asset.revealPath")}
               type="button"
             >

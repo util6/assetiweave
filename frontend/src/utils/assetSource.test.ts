@@ -68,7 +68,7 @@ const asset: Asset = {
   kind: "skill",
   format: "directory",
   relative_path: "demo",
-  absolute_path: "/tmp/demo",
+  stored_path: "/tmp/demo",
   entry_file: null,
   description: null,
   content_hash: null,

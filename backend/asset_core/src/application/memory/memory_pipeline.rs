@@ -72,12 +72,11 @@ impl AppService {
         let service = self.clone();
         self.spawn_pipeline_task(spec, move |cx| async move {
             let tenant_id = service.tenant_id().to_string();
-            let pool = service.db.pool().clone();
             let storage =
                 crate::backend::infrastructure::memory::storage::MemoryStorage::new(&tenant_id);
 
             if params.force_rebuild {
-                let _ = store::clear_watermarks_sqlx(&pool, &tenant_id).await;
+                let _ = store::clear_watermarks_sqlx(service.db.pool(), &tenant_id).await;
                 if let Err(e) = storage.clear_all() {
                     tracing::warn!(tenant = %tenant_id, error = %e, "Failed to clear memory storage during force rebuild");
                 }

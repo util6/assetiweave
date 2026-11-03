@@ -38,6 +38,18 @@ impl Default for AgentRegistryHandle {
     }
 }
 
+impl From<Arc<AgentRegistry>> for AgentRegistryHandle {
+    fn from(registry: Arc<AgentRegistry>) -> Self {
+        Self::from_registry(registry)
+    }
+}
+
+impl From<AgentRegistry> for AgentRegistryHandle {
+    fn from(registry: AgentRegistry) -> Self {
+        Self::from_registry(Arc::new(registry))
+    }
+}
+
 impl AgentRegistryHandle {
     pub fn from_registry(registry: Arc<AgentRegistry>) -> Self {
         Self {

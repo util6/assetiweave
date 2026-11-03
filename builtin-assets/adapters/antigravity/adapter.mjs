@@ -1959,6 +1959,10 @@ function findTranscriptFile(conversationDir) {
   if (existsSync(fullPath)) return fullPath;
   const shortPath = path.join(logsDir, "transcript.jsonl");
   if (existsSync(shortPath)) return shortPath;
+  const directFull = path.join(conversationDir, "transcript_full.jsonl");
+  if (existsSync(directFull)) return directFull;
+  const directShort = path.join(conversationDir, "transcript.jsonl");
+  if (existsSync(directShort)) return directShort;
   return null;
 }
 
@@ -2738,10 +2742,98 @@ function structuredCardRenderer(card) {
   return "plain";
 }
 
+function extractSessionIdFromTranscriptPath(filePath, conversationDir = null) {
+  const convDir = conversationDir || conversationDirForTranscript(filePath);
+  for (const metaName of ["meta.json", ".meta"]) {
+    const metaPath = path.join(convDir, metaName);
+    if (existsSync(metaPath)) {
+      try {
+        const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+        const id = meta.session_id || meta.id || meta.conversation_id || meta.external_id;
+        if (id && typeof id === "string") return id;
+      } catch {}
+    }
+  }
+  const base = path.basename(convDir);
+  if (isUuidDir(base)) return base;
+  const parts = filePath.split(path.sep);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (isUuidDir(parts[i])) return parts[i];
+  }
+  return base || "antigravity-session";
+}
+
+function collectTranscriptFiles(startLocation) {
+  const results = [];
+  const seenFiles = new Set();
+
+  if (startLocation) {
+    const resolved = path.resolve(expandPath(startLocation));
+    if (existsSync(resolved)) {
+      const st = statSync(resolved);
+      // 1. Direct file
+      if (st.isFile()) {
+        if (resolved.endsWith(".jsonl")) {
+          const sid = extractSessionIdFromTranscriptPath(resolved);
+          return [{ filePath: resolved, sessionId: sid }];
+        }
+        return [];
+      }
+      // 2. Direct conversation directory
+      const directTranscript = findTranscriptFile(resolved);
+      if (directTranscript) {
+        const metaJson = path.join(resolved, "meta.json");
+        const dotMeta = path.join(resolved, ".meta");
+        if (!isInternalSessionMeta(metaJson) && !isInternalSessionMeta(dotMeta)) {
+          const sid = extractSessionIdFromTranscriptPath(directTranscript, resolved);
+          return [{ filePath: directTranscript, sessionId: sid }];
+        }
+        return [];
+      }
+    }
+  }
+
+  // 3. Brain directories discovery (supporting multi-brain roots and standard flavors)
+  const brainDirs = discoverBrainDirs(startLocation);
+  for (const bDir of brainDirs) {
+    if (!existsSync(bDir)) continue;
+    try {
+      const entries = readdirSync(bDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+        const convDir = path.join(bDir, entry.name);
+        const metaJson = path.join(convDir, "meta.json");
+        const dotMeta = path.join(convDir, ".meta");
+        if (isInternalSessionMeta(metaJson) || isInternalSessionMeta(dotMeta)) continue;
+
+        const transcript = findTranscriptFile(convDir);
+        if (transcript) {
+          const resolvedPath = path.resolve(transcript);
+          if (!seenFiles.has(resolvedPath)) {
+            seenFiles.add(resolvedPath);
+            const sid = extractSessionIdFromTranscriptPath(resolvedPath, convDir);
+            results.push({ filePath: resolvedPath, sessionId: sid });
+          }
+        }
+      }
+    } catch {}
+  }
+
+  return results;
+}
+
 function readUsage() {
   const location = expandPath(input.source?.location);
   if (!location) {
-    emit("complete", { item: { snapshot_complete: true, usage_event_count: 0, next_cursor: null, decoder_profile: "antigravity-protobuf-acp-v1", diagnostics: [] } });
+    emit("complete", {
+      item: {
+        snapshot_complete: true,
+        usage_event_count: 0,
+        next_cursor: null,
+        decoder_profile: "antigravity-transcript-v1",
+        diagnostics: [],
+      },
+    });
     return;
   }
 
@@ -2753,113 +2845,184 @@ function readUsage() {
     } catch {}
   }
   const cursorMtime = cursor?.last_mtime ? Number(cursor.last_mtime) : 0;
-  const processedDbs = new Set(cursor?.processed_dbs || []);
+  const processedFiles = new Set(cursor?.processed_files || cursor?.processed_dbs || []);
 
-  const dbFiles = discoverConversationDbFiles(location);
+  const files = collectTranscriptFiles(location);
+  const requestedSessionId = input.params?.session_id ?? null;
+  if (requestedSessionId) {
+    if (files.length === 1) {
+      files[0].sessionId = requestedSessionId;
+    } else {
+      const filtered = files.filter((f) => f.sessionId === requestedSessionId);
+      files.length = 0;
+      files.push(...filtered);
+    }
+  }
+
   let maxMtime = cursorMtime;
   let eventCount = 0;
-  const newProcessedDbs = [];
+  const newProcessedFiles = [];
 
-  for (const dbPath of dbFiles) {
+  for (const item of files) {
+    const { filePath, sessionId } = item;
     try {
-      const stat = statSync(dbPath);
+      const stat = statSync(filePath);
       const mtimeMs = stat.mtimeMs;
       if (mtimeMs > maxMtime) {
         maxMtime = mtimeMs;
       }
-      if (cursorMtime > 0 && mtimeMs <= cursorMtime && processedDbs.has(dbPath)) {
-        newProcessedDbs.push(dbPath);
+      if (cursorMtime > 0 && mtimeMs <= cursorMtime && processedFiles.has(filePath)) {
+        newProcessedFiles.push(filePath);
         continue;
       }
 
-      const externalId = path.basename(dbPath, ".db");
-      let rows = [];
-      if (DatabaseSync) {
-        let db;
-        try {
-          db = new DatabaseSync(dbPath, { readOnly: true });
-          const stmt = db.prepare("SELECT idx, hex(data) as hex_data, size FROM gen_metadata WHERE size > 0 ORDER BY idx ASC;");
-          rows = stmt.all();
-        } catch {
-          rows = [];
-        } finally {
-          if (db) db.close();
-        }
-      } else {
-        try {
-          const raw = execFileSync("sqlite3", ["-json", dbPath, "SELECT idx, hex(data) as hex_data, size FROM gen_metadata WHERE size > 0 ORDER BY idx ASC;"], {
-            encoding: "utf8",
-            maxBuffer: 50 * 1024 * 1024,
+      const text = readFileSync(filePath, "utf8");
+      const lines = text.split("\n");
+      let currentModel = "gemini-2.5-pro";
+      let turnIndex = -1;
+      let currentTurn = null;
+
+      const finalizeTurn = () => {
+        if (!currentTurn) return;
+        const totalTokens =
+          currentTurn.input_tokens +
+          currentTurn.cache_read_tokens +
+          currentTurn.cache_write_tokens +
+          currentTurn.reasoning_tokens +
+          currentTurn.output_tokens;
+
+        if (totalTokens > 0) {
+          const turnId = `turn-${currentTurn.turn_index}`;
+          const eventId = `${sessionId}-${turnId}`;
+          const rawTime =
+            currentTurn.first_response_timestamp ||
+            currentTurn.user_timestamp ||
+            stat.mtime.toISOString();
+          let timestamp;
+          try {
+            timestamp = new Date(rawTime).toISOString();
+          } catch {
+            timestamp = stat.mtime.toISOString();
+          }
+
+          emit("item", {
+            item: {
+              kind: "usage_event",
+              event: {
+                external_event_id: eventId,
+                session_id: sessionId,
+                turn_id: turnId,
+                logical_request_id: eventId,
+                attempt_index: 0,
+                timestamp,
+                provider: "google",
+                model: currentTurn.model || currentModel,
+                status: "completed",
+                input_tokens: currentTurn.input_tokens,
+                cache_read_tokens: currentTurn.cache_read_tokens,
+                cache_write_tokens: currentTurn.cache_write_tokens,
+                reasoning_tokens: currentTurn.reasoning_tokens,
+                output_tokens: currentTurn.output_tokens,
+                total_tokens: totalTokens,
+                host_reported_cost: null,
+                currency: null,
+              },
+            },
           });
-          rows = JSON.parse(raw || "[]");
+          eventCount++;
+        }
+        currentTurn = null;
+      };
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let step;
+        try {
+          step = JSON.parse(line);
         } catch {
-          rows = [];
+          continue;
+        }
+
+        const source = step.source ?? "";
+        const type = step.type ?? "";
+        const createdAt = step.created_at ?? step.timestamp ?? null;
+
+        if (typeof step.content === "string") {
+          const match = step.content.match(
+            /The user changed setting [`']?Model Selection[`']? from .+? to (.+?)(?:\.\s+[A-Z]|\n|$)/i
+          );
+          if (match) {
+            currentModel = match[1].replace(/\.+$/, "").trim();
+            if (currentTurn) currentTurn.model = currentModel;
+          }
+        }
+        if (step.model) {
+          currentModel = String(step.model);
+          if (currentTurn) currentTurn.model = currentModel;
+        }
+
+        if (type === "USER_INPUT" && source === "USER_EXPLICIT") {
+          finalizeTurn();
+          turnIndex++;
+          currentTurn = {
+            turn_index: turnIndex,
+            user_timestamp: createdAt,
+            first_response_timestamp: null,
+            model: null,
+            input_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: 0,
+            output_tokens: 0,
+          };
+          continue;
+        }
+
+        if (!currentTurn) {
+          // Defensive protection: if first row is not USER_INPUT but has PLANNER_RESPONSE with tokens
+          if (
+            type === "PLANNER_RESPONSE" &&
+            (Number(step.input_tokens || 0) > 0 || Number(step.output_tokens || 0) > 0)
+          ) {
+            turnIndex++;
+            currentTurn = {
+              turn_index: turnIndex,
+              user_timestamp: createdAt,
+              first_response_timestamp: createdAt,
+              model: null,
+              input_tokens: 0,
+              cache_read_tokens: 0,
+              cache_write_tokens: 0,
+              reasoning_tokens: 0,
+              output_tokens: 0,
+            };
+          } else {
+            continue;
+          }
+        }
+
+        if (type === "PLANNER_RESPONSE" && (source === "MODEL" || source === "PLANNER" || !source)) {
+          if (!currentTurn.first_response_timestamp && createdAt) {
+            currentTurn.first_response_timestamp = createdAt;
+          }
+          currentTurn.input_tokens += Number(step.input_tokens || 0);
+          currentTurn.cache_read_tokens += Number(step.cache_read_tokens || 0);
+          currentTurn.cache_write_tokens += Number(step.cache_write_tokens || 0);
+          currentTurn.reasoning_tokens += Number(step.reasoning_tokens || 0);
+          currentTurn.output_tokens += Number(step.output_tokens || 0);
         }
       }
 
-      for (const r of rows) {
-        if (!r.hex_data) continue;
-        const buf = Buffer.from(r.hex_data, "hex");
-        const top = decodeProto(buf);
-        const sub1 = top[1]?.[0] ? decodeProto(top[1][0].buf) : (top[17]?.[0] ? decodeProto(top[17][0].buf) : null);
-        if (!sub1) continue;
-
-        const usageRaw = sub1[4]?.[0];
-        if (!usageRaw) continue;
-        const usage = decodeProto(usageRaw.buf);
-
-        const promptTokens = usage[2]?.[0]?.val ? Number(usage[2][0].val) : 0;
-        const cachedTokens = usage[5]?.[0]?.val ? Number(usage[5][0].val) : 0;
-        const totalOutputTokens = usage[3]?.[0]?.val ? Number(usage[3][0].val) : 0;
-        const reasoningTokens = usage[9]?.[0]?.val ? Number(usage[9][0].val) : 0;
-        const candidateTokens = usage[10]?.[0]?.val ? Number(usage[10][0].val) : 0;
-
-        const inputTokens = Math.max(0, promptTokens - cachedTokens);
-        const outputTokens = candidateTokens > 0 ? candidateTokens : Math.max(0, totalOutputTokens - reasoningTokens);
-        const totalTokens = inputTokens + cachedTokens + reasoningTokens + outputTokens;
-
-        if (totalTokens === 0) continue;
-
-        const modelStr = sub1[19]?.[0]?.buf?.toString("utf8") || "gemini-2.5-pro";
-        const requestId = `${externalId}-${r.idx}`;
-
-        const event = {
-          external_event_id: requestId,
-          session_id: externalId,
-          turn_id: null,
-          logical_request_id: requestId,
-          attempt_index: 0,
-          timestamp: stat.mtime.toISOString(),
-          provider: "google",
-          model: modelStr,
-          status: "completed",
-          input_tokens: inputTokens,
-          cache_read_tokens: cachedTokens,
-          cache_write_tokens: 0,
-          reasoning_tokens: reasoningTokens,
-          output_tokens: outputTokens,
-          host_reported_cost: null,
-          currency: null,
-        };
-
-        emit("item", {
-          item: {
-            kind: "usage_event",
-            event,
-          },
-        });
-        eventCount++;
-      }
-
-      newProcessedDbs.push(dbPath);
+      finalizeTurn();
+      newProcessedFiles.push(filePath);
     } catch {
-      // Ignore individual corrupted db
+      // Ignore individual corrupted file
     }
   }
 
   const nextCursor = {
     last_mtime: maxMtime,
-    processed_dbs: newProcessedDbs.slice(-2000),
+    processed_files: newProcessedFiles.slice(-2000),
   };
 
   emit("complete", {
@@ -2867,7 +3030,7 @@ function readUsage() {
       snapshot_complete: true,
       usage_event_count: eventCount,
       next_cursor: JSON.stringify(nextCursor),
-      decoder_profile: "antigravity-protobuf-acp-v1",
+      decoder_profile: "antigravity-transcript-v1",
       diagnostics: [],
     },
   });

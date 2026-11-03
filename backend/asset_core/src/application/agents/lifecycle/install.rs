@@ -11,7 +11,6 @@ use crate::backend::{
         layout::{ensure_runtime_root, is_safe_managed_install_path},
         materialize::materialize_and_activate,
         types::AgentInstallStartRequest,
-        CatalogCache,
     },
 };
 
@@ -125,9 +124,22 @@ pub async fn run(
         ));
     }
 
+    let repo = crate::backend::store::system::ExtensionCatalogReleaseRepository::new(
+        coordinator.repository.pool().clone(),
+    );
+    let release_meta = repo
+        .get_latest_agent_meta(&item.id)
+        .await
+        .ok()
+        .flatten()
+        .map(|(_, meta)| meta);
+
+    let upstream_info = release_meta.as_ref().and_then(|m| m.upstream_info.clone());
+
     let target_version = if request.action == "update" {
-        CatalogCache::in_app_cache()
-            .and_then(|c| c.get_upstream_version(&item.id))
+        upstream_info
+            .as_ref()
+            .map(|u| u.version.clone())
             .filter(|up_ver| {
                 if let Some(cur) = current.as_ref() {
                     crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
@@ -151,9 +163,6 @@ pub async fn run(
             Distribution::Npx { version, .. } => {
                 *version = target_version.clone();
             }
-            Distribution::Uvx { version, .. } => {
-                *version = target_version.clone();
-            }
             Distribution::Binary {
                 url,
                 size,
@@ -163,8 +172,6 @@ pub async fn run(
                 launch_args,
                 ..
             } => {
-                let upstream_info =
-                    CatalogCache::in_app_cache().and_then(|c| c.get_upstream_info(&item.id));
                 let matched_target = upstream_info
                     .as_ref()
                     .and_then(|info| info.find_binary_target(&target.os, &target.arch));
@@ -185,20 +192,16 @@ pub async fn run(
                     }
                     *size = None;
                 } else {
-                    let mut new_url = url.clone();
-                    if new_url.contains(&item.version) {
-                        new_url = new_url.replace(&item.version, &target_version);
-                    }
-                    if new_url.contains("agy-acp-server-agy_acp_server_") {
-                        new_url =
-                            new_url.replace("agy-acp-server-agy_acp_server_", "agy-acp-server-");
-                    }
-                    *url = new_url;
-                    *size = None;
-                    *sha256 = String::new();
+                    return Err(market_error(
+                        "upstream_target_unavailable",
+                        format!(
+                            "No upstream binary target available for {}-{}",
+                            target.os, target.arch
+                        ),
+                        false,
+                    ));
                 }
             }
-            _ => {}
         }
     }
 

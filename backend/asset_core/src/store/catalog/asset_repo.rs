@@ -50,7 +50,7 @@ fn map_sqlx_asset_row(row: &SqliteRow) -> StoreResult<Asset> {
         kind: decode_enum_app::<AssetKind>(row.try_get::<String, _>(3)?)?,
         format: decode_enum_app::<AssetFormat>(row.try_get::<String, _>(4)?)?,
         relative_path: row.try_get(5)?,
-        absolute_path: row.try_get(6)?,
+        stored_path: row.try_get(6)?,
         entry_file: row.try_get(7)?,
         description: row.try_get(8)?,
         content_hash: row.try_get(9)?,
@@ -82,7 +82,7 @@ pub async fn replace_source_assets_sqlx(
             .bind(encode_enum_app(asset.kind)?)
             .bind(encode_enum_app(asset.format)?)
             .bind(&asset.relative_path)
-            .bind(&asset.absolute_path)
+            .bind(&asset.stored_path)
             .bind(&asset.entry_file)
             .bind(&asset.description)
             .bind(&asset.content_hash)

@@ -5,13 +5,12 @@ use crate::backend::application::prelude::*;
 use crate::backend::application::{AppError, AppResult};
 use crate::backend::domain::agents::{
     AgentInstallation, Distribution, DistributionCandidate, DistributionSelector, DistributionType,
-    InstallationStatus, Ownership, ProtocolStatus, RuntimeStatus, SystemObservation,
+    InstallationStatus, Ownership, ProtocolStatus, RuntimeStatus,
 };
 use crate::backend::infrastructure::agent_market::{
     default_runtime_root, is_safe_managed_install_path, AgentInstallPreviewRequest,
     AgentInstallStartRequest, AgentInstallationView, AgentMarketError, AgentMarketListRequest,
-    AgentUninstallStartRequest, CatalogCache, InstallContext, Installer, LifecycleTaskPhase,
-    SystemInstaller,
+    AgentUninstallStartRequest, InstallContext, Installer, LifecycleTaskPhase,
 };
 use crate::backend::infrastructure::runtime::AppRuntime;
 use crate::backend::store::system::AgentInstallationRepository;
@@ -69,14 +68,22 @@ impl AppService {
         &self,
         request: AgentInstallPreviewRequest,
     ) -> AppResult<AgentInstallPreview> {
-        let catalog = CatalogCache::best_available()?;
-        let item = catalog.item(&request.agent_id).ok_or_else(|| {
-            AppError::from(AgentMarketError::new(
-                "agent_not_found",
-                "The selected Agent is not in the curated catalog.",
-                false,
-            ))
-        })?;
+        self.ensure_agent_catalog_releases_seeded().await?;
+        let repo = crate::backend::store::system::ExtensionCatalogReleaseRepository::new(
+            self.db.pool().clone(),
+        );
+        let (_, meta) = repo
+            .get_latest_agent_meta(&request.agent_id)
+            .await
+            .map_err(AppError::from)?
+            .ok_or_else(|| {
+                AppError::from(AgentMarketError::new(
+                    "agent_not_found",
+                    "The selected Agent is not in the curated catalog.",
+                    false,
+                ))
+            })?;
+        let item = &meta.item;
         if !matches!(request.action.as_str(), "install" | "update" | "reinstall") {
             return Err(AppError::from(AgentMarketError::new(
                 "invalid_action",
@@ -154,6 +161,8 @@ impl AppService {
         if item.verification.status.needs_confirmation() {
             warnings.push("experimental_verification".to_string());
         }
+        let catalog = crate::backend::domain::agents::market::catalog::CatalogService::bundled()
+            .map_err(|e| AppError::from(AgentMarketError::Catalog(e)))?;
         let preview_token = catalog.preview_token(item, &selected.distribution_id, &request.action);
         let target_path = selected.target_path.as_ref().map(|path| {
             crate::backend::infrastructure::path_utils::display_path_or_original(
@@ -161,8 +170,9 @@ impl AppService {
             )
         });
         let target_version = if request.action == "update" {
-            CatalogCache::in_app_cache()
-                .and_then(|c| c.get_upstream_version(&item.id))
+            meta.upstream_info
+                .as_ref()
+                .map(|u| u.version.clone())
                 .filter(|up_ver| {
                     if let Some(cur) = current.as_ref() {
                         crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
@@ -180,18 +190,14 @@ impl AppService {
         let mut selected = selected;
         let mut candidates = candidates;
         if request.action == "update" || target_version != item.version {
-            if selected.distribution_type != DistributionType::System {
-                selected.resolved_version = Some(target_version.clone());
-            }
+            selected.resolved_version = Some(target_version.clone());
             for candidate in &mut candidates {
-                if candidate.distribution_type != DistributionType::System {
-                    candidate.resolved_version = Some(target_version.clone());
-                }
+                candidate.resolved_version = Some(target_version.clone());
             }
         }
         Ok(AgentInstallPreview {
             agent_id: item.id.clone(),
-            catalog_version: catalog.catalog().catalog_version.clone(),
+            catalog_version: meta.catalog_version.clone(),
             action: request.action,
             selected_distribution: selected.clone(),
             alternatives: candidates
@@ -227,14 +233,22 @@ impl AppService {
                     false,
                 ))
             })?;
-        let catalog = CatalogCache::best_available()?;
-        let item = catalog.item(&agent_id).ok_or_else(|| {
-            AppError::from(AgentMarketError::new(
-                "agent_not_found",
-                "The installed Agent is no longer in the curated catalog.",
-                false,
-            ))
-        })?;
+        self.ensure_agent_catalog_releases_seeded().await?;
+        let repo = crate::backend::store::system::ExtensionCatalogReleaseRepository::new(
+            self.db.pool().clone(),
+        );
+        let (_, meta) = repo
+            .get_latest_agent_meta(&agent_id)
+            .await
+            .map_err(AppError::from)?
+            .ok_or_else(|| {
+                AppError::from(AgentMarketError::new(
+                    "agent_not_found",
+                    "The installed Agent is no longer in the curated catalog.",
+                    false,
+                ))
+            })?;
+        let item = &meta.item;
         let capability_assignments =
             agent_assignment_refs_from_settings(&self.app_settings_value(), &agent_id);
         let mut conflicts = capability_assignments
@@ -253,6 +267,8 @@ impl AppService {
         {
             conflicts.push("unsafe_install_path".to_string());
         }
+        let catalog = crate::backend::domain::agents::market::catalog::CatalogService::bundled()
+            .map_err(|e| AppError::from(AgentMarketError::Catalog(e)))?;
         Ok(AgentUninstallPreview {
             agent_id: agent_id.clone(),
             current_installation: installation_view(&installation),

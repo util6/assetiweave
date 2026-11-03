@@ -23,7 +23,7 @@ const (
 	cacheTTL                  = 24 * time.Hour
 	updateStateFile           = "update-state.json"
 	defaultUpdateCommand      = "download the latest AssetIWeave release"
-	defaultUpdateConfigSubdir = ".assetiweave-cli"
+	defaultUpdateConfigSubdir = ".assetiweave"
 )
 
 type Report struct {

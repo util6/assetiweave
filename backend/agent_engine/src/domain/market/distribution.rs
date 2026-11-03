@@ -1,5 +1,3 @@
-use std::{collections::HashMap, path::PathBuf};
-
 use super::types::{CatalogItem, Distribution, DistributionCandidate, DistributionType};
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -16,18 +14,6 @@ pub enum DistributionError {
         agent_id: Option<String>,
         distribution_id: Option<String>,
     },
-    #[error("The selected system Agent runtime could not be used.")]
-    SystemVersionIncompatible {
-        agent_id: Option<String>,
-        distribution_id: Option<String>,
-    },
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct SystemObservation {
-    pub resolved_program: Option<PathBuf>,
-    pub version: Option<String>,
-    pub error_code: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,8 +22,6 @@ pub struct DistributionSelectionContext {
     pub arch: String,
     pub node_available: bool,
     pub npm_available: bool,
-    pub uv_available: bool,
-    pub system: HashMap<String, SystemObservation>,
 }
 
 impl Default for DistributionSelectionContext {
@@ -47,8 +31,6 @@ impl Default for DistributionSelectionContext {
             arch: normalized_arch(std::env::consts::ARCH),
             node_available: false,
             npm_available: false,
-            uv_available: false,
-            system: HashMap::new(),
         }
     }
 }
@@ -95,12 +77,6 @@ impl DistributionSelector {
                         agent_id: Some(item.id.clone()),
                         distribution_id: Some(explicit.to_string()),
                     }),
-                    "system_version_incompatible" => {
-                        Err(DistributionError::SystemVersionIncompatible {
-                            agent_id: Some(item.id.clone()),
-                            distribution_id: Some(explicit.to_string()),
-                        })
-                    }
                     _ => Err(DistributionError::Unsupported {
                         code,
                         message: "The selected Agent distribution is unavailable on this platform."
@@ -135,43 +111,6 @@ fn candidate(
     context: &DistributionSelectionContext,
 ) -> DistributionCandidate {
     match distribution {
-        Distribution::System {
-            id,
-            command_candidates,
-            version_range,
-            ..
-        } => {
-            let observation = context.system.get(id);
-            let resolved_program = observation.and_then(|obs| obs.resolved_program.clone());
-            let resolved_version = observation.and_then(|obs| obs.version.clone());
-            let error_code = observation.and_then(|obs| obs.error_code.clone());
-            let selectable = resolved_program.is_some()
-                && (version_range.is_empty()
-                    || resolved_version.as_deref().is_some_and(|v| {
-                        semver::VersionReq::parse(version_range)
-                            .and_then(|req| semver::Version::parse(v).map(|ver| req.matches(&ver)))
-                            .unwrap_or(true)
-                    }));
-            let reason_code = if selectable {
-                None
-            } else if error_code.as_deref() == Some("version_incompatible") {
-                Some("system_version_incompatible".to_string())
-            } else {
-                Some("runtime_missing".to_string())
-            };
-            DistributionCandidate {
-                distribution_id: id.clone(),
-                distribution_type: DistributionType::System,
-                selectable,
-                recommended: false,
-                ownership: DistributionType::System.ownership(),
-                reason_code,
-                required_runtime: command_candidates.first().cloned(),
-                resolved_version,
-                download_size: None,
-                target_path: resolved_program,
-            }
-        }
         Distribution::Binary {
             id, target, size, ..
         } => {
@@ -219,43 +158,13 @@ fn candidate(
                 target_path: None,
             }
         }
-        Distribution::Uvx {
-            id,
-            version,
-            python_range,
-            ..
-        } => {
-            let selectable = context.uv_available;
-            let reason_code = if !selectable {
-                Some("runtime_missing".to_string())
-            } else {
-                None
-            };
-            DistributionCandidate {
-                distribution_id: id.clone(),
-                distribution_type: DistributionType::Uvx,
-                selectable,
-                recommended: false,
-                ownership: DistributionType::Uvx.ownership(),
-                reason_code,
-                required_runtime: python_range
-                    .as_ref()
-                    .map(|r| format!("python {r}"))
-                    .or_else(|| Some("python".to_string())),
-                resolved_version: Some(version.clone()),
-                download_size: None,
-                target_path: None,
-            }
-        }
     }
 }
 
 fn type_rank(distribution_type: &DistributionType) -> u8 {
     match distribution_type {
-        DistributionType::System => 0,
         DistributionType::Binary => 1,
         DistributionType::Npx => 2,
-        DistributionType::Uvx => 3,
     }
 }
 

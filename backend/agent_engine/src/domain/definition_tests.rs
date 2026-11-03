@@ -117,6 +117,24 @@ fn valid_acp_definition_passes_validation() {
     assert!(definition.declared_capabilities.text_prompt);
 }
 
+#[test]
+fn test_materialize_acp_definition() {
+    let def = materialize_acp_definition(
+        AgentId::parse("test-agent").unwrap(),
+        "Test Agent".to_string(),
+        std::path::PathBuf::from("/bin/echo"),
+        vec!["acp".to_string()],
+        vec![AgentEnvEntry::new("FOO", "BAR")],
+        DeclaredAgentCapabilities::acp_text(),
+        None,
+        vec![],
+    )
+    .expect("materialize ok");
+    assert_eq!(def.protocol, AgentProtocol::Acp);
+    assert_eq!(def.command, "/bin/echo");
+    assert_eq!(def.args, vec!["acp".to_string()]);
+}
+
 fn definition_with_command(command: &str) -> AgentDefinition {
     AgentDefinition {
         id: AgentId::parse("opencode").unwrap(),

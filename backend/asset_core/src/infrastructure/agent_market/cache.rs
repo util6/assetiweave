@@ -7,9 +7,12 @@ use std::{
 use sha2::{Digest, Sha256};
 
 use super::error::AgentMarketError;
-use crate::backend::domain::agents::market::{
-    catalog::{CatalogError, CatalogRevision, CatalogService},
-    Catalog,
+use crate::backend::domain::agents::{
+    market::{
+        catalog::{CatalogError, CatalogRevision, CatalogService},
+        Catalog,
+    },
+    UpstreamVersionInfo,
 };
 
 pub const MAX_CATALOG_BYTES: usize = 5 * 1024 * 1024;
@@ -34,6 +37,22 @@ pub struct CatalogCache {
     pub upstream_versions_path: PathBuf,
 }
 
+pub fn purge_legacy_agent_market_cache_disk_files() -> std::io::Result<()> {
+    let mut targets = Vec::new();
+    if let Ok(app_home) = crate::backend::infrastructure::path_utils::app_home_dir() {
+        targets.push(app_home.join("cache").join("agent-market"));
+    }
+    if let Some(home) = dirs::home_dir() {
+        targets.push(home.join(".assetiweave").join("cache").join("agent-market"));
+    }
+    for target in targets {
+        if target.exists() {
+            let _ = std::fs::remove_dir_all(&target);
+        }
+    }
+    Ok(())
+}
+
 impl CatalogCache {
     pub fn in_app_cache() -> Option<Self> {
         crate::backend::infrastructure::path_utils::app_home_dir()
@@ -55,9 +74,7 @@ impl CatalogCache {
         }
     }
 
-    pub fn read_upstream_versions(
-        &self,
-    ) -> std::collections::HashMap<String, super::upstream_probe::UpstreamVersionInfo> {
+    pub fn read_upstream_versions(&self) -> std::collections::HashMap<String, UpstreamVersionInfo> {
         super::upstream_probe::UpstreamProbe::load_cached_upstream_versions(
             &self.upstream_versions_path,
         )
@@ -65,7 +82,7 @@ impl CatalogCache {
 
     pub fn save_upstream_versions(
         &self,
-        data: &std::collections::HashMap<String, super::upstream_probe::UpstreamVersionInfo>,
+        data: &std::collections::HashMap<String, UpstreamVersionInfo>,
     ) -> Result<(), std::io::Error> {
         super::upstream_probe::UpstreamProbe::save_cached_upstream_versions(
             &self.upstream_versions_path,
@@ -73,10 +90,7 @@ impl CatalogCache {
         )
     }
 
-    pub fn get_upstream_info(
-        &self,
-        agent_id: &str,
-    ) -> Option<super::upstream_probe::UpstreamVersionInfo> {
+    pub fn get_upstream_info(&self, agent_id: &str) -> Option<UpstreamVersionInfo> {
         self.read_upstream_versions().get(agent_id).cloned()
     }
 
@@ -336,9 +350,10 @@ impl CatalogCache {
                 catalog.catalog_version
             ))));
         }
-        if let Some(cache) = cache {
-            cache.write_atomic(&bytes, response_etag.as_deref())?;
-        }
+        // Disk-based caching is superseded by SQLite app_extension_catalog_releases table.
+        // No disk cache files are written.
+        let _ = cache;
+        let _ = bytes;
         Ok(CatalogRefreshOutcome::Updated {
             catalog,
             etag: response_etag,

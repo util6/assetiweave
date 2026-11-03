@@ -30,8 +30,7 @@ impl AppService {
             )));
         }
 
-        let source_path =
-            crate::backend::infrastructure::path_utils::expand_path(&asset.absolute_path)?;
+        let source_path = crate::backend::infrastructure::path_utils::resolve_asset_path(&asset)?;
         if !source_path.exists() {
             return Err(AppError::NotFound(format!(
                 "asset source path does not exist: {}",
@@ -157,10 +156,12 @@ impl AppService {
                 asset_kind: asset.kind,
                 profile_id: profile.id.clone(),
                 profile_name: profile.name.clone(),
-                source_path: asset.absolute_path.clone(),
+                source_path: crate::backend::infrastructure::path_utils::resolve_asset_path(asset)
+                    .map(|path| path.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| asset.stored_path.clone()),
                 display_source_path:
                     crate::backend::infrastructure::path_utils::display_path_or_original(
-                        &asset.absolute_path,
+                        &asset.stored_path,
                     ),
                 display_target_path:
                     crate::backend::infrastructure::path_utils::display_path_or_original(

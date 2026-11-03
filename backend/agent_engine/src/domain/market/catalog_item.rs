@@ -9,8 +9,8 @@ use super::{
         AgentMarketProtocol, CatalogCapabilities, CoreCompatibility, UpstreamSource, Verification,
     },
     validation::{
-        is_fixed_version, is_safe_artifact_url, is_safe_command_candidate, is_safe_relative_path,
-        is_valid_id, is_valid_npm_package, is_valid_python_project, CatalogValidationError,
+        is_fixed_version, is_safe_artifact_url, is_safe_relative_path, is_valid_id,
+        is_valid_npm_package, CatalogValidationError,
     },
 };
 
@@ -105,19 +105,6 @@ impl CatalogItem {
                     distribution.id().to_string(),
                 ));
             }
-            if let Distribution::System {
-                command_candidates, ..
-            } = distribution
-            {
-                if command_candidates
-                    .iter()
-                    .any(|command| !is_safe_command_candidate(command))
-                {
-                    return Err(CatalogValidationError::InvalidSystemDistribution(
-                        distribution.id().to_string(),
-                    ));
-                }
-            }
             if let Distribution::Binary {
                 url,
                 sha256,
@@ -144,12 +131,6 @@ impl CatalogItem {
             if matches!(distribution, Distribution::Npx { package, version, bin, .. } if !is_valid_npm_package(package) || !is_fixed_version(version) || !is_safe_relative_path(bin))
             {
                 return Err(CatalogValidationError::InvalidNpxDistribution(
-                    distribution.id().to_string(),
-                ));
-            }
-            if matches!(distribution, Distribution::Uvx { package, version, command, .. } if !is_valid_python_project(package) || !is_fixed_version(version) || !is_safe_relative_path(command))
-            {
-                return Err(CatalogValidationError::InvalidUvxDistribution(
                     distribution.id().to_string(),
                 ));
             }

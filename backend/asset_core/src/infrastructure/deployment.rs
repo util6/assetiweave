@@ -120,7 +120,7 @@ fn ensure_target_within_profile(
 }
 
 fn canonical_source_path(asset: &Asset) -> Result<PathBuf, DeploymentError> {
-    expand_path(&asset.absolute_path)
+    crate::backend::infrastructure::path_utils::resolve_asset_path(asset)
         .map_err(|error| DeploymentError::Failure(error.to_string()))?
         .canonicalize()
         .map_err(|error| DeploymentError::Failure(error.to_string()))

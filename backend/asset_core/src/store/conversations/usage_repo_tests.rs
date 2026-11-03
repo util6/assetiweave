@@ -531,3 +531,1007 @@ async fn test_usage_dashboard_query_by_project() {
     std::fs::remove_file(path).ok();
     std::fs::remove_dir_all(temp_root).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_turn_level_usage_cleanup_and_cursor_reset_migration() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-usage-cleanup-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+
+    // 1. Ingest events representing legacy un-turned or non-turn formats alongside valid turn events
+    let legacy_no_turn = RawUsageEventInput {
+        external_event_id: "legacy-no-turn-1".to_string(),
+        session_id: Some("sess-1".to_string()),
+        turn_id: None,
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-28T08:00:00Z".to_string(),
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 100,
+        output_tokens: 100,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: None,
+        currency: Some("USD".to_string()),
+    };
+
+    let legacy_empty_turn = RawUsageEventInput {
+        external_event_id: "legacy-empty-turn-2".to_string(),
+        session_id: Some("sess-1".to_string()),
+        turn_id: Some("   ".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-28T09:00:00Z".to_string(),
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 100,
+        output_tokens: 100,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: None,
+        currency: Some("USD".to_string()),
+    };
+
+    let legacy_unmatched_event_id = RawUsageEventInput {
+        external_event_id: "legacy-line-3".to_string(),
+        session_id: Some("sess-1".to_string()),
+        turn_id: Some("turn-custom".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-28T10:00:00Z".to_string(),
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 100,
+        output_tokens: 100,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: None,
+        currency: Some("USD".to_string()),
+    };
+
+    let valid_turn_event = RawUsageEventInput {
+        external_event_id: "sess-1-turn-0".to_string(),
+        session_id: Some("sess-1".to_string()),
+        turn_id: Some("turn-0".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-29T10:00:00Z".to_string(),
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 500,
+        output_tokens: 500,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: None,
+        currency: Some("USD".to_string()),
+    };
+
+    let valid_msg_event = RawUsageEventInput {
+        external_event_id: "sess-1-msg-101".to_string(),
+        session_id: Some("sess-1".to_string()),
+        turn_id: Some("msg-101".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-29T11:00:00Z".to_string(),
+        provider: "anthropic".to_string(),
+        model: "claude-3-7-sonnet".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 300,
+        output_tokens: 300,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: None,
+        currency: Some("USD".to_string()),
+    };
+
+    upsert_usage_events_sqlx(
+        pool,
+        "default",
+        "src-cleanup",
+        "codex",
+        &[
+            legacy_no_turn,
+            legacy_empty_turn,
+            legacy_unmatched_event_id,
+            valid_turn_event,
+            valid_msg_event,
+        ],
+        None,
+    )
+    .await
+    .expect("insert test events");
+
+    // 2. Set an active opaque_cursor on usage source state
+    let state = UsageSourceState {
+        tenant_id: "default".to_string(),
+        source_id: "src-cleanup".to_string(),
+        adapter_id: "codex".to_string(),
+        decoder_profile: Some("rollout".to_string()),
+        schema_fingerprint: None,
+        opaque_cursor: Some("opaque-cursor-v1".to_string()),
+        last_success_scan_at: Some("2026-10-28T12:00:00Z".to_string()),
+        last_full_scan_at: Some("2026-10-28T12:00:00Z".to_string()),
+        status: "ready".to_string(),
+        diagnostics_json: None,
+        created_at: "2026-10-28T12:00:00Z".to_string(),
+        updated_at: "2026-10-28T12:00:00Z".to_string(),
+    };
+    save_usage_source_state_sqlx(pool, &state)
+        .await
+        .expect("save source state");
+
+    // Verify initial count is 5
+    let count_before: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_usage_events WHERE tenant_id = 'default' AND source_id = 'src-cleanup'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("count before");
+    assert_eq!(count_before, 5);
+
+    // 3. Execute the migration SQL
+    let migration_sql = include_str!(
+        "../../../migrations/20261030000002_turn_level_usage_cleanup_and_cursor_reset.sql"
+    );
+    let conn = rusqlite::Connection::open(&path).expect("open rusqlite connection");
+    conn.execute_batch(migration_sql)
+        .expect("execute migration sql");
+    drop(conn);
+
+    // 4. Verify post-migration state:
+    // Only valid_turn_event and valid_msg_event should remain
+    let remaining_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT external_event_id FROM conversation_usage_events WHERE tenant_id = 'default' AND source_id = 'src-cleanup' ORDER BY external_event_id",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("fetch remaining external_event_ids");
+
+    assert_eq!(
+        remaining_ids,
+        vec!["sess-1-msg-101".to_string(), "sess-1-turn-0".to_string()]
+    );
+
+    // Verify source state cursor reset to NULL
+    let reloaded_state = load_usage_source_state_sqlx(pool, "default", "src-cleanup")
+        .await
+        .expect("load state")
+        .expect("source state exists");
+    assert_eq!(reloaded_state.opaque_cursor, None);
+
+    drop(database);
+    std::fs::remove_file(path).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_prune_unseen_usage_events_sqlx() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-usage-prune-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+
+    let ev_old_1 = RawUsageEventInput {
+        external_event_id: "sess-1-turn-0".to_string(),
+        session_id: Some("sess-1".to_string()),
+        turn_id: Some("turn-0".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-29T10:00:00Z".to_string(),
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 100,
+        output_tokens: 100,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: None,
+        currency: Some("USD".to_string()),
+    };
+    let ev_old_2 = RawUsageEventInput {
+        external_event_id: "sess-1-turn-1".to_string(),
+        session_id: Some("sess-1".to_string()),
+        turn_id: Some("turn-1".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-29T11:00:00Z".to_string(),
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 200,
+        output_tokens: 200,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: None,
+        currency: Some("USD".to_string()),
+    };
+    let ev_other_source = RawUsageEventInput {
+        external_event_id: "other-turn-0".to_string(),
+        session_id: Some("other-sess".to_string()),
+        turn_id: Some("turn-0".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-29T10:00:00Z".to_string(),
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 500,
+        output_tokens: 500,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: None,
+        currency: Some("USD".to_string()),
+    };
+
+    // Ingest older run
+    upsert_usage_events_sqlx(
+        pool,
+        "default",
+        "src-prune",
+        "codex",
+        &[ev_old_1.clone(), ev_old_2.clone()],
+        Some("run-v1"),
+    )
+    .await
+    .expect("ingest old run");
+
+    // Ingest other source on old run
+    upsert_usage_events_sqlx(
+        pool,
+        "default",
+        "src-other",
+        "codex",
+        &[ev_other_source],
+        Some("run-v1"),
+    )
+    .await
+    .expect("ingest other source");
+
+    // In new run for src-prune, only ev_old_1 is seen (ev_old_2 was deleted or absent)
+    upsert_usage_events_sqlx(
+        pool,
+        "default",
+        "src-prune",
+        "codex",
+        &[ev_old_1],
+        Some("run-v2"),
+    )
+    .await
+    .expect("ingest new run");
+
+    // Prune unseen events for src-prune with current observation run run-v2
+    let pruned = prune_unseen_usage_events_sqlx(pool, "default", "src-prune", "run-v2")
+        .await
+        .expect("prune unseen");
+    assert_eq!(pruned, 1); // ev_old_2 should be pruned
+
+    // Verify remaining events for src-prune
+    let remaining_prune_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT external_event_id FROM conversation_usage_events WHERE tenant_id = 'default' AND source_id = 'src-prune'",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("fetch remaining");
+    assert_eq!(remaining_prune_ids, vec!["sess-1-turn-0".to_string()]);
+
+    // Verify src-other events were not pruned
+    let remaining_other_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT external_event_id FROM conversation_usage_events WHERE tenant_id = 'default' AND source_id = 'src-other'",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("fetch other");
+    assert_eq!(remaining_other_ids, vec!["other-turn-0".to_string()]);
+
+    drop(database);
+    std::fs::remove_file(path).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cross_day_continuation_idempotency_and_timestamp_retention() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-usage-cross-day-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+
+    // Day 1: Session starts with Turn 0
+    let turn_0_day_1 = RawUsageEventInput {
+        external_event_id: "sess-cross-turn-0".to_string(),
+        session_id: Some("sess-cross".to_string()),
+        turn_id: Some("turn-0".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-29T10:00:00Z".to_string(),
+        provider: "anthropic".to_string(),
+        model: "claude-3-7-sonnet".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 1000,
+        output_tokens: 500,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: Some(0.015),
+        currency: Some("USD".to_string()),
+    };
+
+    upsert_usage_events_sqlx(
+        pool,
+        "default",
+        "src-cross",
+        "antigravity",
+        &[turn_0_day_1.clone()],
+        Some("run-day-1"),
+    )
+    .await
+    .expect("upsert day 1");
+
+    // Day 2: Session continued with Turn 1.
+    // The adapter re-reads the full log and emits Turn 0 (retaining Day 1 timestamp) and Turn 1 (Day 2 timestamp).
+    let turn_0_day_2_scan = RawUsageEventInput {
+        external_event_id: "sess-cross-turn-0".to_string(),
+        session_id: Some("sess-cross".to_string()),
+        turn_id: Some("turn-0".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-29T10:00:00Z".to_string(), // Crucial: historical timestamp preserved
+        provider: "anthropic".to_string(),
+        model: "claude-3-7-sonnet".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 1000,
+        output_tokens: 500,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: Some(0.015),
+        currency: Some("USD".to_string()),
+    };
+
+    let turn_1_day_2 = RawUsageEventInput {
+        external_event_id: "sess-cross-turn-1".to_string(),
+        session_id: Some("sess-cross".to_string()),
+        turn_id: Some("turn-1".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-30T09:00:00Z".to_string(), // New turn today
+        provider: "anthropic".to_string(),
+        model: "claude-3-7-sonnet".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 2000,
+        output_tokens: 800,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: Some(0.025),
+        currency: Some("USD".to_string()),
+    };
+
+    upsert_usage_events_sqlx(
+        pool,
+        "default",
+        "src-cross",
+        "antigravity",
+        &[turn_0_day_2_scan, turn_1_day_2],
+        Some("run-day-2"),
+    )
+    .await
+    .expect("upsert day 2");
+
+    // Verify row count is exactly 2 (no duplicate turn 0)
+    let total_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_usage_events WHERE tenant_id = 'default' AND source_id = 'src-cross'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("query row count");
+    assert_eq!(total_rows, 2);
+
+    // Verify timestamp of turn 0 is still 2026-10-29T10:00:00Z
+    let turn_0_ts: String = sqlx::query_scalar(
+        "SELECT timestamp FROM conversation_usage_events WHERE external_event_id = 'sess-cross-turn-0'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("query turn 0 timestamp");
+    assert_eq!(turn_0_ts, "2026-10-29T10:00:00Z");
+
+    // Query dashboard and verify daily buckets: one on 2026-10-29, one on 2026-10-30
+    let filter = UsageDashboardFilter {
+        time_range: Some("custom".to_string()),
+        start_date: Some("2026-10-29".to_string()),
+        end_date: Some("2026-10-30".to_string()),
+        adapter_id: None,
+        source_id: Some("src-cross".to_string()),
+        model: None,
+        project_path: None,
+        timezone_offset_minutes: Some(0),
+    };
+    let dashboard = query_usage_dashboard_sqlx(pool, "default", &filter)
+        .await
+        .expect("query dashboard");
+
+    assert_eq!(dashboard.hero.total_tokens, 4300); // 1500 + 2800
+    assert_eq!(dashboard.hero.requests_count, 2);
+
+    let bucket_29 = dashboard
+        .daily_trend
+        .iter()
+        .find(|b| b.date == "2026-10-29")
+        .expect("2026-10-29 bucket");
+    assert_eq!(bucket_29.total_tokens, 1500);
+    assert_eq!(bucket_29.requests_count, 1);
+
+    let bucket_30 = dashboard
+        .daily_trend
+        .iter()
+        .find(|b| b.date == "2026-10-30")
+        .expect("2026-10-30 bucket");
+    assert_eq!(bucket_30.total_tokens, 2800);
+    assert_eq!(bucket_30.requests_count, 1);
+
+    drop(database);
+    std::fs::remove_file(path).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_adversarial_cross_day_continuation_model_and_tokens_mutation() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-usage-cross-day-mutation-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+
+    // Day 1: Session starts with Turn 0
+    let turn_0_day_1 = RawUsageEventInput {
+        external_event_id: "sess-adv-turn-0".to_string(),
+        session_id: Some("sess-adv".to_string()),
+        turn_id: Some("turn-0".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-28T09:00:00Z".to_string(),
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 500,
+        output_tokens: 200,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: Some(0.01),
+        currency: Some("USD".to_string()),
+    };
+
+    upsert_usage_events_sqlx(
+        pool,
+        "tenant-adv",
+        "src-adv",
+        "antigravity",
+        &[turn_0_day_1],
+        Some("run-day-1"),
+    )
+    .await
+    .expect("upsert day 1");
+
+    // Fetch initial created_at and updated_at
+    let (initial_created_at, initial_updated_at): (String, String) = sqlx::query_as(
+        "SELECT created_at, updated_at FROM conversation_usage_events WHERE tenant_id = 'tenant-adv' AND external_event_id = 'sess-adv-turn-0'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("fetch initial timestamps");
+
+    // Day 2: Re-ingest Turn 0 with mutated tokens and mutated model, but keeping original Day 1 timestamp!
+    // Plus a new Turn 1 on Day 2.
+    let turn_0_day_2_mutated = RawUsageEventInput {
+        external_event_id: "sess-adv-turn-0".to_string(),
+        session_id: Some("sess-adv".to_string()),
+        turn_id: Some("turn-0".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-28T09:00:00Z".to_string(), // Crucial: historical timestamp unchanged
+        provider: "openai".to_string(),
+        model: "gpt-4o-2024-11-20".to_string(), // Mutated model
+        status: Some("success".to_string()),
+        input_tokens: 800,  // Mutated input tokens
+        output_tokens: 400, // Mutated output tokens (total 1200)
+        cache_read_tokens: 50,
+        cache_write_tokens: 0,
+        reasoning_tokens: 100,
+        host_reported_cost: Some(0.025), // Mutated cost
+        currency: Some("USD".to_string()),
+    };
+
+    let turn_1_day_2 = RawUsageEventInput {
+        external_event_id: "sess-adv-turn-1".to_string(),
+        session_id: Some("sess-adv".to_string()),
+        turn_id: Some("turn-1".to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-29T10:00:00Z".to_string(),
+        provider: "openai".to_string(),
+        model: "gpt-4o-2024-11-20".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 1000,
+        output_tokens: 500,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: Some(0.02),
+        currency: Some("USD".to_string()),
+    };
+
+    upsert_usage_events_sqlx(
+        pool,
+        "tenant-adv",
+        "src-adv",
+        "antigravity",
+        &[turn_0_day_2_mutated, turn_1_day_2],
+        Some("run-day-2"),
+    )
+    .await
+    .expect("upsert day 2");
+
+    // Verify row count is 2 (no duplicate row for Turn 0)
+    let total_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_usage_events WHERE tenant_id = 'tenant-adv' AND source_id = 'src-adv'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("count rows");
+    assert_eq!(total_rows, 2);
+
+    // Verify Turn 0 row details
+    let row = sqlx::query(
+        "SELECT model, input_tokens, output_tokens, total_tokens, host_reported_cost, timestamp, created_at, updated_at FROM conversation_usage_events WHERE tenant_id = 'tenant-adv' AND external_event_id = 'sess-adv-turn-0'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("fetch turn 0 row");
+
+    let model: String = row.get("model");
+    let input_tokens: i64 = row.get("input_tokens");
+    let output_tokens: i64 = row.get("output_tokens");
+    let total_tokens: i64 = row.get("total_tokens");
+    let host_cost: Option<f64> = row.get("host_reported_cost");
+    let ts: String = row.get("timestamp");
+    let created_at: String = row.get("created_at");
+    let updated_at: String = row.get("updated_at");
+
+    assert_eq!(model, "gpt-4o-2024-11-20", "Model must update on conflict");
+    assert_eq!(input_tokens, 800, "Input tokens must update");
+    assert_eq!(output_tokens, 400, "Output tokens must update");
+    assert_eq!(
+        total_tokens, 1350,
+        "Total tokens must update to sum of input + cache + reasoning + output"
+    );
+    assert_eq!(
+        host_cost,
+        Some(0.025 * 7.25),
+        "Host cost must update (converted to CNY)"
+    );
+    assert_eq!(
+        ts, "2026-10-28T09:00:00Z",
+        "Timestamp must NOT change to Day 2"
+    );
+    assert_eq!(
+        created_at, initial_created_at,
+        "created_at must be preserved across upsert"
+    );
+    assert!(
+        updated_at >= initial_updated_at,
+        "updated_at must advance or match"
+    );
+
+    // Verify dashboard query aggregation by date
+    let filter = UsageDashboardFilter {
+        time_range: Some("custom".to_string()),
+        start_date: Some("2026-10-28".to_string()),
+        end_date: Some("2026-10-29".to_string()),
+        adapter_id: None,
+        source_id: Some("src-adv".to_string()),
+        model: None,
+        project_path: None,
+        timezone_offset_minutes: Some(0),
+    };
+    let dashboard = query_usage_dashboard_sqlx(pool, "tenant-adv", &filter)
+        .await
+        .expect("query dashboard");
+
+    assert_eq!(dashboard.hero.total_tokens, 2850); // 1350 + 1500
+    assert_eq!(dashboard.hero.requests_count, 2);
+
+    let bucket_day1 = dashboard
+        .daily_trend
+        .iter()
+        .find(|b| b.date == "2026-10-28")
+        .expect("day 1 bucket");
+    assert_eq!(bucket_day1.total_tokens, 1350);
+    assert_eq!(bucket_day1.requests_count, 1);
+
+    let bucket_day2 = dashboard
+        .daily_trend
+        .iter()
+        .find(|b| b.date == "2026-10-29")
+        .expect("day 2 bucket");
+    assert_eq!(bucket_day2.total_tokens, 1500);
+    assert_eq!(bucket_day2.requests_count, 1);
+
+    drop(database);
+    std::fs::remove_file(path).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_adversarial_pruning_multi_tenant_and_multi_source_isolation() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-usage-prune-isolation-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+
+    let make_event = |id: &str, sess: &str, turn: &str| RawUsageEventInput {
+        external_event_id: id.to_string(),
+        session_id: Some(sess.to_string()),
+        turn_id: Some(turn.to_string()),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-29T10:00:00Z".to_string(),
+        provider: "anthropic".to_string(),
+        model: "claude-3-7-sonnet".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 100,
+        output_tokens: 100,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: None,
+        currency: Some("USD".to_string()),
+    };
+
+    // 1. Tenant A - Source 1: 2 events with run-A1, 1 event with NULL run
+    upsert_usage_events_sqlx(
+        pool,
+        "tenant-A",
+        "src-shared-id",
+        "codex",
+        &[
+            make_event("A-s1-t0", "sess-A1", "turn-0"),
+            make_event("A-s1-t1", "sess-A1", "turn-1"),
+        ],
+        Some("run-A1"),
+    )
+    .await
+    .expect("ingest tenant A src-1");
+
+    upsert_usage_events_sqlx(
+        pool,
+        "tenant-A",
+        "src-shared-id",
+        "codex",
+        &[make_event("A-s1-null", "sess-A1", "turn-null")],
+        None, // observation_run_id is NULL
+    )
+    .await
+    .expect("ingest tenant A src-1 null run");
+
+    // 2. Tenant A - Source 2: 1 event with run-A1, 1 event with NULL run
+    upsert_usage_events_sqlx(
+        pool,
+        "tenant-A",
+        "src-distinct-id",
+        "codex",
+        &[make_event("A-s2-t0", "sess-A2", "turn-0")],
+        Some("run-A1"),
+    )
+    .await
+    .expect("ingest tenant A src-2");
+
+    upsert_usage_events_sqlx(
+        pool,
+        "tenant-A",
+        "src-distinct-id",
+        "codex",
+        &[make_event("A-s2-null", "sess-A2", "turn-null")],
+        None,
+    )
+    .await
+    .expect("ingest tenant A src-2 null run");
+
+    // 3. Tenant B - Source 1 (SAME source_id "src-shared-id"!): 2 events with run-B1, 1 with NULL run
+    upsert_usage_events_sqlx(
+        pool,
+        "tenant-B",
+        "src-shared-id",
+        "codex",
+        &[
+            make_event("B-s1-t0", "sess-B1", "turn-0"),
+            make_event("B-s1-t1", "sess-B1", "turn-1"),
+        ],
+        Some("run-B1"),
+    )
+    .await
+    .expect("ingest tenant B src-1");
+
+    upsert_usage_events_sqlx(
+        pool,
+        "tenant-B",
+        "src-shared-id",
+        "codex",
+        &[make_event("B-s1-null", "sess-B1", "turn-null")],
+        None,
+    )
+    .await
+    .expect("ingest tenant B src-1 null run");
+
+    let count_rows = |pool: sqlx::SqlitePool, tenant: String, src: String| async move {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM conversation_usage_events WHERE tenant_id = ? AND source_id = ?",
+        )
+        .bind(tenant)
+        .bind(src)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        n
+    };
+
+    assert_eq!(
+        count_rows(
+            pool.clone(),
+            "tenant-A".to_string(),
+            "src-shared-id".to_string()
+        )
+        .await,
+        3
+    );
+    assert_eq!(
+        count_rows(
+            pool.clone(),
+            "tenant-A".to_string(),
+            "src-distinct-id".to_string()
+        )
+        .await,
+        2
+    );
+    assert_eq!(
+        count_rows(
+            pool.clone(),
+            "tenant-B".to_string(),
+            "src-shared-id".to_string()
+        )
+        .await,
+        3
+    );
+
+    // 4. In run-A2, Tenant A src-shared-id ONLY sees A-s1-t0 (A-s1-t1 was deleted, A-s1-null was legacy)
+    upsert_usage_events_sqlx(
+        pool,
+        "tenant-A",
+        "src-shared-id",
+        "codex",
+        &[make_event("A-s1-t0", "sess-A1", "turn-0")],
+        Some("run-A2"),
+    )
+    .await
+    .expect("ingest run-A2");
+
+    // Prune for Tenant A, src-shared-id with current run-A2
+    let pruned = prune_unseen_usage_events_sqlx(pool, "tenant-A", "src-shared-id", "run-A2")
+        .await
+        .expect("prune");
+
+    assert_eq!(pruned, 2, "Should prune exactly the 2 unseen events from Tenant A src-shared-id (A-s1-t1 and A-s1-null)");
+
+    // 5. Verify isolation:
+    // Tenant A src-shared-id has exactly 1 remaining event (A-s1-t0)
+    assert_eq!(
+        count_rows(
+            pool.clone(),
+            "tenant-A".to_string(),
+            "src-shared-id".to_string()
+        )
+        .await,
+        1
+    );
+    let remaining_a_s1: Vec<String> = sqlx::query_scalar(
+        "SELECT external_event_id FROM conversation_usage_events WHERE tenant_id = 'tenant-A' AND source_id = 'src-shared-id'",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("fetch A s1");
+    assert_eq!(remaining_a_s1, vec!["A-s1-t0".to_string()]);
+
+    // Tenant A src-distinct-id MUST be completely untouched (still 2 events)
+    assert_eq!(
+        count_rows(
+            pool.clone(),
+            "tenant-A".to_string(),
+            "src-distinct-id".to_string()
+        )
+        .await,
+        2,
+        "Tenant A other source must not be pruned"
+    );
+
+    // Tenant B src-shared-id MUST be completely untouched (still 3 events), despite identical source_id!
+    assert_eq!(
+        count_rows(
+            pool.clone(),
+            "tenant-B".to_string(),
+            "src-shared-id".to_string()
+        )
+        .await,
+        3,
+        "Tenant B must not be pruned when Tenant A prunes same source_id"
+    );
+
+    drop(database);
+    std::fs::remove_file(path).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_adversarial_migration_boundary_and_fuzz() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-usage-migration-fuzz-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+
+    // Insert 10 boundary cases into conversation_usage_events
+    // 5 invalid (must be deleted) + 5 valid (must be preserved)
+    let make_raw = |id: &str, turn: Option<&str>| RawUsageEventInput {
+        external_event_id: id.to_string(),
+        session_id: Some("sess-fuzz".to_string()),
+        turn_id: turn.map(str::to_string),
+        logical_request_id: None,
+        attempt_index: None,
+        timestamp: "2026-10-29T10:00:00Z".to_string(),
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        status: Some("success".to_string()),
+        input_tokens: 100,
+        output_tokens: 100,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        host_reported_cost: None,
+        currency: Some("USD".to_string()),
+    };
+
+    let events = vec![
+        // Invalid 1: turn_id is None
+        make_raw("sess-turn-none", None),
+        // Invalid 2: turn_id is empty string
+        make_raw("sess-turn-empty", Some("")),
+        // Invalid 3: turn_id is whitespace (spaces)
+        make_raw("sess-turn-whitespace", Some("      ")),
+        // Invalid 4: valid turn_id, but external_event_id has no -turn- or -msg-
+        make_raw("sess_no_separator_turn_0", Some("turn-0")),
+        // Invalid 5: external_event_id is "turn-0" (no leading session / hyphen before turn)
+        make_raw("turn-0", Some("turn-0")),
+        // Valid 1: standard turn format
+        make_raw("sess-1-turn-0", Some("turn-0")),
+        // Valid 2: standard message format
+        make_raw("sess-2-msg-10", Some("msg-10")),
+        // Valid 3: minimal valid -turn-
+        make_raw("prefix-turn-suffix", Some("turn-x")),
+        // Valid 4: minimal valid -msg-
+        make_raw("prefix-msg-suffix", Some("msg-y")),
+        // Valid 5: complex session id with hyphens and -turn-
+        make_raw("project-sub-app-turn-999", Some("turn-999")),
+    ];
+
+    upsert_usage_events_sqlx(pool, "default", "src-fuzz", "antigravity", &events, None)
+        .await
+        .expect("upsert fuzz events");
+
+    // Set cursors across 3 sources
+    let make_state = |source_id: &str, cursor: Option<&str>| UsageSourceState {
+        tenant_id: "default".to_string(),
+        source_id: source_id.to_string(),
+        adapter_id: "antigravity".to_string(),
+        decoder_profile: None,
+        schema_fingerprint: None,
+        opaque_cursor: cursor.map(str::to_string),
+        last_success_scan_at: None,
+        last_full_scan_at: None,
+        status: "ready".to_string(),
+        diagnostics_json: None,
+        created_at: "2026-10-29T00:00:00Z".to_string(),
+        updated_at: "2026-10-29T00:00:00Z".to_string(),
+    };
+
+    save_usage_source_state_sqlx(pool, &make_state("src-1", Some("cur-1")))
+        .await
+        .unwrap();
+    save_usage_source_state_sqlx(pool, &make_state("src-2", Some("cur-2")))
+        .await
+        .unwrap();
+    save_usage_source_state_sqlx(pool, &make_state("src-3", None))
+        .await
+        .unwrap();
+
+    let count_before: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_usage_events WHERE source_id = 'src-fuzz'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(count_before, 10);
+
+    // Execute migration SQL
+    let migration_sql = include_str!(
+        "../../../migrations/20261030000002_turn_level_usage_cleanup_and_cursor_reset.sql"
+    );
+    let conn = rusqlite::Connection::open(&path).expect("open rusqlite connection");
+    conn.execute_batch(migration_sql)
+        .expect("execute migration sql");
+    drop(conn);
+
+    // Verify exactly the 5 valid events remain
+    let remaining: Vec<String> = sqlx::query_scalar(
+        "SELECT external_event_id FROM conversation_usage_events WHERE source_id = 'src-fuzz' ORDER BY external_event_id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+
+    let expected = vec![
+        "prefix-msg-suffix".to_string(),
+        "prefix-turn-suffix".to_string(),
+        "project-sub-app-turn-999".to_string(),
+        "sess-1-turn-0".to_string(),
+        "sess-2-msg-10".to_string(),
+    ];
+    assert_eq!(
+        remaining, expected,
+        "Only valid turn/msg records must survive migration"
+    );
+
+    // Verify all source state cursors reset to None
+    let states = load_all_usage_source_states_sqlx(pool, "default")
+        .await
+        .unwrap();
+    assert_eq!(states.len(), 3);
+    for s in states {
+        assert_eq!(
+            s.opaque_cursor, None,
+            "All source cursors must be reset to None"
+        );
+    }
+
+    drop(database);
+    std::fs::remove_file(path).ok();
+}

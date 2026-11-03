@@ -1,8 +1,11 @@
 use super::*;
 use crate::domain::conversations::{
-    derive_part_id, ConversationContentCardDescriptor, ConversationPartKind, ConversationPartRole,
+    derive_part_id, ConversationAdapterPackageOrigin, ConversationAdapterPackageRecordKind,
+    ConversationAdapterRuntimeGateStatus, ConversationContentCardDescriptor,
+    ConversationPackageUpdatePolicy, ConversationPartKind, ConversationPartRole,
 };
 use serde::Deserialize;
+use sqlx::Row;
 
 #[derive(Debug, FromRow)]
 pub(super) struct ConversationAdapterRow {
@@ -80,73 +83,115 @@ pub(super) fn map_sqlx_conversation_adapter(row: &SqliteRow) -> StoreResult<Conv
         .into_domain()
 }
 
-#[derive(Debug, FromRow)]
-pub(super) struct ConversationAdapterPackageRow {
-    package_id: String,
-    adapter_id: String,
-    name: String,
-    version: String,
-    record_kind: String,
-    install_dir: String,
-    manifest_path: String,
-    adapter_manifest_path: String,
-    runtime_protocol: String,
-    runtime_ready: i64,
-    origin: String,
-    source_url: Option<String>,
-    git_ref: Option<String>,
-    git_commit: Option<String>,
-    catalog_url: Option<String>,
-    update_policy: String,
-    latest_version: Option<String>,
-    last_checked_at: Option<String>,
-    runtime_gate_status: String,
-    runtime_validated_at: Option<String>,
-    installed_content_hash: Option<String>,
-    trusted_package_hash: Option<String>,
-    error_message: Option<String>,
-    created_at: String,
-    updated_at: String,
+pub(super) fn deserialize_bool_flexible<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct BoolVisitor;
+    impl<'de> serde::de::Visitor<'de> for BoolVisitor {
+        type Value = bool;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a boolean or an integer 0/1")
+        }
+        fn visit_bool<E>(self, v: bool) -> Result<bool, E> {
+            Ok(v)
+        }
+        fn visit_i64<E>(self, v: i64) -> Result<bool, E> {
+            Ok(v != 0)
+        }
+        fn visit_u64<E>(self, v: u64) -> Result<bool, E> {
+            Ok(v != 0)
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<bool, E> {
+            match v {
+                "true" | "1" => Ok(true),
+                "false" | "0" => Ok(false),
+                _ => Err(E::custom(format!("invalid boolean string: {v}"))),
+            }
+        }
+    }
+    deserializer.deserialize_any(BoolVisitor)
 }
 
-impl ConversationAdapterPackageRow {
-    fn into_domain(self) -> StoreResult<ConversationAdapterPackage> {
-        Ok(ConversationAdapterPackage {
-            package_id: self.package_id,
-            adapter_id: self.adapter_id,
-            name: self.name,
-            version: self.version,
-            record_kind: decode_enum(self.record_kind)?,
-            install_dir: self.install_dir,
-            manifest_path: self.manifest_path,
-            adapter_manifest_path: self.adapter_manifest_path,
-            runtime_protocol: self.runtime_protocol,
-            runtime_ready: self.runtime_ready == 1,
-            origin: decode_enum(self.origin)?,
-            source_url: self.source_url,
-            git_ref: self.git_ref,
-            git_commit: self.git_commit,
-            catalog_url: self.catalog_url,
-            update_policy: decode_enum(self.update_policy)?,
-            latest_version: self.latest_version,
-            last_checked_at: self.last_checked_at,
-            runtime_gate_status: decode_enum(self.runtime_gate_status)?,
-            runtime_validated_at: self.runtime_validated_at,
-            installed_content_hash: self.installed_content_hash,
-            trusted_package_hash: self.trusted_package_hash,
-            error_message: self.error_message,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-        })
-    }
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct ConversationAdapterCapabilityMeta {
+    pub record_kind: ConversationAdapterPackageRecordKind,
+    pub manifest_path: String,
+    pub adapter_manifest_path: String,
+    pub runtime_protocol: String,
+    #[serde(deserialize_with = "deserialize_bool_flexible")]
+    pub runtime_ready: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trusted_package_hash: Option<String>,
+    pub origin: ConversationAdapterPackageOrigin,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_url: Option<String>,
+    pub update_policy: ConversationPackageUpdatePolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_checked_at: Option<String>,
+    pub runtime_gate_status: ConversationAdapterRuntimeGateStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_validated_at: Option<String>,
 }
 
 pub(super) fn map_sqlx_conversation_adapter_package(
     row: &SqliteRow,
 ) -> StoreResult<ConversationAdapterPackage> {
-    ConversationAdapterPackageRow::from_row(row)
-        .map_err(StoreError::external)?
-        .into_domain()
+    let package_id: String = row.get("extension_id");
+    let adapter_id: String = row.get("target_id");
+    let name: String = row.get("display_name");
+    let version: String = row.get("active_version");
+    let install_dir: String = row
+        .get::<Option<String>, _>("install_dir")
+        .unwrap_or_default();
+    let error_message: Option<String> = row.get("error_message");
+    let created_at: String = row.get("installed_at");
+    let updated_at: String = row.get("updated_at");
+    let meta_json: String = row.get("capability_meta_json");
+    let meta: ConversationAdapterCapabilityMeta =
+        serde_json::from_str(&meta_json).map_err(|e| {
+            StoreError::external(format!(
+                "failed to parse conversation adapter capability meta: {e}"
+            ))
+        })?;
+
+    Ok(ConversationAdapterPackage {
+        package_id,
+        adapter_id,
+        name,
+        version,
+        record_kind: meta.record_kind,
+        install_dir,
+        manifest_path: meta.manifest_path,
+        adapter_manifest_path: meta.adapter_manifest_path,
+        runtime_protocol: meta.runtime_protocol,
+        runtime_ready: meta.runtime_ready,
+        origin: meta.origin,
+        source_url: meta.source_url,
+        git_ref: meta.git_ref,
+        git_commit: meta.git_commit,
+        catalog_url: meta.catalog_url,
+        update_policy: meta.update_policy,
+        latest_version: meta.latest_version,
+        last_checked_at: meta.last_checked_at,
+        runtime_gate_status: meta.runtime_gate_status,
+        runtime_validated_at: meta.runtime_validated_at,
+        installed_content_hash: meta.installed_content_hash,
+        trusted_package_hash: meta.trusted_package_hash,
+        error_message,
+        created_at,
+        updated_at,
+    })
 }
 
 #[derive(Debug, FromRow)]

@@ -42,7 +42,7 @@ export function filterAssets(assets: Asset[], options: AssetFilterOptions) {
         asset.kind,
         asset.format,
         asset.relative_path,
-        asset.absolute_path,
+        asset.stored_path,
         asset.description ?? "",
       ]
         .join(" ")

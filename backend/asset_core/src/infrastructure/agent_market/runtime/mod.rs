@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use sqlx::SqlitePool;
@@ -16,7 +16,7 @@ use crate::backend::{
     },
     infrastructure::{
         agent_execution::{
-            backends::{acp::AcpExecutionBackend, native::NativeExecutionBackend},
+            backends::acp::AcpExecutionBackend,
             executor::AgentExecutor,
             registry::{AgentRegistry, AgentRegistryHandle},
             AgentExecutionRuntime,
@@ -32,7 +32,6 @@ pub mod model_cache;
 pub mod package_system;
 pub mod probes_acp;
 pub mod probes_acp_health;
-pub mod probes_native;
 
 pub use definition::*;
 pub use model_cache::*;
@@ -75,7 +74,6 @@ impl AgentRuntimeManager {
         let executor = Arc::new(AgentExecutor::with_registry_handle_and_bindings(
             registry.clone(),
             Arc::new(AcpExecutionBackend::new(workspace_root.clone())),
-            Arc::new(NativeExecutionBackend::new(workspace_root.clone())),
             2,
             Arc::new(crate::backend::store::system::PersistentBindingStore::new(
                 pool.clone(),
@@ -163,7 +161,7 @@ impl AgentRuntimeManager {
     }
 
     pub fn cleanup_runtime_storage(&self, runtime_root: &Path) -> Vec<String> {
-        probes_native::cleanup_runtime_directories(runtime_root)
+        super::layout::cleanup_runtime_directories(runtime_root)
     }
 
     pub fn probe_installation_entry(
@@ -234,13 +232,6 @@ impl AgentRuntimeManager {
                         false
                     }
                 },
-                AgentMarketProtocol::Native => match self.probe_native_health(&agent_id).await {
-                    Ok(result) => result.available,
-                    Err(error) => {
-                        tracing::warn!(agent_id = %agent_id, error = %error, "Native agent health probe failed");
-                        false
-                    }
-                },
             };
             summary.checked += 1;
             if available {
@@ -252,6 +243,34 @@ impl AgentRuntimeManager {
         self.reload_registry().await?;
         Ok(summary)
     }
+}
+
+pub fn cleanup_runtime_directories(runtime_root: &Path) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let now = SystemTime::now();
+    let staging = runtime_root.join(".staging");
+    if let Ok(entries) = std::fs::read_dir(&staging) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_old = entry
+                .metadata()
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| now.duration_since(modified).ok())
+                .is_some_and(|age| age > STAGING_RETENTION);
+            if is_old
+                && entry
+                    .file_type()
+                    .map(|file_type| file_type.is_dir() && !file_type.is_symlink())
+                    .unwrap_or(false)
+            {
+                if let Err(error) = std::fs::remove_dir_all(&path) {
+                    warnings.push(format!("stale staging cleanup pending: {error}"));
+                }
+            }
+        }
+    }
+    warnings
 }
 
 #[cfg(test)]

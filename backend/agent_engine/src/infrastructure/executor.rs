@@ -1,8 +1,5 @@
 use std::{
     collections::HashMap,
-    future::Future,
-    path::PathBuf,
-    pin::Pin,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -15,60 +12,96 @@ use crate::domain::{
 };
 
 use super::{
-    backends::{acp::AcpExecutionBackend, native::NativeExecutionBackend},
+    backends::{
+        acp_models_cache::{
+            AgentProbeIdentity, AgentProbeReport, BoundedModelCache, ProbeFlight,
+            MODEL_CACHE_CAPACITY,
+        },
+        acp_probe_report::{
+            AcpModelDiscoveryOutcome, AcpProbeReport, AcpProtocolConnectionOutcome,
+        },
+    },
     registry::{AgentAvailability, AgentProbeError, AgentRegistry, AgentRegistryHandle},
-    AgentConnectionResult, AgentModelOption, AgentModelsResult, AiExecutionCleanupReport,
-    AiExecutionError, AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose,
-    AiExecutionRequest, AiExecutionResult, SessionCleanupStatus,
+    AgentConnectionResult, AgentModelsResult, AiExecutionError, AiExecutionPhase,
+    AiExecutionPurpose, AiExecutionRequest, AiExecutionResult,
 };
 
 pub use super::executor_support::*;
 pub use super::executor_traits::*;
 
 pub struct AgentExecutor {
-    registry: AgentRegistryHandle,
-    acp: Arc<dyn AgentExecutionBackend>,
-    native: Arc<dyn AgentExecutionBackend>,
+    pub(crate) registry: AgentRegistryHandle,
+    pub(crate) acp: Arc<dyn AgentExecutionBackend>,
     permits: Arc<Semaphore>,
     active:
         Arc<Mutex<HashMap<uuid::Uuid, (AgentId, Option<String>, super::AiExecutionCancellation)>>>,
     mutation_gates: Arc<Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>>,
     persistent_bindings: Option<Arc<dyn PersistentBindingStorage>>,
+    pub(crate) models_cache: Arc<tokio::sync::RwLock<BoundedModelCache>>,
+    pub(crate) probe_flights:
+        Arc<tokio::sync::Mutex<HashMap<AgentProbeIdentity, Arc<ProbeFlight>>>>,
+    pub(crate) probe_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl AgentExecutor {
+    pub fn new(
+        registry: AgentRegistryHandle,
+        acp: Arc<dyn AgentExecutionBackend>,
+        max_concurrency: usize,
+    ) -> Self {
+        Self {
+            registry,
+            acp,
+            permits: Arc::new(Semaphore::new(max_concurrency.max(1))),
+            active: Arc::new(Mutex::new(HashMap::new())),
+            mutation_gates: Arc::new(Mutex::new(HashMap::new())),
+            persistent_bindings: None,
+            models_cache: Arc::new(tokio::sync::RwLock::new(BoundedModelCache::new(
+                MODEL_CACHE_CAPACITY,
+            ))),
+            probe_flights: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            probe_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
+        }
+    }
+
     pub fn with_backends(
         registry: Arc<AgentRegistry>,
         acp: Arc<dyn AgentExecutionBackend>,
-        native: Arc<dyn AgentExecutionBackend>,
         max_concurrency: usize,
     ) -> Self {
         Self {
             registry: AgentRegistryHandle::from_registry(registry),
             acp,
-            native,
             permits: Arc::new(Semaphore::new(max_concurrency.max(1))),
             active: Arc::new(Mutex::new(HashMap::new())),
             mutation_gates: Arc::new(Mutex::new(HashMap::new())),
             persistent_bindings: None,
+            models_cache: Arc::new(tokio::sync::RwLock::new(BoundedModelCache::new(
+                MODEL_CACHE_CAPACITY,
+            ))),
+            probe_flights: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            probe_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
         }
     }
 
     pub fn with_registry_handle_and_bindings(
         registry: AgentRegistryHandle,
         acp: Arc<dyn AgentExecutionBackend>,
-        native: Arc<dyn AgentExecutionBackend>,
         max_concurrency: usize,
         persistent_bindings: Arc<dyn PersistentBindingStorage>,
     ) -> Self {
         Self {
             registry,
             acp,
-            native,
             permits: Arc::new(Semaphore::new(max_concurrency.max(1))),
             active: Arc::new(Mutex::new(HashMap::new())),
             mutation_gates: Arc::new(Mutex::new(HashMap::new())),
             persistent_bindings: Some(persistent_bindings),
+            models_cache: Arc::new(tokio::sync::RwLock::new(BoundedModelCache::new(
+                MODEL_CACHE_CAPACITY,
+            ))),
+            probe_flights: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            probe_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
         }
     }
 
@@ -191,20 +224,12 @@ impl AgentExecutor {
             {
                 return Err(AiExecutionError::RecallToolsUnavailable);
             }
-            if request.memory_generation_tools.is_some()
-                && !matches!(definition.protocol, AgentProtocol::Acp)
-            {
-                return Err(AiExecutionError::MemoryGenerationToolsUnavailable);
-            }
             if let Ok(mut active) = self.active.lock() {
                 if let Some((_, installation_id, _)) = active.get_mut(&active_id) {
                     *installation_id = definition.installation_id.clone();
                 }
             }
-            let backend = match definition.protocol {
-                AgentProtocol::Acp => Arc::clone(&self.acp),
-                AgentProtocol::Native => Arc::clone(&self.native),
-            };
+            let backend = Arc::clone(&self.acp);
 
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
@@ -295,37 +320,21 @@ impl AgentExecutor {
             );
         };
 
-        let backend = match definition.protocol {
-            AgentProtocol::Acp => Arc::clone(&self.acp),
-            AgentProtocol::Native => Arc::clone(&self.native),
-        };
+        let backend = Arc::clone(&self.acp);
 
-        let protocol = definition.protocol;
         match backend.check_connection(definition).await {
             Ok(()) => {
                 result.available = true;
                 result.connected = true;
-                result.connection_method = Some(if protocol == AgentProtocol::Native {
-                    "native".to_string()
-                } else {
-                    "acp".to_string()
-                });
+                result.connection_method = Some("acp".to_string());
                 result.error_code = None;
                 result.error = None;
             }
             Err(error) => {
                 result.available = false;
                 result.connected = false;
-                result.connection_method = Some(if protocol == AgentProtocol::Native {
-                    "native".to_string()
-                } else {
-                    "acp".to_string()
-                });
-                result.error_code = Some(if protocol == AgentProtocol::Native {
-                    "native_connection_failed".to_string()
-                } else {
-                    "acp_connection_failed".to_string()
-                });
+                result.connection_method = Some("acp".to_string());
+                result.error_code = Some("acp_connection_failed".to_string());
                 result.error = Some(error.to_view().message);
             }
         }
@@ -346,10 +355,7 @@ impl AgentExecutor {
             );
         };
 
-        let backend = match definition.protocol {
-            AgentProtocol::Acp => Arc::clone(&self.acp),
-            AgentProtocol::Native => Arc::clone(&self.native),
-        };
+        let backend = Arc::clone(&self.acp);
 
         match backend.discover_models(definition).await {
             Ok((models, current_model_id)) => AgentModelsResult {

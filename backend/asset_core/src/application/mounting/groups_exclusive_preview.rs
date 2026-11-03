@@ -282,7 +282,7 @@ pub fn validate_exclusive_mount_candidate(
         ));
     }
 
-    let source_path = expand_path(&asset.absolute_path)?;
+    let source_path = crate::backend::infrastructure::path_utils::resolve_asset_path(asset)?;
     if !source_path.exists() {
         return Err(AppError::NotFound(format!(
             "source asset path does not exist: {}",

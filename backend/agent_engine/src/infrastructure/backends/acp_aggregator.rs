@@ -259,8 +259,6 @@ fn title_mentions_tool(title: &str, tool_name: &str) -> bool {
         } else {
             let prev_char = title[..start].chars().next_back().unwrap();
             !prev_char.is_ascii_alphanumeric()
-                || title[..start].ends_with("assetiweave_memory_generation")
-                || title[..start].ends_with("assetiweave-memory-generation")
         };
         let after_is_boundary = if end == title.len() {
             true

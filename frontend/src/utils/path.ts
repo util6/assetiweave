@@ -3,7 +3,7 @@ import type { Asset } from "../types";
 export function displayAssetPath(asset: Asset) {
   return (
     asset.display_path ||
-    abbreviateHomePath(asset.absolute_path || asset.relative_path)
+    abbreviateHomePath(asset.stored_path || asset.relative_path)
   );
 }
 

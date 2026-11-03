@@ -52,6 +52,44 @@ pub struct RecentMemorySnapshotView {
     pub projects: Vec<RecentProjectView>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecentNodeStatus {
+    Completed,
+    Continued,
+    Unexplored,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentTreeNodeView {
+    pub id: String,
+    #[serde(default, alias = "parent_id")]
+    pub parent_id: Option<String>,
+    pub status: RecentNodeStatus,
+    #[serde(default)]
+    pub label: String,
+    pub summary: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "recorded_at"
+    )]
+    pub recorded_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentTopicView {
+    #[serde(alias = "topic_id")]
+    pub topic_id: String,
+    pub topic: String,
+    #[serde(default, alias = "updated_at")]
+    pub updated_at: String,
+    #[serde(default)]
+    pub nodes: Vec<RecentTreeNodeView>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecentProjectView {
@@ -62,7 +100,34 @@ pub struct RecentProjectView {
     pub no_material_change: bool,
     pub latest_activity_at: String,
     pub source_session_count: i64,
+    #[serde(default)]
     pub items: Vec<RecentMemoryItemView>,
+    #[serde(default)]
+    pub topics: Vec<RecentTopicView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentStateProject {
+    #[serde(alias = "project_key")]
+    pub project_key: String,
+    #[serde(default, alias = "project_path")]
+    pub project_path: Option<String>,
+    #[serde(default, alias = "updated_at")]
+    pub updated_at: String,
+    #[serde(default)]
+    pub topics: Vec<RecentTopicView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentStateFile {
+    #[serde(default, alias = "schema_version")]
+    pub schema_version: u32,
+    #[serde(default, alias = "updated_at")]
+    pub updated_at: String,
+    #[serde(default)]
+    pub projects: Vec<RecentStateProject>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

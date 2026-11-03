@@ -24,7 +24,6 @@ impl<'a> AgentOperations<'a> {
     ) -> Result<Value> {
         let parsed_protocol = match protocol.as_deref() {
             Some("acp") => Some(AgentMarketProtocol::Acp),
-            Some("native") => Some(AgentMarketProtocol::Native),
             _ => None,
         };
         let req = AgentMarketListRequest {
@@ -53,6 +52,7 @@ impl<'a> AgentOperations<'a> {
         let result = self
             .app_service
             .refresh_agent_market_catalog()
+            .await
             .context("failed to refresh agent market catalog")?;
         Ok(serde_json::to_value(result)?)
     }

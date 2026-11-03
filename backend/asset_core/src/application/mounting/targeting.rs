@@ -199,7 +199,7 @@ fn same_path(left: &Path, right: &Path) -> bool {
 }
 
 pub fn canonical_source_path(asset: &Asset) -> AppResult<PathBuf> {
-    expand_path(&asset.absolute_path)?
+    crate::backend::infrastructure::path_utils::resolve_asset_path(asset)?
         .canonicalize()
         .map_err(|error| AppError::External(error.to_string()))
 }

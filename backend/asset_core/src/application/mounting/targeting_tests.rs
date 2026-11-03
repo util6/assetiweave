@@ -106,7 +106,7 @@ fn inspect_mount_treats_identical_existing_target_as_not_mounted() {
     assert_eq!(inspection.linked_source, None);
 }
 
-fn test_asset(name: &str, absolute_path: &Path) -> Asset {
+fn test_asset(name: &str, asset_dir: &Path) -> Asset {
     Asset {
         id: format!("asset-{name}"),
         source_id: "codex-skills".to_string(),
@@ -116,7 +116,7 @@ fn test_asset(name: &str, absolute_path: &Path) -> Asset {
         detector_version: 1,
         format: AssetFormat::Directory,
         relative_path: name.to_string(),
-        absolute_path: absolute_path.to_string_lossy().to_string(),
+        stored_path: asset_dir.to_string_lossy().to_string(),
         entry_file: Some(format!("{name}/SKILL.md")),
         description: None,
         content_hash: None,

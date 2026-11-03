@@ -1,3 +1,4 @@
+use super::cleanup_runtime_directories;
 use super::*;
 use crate::backend::domain::agents::{
     definition::DeclaredAgentCapabilities,
@@ -12,7 +13,6 @@ use crate::backend::infrastructure::agent_execution::{
     AgentModelOption, AgentModelsResult, AiExecutionError,
 };
 use crate::backend::infrastructure::agent_market::manifest::AgentInstallationExt;
-use crate::backend::infrastructure::agent_market::runtime::probes_native::cleanup_runtime_directories;
 
 #[test]
 fn failed_publish_preserves_the_previous_complete_snapshot() {
@@ -209,7 +209,7 @@ async fn acp_test_fixture_with_id(
         agent_version: "1.0.0".to_string(),
         protocol: AgentMarketProtocol::Acp,
         distribution_id: "test-distribution".to_string(),
-        distribution_type: DistributionType::System,
+        distribution_type: DistributionType::Binary,
         ownership: Ownership::System,
         install_dir: None,
         resolved_program: program.clone(),
@@ -290,7 +290,6 @@ fn test_request(
         replay: false,
         restore_only: false,
         recall_tools: None,
-        memory_generation_tools: None,
         account: None,
     }
 }
@@ -540,9 +539,9 @@ async fn probe_installation_entry_and_cleanup_runtime_storage_primitives() {
         display_name: "Test Agent".to_string(),
         catalog_item_version: "1.0.0".to_string(),
         agent_version: "1.0.0".to_string(),
-        protocol: AgentMarketProtocol::Native,
+        protocol: AgentMarketProtocol::Acp,
         distribution_id: "test-dist".to_string(),
-        distribution_type: DistributionType::System,
+        distribution_type: DistributionType::Binary,
         ownership: Ownership::System,
         install_dir: None,
         resolved_program: fake_bin.clone(),
@@ -550,7 +549,7 @@ async fn probe_installation_entry_and_cleanup_runtime_storage_primitives() {
         definition_json: definition_json(
             "test-agent",
             "Test Agent",
-            &AgentMarketProtocol::Native,
+            &AgentMarketProtocol::Acp,
             &fake_bin,
             &[],
         ),
@@ -1042,7 +1041,7 @@ async fn acp_test_fixture_with_extra_args(
         agent_version: "1.0.0".to_string(),
         protocol: AgentMarketProtocol::Acp,
         distribution_id: "test-distribution".to_string(),
-        distribution_type: DistributionType::System,
+        distribution_type: DistributionType::Binary,
         ownership: Ownership::System,
         install_dir: None,
         resolved_program: program.clone(),

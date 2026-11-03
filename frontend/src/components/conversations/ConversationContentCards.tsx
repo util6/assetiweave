@@ -462,7 +462,7 @@ function AmbientActionGroup({
   const count = nodes.length;
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-2xl border border-theme-card-border/70 bg-theme-card/35 p-2 backdrop-blur-xs transition-all shadow-xs">
+    <div className="flex flex-col gap-1.5 overflow-hidden rounded-2xl border border-theme-card-border/70 bg-theme-card/35 p-2 backdrop-blur-xs transition-all shadow-xs">
       <div
         className="flex h-8 cursor-pointer items-center justify-between rounded-xl px-2.5 transition-colors hover:bg-theme-card/60"
         onClick={() => setExpanded((prev) => !prev)}
@@ -664,7 +664,9 @@ export function ConversationContentCards({
   }
 
   return (
-    <div className="grid gap-3">
+    // 显式声明单列 minmax(0, 1fr)：隐式 auto 轨道会被卡片正文里的超长不可断 token
+    // （哈希、base64、单行日志）按 min-content 撑宽，导致整个卡片列溢出内容面板。
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
       {groupedDisplayItems.map((item) => {
         if (item.type === "ambient_group") {
           return (
@@ -1269,7 +1271,7 @@ function SubagentTreeCard({
   const childSessionId = payload?.child_session_id;
 
   return (
-    <div className="rounded-2xl border border-border/60 bg-theme-card/45 p-3.5 space-y-3 transition-[border-color,background-color] duration-150">
+    <div className="overflow-hidden rounded-2xl border border-border/60 bg-theme-card/45 p-3.5 space-y-3 transition-[border-color,background-color] duration-150">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="grid size-7 shrink-0 place-items-center rounded-xl bg-theme-control text-on-surface-variant border border-border/40">
@@ -1308,7 +1310,7 @@ function SubagentTreeCard({
           {block.format === "markdown" ? (
             <MarkdownContent value={taskText} />
           ) : (
-            <div className="whitespace-pre-wrap break-words text-body-sm leading-relaxed">
+            <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-body-sm leading-relaxed">
               {taskText}
             </div>
           )}

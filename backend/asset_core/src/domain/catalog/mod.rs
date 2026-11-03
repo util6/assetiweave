@@ -133,8 +133,14 @@ pub struct Asset {
     #[serde(default = "default_asset_detector_version")]
     pub detector_version: u32,
     pub format: AssetFormat,
+    /// 相对来源根目录的路径，始终使用 `/` 分隔符。
     pub relative_path: String,
-    pub absolute_path: String,
+    /// 便携存储路径：用户目录与系统数据目录折叠为 `~/`、`@config/`、`@local-data/`
+    /// 等锚点，只在当前主机无法折叠时才回退为绝对路径。
+    ///
+    /// 严禁直接把它当作可访问的绝对路径使用，读取 I/O 前必须经
+    /// `path_utils::expand_path` / `path_utils::resolve_asset_path` 展开。
+    pub stored_path: String,
     pub entry_file: Option<String>,
     pub description: Option<String>,
     pub content_hash: Option<String>,

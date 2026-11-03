@@ -2,9 +2,10 @@ use std::io::{IsTerminal, Write};
 
 use anyhow::{Context, Result};
 use asset_core::application::{
-    AppService, ConversationAdapterPackageInspectParams, ConversationCardGetParams,
-    ConversationDataAuditParams, ConversationDataRepairParams, ConversationDataRollbackParams,
-    ConversationOutlineParams, ConversationSyncMode, ConversationSyncParams,
+    AppService, ConversationAdapterPackageInspectParams, ConversationAdapterWorkspaceUpgradeParams,
+    ConversationCardGetParams, ConversationDataAuditParams, ConversationDataRepairParams,
+    ConversationDataRollbackParams, ConversationOutlineParams, ConversationSyncMode,
+    ConversationSyncParams,
 };
 use asset_core::domain::conversations::ConversationCardDetail;
 use serde_json::Value;
@@ -184,5 +185,17 @@ impl<'a> ConversationOperations<'a> {
             .await
             .context("failed to get conversation card")?;
         Ok(card)
+    }
+
+    pub async fn upgrade_adapter_workspace(
+        &self,
+        params: ConversationAdapterWorkspaceUpgradeParams,
+    ) -> Result<Value> {
+        let result = self
+            .app_service
+            .upgrade_conversation_adapter_workspace(params)
+            .await
+            .context("failed to upgrade conversation adapter workspace")?;
+        Ok(serde_json::to_value(result)?)
     }
 }

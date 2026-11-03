@@ -199,7 +199,7 @@ fn duplicate_agent_ids_fail_registry_construction() {
 fn protocol_is_definition_data_and_not_inferred_from_a_vendor_id() {
     let registry = AgentRegistry::from_definitions([
         definition("alternate-acp", AgentProtocol::Acp),
-        definition("opencode-native", AgentProtocol::Native),
+        definition("opencode-acp", AgentProtocol::Acp),
     ])
     .expect("valid registry");
 
@@ -212,10 +212,10 @@ fn protocol_is_definition_data_and_not_inferred_from_a_vendor_id() {
     );
     assert_eq!(
         registry
-            .get(&AgentId::parse("opencode-native").unwrap())
+            .get(&AgentId::parse("opencode-acp").unwrap())
             .unwrap()
             .protocol,
-        AgentProtocol::Native
+        AgentProtocol::Acp
     );
 }
 

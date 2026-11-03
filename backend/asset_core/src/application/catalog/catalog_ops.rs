@@ -23,7 +23,13 @@ pub const SKILL_BACKUP_SOURCE_ID: &str = "assetiweave-library-skills";
 pub fn assetiweave_library_source_for_tenant(tenant_id: &str) -> Source {
     let root_path = default_skill_backup_root_for_tenant(tenant_id)
         .and_then(|path| normalize_path_for_storage(&path.to_string_lossy()))
-        .unwrap_or_else(|_| format!("~/.assetiweave/tenants/{tenant_id}/library/skills"));
+        .unwrap_or_else(|_| {
+            if tenant_id == "default" {
+                "~/.assetiweave/skills".to_string()
+            } else {
+                format!("~/.assetiweave/tenants/{tenant_id}/skills")
+            }
+        });
     assetiweave_library_source_with_root(root_path)
 }
 
@@ -42,6 +48,7 @@ pub fn assetiweave_library_source_with_root(root_path: String) -> Source {
         include_globs: vec!["**/SKILL.md".to_string()],
         exclude_globs: vec![
             "**/.git/**".to_string(),
+            "**/.system/**".to_string(),
             "**/node_modules/**".to_string(),
             "**/target/**".to_string(),
             "**/dist/**".to_string(),
@@ -78,7 +85,13 @@ fn skill_backup_root_path(tenant_id: &str, sources: Vec<Source>) -> String {
         .unwrap_or_else(|| {
             default_skill_backup_root_for_tenant(tenant_id)
                 .and_then(|path| normalize_path_for_storage(&path.to_string_lossy()))
-                .unwrap_or_else(|_| format!("~/.assetiweave/tenants/{tenant_id}/library/skills"))
+                .unwrap_or_else(|_| {
+                    if tenant_id == "default" {
+                        "~/.assetiweave/skills".to_string()
+                    } else {
+                        format!("~/.assetiweave/tenants/{tenant_id}/skills")
+                    }
+                })
         })
 }
 
@@ -226,7 +239,7 @@ fn build_catalog_asset_entries(assets: Vec<Asset>, sources: &[Source]) -> Vec<Ca
             left_score
                 .cmp(&right_score)
                 .then_with(|| left.name.cmp(&right.name))
-                .then_with(|| left.absolute_path.cmp(&right.absolute_path))
+                .then_with(|| left.stored_path.cmp(&right.stored_path))
         });
 
         let canonical = group.remove(0);
@@ -240,7 +253,7 @@ fn build_catalog_asset_entries(assets: Vec<Asset>, sources: &[Source]) -> Vec<Ca
                 backup_entry_state(asset, source_by_id.get(asset.source_id.as_str()).copied())
                     == Some(SkillBackupState::BackedUp)
             })
-            .map(|asset| asset.absolute_path.clone());
+            .map(|asset| asset.stored_path.clone());
         let backup_status = if let Some(backup_path) = backup_path {
             Some(SkillBackupAssetStatus {
                 state: SkillBackupState::BackedUp,
@@ -274,7 +287,10 @@ fn build_catalog_asset_entries(assets: Vec<Asset>, sources: &[Source]) -> Vec<Ca
 fn attach_git_repository_info(catalog_assets: &mut [CatalogAsset]) {
     let mut repository_by_root = HashMap::new();
     for catalog_asset in catalog_assets {
-        let asset_path = Path::new(&catalog_asset.asset.absolute_path);
+        let Some(asset_path) = expand_path(&catalog_asset.asset.stored_path).ok() else {
+            continue;
+        };
+        let asset_path = asset_path.as_path();
         let Some(repository_root) = find_git_root(asset_path) else {
             continue;
         };
@@ -293,7 +309,7 @@ fn attach_git_repository_info(catalog_assets: &mut [CatalogAsset]) {
 
 fn catalog_asset(asset: Asset, backup_status: Option<SkillBackupAssetStatus>) -> CatalogAsset {
     let display_path =
-        display_path(&asset.absolute_path).unwrap_or_else(|_| asset.absolute_path.clone());
+        display_path(&asset.stored_path).unwrap_or_else(|_| asset.stored_path.clone());
     CatalogAsset {
         asset,
         display_path,
@@ -308,8 +324,8 @@ fn standalone_backup_status(
 ) -> Option<SkillBackupAssetStatus> {
     backup_entry_state(asset, source).map(|state| SkillBackupAssetStatus {
         state,
-        display_backup_path: display_path(&asset.absolute_path).ok(),
-        backup_path: Some(asset.absolute_path.clone()),
+        display_backup_path: display_path(&asset.stored_path).ok(),
+        backup_path: Some(asset.stored_path.clone()),
         hidden_asset_ids: Vec::new(),
     })
 }
@@ -319,14 +335,16 @@ fn unavailable_backup_library_asset(asset: &Asset, source: Option<&Source>) -> b
         return false;
     }
 
-    let asset_path = Path::new(&asset.absolute_path);
+    let Ok(asset_path) = expand_path(&asset.stored_path) else {
+        return true;
+    };
     if !asset_path.exists() {
         return true;
     }
 
     source
         .and_then(|source| expand_path(&source.root_path).ok())
-        .is_some_and(|root| !path_is_inside_or_same(&root, asset_path))
+        .is_some_and(|root| !path_is_inside_or_same(&root, &asset_path))
 }
 
 fn path_is_inside_or_same(root: &Path, path: &Path) -> bool {

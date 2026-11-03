@@ -67,7 +67,6 @@ pub fn definition_from_installation(
         .map_err(|error| AgentMarketError::new("invalid_agent_id", &error.to_string(), false))?;
     let protocol = match resolved.protocol.as_str() {
         "acp" => AgentProtocol::Acp,
-        "native" => AgentProtocol::Native,
         other => {
             return Err(AgentMarketError::new(
                 "unsupported_agent_protocol",
@@ -173,7 +172,6 @@ fn declared_capabilities_from_catalog(
 ) -> DeclaredAgentCapabilities {
     let market_protocol = match protocol {
         AgentProtocol::Acp => AgentMarketProtocol::Acp,
-        AgentProtocol::Native => AgentMarketProtocol::Native,
     };
     capabilities
         .map(|value| value.to_declared_agent_capabilities(&market_protocol))

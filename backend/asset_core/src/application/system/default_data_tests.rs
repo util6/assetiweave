@@ -96,19 +96,29 @@ fn skill_sources_scope_only_assetiweave_library_path_by_tenant() {
         .expect("tenant b skill library source");
     assert_eq!(
         tenant_a_library.root_path,
-        "~/.assetiweave/tenants/tenant-a/library/skills"
+        "~/.assetiweave/tenants/tenant-a/skills"
     );
     assert_eq!(
         tenant_b_library.root_path,
-        "~/.assetiweave/tenants/tenant-b/library/skills"
+        "~/.assetiweave/tenants/tenant-b/skills"
     );
     assert!(tenant_a_library
         .root_path
-        .ends_with(".assetiweave/tenants/tenant-a/library/skills"));
+        .ends_with(".assetiweave/tenants/tenant-a/skills"));
     assert!(tenant_b_library
         .root_path
-        .ends_with(".assetiweave/tenants/tenant-b/library/skills"));
+        .ends_with(".assetiweave/tenants/tenant-b/skills"));
     assert_ne!(tenant_a_library.root_path, tenant_b_library.root_path);
+    assert!(tenant_a_library
+        .exclude_globs
+        .contains(&"**/.system/**".to_string()));
+
+    let default_sources = default_sources_for_tenant("default");
+    let default_library = default_sources
+        .iter()
+        .find(|source| source.id == "assetiweave-library-skills")
+        .expect("default skill library source");
+    assert_eq!(default_library.root_path, "~/.assetiweave/skills");
 
     let tenant_a_codex = tenant_a_sources
         .iter()

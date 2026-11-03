@@ -28,6 +28,7 @@ export const memoryEn = {
   "memory.recent.expandItem": "Expand item",
   "memory.recent.collapseItem": "Collapse item",
   "memory.recent.items": "items",
+  "memory.recent.topics": "topics",
   "memory.recent.latestUpdate": "Latest update",
   "memory.recent.today": "Today",
   "memory.recent.yesterday": "Yesterday",

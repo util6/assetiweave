@@ -9,6 +9,9 @@ import type {
   RecentMemoryEventTarget,
   RecentMemorySession,
   RecentMemoryStateView,
+  RecentNodeStatus,
+  RecentTopicView,
+  RecentTreeNodeView,
 } from "../types/memory";
 
 export const memoryScopeSchema = z.object({
@@ -213,6 +216,28 @@ export const memoryTaskViewSchema: z.ZodType<MemoryTaskView> = z.object({
   detail: z.record(z.string(), z.unknown()),
 });
 
+export const recentNodeStatusSchema = z.enum([
+  "completed",
+  "continued",
+  "unexplored",
+]);
+
+export const recentTreeNodeViewSchema: z.ZodType<RecentTreeNodeView> = z.object({
+  id: z.string(),
+  parentId: z.string().nullable(),
+  status: recentNodeStatusSchema,
+  label: z.string(),
+  summary: z.string(),
+  recordedAt: z.string().nullable().optional(),
+});
+
+export const recentTopicViewSchema: z.ZodType<RecentTopicView> = z.object({
+  topicId: z.string(),
+  topic: z.string(),
+  updatedAt: z.string(),
+  nodes: z.array(recentTreeNodeViewSchema),
+});
+
 export const recentMemoryStateViewSchema: z.ZodType<RecentMemoryStateView> =
   z.object({
     status: z.enum(["empty", "generating", "ready", "update_failed"]),
@@ -266,6 +291,7 @@ export const recentMemoryStateViewSchema: z.ZodType<RecentMemoryStateView> =
                 ),
               }),
             ),
+            topics: z.array(recentTopicViewSchema).default([]),
           }),
         ),
       })

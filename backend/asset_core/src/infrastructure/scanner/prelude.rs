@@ -3,7 +3,7 @@ pub(super) use super::classifier::{classify_asset, detect_format, extract_descri
 pub(super) use super::glob::build_glob_set;
 pub(super) use super::{mixed, skill};
 pub(super) use crate::backend::infrastructure::path_utils::{
-    expand_path, hash_path, normalize_relative_path,
+    expand_path, hash_path, normalize_relative_path, normalize_std_path_for_storage,
 };
 pub(super) use crate::backend::{
     domain::{stable_asset_id, Asset, AssetFormat, AssetKind, Source, SourceScannerKind},

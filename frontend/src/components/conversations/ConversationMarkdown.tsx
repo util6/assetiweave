@@ -204,6 +204,10 @@ const markdownComponents = {
       {children}
     </h6>
   ),
+  img: ({ node, alt, ...props }: any) => (
+    // 会话里粘贴的截图/图表往往远宽于内容列；未约束时会把卡片与整列撑开，造成横向裁切。
+    <img {...props} alt={alt} className="max-w-full h-auto rounded-lg" />
+  ),
   ol: ({ children, node, ...props }: any) => (
     <ol className="list-decimal space-y-1 pl-5" {...props}>
       {children}
@@ -354,7 +358,9 @@ export function MarkdownContent({
   }
 
   return (
-    <div className="space-y-3 text-body-sm leading-6 text-on-surface">
+    // overflow-wrap: anywhere 会让超长不可断 token（哈希、base64、长路径）参与 min-content 计算，
+    // 否则块级链路上的正文只会被 contain:paint 静默裁掉，且不出横向滚动条。
+    <div className="space-y-3 text-body-sm leading-6 text-on-surface [overflow-wrap:anywhere] [&_img]:max-w-full">
       <ReactMarkdown
         components={customComponents}
         rehypePlugins={rehypePlugins}

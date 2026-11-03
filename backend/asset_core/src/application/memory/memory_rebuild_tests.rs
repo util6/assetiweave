@@ -90,7 +90,7 @@ async fn rebuild_memory_scope_with_force_cleans_storage_and_watermarks() {
     let _ = service.wait_for_memory_task(task_id).await;
 
     assert!(!storage.root_dir().join("sessions/old-sess.md").exists());
-    assert!(storage.sessions_dir().exists());
+    assert!(storage.state_dir().exists());
     assert!(storage.recent_dir().exists());
     assert!(storage.projects_dir().exists());
 

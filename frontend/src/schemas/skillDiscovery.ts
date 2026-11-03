@@ -52,7 +52,7 @@ const assetSchema = z.strictObject({
   kind: assetKindSchema,
   format: assetFormatSchema,
   relative_path: z.string(),
-  absolute_path: z.string(),
+  stored_path: z.string(),
   entry_file: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
   content_hash: z.string().nullable().optional(),

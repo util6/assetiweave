@@ -78,13 +78,13 @@ vi.mock("../../store/settings/useAppSettings", async (importOriginal) => {
 
 vi.mock("../../services/catalog", () => ({
   getSkillBackupSettings: vi.fn().mockResolvedValue({
-    default_root_path: "~/.assetiweave/library/skills",
-    display_default_root_path: "~/.assetiweave/library/skills",
-    display_root_path: "~/.assetiweave/library/skills",
+    default_root_path: "~/.assetiweave/skills",
+    display_default_root_path: "~/.assetiweave/skills",
+    display_root_path: "~/.assetiweave/skills",
     exists: true,
-    expanded_root_path: "~/.assetiweave/library/skills",
+    expanded_root_path: "~/.assetiweave/skills",
     is_default_root: true,
-    root_path: "~/.assetiweave/library/skills",
+    root_path: "~/.assetiweave/skills",
   }),
   revealPath: vi.fn(),
   selectTargetDirectory: vi.fn(),

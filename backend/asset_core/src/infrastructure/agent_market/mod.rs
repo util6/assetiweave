@@ -10,9 +10,9 @@ pub mod runtime;
 pub mod types;
 pub mod upstream_probe;
 
-pub use cache::{CatalogCache, CatalogRefreshOutcome};
+pub use cache::{purge_legacy_agent_market_cache_disk_files, CatalogCache, CatalogRefreshOutcome};
 pub use error::*;
-pub use installers::{InstallContext, Installer, SystemInstaller};
+pub use installers::{InstallContext, Installer};
 pub use layout::*;
 pub use manifest::*;
 pub use materialize::*;

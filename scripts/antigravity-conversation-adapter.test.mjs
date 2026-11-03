@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -1912,3 +1912,437 @@ function readFixtureSession(transcriptPath) {
   assert.ok(session);
   return session;
 }
+
+function readFixtureUsage(location, params = {}) {
+  const result = spawnSync(process.execPath, [adapterPath], {
+    encoding: "utf8",
+    input: JSON.stringify({
+      method: "read_usage",
+      source: { location },
+      params,
+    }),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const messages = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const events = messages
+    .filter((message) => message.type === "item" && message.item?.kind === "usage_event")
+    .map((message) => message.item.event);
+  const complete = messages.find((message) => message.type === "complete")?.item ?? null;
+  return { messages, events, complete };
+}
+
+test("Antigravity extracts single Turn usage and first response UTC timestamp from transcript.jsonl", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-usage-single-"));
+  try {
+    const sessionId = "2a30f556-a539-413d-961c-304ed5dc529b";
+    const sessionDir = path.join(fixtureRoot, sessionId);
+    const logsDir = path.join(sessionDir, ".system_generated", "logs");
+    mkdirSync(logsDir, { recursive: true });
+    const transcriptPath = path.join(logsDir, "transcript.jsonl");
+
+    writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({
+          step_index: 0,
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          status: "DONE",
+          created_at: "2026-10-30T04:00:00.000Z",
+          content: "<USER_REQUEST>Explain quantum computing</USER_REQUEST>",
+        }),
+        JSON.stringify({
+          step_index: 1,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          status: "DONE",
+          created_at: "2026-10-30T04:00:03.456Z",
+          input_tokens: 150,
+          cache_read_tokens: 45,
+          output_tokens: 80,
+          content: "Quantum computing harnesses quantum mechanics...",
+        }),
+      ].join("\n")
+    );
+
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.snapshot_complete, true);
+    assert.equal(complete.usage_event_count, 1);
+    assert.equal(complete.decoder_profile, "antigravity-transcript-v1");
+    assert.equal(events.length, 1);
+
+    const event = events[0];
+    assert.equal(event.session_id, sessionId);
+    assert.equal(event.turn_id, "turn-0");
+    assert.equal(event.external_event_id, `${sessionId}-turn-0`);
+    assert.equal(event.logical_request_id, `${sessionId}-turn-0`);
+    assert.equal(event.attempt_index, 0);
+    assert.equal(event.provider, "google");
+    assert.equal(event.model, "gemini-2.5-pro");
+    assert.equal(event.status, "completed");
+    assert.equal(event.timestamp, "2026-10-30T04:00:03.456Z");
+    assert.equal(event.input_tokens, 150);
+    assert.equal(event.cache_read_tokens, 45);
+    assert.equal(event.cache_write_tokens, 0);
+    assert.equal(event.reasoning_tokens, 0);
+    assert.equal(event.output_tokens, 80);
+    assert.equal(event.total_tokens, 275);
+    assert.equal(event.host_reported_cost, null);
+    assert.equal(event.currency, null);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity accumulates multi-step tool loop tokens within a single Turn and retains first response timestamp", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-usage-loop-"));
+  try {
+    const sessionId = "f5f26120-1514-41e7-ac3c-909f65378606";
+    const sessionDir = path.join(fixtureRoot, sessionId);
+    const logsDir = path.join(sessionDir, ".system_generated", "logs");
+    mkdirSync(logsDir, { recursive: true });
+    const transcriptPath = path.join(logsDir, "transcript.jsonl");
+
+    writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({
+          step_index: 0,
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          created_at: "2026-10-27T10:00:00.000Z",
+          content: "<USER_REQUEST>Search and fix code</USER_REQUEST>",
+        }),
+        JSON.stringify({
+          step_index: 1,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          created_at: "2026-10-27T10:00:01.500Z",
+          input_tokens: 100,
+          cache_read_tokens: 20,
+          output_tokens: 50,
+          tool_calls: [{ name: "grep_search", args: { query: "todo" } }],
+        }),
+        JSON.stringify({
+          step_index: 2,
+          source: "MODEL",
+          type: "GENERIC",
+          created_at: "2026-10-27T10:00:03.000Z",
+          content: "file.js:10: TODO",
+        }),
+        JSON.stringify({
+          step_index: 3,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          created_at: "2026-10-27T10:00:05.200Z",
+          input_tokens: 200,
+          cache_read_tokens: 40,
+          output_tokens: 80,
+          tool_calls: [{ name: "replace_file_content", args: {} }],
+        }),
+        JSON.stringify({
+          step_index: 4,
+          source: "MODEL",
+          type: "GENERIC",
+          created_at: "2026-10-27T10:00:07.000Z",
+          content: "replaced",
+        }),
+        JSON.stringify({
+          step_index: 5,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          created_at: "2026-10-27T10:00:10.800Z",
+          input_tokens: 300,
+          cache_read_tokens: 60,
+          output_tokens: 120,
+          content: "All done!",
+        }),
+      ].join("\n")
+    );
+
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.usage_event_count, 1);
+    assert.equal(events.length, 1);
+
+    const event = events[0];
+    assert.equal(event.session_id, sessionId);
+    assert.equal(event.turn_id, "turn-0");
+    assert.equal(event.external_event_id, `${sessionId}-turn-0`);
+    assert.equal(event.timestamp, "2026-10-27T10:00:01.500Z"); // Strictly first response timestamp
+    assert.equal(event.input_tokens, 600); // 100 + 200 + 300
+    assert.equal(event.cache_read_tokens, 120); // 20 + 40 + 60
+    assert.equal(event.output_tokens, 250); // 50 + 80 + 120
+    assert.equal(event.total_tokens, 970); // 600 + 120 + 250
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity preserves separate historical UTC timestamps for cross-day multi-turn sessions", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-usage-crossday-"));
+  try {
+    const sessionId = "104c0143-cfd7-4ff0-a270-3859ac2826d2";
+    const sessionDir = path.join(fixtureRoot, sessionId);
+    const logsDir = path.join(sessionDir, ".system_generated", "logs");
+    mkdirSync(logsDir, { recursive: true });
+    const transcriptPath = path.join(logsDir, "transcript.jsonl");
+
+    writeFileSync(
+      transcriptPath,
+      [
+        // Turn 0: Day 1 (2026-10-27)
+        JSON.stringify({
+          step_index: 0,
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          created_at: "2026-10-27T16:14:00.000Z",
+          content: "<USER_REQUEST>Day 1 question</USER_REQUEST>",
+        }),
+        JSON.stringify({
+          step_index: 1,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          created_at: "2026-10-27T16:14:51.100Z",
+          input_tokens: 120,
+          cache_read_tokens: 10,
+          output_tokens: 60,
+          content: "Day 1 answer",
+        }),
+        // Turn 1: Day 2 (2026-10-28)
+        JSON.stringify({
+          step_index: 2,
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          created_at: "2026-10-28T03:37:00.000Z",
+          content: "<USER_REQUEST>Day 2 continuation</USER_REQUEST>",
+        }),
+        JSON.stringify({
+          step_index: 3,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          created_at: "2026-10-28T03:37:20.250Z",
+          input_tokens: 240,
+          cache_read_tokens: 50,
+          output_tokens: 90,
+          content: "Day 2 answer",
+        }),
+      ].join("\n")
+    );
+
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.usage_event_count, 2);
+    assert.equal(events.length, 2);
+
+    assert.equal(events[0].turn_id, "turn-0");
+    assert.equal(events[0].external_event_id, `${sessionId}-turn-0`);
+    assert.equal(events[0].timestamp, "2026-10-27T16:14:51.100Z");
+    assert.equal(events[0].total_tokens, 190);
+
+    assert.equal(events[1].turn_id, "turn-1");
+    assert.equal(events[1].external_event_id, `${sessionId}-turn-1`);
+    assert.equal(events[1].timestamp, "2026-10-28T03:37:20.250Z");
+    assert.equal(events[1].total_tokens, 380);
+
+    assert.ok(events[0].timestamp.startsWith("2026-10-27"));
+    assert.ok(events[1].timestamp.startsWith("2026-10-28"));
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity filters out empty zero-token turns from usage event stream", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-usage-zerotoken-"));
+  try {
+    const sessionId = "33333333-3333-3333-3333-333333333333";
+    const sessionDir = path.join(fixtureRoot, sessionId);
+    const logsDir = path.join(sessionDir, ".system_generated", "logs");
+    mkdirSync(logsDir, { recursive: true });
+    const transcriptPath = path.join(logsDir, "transcript.jsonl");
+
+    writeFileSync(
+      transcriptPath,
+      [
+        // Turn 0: Zero token response
+        JSON.stringify({
+          step_index: 0,
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          created_at: "2026-10-30T01:00:00.000Z",
+          content: "<USER_REQUEST>Empty turn</USER_REQUEST>",
+        }),
+        JSON.stringify({
+          step_index: 1,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          created_at: "2026-10-30T01:00:01.000Z",
+          input_tokens: 0,
+          cache_read_tokens: 0,
+          output_tokens: 0,
+          content: "",
+        }),
+        // Turn 1: Valid non-zero tokens
+        JSON.stringify({
+          step_index: 2,
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          created_at: "2026-10-30T01:05:00.000Z",
+          content: "<USER_REQUEST>Valid turn</USER_REQUEST>",
+        }),
+        JSON.stringify({
+          step_index: 3,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          created_at: "2026-10-30T01:05:02.000Z",
+          input_tokens: 80,
+          cache_read_tokens: 10,
+          output_tokens: 40,
+          content: "Valid response",
+        }),
+        // Turn 2: User input interrupted, no model response
+        JSON.stringify({
+          step_index: 4,
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          created_at: "2026-10-30T01:10:00.000Z",
+          content: "<USER_REQUEST>Interrupted</USER_REQUEST>",
+        }),
+      ].join("\n")
+    );
+
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.usage_event_count, 1);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].turn_id, "turn-1");
+    assert.equal(events[0].external_event_id, `${sessionId}-turn-1`);
+    assert.equal(events[0].total_tokens, 130);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity extracts usage in pure transcript environment without SQLite or Protobuf dependencies", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-usage-nosql-"));
+  try {
+    const sessionId = "44444444-4444-4444-4444-444444444444";
+    const sessionDir = path.join(fixtureRoot, sessionId);
+    const logsDir = path.join(sessionDir, ".system_generated", "logs");
+    mkdirSync(logsDir, { recursive: true });
+    const transcriptPath = path.join(logsDir, "transcript.jsonl");
+
+    writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({
+          step_index: 0,
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          created_at: "2026-10-30T02:00:00.000Z",
+          content: "<USER_REQUEST>Pure transcript test</USER_REQUEST>",
+        }),
+        JSON.stringify({
+          step_index: 1,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          created_at: "2026-10-30T02:00:01.000Z",
+          input_tokens: 50,
+          cache_read_tokens: 0,
+          output_tokens: 25,
+          content: "No SQL needed",
+        }),
+      ].join("\n")
+    );
+
+    // Verify absolutely no .db file exists in the directory tree
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.snapshot_complete, true);
+    assert.equal(complete.decoder_profile, "antigravity-transcript-v1");
+    assert.equal(events.length, 1);
+    assert.equal(events[0].session_id, sessionId);
+    assert.equal(events[0].turn_id, "turn-0");
+    assert.equal(events[0].total_tokens, 75);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity supports incremental cursor skipping for unchanged transcript files and rescanning on update", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-usage-cursor-"));
+  try {
+    const sessionId = "55555555-5555-5555-5555-555555555555";
+    const sessionDir = path.join(fixtureRoot, sessionId);
+    const logsDir = path.join(sessionDir, ".system_generated", "logs");
+    mkdirSync(logsDir, { recursive: true });
+    const transcriptPath = path.join(logsDir, "transcript.jsonl");
+
+    const turn0Lines = [
+      JSON.stringify({
+        step_index: 0,
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-10-30T03:00:00.000Z",
+        content: "<USER_REQUEST>Initial prompt</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        step_index: 1,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-10-30T03:00:01.000Z",
+        input_tokens: 100,
+        output_tokens: 50,
+        content: "Initial answer",
+      }),
+    ];
+
+    writeFileSync(transcriptPath, turn0Lines.join("\n"));
+
+    // 1. Initial scan
+    const run1 = readFixtureUsage(fixtureRoot);
+    assert.equal(run1.complete.usage_event_count, 1);
+    assert.equal(run1.events.length, 1);
+    assert.ok(run1.complete.next_cursor);
+    const cursor1 = JSON.parse(run1.complete.next_cursor);
+    assert.ok(cursor1.last_mtime > 0);
+    assert.ok(cursor1.processed_files.some((f) => f.includes("transcript.jsonl")));
+
+    // 2. Second scan with cursor and no file changes -> must skip
+    const run2 = readFixtureUsage(fixtureRoot, { cursor: run1.complete.next_cursor });
+    assert.equal(run2.complete.usage_event_count, 0);
+    assert.equal(run2.events.length, 0);
+
+    // 3. Append new turn to file with updated mtime
+    const stat1 = statSync(transcriptPath);
+    const turn1Lines = [
+      ...turn0Lines,
+      JSON.stringify({
+        step_index: 2,
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-10-30T03:10:00.000Z",
+        content: "<USER_REQUEST>Follow-up</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        step_index: 3,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-10-30T03:10:02.000Z",
+        input_tokens: 200,
+        output_tokens: 80,
+        content: "Follow-up answer",
+      }),
+    ];
+    writeFileSync(transcriptPath, turn1Lines.join("\n"));
+    utimesSync(transcriptPath, (stat1.mtimeMs + 2000) / 1000, (stat1.mtimeMs + 2000) / 1000);
+
+    // 4. Scan again with cursor -> modified file must be rescanned
+    const run3 = readFixtureUsage(fixtureRoot, { cursor: run1.complete.next_cursor });
+    assert.equal(run3.complete.usage_event_count, 2);
+    assert.equal(run3.events.length, 2);
+    assert.equal(run3.events[0].turn_id, "turn-0");
+    assert.equal(run3.events[1].turn_id, "turn-1");
+    const cursor3 = JSON.parse(run3.complete.next_cursor);
+    assert.ok(cursor3.last_mtime > cursor1.last_mtime);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+

@@ -1,6 +1,6 @@
 use crate::backend::domain::{
-    AppKind, ConversationAdapter, ConversationAdapterPackage, ConversationAdapterPackageVersion,
-    GitRepositoryInfo,
+    AppKind, Asset, ConversationAdapter, ConversationAdapterPackage,
+    ConversationAdapterPackageVersion, GitRepositoryInfo,
 };
 use crate::backend::infrastructure::host_paths::HostPathResolver;
 use crate::backend::infrastructure::target_catalog::TargetCatalog;
@@ -55,11 +55,14 @@ pub fn default_skill_backup_root() -> InfraResult<PathBuf> {
 
 pub fn default_skill_backup_root_for_tenant(tenant_id: &str) -> InfraResult<PathBuf> {
     let home = app_home_dir()?;
-    Ok(home
-        .join("tenants")
-        .join(safe_tenant_path_segment(tenant_id))
-        .join("library")
-        .join("skills"))
+    if tenant_id == "default" {
+        Ok(home.join("skills"))
+    } else {
+        Ok(home
+            .join("tenants")
+            .join(safe_tenant_path_segment(tenant_id))
+            .join("skills"))
+    }
 }
 
 pub fn legacy_skill_backup_root() -> InfraResult<PathBuf> {
@@ -86,6 +89,14 @@ pub fn expand_path(path: &str) -> InfraResult<PathBuf> {
 pub fn normalize_path_for_storage(path: &str) -> InfraResult<String> {
     let resolver = HostPathResolver::current()?;
     Ok(resolver.normalize_input(path)?.as_str().to_string())
+}
+
+/// 把资产记录的便携存储路径展开为当前主机可访问的真实路径。
+///
+/// `assets.stored_path` 只保存锚点形式（`~/`、`@config/` 等），任何文件 I/O、
+/// 存在性判断或路径相等比较都必须先经过本函数，严禁直接 `Path::new(&asset.stored_path)`。
+pub fn resolve_asset_path(asset: &Asset) -> InfraResult<PathBuf> {
+    expand_path(&asset.stored_path)
 }
 
 pub fn normalize_conversation_adapter_paths(adapter: &mut ConversationAdapter) -> InfraResult<()> {
@@ -386,15 +397,35 @@ pub fn detect_target_provider(
 pub fn is_app_library_path(path: &Path) -> bool {
     let filesystem = crate::backend::infrastructure::host_filesystem::HostFilesystem::current();
     if let Ok(home) = app_home_dir() {
+        let skills_root = home.join("skills");
+        if filesystem.is_within(path, &skills_root) {
+            let system_root = skills_root.join(".system");
+            if !filesystem.is_within(path, &system_root) {
+                return true;
+            }
+        }
         let tenants_root = home.join("tenants");
         if let Some(parts) = filesystem.relative_components(path, &tenants_root) {
+            if parts.len() >= 2 && parts[1] == "skills" {
+                return true;
+            }
             if parts.len() >= 3 && parts[1] == "library" && parts[2] == "skills" {
                 return true;
             }
         }
     } else if let Some(home) = dirs::home_dir() {
+        let skills_root = home.join(".assetiweave").join("skills");
+        if filesystem.is_within(path, &skills_root) {
+            let system_root = skills_root.join(".system");
+            if !filesystem.is_within(path, &system_root) {
+                return true;
+            }
+        }
         let tenants_root = home.join(".assetiweave").join("tenants");
         if let Some(parts) = filesystem.relative_components(path, &tenants_root) {
+            if parts.len() >= 2 && parts[1] == "skills" {
+                return true;
+            }
             if parts.len() >= 3 && parts[1] == "library" && parts[2] == "skills" {
                 return true;
             }

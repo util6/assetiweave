@@ -471,6 +471,160 @@ test("OpenCode folds every child round into one subagent Turn", () => {
   }
 });
 
+test("OpenCode extracts usage event with turn_id, external_event_id and millisecond UTC timestamp from table with time_created", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-usage-col-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode.db");
+    const msgData = JSON.stringify({
+      role: "assistant",
+      modelID: "claude-3-7-sonnet",
+      providerID: "anthropic",
+      cost: 0.0035,
+      tokens: {
+        input: 100,
+        output: 50,
+        reasoning: 10,
+        cache: { read: 20, write: 5 },
+        total: 185,
+      },
+    });
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);",
+      "INSERT INTO session VALUES ('sess-100', 'Test Session', '/tmp/proj', '2026-10-30T04:00:00Z');",
+      `INSERT INTO message VALUES ('msg-42', 'sess-100', 1761806400000, '${sqlString(msgData)}');`,
+    ].join("\n"));
+
+    const { events, complete } = readFixtureUsage(dbPath);
+    assert.equal(complete.snapshot_complete, true);
+    assert.equal(complete.usage_event_count, 1);
+    assert.equal(complete.decoder_profile, "opencode-sqlite-v1");
+    assert.equal(events.length, 1);
+
+    const event = events[0];
+    assert.equal(event.session_id, "sess-100");
+    assert.equal(event.turn_id, "msg-42");
+    assert.equal(event.external_event_id, "sess-100-msg-42");
+    assert.equal(event.logical_request_id, "sess-100-msg-42");
+    assert.equal(event.attempt_index, 0);
+    assert.equal(event.provider, "anthropic");
+    assert.equal(event.model, "claude-3-7-sonnet");
+    assert.equal(event.timestamp, new Date(1761806400000).toISOString());
+    assert.equal(event.input_tokens, 100);
+    assert.equal(event.output_tokens, 50);
+    assert.equal(event.reasoning_tokens, 10);
+    assert.equal(event.cache_read_tokens, 20);
+    assert.equal(event.cache_write_tokens, 5);
+    assert.equal(event.total_tokens, 185);
+    assert.equal(event.cost, 0.0035);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("OpenCode safely queries usage when time_created column is missing by probing table_info and reading data.time.created", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-usage-nocol-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode.db");
+    const msgData = JSON.stringify({
+      role: "assistant",
+      time: { created: "2026-10-30T04:30:00.123Z" },
+      modelID: "gpt-4o",
+      providerID: "openai",
+      tokens: {
+        input: 80,
+        output: 40,
+        total: 120,
+      },
+    });
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT);",
+      // Schema without time_created column
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "INSERT INTO session VALUES ('sess-200', 'Test Session', '/tmp/proj', '2026-10-30T04:30:00Z');",
+      `INSERT INTO message VALUES ('msg-99', 'sess-200', '${sqlString(msgData)}');`,
+    ].join("\n"));
+
+    const { events, complete } = readFixtureUsage(dbPath);
+    assert.equal(complete.usage_event_count, 1);
+    assert.equal(events.length, 1);
+
+    const event = events[0];
+    assert.equal(event.session_id, "sess-200");
+    assert.equal(event.turn_id, "msg-99");
+    assert.equal(event.external_event_id, "sess-200-msg-99");
+    assert.equal(event.timestamp, "2026-10-30T04:30:00.123Z");
+    assert.equal(event.input_tokens, 80);
+    assert.equal(event.output_tokens, 40);
+    assert.equal(event.total_tokens, 120);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("OpenCode suppresses messages where totalTokens <= 0", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-usage-zero-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode.db");
+    const zeroTokenMsg = JSON.stringify({
+      role: "assistant",
+      tokens: { input: 0, output: 0, total: 0 },
+    });
+    const validTokenMsg = JSON.stringify({
+      role: "assistant",
+      tokens: { input: 50, output: 25, total: 75 },
+    });
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);",
+      "INSERT INTO session VALUES ('sess-zero', 'Test', '/tmp', '2026-10-30T05:00:00Z');",
+      `INSERT INTO message VALUES ('msg-zero', 'sess-zero', 1761807000000, '${sqlString(zeroTokenMsg)}');`,
+      `INSERT INTO message VALUES ('msg-valid', 'sess-zero', 1761807001000, '${sqlString(validTokenMsg)}');`,
+    ].join("\n"));
+
+    const { events, complete } = readFixtureUsage(dbPath);
+    assert.equal(complete.usage_event_count, 1);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].turn_id, "msg-valid");
+    assert.equal(events[0].external_event_id, "sess-zero-msg-valid");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("OpenCode supports incremental cursor queries using last_time_created", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-usage-cursor-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode.db");
+    const msg1 = JSON.stringify({ role: "assistant", tokens: { input: 10, output: 10, total: 20 } });
+    const msg2 = JSON.stringify({ role: "assistant", tokens: { input: 20, output: 20, total: 40 } });
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);",
+      "INSERT INTO session VALUES ('sess-cur', 'Test', '/tmp', '2026-10-30T05:00:00Z');",
+      `INSERT INTO message VALUES ('msg-1', 'sess-cur', 1000, '${sqlString(msg1)}');`,
+    ].join("\n"));
+
+    const firstRun = readFixtureUsage(dbPath);
+    assert.equal(firstRun.events.length, 1);
+    const cursor = JSON.parse(firstRun.complete.next_cursor);
+    assert.equal(cursor.last_time_created, 1000);
+
+    // Insert message 2 with time_created 2000
+    runSqlite(dbPath, [
+      `INSERT INTO message VALUES ('msg-2', 'sess-cur', 2000, '${sqlString(msg2)}');`,
+    ].join("\n"));
+
+    const secondRun = readFixtureUsage(dbPath, { cursor: firstRun.complete.next_cursor });
+    assert.equal(secondRun.events.length, 1);
+    assert.equal(secondRun.events[0].turn_id, "msg-2");
+    const nextCursor = JSON.parse(secondRun.complete.next_cursor);
+    assert.equal(nextCursor.last_time_created, 2000);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 function readFixtureSession(dbPath) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",
@@ -481,6 +635,24 @@ function readFixtureSession(dbPath) {
   const session = messages.find((entry) => entry.type === "item")?.item?.session;
   assert.ok(session);
   return session;
+}
+
+function readFixtureUsage(location, params = {}) {
+  const result = spawnSync(process.execPath, [adapterPath], {
+    encoding: "utf8",
+    input: JSON.stringify({
+      method: "read_usage",
+      source: { location },
+      params,
+    }),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const messages = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const events = messages
+    .filter((message) => message.type === "usage_event")
+    .map((message) => message.usage_event);
+  const complete = messages.find((message) => message.type === "complete")?.item ?? null;
+  return { messages, events, complete };
 }
 
 function runSqlite(dbPath, sql) {

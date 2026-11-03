@@ -1296,7 +1296,7 @@ export function GlobalSettingsDialog({
                       <Button
                         onClick={() => {
                           if (selectedMemorySkill) {
-                            void revealPath(selectedMemorySkill.absolute_path);
+                            void revealPath(selectedMemorySkill.stored_path);
                           }
                         }}
                         type="button"

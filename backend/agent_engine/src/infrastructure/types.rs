@@ -166,26 +166,6 @@ pub struct AiRecallTools {
     pub database_path: String,
 }
 
-#[derive(Clone)]
-pub struct AiMemoryGenerationTools {
-    pub tenant_id: String,
-    pub job_id: String,
-    pub ownership_token: String,
-    pub database_path: String,
-}
-
-impl fmt::Debug for AiMemoryGenerationTools {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("AiMemoryGenerationTools")
-            .field("tenant_id", &self.tenant_id)
-            .field("job_id", &self.job_id)
-            .field("ownership_token", &"<redacted>")
-            .field("database_path", &"<redacted>")
-            .finish()
-    }
-}
-
 impl fmt::Debug for AiRecallTools {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -243,7 +223,6 @@ pub struct AiExecutionRequest {
     pub replay: bool,
     pub restore_only: bool,
     pub recall_tools: Option<AiRecallTools>,
-    pub memory_generation_tools: Option<AiMemoryGenerationTools>,
     pub account: Option<crate::domain::account::AgentAccount>,
 }
 
@@ -271,13 +250,6 @@ impl AiExecutionRequest {
         if !matches!(self.purpose, AiExecutionPurpose::Recall) && self.recall_tools.is_some() {
             return Err(AiExecutionError::Protocol {
                 operation: "recall_tools_scope",
-            });
-        }
-        if !matches!(self.purpose, AiExecutionPurpose::MemoryGeneration)
-            && self.memory_generation_tools.is_some()
-        {
-            return Err(AiExecutionError::Protocol {
-                operation: "memory_generation_tools_scope",
             });
         }
         if !self.restore_only {
@@ -324,7 +296,6 @@ impl fmt::Debug for AiExecutionRequest {
             .field("replay", &self.replay)
             .field("restore_only", &self.restore_only)
             .field("recall_tools", &self.recall_tools)
-            .field("memory_generation_tools", &self.memory_generation_tools)
             .finish()
     }
 }

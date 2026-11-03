@@ -1,4 +1,5 @@
 use crate::backend::domain::memory::evidence::redact_memory_text;
+use crate::backend::domain::memory::{ProjectMemoryState, RecentMemoryState};
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -53,14 +54,134 @@ impl MemoryStorage {
         self.root_dir.join("MEMORY.md")
     }
 
+    pub fn state_dir(&self) -> PathBuf {
+        self.root_dir.join(".state")
+    }
+
+    pub fn state_projects_dir(&self) -> PathBuf {
+        self.state_dir().join("projects")
+    }
+
+    pub fn state_project_file(&self, slug: &str) -> PathBuf {
+        self.state_projects_dir().join(format!("{}.json", slug))
+    }
+
+    pub fn state_recent_file(&self) -> PathBuf {
+        self.state_dir().join("recent.json")
+    }
+
+    /// Initialize directories without sessions/ directory layer.
     pub fn init_dirs(&self) -> std::io::Result<()> {
-        fs::create_dir_all(self.sessions_dir())?;
+        fs::create_dir_all(self.state_dir())?;
+        fs::create_dir_all(self.state_projects_dir())?;
         fs::create_dir_all(self.recent_dir())?;
         fs::create_dir_all(self.projects_dir())?;
         Ok(())
     }
 
-    /// 清理磁盘记忆目录中的所有生成产物，并重新初始化干净的基础分层目录结构
+    /// Read project state JSON from `.state/projects/<slug>.json`.
+    pub fn read_project_state(&self, slug: &str) -> std::io::Result<Option<ProjectMemoryState>> {
+        let path = self.state_project_file(slug);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(path)?;
+        let state: ProjectMemoryState = serde_json::from_str(&content)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Ok(Some(state))
+    }
+
+    /// Atomically write project state to `.state/projects/<slug>.json` via same-directory temp rename.
+    pub fn write_project_state_atomic(
+        &self,
+        slug: &str,
+        state: &ProjectMemoryState,
+    ) -> std::io::Result<PathBuf> {
+        let target_path = self.state_project_file(slug);
+        let parent = if let Some(p) = target_path.parent() {
+            fs::create_dir_all(p)?;
+            p.to_path_buf()
+        } else {
+            let p = self.state_projects_dir();
+            fs::create_dir_all(&p)?;
+            p
+        };
+
+        let json_text = serde_json::to_string_pretty(state)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let redacted = redact_memory_text(&json_text).text;
+
+        let temp_file_name = format!(".tmp_{}.json", Uuid::new_v4());
+        let temp_path = parent.join(temp_file_name);
+
+        fs::write(&temp_path, redacted)?;
+
+        #[cfg(windows)]
+        {
+            if let Ok(metadata) = fs::metadata(&target_path) {
+                let mut perms = metadata.permissions();
+                if perms.readonly() {
+                    perms.set_readonly(false);
+                    let _ = fs::set_permissions(&target_path, perms);
+                }
+            }
+        }
+
+        if let Err(e) = fs::rename(&temp_path, &target_path) {
+            fs::remove_file(&temp_path).ok();
+            return Err(e);
+        }
+
+        Ok(target_path)
+    }
+
+    /// Read recent memory state JSON from `.state/recent.json`.
+    pub fn read_recent_state(&self) -> std::io::Result<Option<RecentMemoryState>> {
+        let path = self.state_recent_file();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(path)?;
+        let state: RecentMemoryState = serde_json::from_str(&content)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Ok(Some(state))
+    }
+
+    /// Atomically write recent memory state to `.state/recent.json` via same-directory temp rename.
+    pub fn write_recent_state_atomic(&self, state: &RecentMemoryState) -> std::io::Result<PathBuf> {
+        let target_path = self.state_recent_file();
+        let parent = self.state_dir();
+        fs::create_dir_all(&parent)?;
+
+        let json_text = serde_json::to_string_pretty(state)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let redacted = redact_memory_text(&json_text).text;
+
+        let temp_file_name = format!(".tmp_{}.json", Uuid::new_v4());
+        let temp_path = parent.join(temp_file_name);
+
+        fs::write(&temp_path, redacted)?;
+
+        #[cfg(windows)]
+        {
+            if let Ok(metadata) = fs::metadata(&target_path) {
+                let mut perms = metadata.permissions();
+                if perms.readonly() {
+                    perms.set_readonly(false);
+                    let _ = fs::set_permissions(&target_path, perms);
+                }
+            }
+        }
+
+        if let Err(e) = fs::rename(&temp_path, &target_path) {
+            fs::remove_file(&temp_path).ok();
+            return Err(e);
+        }
+
+        Ok(target_path)
+    }
+
+    /// Clean memory directory and re-initialize clean directories.
     pub fn clear_all(&self) -> std::io::Result<()> {
         if self.root_dir.exists() {
             for entry in fs::read_dir(&self.root_dir)? {

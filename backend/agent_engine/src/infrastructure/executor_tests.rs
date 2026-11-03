@@ -3,7 +3,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::{
-    domain::definition::{AgentCommandDefinition, AgentId, DeclaredAgentCapabilities},
+    domain::definition::{
+        AgentCommandDefinition, AgentDefinition, AgentId, AgentProtocol, DeclaredAgentCapabilities,
+    },
     infrastructure::registry::AgentRegistry,
     infrastructure::*,
 };
@@ -25,14 +27,6 @@ fn execution_log_fields(
 }
 
 impl AgentExecutor {
-    pub fn new(
-        registry: Arc<AgentRegistry>,
-        acp: Arc<dyn AgentExecutionBackend>,
-        max_concurrency: usize,
-    ) -> Self {
-        Self::with_backends(registry, acp.clone(), acp, max_concurrency)
-    }
-
     fn available_permits(&self) -> usize {
         self.permits.available_permits()
     }
@@ -129,7 +123,7 @@ impl AgentExecutionBackend for FakeBackend {
 #[tokio::test(flavor = "current_thread")]
 async fn exe_01_invalid_request_never_calls_backend() {
     let (backend, _started) = FakeBackend::new(FakeMode::Immediate);
-    let executor = executor(AgentProtocol::Acp, backend.clone(), 2);
+    let executor = executor(backend.clone(), 2);
     let mut invalid = request("fake-agent");
     invalid.prompt = "   ".to_owned();
 
@@ -143,7 +137,7 @@ async fn exe_01_invalid_request_never_calls_backend() {
 #[tokio::test(flavor = "current_thread")]
 async fn exe_02_unknown_agent_has_stable_error_and_never_calls_backend() {
     let (backend, _started) = FakeBackend::new(FakeMode::Immediate);
-    let executor = executor(AgentProtocol::Acp, backend.clone(), 2);
+    let executor = executor(backend.clone(), 2);
 
     let result = executor.execute(request("unknown-agent")).await;
 
@@ -157,20 +151,15 @@ async fn exe_02_unknown_agent_has_stable_error_and_never_calls_backend() {
 #[tokio::test(flavor = "current_thread")]
 async fn exe_03_and_04_route_only_by_protocol() {
     let (acp_backend, _started) = FakeBackend::new(FakeMode::Immediate);
-    let acp_executor = executor(AgentProtocol::Acp, acp_backend.clone(), 2);
+    let acp_executor = executor(acp_backend.clone(), 2);
     assert!(acp_executor.execute(request("fake-agent")).await.is_ok());
     assert_eq!(acp_backend.calls.load(Ordering::SeqCst), 1);
-
-    let (native_backend, _started) = FakeBackend::new(FakeMode::Immediate);
-    let native_executor = executor(AgentProtocol::Native, native_backend.clone(), 2);
-    assert!(native_executor.execute(request("fake-agent")).await.is_ok());
-    assert_eq!(native_backend.calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn exe_05_shared_semaphore_limits_concurrency_to_two() {
     let (backend, mut started) = FakeBackend::new(FakeMode::Hold);
-    let executor = Arc::new(executor(AgentProtocol::Acp, backend.clone(), 2));
+    let executor = Arc::new(executor(backend.clone(), 2));
     let first = spawn_execution(Arc::clone(&executor), request("fake-agent"));
     let second = spawn_execution(Arc::clone(&executor), request("fake-agent"));
     let third = spawn_execution(Arc::clone(&executor), request("fake-agent"));
@@ -193,7 +182,7 @@ async fn exe_05_shared_semaphore_limits_concurrency_to_two() {
 #[tokio::test(flavor = "current_thread")]
 async fn exe_06_queued_cancel_never_spawns_backend() {
     let (backend, mut started) = FakeBackend::new(FakeMode::Hold);
-    let executor = Arc::new(executor(AgentProtocol::Acp, backend.clone(), 1));
+    let executor = Arc::new(executor(backend.clone(), 1));
     let first = spawn_execution(Arc::clone(&executor), request("fake-agent"));
     started.recv().await.unwrap();
 
@@ -213,7 +202,7 @@ async fn exe_06_queued_cancel_never_spawns_backend() {
 #[tokio::test(flavor = "current_thread")]
 async fn exe_07_queue_wait_is_bounded_by_the_total_deadline() {
     let (backend, mut started) = FakeBackend::new(FakeMode::Hold);
-    let executor = Arc::new(executor(AgentProtocol::Acp, backend.clone(), 1));
+    let executor = Arc::new(executor(backend.clone(), 1));
     let first = spawn_execution(Arc::clone(&executor), request("fake-agent"));
     started.recv().await.unwrap();
     let mut queued_request = request("fake-agent");
@@ -230,7 +219,7 @@ async fn exe_07_queue_wait_is_bounded_by_the_total_deadline() {
 #[tokio::test(flavor = "current_thread")]
 async fn exe_08_total_timeout_cancels_backend_and_waits_for_cleanup() {
     let (backend, mut started) = FakeBackend::new(FakeMode::WaitCancellation);
-    let executor = executor(AgentProtocol::Acp, backend.clone(), 1);
+    let executor = executor(backend.clone(), 1);
     let mut execution_request = request("fake-agent");
     execution_request.limits.total_timeout = Duration::from_millis(30);
 
@@ -246,7 +235,7 @@ async fn exe_08_total_timeout_cancels_backend_and_waits_for_cleanup() {
 #[tokio::test(flavor = "current_thread")]
 async fn exe_09_and_10_result_metadata_does_not_claim_confirmed_model_use() {
     let (backend, _started) = FakeBackend::new(FakeMode::Immediate);
-    let executor = executor(AgentProtocol::Acp, backend, 2);
+    let executor = executor(backend, 2);
     let mut execution_request = request("fake-agent");
     execution_request.model = Some("requested/model".to_owned());
 
@@ -258,29 +247,20 @@ async fn exe_09_and_10_result_metadata_does_not_claim_confirmed_model_use() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn memory_generation_tools_require_an_acp_agent() {
+async fn memory_generation_purpose_succeeds_for_an_acp_agent() {
     let (backend, _started) = FakeBackend::new(FakeMode::Immediate);
-    let executor = executor(AgentProtocol::Native, backend.clone(), 2);
+    let executor = executor(backend.clone(), 2);
     let mut execution_request = request("fake-agent");
     execution_request.purpose = AiExecutionPurpose::MemoryGeneration;
-    execution_request.memory_generation_tools = Some(AiMemoryGenerationTools {
-        tenant_id: "tenant-fixture".to_string(),
-        job_id: "job-fixture".to_string(),
-        ownership_token: "lease-fixture".to_string(),
-        database_path: ":memory:".to_string(),
-    });
 
-    assert!(matches!(
-        executor.execute(execution_request).await,
-        Err(AiExecutionError::MemoryGenerationToolsUnavailable)
-    ));
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    assert!(executor.execute(execution_request).await.is_ok());
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn exe_11_connection_check_runs_install_probe_then_acp_handshake() {
     let (backend, _started) = FakeBackend::new(FakeMode::Immediate);
-    let mut agent_definition = definition(AgentProtocol::Acp);
+    let mut agent_definition = definition();
     agent_definition.command = "sh".to_owned();
     agent_definition.availability_probe = Some(AgentCommandDefinition::with_command(
         "sh",
@@ -325,7 +305,6 @@ fn sec_execution_log_fields_exclude_prompt_model_and_payload() {
 #[tokio::test(flavor = "current_thread")]
 async fn antigravity_routes_only_via_acp_and_rejects_missing_capabilities() {
     let (acp_backend, _started_acp) = FakeBackend::new(FakeMode::Immediate);
-    let (native_backend, _started_native) = FakeBackend::new(FakeMode::Immediate);
     let antigravity_def = AgentDefinition {
         id: AgentId::parse("antigravity").unwrap(),
         installation_id: None,
@@ -341,30 +320,20 @@ async fn antigravity_routes_only_via_acp_and_rejects_missing_capabilities() {
         session_cleanup_not_found_markers: Vec::new(),
     };
     let registry = AgentRegistry::from_definitions([antigravity_def.clone()]).unwrap();
-    let executor = AgentExecutor::with_backends(
-        registry.into(),
-        acp_backend.clone(),
-        native_backend.clone(),
-        2,
-    );
+    let executor = AgentExecutor::with_backends(registry.into(), acp_backend.clone(), 2);
 
-    // 1. Normal translation routed strictly to ACP backend, Native backend is not touched
+    // 1. Normal translation routed strictly to ACP backend
     let normal_req = request("antigravity");
     assert!(executor.execute(normal_req).await.is_ok());
     assert_eq!(acp_backend.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(native_backend.calls.load(Ordering::SeqCst), 0);
 
     // 3. Replay rejected with ResumeUnavailable when history_replay capability is false
     let mut no_replay_def = antigravity_def.clone();
     no_replay_def.id = AgentId::parse("antigravity-no-replay").unwrap();
     no_replay_def.declared_capabilities.history_replay = false;
     let registry_no_replay = AgentRegistry::from_definitions([no_replay_def]).unwrap();
-    let executor_no_replay = AgentExecutor::with_backends(
-        registry_no_replay.into(),
-        acp_backend.clone(),
-        native_backend.clone(),
-        2,
-    );
+    let executor_no_replay =
+        AgentExecutor::with_backends(registry_no_replay.into(), acp_backend.clone(), 2);
     let mut replay_req = request("antigravity-no-replay");
     replay_req.session_mode = AgentSessionMode::Persistent;
     replay_req.execution_context_key = Some("ctx-key".to_string());
@@ -375,7 +344,6 @@ async fn antigravity_routes_only_via_acp_and_rejects_missing_capabilities() {
         Err(AiExecutionError::ResumeUnavailable)
     ));
     assert_eq!(acp_backend.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(native_backend.calls.load(Ordering::SeqCst), 0);
 }
 
 fn spawn_execution(
@@ -385,21 +353,17 @@ fn spawn_execution(
     tokio::spawn(async move { executor.execute(request).await })
 }
 
-fn executor(
-    protocol: AgentProtocol,
-    backend: Arc<FakeBackend>,
-    concurrency: usize,
-) -> AgentExecutor {
-    let registry = AgentRegistry::from_definitions([definition(protocol)]).unwrap();
+fn executor(backend: Arc<FakeBackend>, concurrency: usize) -> AgentExecutor {
+    let registry = AgentRegistry::from_definitions([definition()]).unwrap();
     AgentExecutor::new(registry.into(), backend, concurrency)
 }
 
-fn definition(protocol: AgentProtocol) -> AgentDefinition {
+fn definition() -> AgentDefinition {
     AgentDefinition {
         id: AgentId::parse("fake-agent").unwrap(),
         installation_id: None,
         display_name: "Fake Agent".to_owned(),
-        protocol,
+        protocol: AgentProtocol::Acp,
         command: "fake-agent".to_owned(),
         args: Vec::new(),
         env: Vec::new(),
@@ -431,7 +395,6 @@ fn request(agent_id: &str) -> AiExecutionRequest {
         replay: false,
         restore_only: false,
         recall_tools: None,
-        memory_generation_tools: None,
         account: None,
     }
 }

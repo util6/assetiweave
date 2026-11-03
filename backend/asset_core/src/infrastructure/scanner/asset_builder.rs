@@ -5,7 +5,10 @@ pub fn refresh_recorded_asset(
     asset: &Asset,
     timestamp: &str,
 ) -> InfraResult<Option<Asset>> {
-    let asset_path = Path::new(&asset.absolute_path);
+    let Ok(asset_path) = expand_path(&asset.stored_path) else {
+        return Ok(None);
+    };
+    let asset_path = asset_path.as_path();
     if !asset_path.exists() {
         return Ok(None);
     }
@@ -77,7 +80,7 @@ pub(super) fn build_asset(
         detector_version,
         format,
         relative_path: relative_path.to_string(),
-        absolute_path: asset_path.to_string_lossy().to_string(),
+        stored_path: normalize_std_path_for_storage(asset_path)?,
         entry_file: entry_file_relative,
         description,
         content_hash,

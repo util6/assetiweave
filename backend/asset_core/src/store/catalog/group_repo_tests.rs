@@ -212,7 +212,7 @@ fn test_asset(id: &str, source_id: &str, relative_path: &str) -> Asset {
         detector_version: 1,
         format: AssetFormat::Directory,
         relative_path: relative_path.to_string(),
-        absolute_path: format!("/tmp/{relative_path}"),
+        stored_path: format!("/tmp/{relative_path}"),
         entry_file: Some("SKILL.md".to_string()),
         description: None,
         content_hash: None,

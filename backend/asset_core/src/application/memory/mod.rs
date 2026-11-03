@@ -3,7 +3,6 @@ pub mod generation_skill;
 pub mod global_memory_context;
 pub mod legacy_archive;
 pub mod memory_agent_session;
-pub mod memory_generation_tools;
 pub mod memory_markdown_pipeline;
 pub mod memory_markdown_views;
 pub mod memory_pipeline;
@@ -19,10 +18,17 @@ pub mod memory_tasks;
 pub mod memory_workflow_global;
 pub mod memory_workflow_recent_project;
 pub mod params;
+pub mod reasoning_loop;
 pub mod recent;
 pub mod session_branch_workflow;
 pub mod session_coordinator;
+pub mod state_service;
 pub mod types;
+
+pub use reasoning_loop::{
+    execute_inspect_commit_loop, parse_agent_decision, unpeel_json, MemoryAgentDecision,
+    MemoryCommitDecision, MemoryInspectDecision,
+};
 
 pub use memory_markdown_pipeline::MemoryMarkdownPipelineReport;
 pub use memory_markdown_views::MemoryMarkdownFileView;
@@ -38,7 +44,6 @@ pub use session_branch_workflow::{
 pub use activity_watchdog::{
     run_with_activity_watchdog, ActivityWatchdogConfig, WatchdogTimeoutKind,
 };
-pub use memory_generation_tools::MemoryGenerationToolHandler;
 pub use memory_pipeline::MemoryPipelineParams;
 pub use types::{
     MemoryContextReference, MemoryContextResult, MemoryProjectView, MemoryRebuildResult,

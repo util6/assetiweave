@@ -1,6 +1,8 @@
 use crate::backend::application::{AppError, AppResult, AppService};
+use crate::backend::infrastructure::memory::projection::{
+    sync_project_markdown, sync_recent_markdown,
+};
 use crate::backend::infrastructure::memory::storage::MemoryStorage;
-use std::collections::{BTreeMap, HashSet};
 use std::fs;
 
 pub fn project_path_to_slug(project_path: &str) -> String {
@@ -159,99 +161,6 @@ pub fn parse_session_markdown(content: &str) -> ParsedSessionMarkdown {
     parsed
 }
 
-fn extract_semantic_tokens(text: &str) -> HashSet<String> {
-    // 移除 markdown 链接格式，如 [short#T1](...)
-    let mut clean = String::new();
-    let mut in_url = false;
-    for c in text.chars() {
-        if c == '(' {
-            in_url = true;
-        } else if c == ')' {
-            in_url = false;
-        } else if !in_url && c != '[' && c != ']' && c != ':' && c != '-' {
-            clean.push(c);
-        }
-    }
-
-    let stop_words: HashSet<&str> = [
-        "the", "and", "for", "with", "from", "that", "this", "turn", "cli", "gui", "api", "app",
-        "code", "session", "test", "task",
-    ]
-    .into_iter()
-    .collect();
-
-    let mut tokens = HashSet::new();
-
-    // 1. 英文与数字单词
-    for word in clean.split_whitespace() {
-        let w = word.trim().to_lowercase();
-        if w.len() >= 3 && !stop_words.contains(w.as_str()) && w.is_ascii() {
-            tokens.insert(w);
-        }
-    }
-
-    // 2. 中文提取 2-gram 语义片段（确保中文技术词汇如 "缓存", "重构", "分发" 参与相似度计算）
-    let chars: Vec<char> = clean
-        .chars()
-        .filter(|c| !c.is_ascii_whitespace() && !c.is_ascii_punctuation())
-        .collect();
-    for window in chars.windows(2) {
-        let s: String = window.iter().collect();
-        if !s.chars().all(|c| c.is_ascii()) {
-            tokens.insert(s);
-        }
-    }
-
-    tokens
-}
-
-fn ablate_and_merge_leaves(
-    existing_leaves: &[String],
-    new_leaves: &[String],
-    completed_tasks: &[String],
-) -> Vec<String> {
-    let completed_token_sets: Vec<HashSet<String>> = completed_tasks
-        .iter()
-        .map(|t| extract_semantic_tokens(t))
-        .collect();
-
-    let is_ablated = |leaf: &str| -> bool {
-        let tokens = extract_semantic_tokens(leaf);
-        if tokens.is_empty() {
-            return false;
-        }
-        for comp_tokens in &completed_token_sets {
-            let intersection = tokens.intersection(comp_tokens).count();
-            let coverage = intersection as f64 / tokens.len() as f64;
-            // 语义重合标准：交集至少 2 项且覆盖率达到 40%，或短叶子完全覆盖
-            if (intersection >= 2 && coverage >= 0.4)
-                || (tokens.len() <= 2 && intersection == tokens.len())
-            {
-                return true;
-            }
-        }
-        false
-    };
-
-    let mut result = Vec::new();
-
-    // 1. 保留未被消融的旧叶子
-    for leaf in existing_leaves {
-        if !is_ablated(leaf) && !result.contains(leaf) {
-            result.push(leaf.clone());
-        }
-    }
-
-    // 2. 加入未被消融的新叶子
-    for leaf in new_leaves {
-        if !is_ablated(leaf) && !result.contains(leaf) {
-            result.push(leaf.clone());
-        }
-    }
-
-    result
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct RecentAndProjectWorkflowReport {
     pub session_count: usize,
@@ -272,139 +181,44 @@ impl AppService {
         storage: &MemoryStorage,
         now: chrono::DateTime<chrono::Utc>,
     ) -> AppResult<RecentAndProjectWorkflowReport> {
-        let sessions_dir = storage.sessions_dir();
-        if !sessions_dir.exists() {
-            return Ok(RecentAndProjectWorkflowReport::default());
-        }
-
-        let settings = self.backend_settings()?;
-        let window_hours = if settings.memory.recent_window_hours > 0 {
-            settings.memory.recent_window_hours as i64
-        } else {
-            48
-        };
-        let cutoff = now - chrono::Duration::hours(window_hours);
-
-        let mut project_leaves_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        let mut project_completed_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        // 1. 同步 Recent 记忆状态与 Markdown 投影
         let mut session_count = 0;
-
-        let entries = fs::read_dir(&sessions_dir)
-            .map_err(AppError::from)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"));
-
-        for entry in entries {
-            let content = fs::read_to_string(entry.path()).map_err(AppError::from)?;
-            let parsed = parse_session_markdown(&content);
-
-            // 【Spec 硬性红线】解析 Frontmatter 中的 updated_at。
-            // 若早于当前时间减去窗口时间 (now - window_hours)，跳过该会话，严禁将超期历史会话纳入近期聚合。
-            let Some(dt) = crate::backend::domain::parse_conversation_timestamp(&parsed.updated_at)
-            else {
-                continue;
-            };
-            if dt < cutoff {
-                continue;
-            }
-
-            session_count += 1;
-
-            let proj = parsed
-                .project_path
-                .unwrap_or_else(|| "unspecified".to_string());
-
-            project_leaves_map
-                .entry(proj.clone())
-                .or_default()
-                .extend(parsed.unexplored_branches);
-            project_completed_map
-                .entry(proj)
-                .or_default()
-                .extend(parsed.completed_tasks);
+        let recent_state = storage.read_recent_state().map_err(AppError::from)?;
+        if let Some(recent) = recent_state {
+            sync_recent_markdown(storage, &recent).map_err(AppError::from)?;
+            let today_str = now.format("%Y-%m-%d").to_string();
+            let recent_md =
+                crate::backend::infrastructure::memory::projection::recent_state_to_markdown(
+                    &recent,
+                );
+            storage
+                .write_markdown_atomic(format!("recent/{}.md", today_str), &recent_md)
+                .map_err(AppError::from)?;
+            session_count = recent
+                .projects
+                .values()
+                .map(|p| p.session_watermarks.len())
+                .sum();
         }
 
-        // 1. 生成 Recent 产物：recent/latest.md 与 recent/<date>.md
-        let mut recent_md = String::new();
-        recent_md.push_str("# 近期研发进展与待探索分支 (Recent Work & Unexplored Branches)\n\n");
+        // 2. 遍历 .state/projects/<slug>.json 同步各项目的 Project 记忆投影
+        let projects_dir = storage.state_projects_dir();
+        let mut project_count = 0;
+        if projects_dir.exists() {
+            let entries = fs::read_dir(&projects_dir)
+                .map_err(AppError::from)?
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"));
 
-        for (proj, leaves) in &project_leaves_map {
-            let completed = project_completed_map.get(proj);
-            recent_md.push_str(&format!("## 项目: {}\n\n", proj));
-
-            recent_md.push_str("### 🍂 待探索的悬空叶子节点 (Unexplored Branches)\n");
-            if leaves.is_empty() {
-                recent_md.push_str("- 无待探索分支\n");
-            } else {
-                for l in leaves {
-                    recent_md.push_str(&format!("{}\n", l));
-                }
-            }
-            recent_md.push('\n');
-
-            recent_md.push_str("### ✅ 已完成的闭环任务 (Completed Tasks)\n");
-            match completed {
-                Some(tasks) if !tasks.is_empty() => {
-                    for t in tasks {
-                        recent_md.push_str(&format!("{}\n", t));
+            for entry in entries {
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                if let Some(slug) = file_name.strip_suffix(".json") {
+                    if let Ok(Some(project_state)) = storage.read_project_state(slug) {
+                        sync_project_markdown(storage, &project_state).map_err(AppError::from)?;
+                        project_count += 1;
                     }
                 }
-                _ => {
-                    recent_md.push_str("- 无已完成任务\n");
-                }
             }
-            recent_md.push('\n');
-        }
-
-        storage
-            .write_markdown_atomic("recent/latest.md", &recent_md)
-            .map_err(AppError::from)?;
-
-        let today_str = now.format("%Y-%m-%d").to_string();
-        storage
-            .write_markdown_atomic(format!("recent/{}.md", today_str), &recent_md)
-            .map_err(AppError::from)?;
-
-        // 2. 更新 Project 产物与动态消融：projects/<slug>.md
-        let mut project_count = 0;
-        for (proj, new_leaves) in &project_leaves_map {
-            let slug = project_path_to_slug(proj);
-            let proj_rel_path = format!("projects/{}.md", slug);
-
-            let completed = project_completed_map.get(proj).cloned().unwrap_or_default();
-
-            // 读取现有池
-            let mut existing_leaves = Vec::new();
-            if let Ok(Some(existing_content)) = storage.read_markdown(&proj_rel_path) {
-                let parsed = parse_session_markdown(&existing_content);
-                existing_leaves = parsed.unexplored_branches;
-            }
-
-            let remaining_leaves =
-                ablate_and_merge_leaves(&existing_leaves, new_leaves, &completed);
-
-            let mut proj_md = String::new();
-            proj_md.push_str("---\n");
-            proj_md.push_str(&format!("project_path: {}\n", proj));
-            proj_md.push_str(&format!("updated_at: {}\n", now.to_rfc3339()));
-            proj_md.push_str("---\n\n");
-            proj_md.push_str(&format!("# 项目记忆: {}\n\n", proj));
-
-            proj_md.push_str("## 🍂 待探索的悬空叶子节点 (Unexplored Branches)\n");
-            if remaining_leaves.is_empty() {
-                proj_md.push_str("- 暂无待探索分支\n");
-            } else {
-                for l in &remaining_leaves {
-                    proj_md.push_str(&format!("{}\n", l));
-                }
-            }
-            proj_md.push('\n');
-
-            storage
-                .write_markdown_atomic(&proj_rel_path, &proj_md)
-                .map_err(AppError::from)?;
-
-            project_count += 1;
         }
 
         Ok(RecentAndProjectWorkflowReport {

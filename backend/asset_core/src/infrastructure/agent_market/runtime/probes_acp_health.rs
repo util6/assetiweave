@@ -7,7 +7,7 @@ use crate::backend::{
             AcpConnectionStage, AcpModelDiscoveryOutcome, AcpProbeReport,
             AcpProtocolConnectionOutcome,
         },
-        AgentConnectionResult,
+        AgentConnectionResult, AgentModelsResult,
     },
 };
 
@@ -169,5 +169,16 @@ pub fn probe_identity(installation: &AgentInstallation) -> AgentProbeIdentity {
         definition_digest: format!("{:x}", digest.finalize()),
         enabled: installation.enabled,
         executable_present: installation.resolved_program.is_file(),
+    }
+}
+
+pub fn unavailable_models(agent_id: &str, code: &str, message: &str) -> AgentModelsResult {
+    AgentModelsResult {
+        agent_id: agent_id.to_string(),
+        available: false,
+        models: Vec::new(),
+        current_model_id: None,
+        error_code: Some(code.to_string()),
+        error: Some(message.to_string()),
     }
 }

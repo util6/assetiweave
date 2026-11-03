@@ -85,7 +85,7 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.refresh_agent_market_catalog(),
+        ServiceAsync => |service, _params| service.refresh_agent_market_catalog().await,
         &[],
         Some("assetiweave-cli agent market refresh")
     ),

@@ -114,7 +114,7 @@ const asset: Asset = {
   kind: "skill",
   format: "directory",
   relative_path: "review-workflow",
-  absolute_path: "~/code-space/skills/review-workflow",
+  stored_path: "~/code-space/skills/review-workflow",
   entry_file: null,
   description: null,
   content_hash: null,

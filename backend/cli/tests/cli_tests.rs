@@ -128,6 +128,38 @@ fn test_conversation_adapter_list() {
 }
 
 #[test]
+fn test_conversation_adapter_upgrade_developer_dry_run() {
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .args([
+            "conversation",
+            "adapter",
+            "upgrade",
+            "--developer",
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["dry_run"], true);
+    assert_eq!(json["data"]["developer"], true);
+
+    // Test short alias: c ad up -d --dry-run
+    let mut alias_cmd = aiwc_command();
+    let alias_assert = alias_cmd
+        .args(["c", "ad", "up", "-d", "--dry-run", "--format", "json"])
+        .assert()
+        .success();
+    let alias_output = String::from_utf8(alias_assert.get_output().stdout.clone()).unwrap();
+    let alias_json: Value = serde_json::from_str(&alias_output).unwrap();
+    assert_eq!(alias_json["ok"], true);
+}
+
+#[test]
 fn test_skill_list() {
     let mut cmd = aiwc_command();
     cmd.args(["skill", "list"]).assert().success();
@@ -445,6 +477,212 @@ fn test_memory_cli_read_path_rendered_markdown() {
         .as_str()
         .unwrap()
         .contains("Recent Work"));
+}
+
+#[test]
+fn test_memory_cli_state_commit_and_watermark() {
+    let tmp = tempfile::tempdir().unwrap();
+    let memory_root = tmp.path().join("memories");
+    std::fs::create_dir_all(&memory_root).unwrap();
+
+    // 1. Watermark check before any activity
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args([
+            "memory",
+            "watermark",
+            "check",
+            "--project",
+            "test-slug",
+            "--session-id",
+            "sess-123",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["has_watermark"], false);
+
+    // 2. Advance watermark
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args([
+            "memory",
+            "watermark",
+            "advance",
+            "--project",
+            "test-slug",
+            "--session-id",
+            "sess-123",
+            "--turn",
+            "5",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["advanced_to_turn"], 5);
+
+    // 3. Watermark check after advance
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args([
+            "memory",
+            "watermark",
+            "check",
+            "--project",
+            "test-slug",
+            "--session-id",
+            "sess-123",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["has_watermark"], true);
+    assert_eq!(json["data"]["watermark"], 5);
+
+    // 4. Commit evolution
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args([
+            "memory",
+            "commit",
+            "--project",
+            "test-slug",
+            "--topic",
+            "tree-arch",
+            "--topic-name",
+            "Tree Architecture",
+            "--summary",
+            "State tree migration completed",
+            "--session-id",
+            "sess-123",
+            "--short-id",
+            "s123",
+            "--turn",
+            "6",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["committed_node_id"], "s123#T6");
+
+    // 5. Get project state
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args([
+            "memory",
+            "state",
+            "get",
+            "--project",
+            "test-slug",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["project_slug"], "test-slug");
+    assert_eq!(json["data"]["session_watermarks"]["sess-123"], 6);
+
+    // 6. Get recent state
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args(["memory", "state", "get", "--format", "json"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert!(json["data"]["projects"]["test-slug"].is_object());
+
+    // 7. Check projected markdown through project get
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args(["memory", "project", "get", "test-slug"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(output.contains("# 项目记忆: test-slug"));
+    assert!(
+        output.contains("[s123#T6](aiwc://session/s123/turn/6): State tree migration completed")
+    );
+
+    // 8. Test memory state get --raw (un-enveloped)
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args(["memory", "state", "get", "--project", "test-slug", "--raw"])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let raw_json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(raw_json["project_slug"], "test-slug");
+    assert!(raw_json.get("ok").is_none());
+
+    // 9. Test memory commit --file <path>
+    let commit_file = tmp.path().join("commit.json");
+    let payload_json = serde_json::json!({
+        "project_slug": "test-slug",
+        "topic_id": "tree-arch",
+        "topic_name": "Tree Architecture",
+        "parent_node_id": "s123#T6",
+        "parent_new_status": "continued",
+        "new_node": {
+            "id": "s123#T7",
+            "parent_id": "s123#T6",
+            "topic_id": "tree-arch",
+            "summary": "Continued via --file payload",
+            "status": "completed",
+            "source_session_id": "sess-123",
+            "turn_index": 7,
+            "created_at": "2026-11-02T12:00:00Z",
+            "updated_at": "2026-11-02T12:00:00Z"
+        },
+        "unexplored_siblings": []
+    });
+    std::fs::write(&commit_file, serde_json::to_string(&payload_json).unwrap()).unwrap();
+
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args([
+            "memory",
+            "commit",
+            "--file",
+            commit_file.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["committed_node_id"], "s123#T7");
 }
 
 #[test]

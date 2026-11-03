@@ -2568,6 +2568,53 @@ function readUsage() {
         let currentModel = "gpt-5.4";
         let currentProvider = "openai";
 
+        let turnIndex = -1;
+        let currentTurn = null;
+        let pendingTurnTime = null;
+        let pendingTurnModel = null;
+
+        const flushTurn = () => {
+          if (!currentTurn) return;
+          const totalTokens =
+            currentTurn.inputTokens +
+            currentTurn.outputTokens +
+            currentTurn.cacheReadTokens +
+            currentTurn.cacheWriteTokens +
+            currentTurn.reasoningTokens;
+
+          if (totalTokens > 0) {
+            const turnId = `turn-${currentTurn.turnIndex}`;
+            const eventId = `${row.id}-${turnId}`;
+            const timestamp = currentTurn.timestamp || stat.mtime.toISOString();
+
+            const event = {
+              external_event_id: eventId,
+              session_id: String(row.id),
+              turn_id: turnId,
+              logical_request_id: eventId,
+              attempt_index: 0,
+              timestamp,
+              provider: currentTurn.provider || currentProvider,
+              model: currentTurn.model || currentModel,
+              input_tokens: currentTurn.inputTokens,
+              output_tokens: currentTurn.outputTokens,
+              cache_read_tokens: currentTurn.cacheReadTokens,
+              cache_write_tokens: currentTurn.cacheWriteTokens,
+              reasoning_tokens: currentTurn.reasoningTokens,
+              total_tokens: totalTokens,
+              status: "success",
+              currency: null,
+              cost: null,
+              metadata: {
+                file: path.basename(filePath),
+              },
+            };
+            emit("usage_event", { usage_event: event });
+            eventCount++;
+          }
+          currentTurn = null;
+        };
+
         for (const line of lines) {
           if (!line.trim()) continue;
           let parsed;
@@ -2577,58 +2624,134 @@ function readUsage() {
             continue;
           }
 
-          if (parsed.type === "session_meta") {
-            if (parsed.payload?.model_provider) {
-              currentProvider = parsed.payload.model_provider;
+          const payload = parsed.payload ?? parsed;
+
+          if (parsed.type === "session_meta" || payload.type === "session_meta") {
+            const prov = payload.model_provider || parsed.model_provider;
+            if (prov) {
+              currentProvider = String(prov);
+              if (currentTurn && !currentTurn.provider) currentTurn.provider = currentProvider;
             }
-          } else if (parsed.type === "turn_context") {
-            if (parsed.payload?.model) {
-              currentModel = parsed.payload.model;
+            const model = payload.model || parsed.model;
+            if (model) {
+              currentModel = String(model);
+              if (currentTurn && !currentTurn.model) currentTurn.model = currentModel;
             }
-          } else if (parsed.type === "event_msg" && parsed.payload?.type === "token_count") {
-            const usage = parsed.payload.info?.last_token_usage;
-            if (!usage || (usage.total_tokens ?? 0) <= 0) continue;
+          }
 
-            const inputTokens = usage.input_tokens ?? 0;
-            const cachedInputTokens = usage.cached_input_tokens ?? 0;
-            const outputTokens = usage.output_tokens ?? 0;
-            const reasoningTokens = usage.reasoning_output_tokens ?? 0;
-            const cacheWriteTokens = usage.cache_write_input_tokens ?? 0;
-            const totalTokens = usage.total_tokens ?? (inputTokens + outputTokens);
+          const isTurnContext = parsed.type === "turn_context" || payload.type === "turn_context";
+          if (isTurnContext) {
+            const model = payload.model || parsed.model;
+            if (model) {
+              currentModel = String(model);
+              if (!currentTurn) {
+                pendingTurnModel = currentModel;
+              }
+            }
+            const rawTime = parsed.timestamp ?? payload.timestamp;
+            if (rawTime) {
+              try {
+                pendingTurnTime = new Date(rawTime).toISOString();
+              } catch {}
+            }
+          }
 
-            if (totalTokens <= 0) continue;
+          const isUserMessage =
+            (payload.type === "message" || parsed.type === "message") &&
+            (payload.role === "user" || parsed.role === "user");
 
-            const ordinal = parsed.ordinal ?? eventCount;
-            const eventId = `${row.id}-${ordinal}`;
-            const timestamp = parsed.timestamp || stat.mtime.toISOString();
+          if (isUserMessage) {
+            const hasAccumulatedTokens = currentTurn && (
+              currentTurn.inputTokens +
+              currentTurn.outputTokens +
+              currentTurn.cacheReadTokens +
+              currentTurn.cacheWriteTokens +
+              currentTurn.reasoningTokens
+            ) > 0;
 
-            const event = {
-              external_event_id: eventId,
-              session_id: String(row.id),
-              turn_id: null,
-              logical_request_id: eventId,
-              attempt_index: 0,
-              timestamp,
+            if (hasAccumulatedTokens) {
+              flushTurn();
+            } else {
+              currentTurn = null;
+            }
+
+            turnIndex++;
+            let ts = pendingTurnTime;
+            const rawTime = parsed.timestamp ?? payload.timestamp;
+            if (!ts && rawTime) {
+              try {
+                ts = new Date(rawTime).toISOString();
+              } catch {}
+            }
+            pendingTurnTime = null;
+            currentTurn = {
+              turnIndex,
+              timestamp: ts,
               provider: currentProvider,
-              model: currentModel,
-              input_tokens: inputTokens,
-              output_tokens: outputTokens,
-              cache_read_tokens: cachedInputTokens,
-              cache_write_tokens: cacheWriteTokens,
-              reasoning_tokens: reasoningTokens,
-              total_tokens: totalTokens,
-              status: "success",
-              currency: null,
-              cost: null,
-              metadata: {
-                ordinal,
-                file: path.basename(filePath),
-              },
+              model: pendingTurnModel || currentModel,
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              reasoningTokens: 0,
             };
-            emit("usage_event", { usage_event: event });
-            eventCount++;
+            pendingTurnModel = null;
+          }
+
+          if (parsed.type === "event_msg" && parsed.payload?.type === "token_count") {
+            const usage = parsed.payload.info?.last_token_usage;
+            if (usage) {
+              const inputTokens = Number(usage.input_tokens || 0);
+              const cachedInputTokens = Number(usage.cached_input_tokens || 0);
+              const outputTokens = Number(usage.output_tokens || 0);
+              const reasoningTokens = Number(usage.reasoning_output_tokens || 0);
+              const cacheWriteTokens = Number(usage.cache_write_input_tokens || 0);
+              const totalTokens = Number(usage.total_tokens || (inputTokens + outputTokens + cachedInputTokens + cacheWriteTokens + reasoningTokens));
+
+              if (totalTokens > 0) {
+                if (!currentTurn) {
+                  turnIndex++;
+                  let ts = pendingTurnTime;
+                  const rawTime = parsed.timestamp ?? payload.timestamp;
+                  if (!ts && rawTime) {
+                    try {
+                      ts = new Date(rawTime).toISOString();
+                    } catch {}
+                  }
+                  pendingTurnTime = null;
+                  currentTurn = {
+                    turnIndex,
+                    timestamp: ts,
+                    provider: currentProvider,
+                    model: pendingTurnModel || currentModel,
+                    inputTokens: 0,
+                    outputTokens: 0,
+                    cacheReadTokens: 0,
+                    cacheWriteTokens: 0,
+                    reasoningTokens: 0,
+                  };
+                  pendingTurnModel = null;
+                }
+
+                if (!currentTurn.timestamp) {
+                  const rawTime = parsed.timestamp ?? payload.timestamp;
+                  if (rawTime) {
+                    try {
+                      currentTurn.timestamp = new Date(rawTime).toISOString();
+                    } catch {}
+                  }
+                }
+
+                currentTurn.inputTokens += inputTokens;
+                currentTurn.outputTokens += outputTokens;
+                currentTurn.cacheReadTokens += cachedInputTokens;
+                currentTurn.cacheWriteTokens += cacheWriteTokens;
+                currentTurn.reasoningTokens += reasoningTokens;
+              }
+            }
           }
         }
+        flushTurn();
         newProcessedFiles.push(filePath);
       } catch {}
     }

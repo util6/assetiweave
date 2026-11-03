@@ -1547,6 +1547,8 @@ describe("MarkdownContent", () => {
     expect(html).toContain("sticky bottom-0");
     expect(html).toContain("flex min-h-48 flex-col overflow-hidden");
     expect(html).toContain("line-clamp-2 min-w-0 break-words");
+    expect(html).toContain("#1");
+    expect(html).toContain("#2");
   });
 
   it("lists turns in the left rail and renders only the selected turn on the right", () => {
@@ -1756,6 +1758,11 @@ describe("MarkdownContent", () => {
 
     expect(screen.getByRole("heading", { name: "问题" })).toBeTruthy();
     expect(
+      screen.getByRole("button", {
+        name: "复制会话短 ID session-，可直接在 Agent 中使用",
+      }),
+    ).toBeTruthy();
+    expect(
       screen.getByRole("button", { name: "预览问题 同步流程" }),
     ).toBeTruthy();
     expect(
@@ -1765,6 +1772,7 @@ describe("MarkdownContent", () => {
     fireEvent.click(screen.getByRole("button", { name: "收起问题列表" }));
 
     expect(screen.queryByRole("heading", { name: "问题" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^复制会话短 ID/ })).toBeNull();
     expect(
       screen.queryByRole("button", { name: "预览问题 同步流程" }),
     ).toBeNull();

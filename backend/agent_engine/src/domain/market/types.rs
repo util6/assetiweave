@@ -1,23 +1,18 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use validator::Validate;
-
-use super::validation::*;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentMarketProtocol {
     Acp,
-    Native,
 }
 
 impl AgentMarketProtocol {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Acp => "acp",
-            Self::Native => "native",
         }
     }
 }
@@ -26,7 +21,6 @@ impl From<AgentMarketProtocol> for crate::domain::definition::AgentProtocol {
     fn from(p: AgentMarketProtocol) -> Self {
         match p {
             AgentMarketProtocol::Acp => Self::Acp,
-            AgentMarketProtocol::Native => Self::Native,
         }
     }
 }
@@ -35,7 +29,6 @@ impl From<crate::domain::definition::AgentProtocol> for AgentMarketProtocol {
     fn from(p: crate::domain::definition::AgentProtocol) -> Self {
         match p {
             crate::domain::definition::AgentProtocol::Acp => Self::Acp,
-            crate::domain::definition::AgentProtocol::Native => Self::Native,
         }
     }
 }
@@ -43,27 +36,20 @@ impl From<crate::domain::definition::AgentProtocol> for AgentMarketProtocol {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DistributionType {
-    System,
     Binary,
     Npx,
-    Uvx,
 }
 
 impl DistributionType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::System => "system",
             Self::Binary => "binary",
             Self::Npx => "npx",
-            Self::Uvx => "uvx",
         }
     }
 
     pub fn ownership(&self) -> Ownership {
-        match self {
-            Self::System => Ownership::System,
-            Self::Binary | Self::Npx | Self::Uvx => Ownership::Managed,
-        }
+        Ownership::Managed
     }
 }
 
@@ -134,13 +120,12 @@ impl CatalogCapabilities {
                 live_events: true,
                 ..Self::default()
             },
-            AgentMarketProtocol::Native => Self::default(),
         }
     }
 
     pub fn to_declared_agent_capabilities(
         &self,
-        protocol: &AgentMarketProtocol,
+        _protocol: &AgentMarketProtocol,
     ) -> crate::domain::DeclaredAgentCapabilities {
         crate::domain::DeclaredAgentCapabilities {
             text_prompt: self.text_prompt,
@@ -148,9 +133,7 @@ impl CatalogCapabilities {
             history_replay: self.history_replay,
             live_events: self.live_events,
             rich_history_replay: self.rich_history_replay,
-            resume_args: matches!(protocol, AgentMarketProtocol::Native)
-                .then(|| self.resume_args.clone())
-                .flatten(),
+            resume_args: None,
         }
     }
 }
@@ -349,5 +332,65 @@ impl AgentInstallation {
             && self.installation_status == InstallationStatus::Ready
             && self.runtime_status == RuntimeStatus::Ready
             && self.protocol_status == ProtocolStatus::Ready
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpstreamProbeSource {
+    AcpRegistry,
+    Npm,
+}
+
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpstreamBinaryTarget {
+    pub archive: String,
+    #[serde(default)]
+    pub cmd: Option<String>,
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+    #[serde(default)]
+    pub sha256: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpstreamVersionInfo {
+    pub version: String,
+    pub source: UpstreamProbeSource,
+    pub checked_at: String,
+    #[serde(default)]
+    pub binary_targets: HashMap<String, UpstreamBinaryTarget>,
+}
+
+impl UpstreamVersionInfo {
+    pub fn find_binary_target(&self, os: &str, arch: &str) -> Option<&UpstreamBinaryTarget> {
+        let norm_os = match os {
+            "macos" | "darwin" => "darwin",
+            "windows" => "windows",
+            "linux" => "linux",
+            other => other,
+        };
+        let arch_variants = match arch {
+            "aarch64" | "arm64" => vec!["aarch64", "arm64"],
+            "x86_64" | "amd64" => vec!["x86_64", "amd64"],
+            other => vec![other],
+        };
+        let os_variants = if norm_os == "darwin" {
+            vec!["darwin", "macos"]
+        } else {
+            vec![norm_os]
+        };
+
+        for o in &os_variants {
+            for a in &arch_variants {
+                let key = format!("{o}-{a}");
+                if let Some(target) = self.binary_targets.get(&key) {
+                    return Some(target);
+                }
+            }
+        }
+        None
     }
 }

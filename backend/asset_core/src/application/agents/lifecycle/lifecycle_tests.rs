@@ -473,9 +473,9 @@ async fn startup_reconciliation_marks_mismatched_legacy_native_installation_inco
         display_name: "Google Antigravity".to_string(),
         catalog_item_version: "1.0.0".to_string(),
         agent_version: "1.0.0".to_string(),
-        protocol: AgentMarketProtocol::Native,
+        protocol: AgentMarketProtocol::Acp,
         distribution_id: "system-antigravity".to_string(),
-        distribution_type: crate::backend::domain::agents::DistributionType::System,
+        distribution_type: crate::backend::domain::agents::DistributionType::Binary,
         ownership: crate::backend::domain::agents::Ownership::System,
         install_dir: None,
         resolved_program: fake_agy.clone(),
@@ -484,7 +484,7 @@ async fn startup_reconciliation_marks_mismatched_legacy_native_installation_inco
             crate::backend::infrastructure::agent_market::runtime::definition::definition_json(
                 "antigravity",
                 "Google Antigravity",
-                &AgentMarketProtocol::Native,
+                &AgentMarketProtocol::Acp,
                 &fake_agy,
                 &[],
             ),
@@ -598,7 +598,7 @@ async fn startup_reconciliation_marks_mismatched_legacy_native_installation_inco
 
     assert!(fake_agy.is_file());
     assert_eq!(updated.resolved_program, fake_agy);
-    assert_eq!(updated.protocol, AgentMarketProtocol::Native);
+    assert_eq!(updated.protocol, AgentMarketProtocol::Acp);
 
     let final_snapshot = manager.registry().snapshot();
     let registered = final_snapshot.get(&AgentId::parse("antigravity").unwrap());
@@ -614,12 +614,12 @@ async fn test_dynamic_binary_update_uses_upstream_target_archive_and_cmd() {
     let cache_dir = temp_root.join("cache").join("agent-market");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
-    let cache = CatalogCache::new(cache_dir.clone());
+    let cache = crate::backend::infrastructure::agent_market::CatalogCache::new(cache_dir.clone());
     let mut map = std::collections::HashMap::new();
     let mut binary_targets = std::collections::HashMap::new();
     binary_targets.insert(
         "darwin-aarch64".to_string(),
-        crate::backend::infrastructure::agent_market::UpstreamBinaryTarget {
+        crate::backend::domain::agents::UpstreamBinaryTarget {
             archive: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.0-darwin-arm64.zip"
                 .to_string(),
             cmd: Some("./agy_acp_server.par".to_string()),
@@ -629,9 +629,9 @@ async fn test_dynamic_binary_update_uses_upstream_target_archive_and_cmd() {
     );
     map.insert(
         "antigravity".to_string(),
-        crate::backend::infrastructure::agent_market::UpstreamVersionInfo {
+        crate::backend::domain::agents::UpstreamVersionInfo {
             version: "1.4.0".to_string(),
-            source: crate::backend::infrastructure::agent_market::UpstreamProbeSource::AcpRegistry,
+            source: crate::backend::domain::agents::UpstreamProbeSource::AcpRegistry,
             checked_at: "2026-10-16T00:00:00Z".to_string(),
             binary_targets,
         },

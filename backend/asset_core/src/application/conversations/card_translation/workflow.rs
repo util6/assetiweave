@@ -357,7 +357,6 @@ async fn execute_agent_translation(
         replay: false,
         restore_only: false,
         recall_tools: None,
-        memory_generation_tools: None,
         account: None,
     };
     request.validate().map_err(app_error_from_ai)?;

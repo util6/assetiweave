@@ -3,10 +3,9 @@ use std::sync::Arc;
 
 use crate::backend::{
     application::agents::lifecycle::AgentLifecycleCoordinator,
-    domain::agents::Distribution,
+    domain::agents::market::catalog::CatalogService,
     infrastructure::agent_market::{
-        cache::CatalogCache, error::AgentMarketError, layout::default_runtime_root,
-        runtime::AgentRuntimeManager, types::AgentInstallStartRequest,
+        error::AgentMarketError, layout::default_runtime_root, runtime::AgentRuntimeManager,
     },
 };
 
@@ -25,7 +24,7 @@ pub async fn migrate_legacy_assignments(
                 let message = format!("{error}");
                 AgentMarketError::new("settings_load_failed", &message, false)
             })?;
-    let catalog = CatalogCache::best_available()?;
+    let catalog = CatalogService::bundled().map_err(AgentMarketError::Catalog)?;
     let catalog_version = catalog.catalog().catalog_version.clone();
 
     let mut agent_ids = BTreeSet::new();
@@ -91,35 +90,9 @@ pub async fn migrate_legacy_assignments(
             notices.push(format!("{agent_id}: catalog item unavailable"));
             continue;
         };
-        let Some(distribution) = item
-            .distributions
-            .iter()
-            .find(|distribution| matches!(distribution, Distribution::System { .. }))
-        else {
-            notices.push(format!(
-                "{agent_id}: managed installation requires confirmation"
-            ));
-            continue;
-        };
-        let request = AgentInstallStartRequest {
-            agent_id: item.id.clone(),
-            action: "install".to_string(),
-            catalog_version: catalog_version.clone(),
-            agent_version: item.version.clone(),
-            distribution_id: distribution.id().to_string(),
-            preview_token: catalog.preview_token(item, distribution.id(), "install"),
-        };
-        match lifecycle
-            .install_with_cancellation_and_progress(request, None, None, None)
-            .await
-        {
-            Ok(outcome) => {
-                if !outcome.installation.execution_ready() {
-                    notices.push(format!("{agent_id}: installed with degraded health"));
-                }
-            }
-            Err(error) => notices.push(format!("{agent_id}: {}", error.code())),
-        }
+        notices.push(format!(
+            "{agent_id}: managed installation requires confirmation"
+        ));
     }
 
     let mut updated_settings = settings;

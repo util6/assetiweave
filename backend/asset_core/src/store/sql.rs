@@ -25,7 +25,7 @@ WHERE tenant_id = ?1 AND id = ?2
 "#;
 
 pub const LIST_ASSETS: &str = r#"
-SELECT id, source_id, name, kind, format, relative_path, absolute_path,
+SELECT id, source_id, name, kind, format, relative_path, stored_path,
        entry_file, description, content_hash, discovered_at, updated_at,
        detector_id, detector_version
 FROM assets
@@ -34,7 +34,7 @@ ORDER BY name ASC
 "#;
 
 pub const LIST_ASSETS_BY_KIND: &str = r#"
-SELECT id, source_id, name, kind, format, relative_path, absolute_path,
+SELECT id, source_id, name, kind, format, relative_path, stored_path,
        entry_file, description, content_hash, discovered_at, updated_at,
        detector_id, detector_version
 FROM assets
@@ -43,7 +43,7 @@ ORDER BY name ASC
 "#;
 
 pub const LOAD_ASSET: &str = r#"
-SELECT id, source_id, name, kind, format, relative_path, absolute_path,
+SELECT id, source_id, name, kind, format, relative_path, stored_path,
        entry_file, description, content_hash, discovered_at, updated_at,
        detector_id, detector_version
 FROM assets
@@ -310,7 +310,7 @@ WHERE tenant_id = ?3 AND id = ?4
 
 pub const INSERT_ASSET: &str = r#"
 INSERT INTO assets (
-    tenant_id, id, source_id, name, kind, format, relative_path, absolute_path,
+    tenant_id, id, source_id, name, kind, format, relative_path, stored_path,
     entry_file, description, content_hash, discovered_at, updated_at,
     detector_id, detector_version
 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)

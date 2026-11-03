@@ -177,7 +177,6 @@ impl AppService {
                     database_path: self.db_path.to_string_lossy().into_owned(),
                 },
             ),
-            memory_generation_tools: None,
             account: None,
         };
         let agent_runtime = self.agent_runtime.clone();

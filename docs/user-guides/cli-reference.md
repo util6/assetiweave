@@ -3,19 +3,25 @@
 > [!TIP]
 > 如果你需要面向用户和 AI Agent 的详细使用指南、命令说明与例程速查，请参阅 [CLI 用户指南](cli-user-guide.md)。
 
-AssetIWeave CLI 遵循类似飞书/Lark CLI 的分层设计：
+> [!IMPORTANT]
+> **架构跃迁公告**：当前 AssetIWeave CLI 已全面重构升级为纯 **Rust Native 客户端 (`backend/cli`)**。全新的二进制 `aiwc`（兼容全称 `assetiweave-cli`）以 **OneShot In-Process** 方式直接调用统一业务门面 `AppService`，彻底消除了历史基于 stdio JSON-RPC 的跨进程开销，达到微秒级启动。历史 Go 编写的 Cobra 客户端代码已只读归档于 `cli/` 目录。
+
+AssetIWeave CLI 遵循清晰的分层与设计收口：
 
 ```text
-AI / 用户
-  -> 手写快捷别名命令          source / skill / asset / profile
-  -> 自动生成的 App 领域命令    app <method>（由 Rust Contract 驱动）
-  -> 底层 Engine API 接口       api call <method>
-  -> assetiweave-engine       基于 stdio 的 Rust JSON-RPC 协议
-  -> src-tauri/src/service.rs Rust 统一业务服务门面
-  -> SQLite / 文件系统 / 符号链接目标
+AI / 用户 / 脚本
+  ├── 1. 手写快捷别名与领域命令    source / skill / conversation / memory / agent / harvester ...
+  ├── 2. 底层 RPC 接口与 Schema   schema [method] / api call <method> --json '<params>'
+  └── 3. 输出呈现模式             --format table (默认, 优雅表格) / --format json (结构化)
+                │
+                ▼ (OneShot In-Process Direct)
+       backend/asset_core 中的 AppService 统一业务服务门面
+                │
+                ▼
+        SQLite 事实源 + Tantivy 检索 + 单层软链接
 ```
 
-Go 语言编写的 CLI 仅仅是一个客户端。它绝不直接读写 SQLite、复制 Skill 资产或创建符号链接。这些底层操作完全保留在 Rust 后端中，从而确保桌面端 GUI 和命令行 CLI 始终共享完全一致的业务规则。
+Rust Native CLI 绝不绕过 `AppService` 直写 SQLite 或创建悬空软链接，从而确保桌面端 GUI 和命令行 CLI 始终共享完全一致的业务规则与事务一致性。
 
 ## 架构对齐快照
 
@@ -165,7 +171,7 @@ assetiweave-cli config plugins show
 
 插件清单包含插件名称、版本、声明的能力、注册的 Observer/Wrapper/生命周期 Hook 以及 `Restrict` 规则。该诊断命令在 CLI 插件策略下始终允许执行，即使在常规业务命令被限制时，运维人员依然可以检查受限的插件状态。
 
-插件可以在 `Install` 期间通过 `Registrar.Config()` 读取本地配置。CLI 默认从 `$HOME/.assetiweave-cli/plugins.json` 加载配置；可通过设置 `ASSETIWEAVE_CLI_PLUGIN_CONFIG` 覆盖该路径：
+插件可以在 `Install` 期间通过 `Registrar.Config()` 读取本地配置。CLI 默认从 `$HOME/.assetiweave/plugins.json` 加载配置；可通过设置 `ASSETIWEAVE_CLI_PLUGIN_CONFIG` 覆盖该路径：
 
 ```json
 {
@@ -201,7 +207,7 @@ assetiweave-cli config plugins show
 
 Release 构建会自动注入 CLI 产品版本号。`pnpm cli:test:e2e` 会同时启动编译后的 CLI 与 Engine，并验证产品版本对齐、协议兼容性、生成的 App 命令、运行时参数校验、命令策略、调用元数据以及高风险确认流程。
 
-`assetiweave-cli version --check-updates` 会读取远程 Tauri 更新清单，并在 `data.update` 下输出非阻塞的诊断信息。成功的检查会刷新 `$HOME/.assetiweave-cli/update-state.json`。常规的 Release 命令会读取该缓存，并在发现存在更新的 CLI 版本时，向成功与错误 JSON 信封中注入结构化的 `_notice.update` 对象。在 Dev 构建和 CI 环境下该提示会被自动抑制；在自动化脚本中可通过设置 `ASSETIWEAVE_CLI_NO_UPDATE_NOTIFIER=1` 予以抑制。测试和隔离环境可以覆盖 `ASSETIWEAVE_UPDATE_STATE_PATH` 和 `ASSETIWEAVE_UPDATE_MANIFEST_URL`。
+`assetiweave-cli version --check-updates` 会读取远程 Tauri 更新清单，并在 `data.update` 下输出非阻塞的诊断信息。成功的检查会刷新 `$HOME/.assetiweave/update-state.json`。常规的 Release 命令会读取该缓存，并在发现存在更新的 CLI 版本时，向成功与错误 JSON 信封中注入结构化的 `_notice.update` 对象。在 Dev 构建和 CI 环境下该提示会被自动抑制；在自动化脚本中可通过设置 `ASSETIWEAVE_CLI_NO_UPDATE_NOTIFIER=1` 予以抑制。测试和隔离环境可以覆盖 `ASSETIWEAVE_UPDATE_STATE_PATH` 和 `ASSETIWEAVE_UPDATE_MANIFEST_URL`。
 
 `assetiweave-cli update --check` 使用相同的更新清单来解析 GitHub Release 下载地址及当前平台对应的 CLI 工具归档包（如 `assetiweave-tools-v0.1.1-macos-arm64.tar.gz`）及其 `.sha256` 校验和。`assetiweave-cli update --yes` 会下载这两个文件，校验 SHA256，解压到临时目录，并原子替换当前运行可执行文件所在目录下的 `assetiweave-cli` 和 `assetiweave-engine`，安装失败时自动回滚。
 

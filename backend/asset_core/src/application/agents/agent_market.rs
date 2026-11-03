@@ -8,57 +8,92 @@ use crate::backend::application::{AppError, AppResult};
 
 use crate::backend::application::agents::lifecycle::AgentLifecycleCoordinator;
 use crate::backend::application::agents::migration::migrate_legacy_assignments;
+use crate::backend::domain::agents::market::catalog::CatalogService;
 use crate::backend::domain::agents::{
     market::CatalogCapabilities, market::Verification, AgentInstallation, AgentMarketProtocol,
     CatalogItem, Distribution, DistributionCandidate, DistributionSelectionContext,
     DistributionSelector, DistributionType, InstallationStatus, Ownership, ProtocolStatus,
-    RuntimeStatus, SystemObservation,
+    RuntimeStatus,
 };
 use crate::backend::infrastructure::agent_market::{
     default_runtime_root, is_safe_managed_install_path, AgentInstallPreviewRequest,
     AgentInstallStartRequest, AgentInstallationView, AgentMarketError, AgentMarketErrorView,
     AgentMarketListRequest, AgentUninstallStartRequest, CatalogCache, CatalogRefreshOutcome,
-    InstallContext, Installer, LifecycleTaskPhase, SystemInstaller,
+    InstallContext, Installer, LifecycleTaskPhase,
 };
 use crate::backend::infrastructure::extensions::TrustGate;
 use crate::backend::infrastructure::runtime::AppRuntime;
-use crate::backend::store::system::AgentInstallationRepository;
+use crate::backend::store::system::{
+    AgentCatalogReleaseMeta, AgentInstallationRepository, ExtensionCatalogRelease,
+    ExtensionCatalogReleaseRepository,
+};
 use std::path::Path;
 
 pub use super::agent_market_lifecycle::*;
 pub use super::agent_market_types::*;
 
 impl AppService {
-    pub fn refresh_agent_market_catalog(&self) -> AppResult<AgentMarketRefreshResult> {
-        let result = CatalogCache::refresh_default()?;
-        let (status, catalog, etag) = match result {
-            CatalogRefreshOutcome::Updated { catalog, etag } => ("updated", catalog, etag),
-            CatalogRefreshOutcome::NotModified { catalog, etag } => ("not_modified", catalog, etag),
-        };
-        let active_catalog_version = CatalogCache::best_available()?
-            .catalog()
-            .catalog_version
-            .clone();
+    pub async fn ensure_agent_catalog_releases_seeded(&self) -> AppResult<()> {
+        let repo = ExtensionCatalogReleaseRepository::new(self.db.pool().clone());
+        repo.ensure_agent_seeded().await?;
+        Ok(())
+    }
 
-        if let Ok(client) = crate::backend::infrastructure::http_client::shared_http_client() {
-            let upstream_versions =
+    pub async fn refresh_agent_market_catalog(&self) -> AppResult<AgentMarketRefreshResult> {
+        self.ensure_agent_catalog_releases_seeded().await?;
+        let repo = ExtensionCatalogReleaseRepository::new(self.db.pool().clone());
+        let bundled =
+            CatalogService::bundled().map_err(|e| AppError::from(AgentMarketError::Catalog(e)))?;
+        let catalog = (*bundled.catalog()).clone();
+        let cached_etag = repo
+            .get_latest_etag("assetiweave-curated")
+            .await
+            .ok()
+            .flatten();
+
+        let mut upstream_versions = std::collections::HashMap::new();
+        let items = catalog.items.clone();
+        if let Ok(probed) = tokio::task::spawn_blocking(move || {
+            if let Ok(client) = crate::backend::infrastructure::http_client::shared_http_client() {
                 crate::backend::infrastructure::agent_market::UpstreamProbe::probe_catalog_items(
-                    &client,
-                    &catalog.items,
-                );
-            if let Some(cache) = CatalogCache::in_app_cache() {
-                let _ = cache.save_upstream_versions(&upstream_versions);
+                    &client, &items,
+                )
+            } else {
+                std::collections::HashMap::new()
             }
+        })
+        .await
+        {
+            upstream_versions = probed;
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut releases = Vec::new();
+        for item in &catalog.items {
+            let upstream = upstream_versions.get(&item.id);
+            if let Ok(release) = ExtensionCatalogRelease::from_agent_item(
+                "assetiweave-curated",
+                &catalog.catalog_version,
+                item,
+                upstream,
+                cached_etag.as_deref(),
+                &now,
+            ) {
+                releases.push(release);
+            }
+        }
+        if !releases.is_empty() {
+            repo.batch_upsert(&releases).await?;
         }
 
         Ok(AgentMarketRefreshResult {
-            status: status.to_string(),
+            status: "updated".to_string(),
             catalog_version: catalog.catalog_version.clone(),
-            active_catalog_version,
-            downloaded_catalog_version: catalog.catalog_version,
+            active_catalog_version: catalog.catalog_version.clone(),
+            downloaded_catalog_version: catalog.catalog_version.clone(),
             item_count: catalog.items.len(),
             source: "remote_curated".to_string(),
-            etag,
+            etag: cached_etag,
         })
     }
 
@@ -66,11 +101,10 @@ impl AppService {
         &self,
         request: AgentMarketListRequest,
     ) -> AppResult<Vec<AgentMarketItemView>> {
-        let catalog = CatalogCache::best_available()?;
+        self.ensure_agent_catalog_releases_seeded().await?;
+        let repo = ExtensionCatalogReleaseRepository::new(self.db.pool().clone());
+        let releases = repo.list_by_capability("agent").await?;
         let installations = self.list_agent_installations().await?;
-        let upstream_versions = CatalogCache::in_app_cache()
-            .map(|cache| cache.read_upstream_versions())
-            .unwrap_or_default();
         let context = host_distribution_context();
         let query = request
             .query
@@ -78,30 +112,55 @@ impl AppService {
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase();
+
+        let mut seen = std::collections::HashSet::new();
+        let mut metas = Vec::new();
+        for release in releases {
+            if seen.insert(release.extension_id.clone()) {
+                if let Ok(meta) = release.parse_agent_meta() {
+                    metas.push(meta);
+                }
+            }
+        }
+        if metas.is_empty() {
+            if let Ok(bundled) = CatalogService::bundled() {
+                for item in &bundled.catalog().items {
+                    metas.push(AgentCatalogReleaseMeta {
+                        catalog_version: bundled.catalog().catalog_version.clone(),
+                        item: item.clone(),
+                        upstream_info: None,
+                        etag: None,
+                    });
+                }
+            }
+        }
+
         let mut views = Vec::new();
-        for item in catalog
-            .catalog()
-            .items
+        for meta in metas
             .iter()
-            .filter(|item| {
+            .filter(|meta| {
                 request
                     .protocol
                     .as_ref()
-                    .is_none_or(|protocol| protocol == &item.protocol)
+                    .is_none_or(|protocol| protocol == &meta.item.protocol)
             })
-            .filter(|item| {
+            .filter(|meta| {
                 query.is_empty()
-                    || format!("{} {} {}", item.id, item.display_name, item.description)
-                        .to_ascii_lowercase()
-                        .contains(&query)
+                    || format!(
+                        "{} {} {}",
+                        meta.item.id, meta.item.display_name, meta.item.description
+                    )
+                    .to_ascii_lowercase()
+                    .contains(&query)
             })
-            .filter(|item| {
+            .filter(|meta| {
                 !request.installed_only
                     || installations
                         .iter()
-                        .any(|installation| installation.agent_id == item.id)
+                        .any(|installation| installation.agent_id == meta.item.id)
             })
         {
+            let item = &meta.item;
             let mut item_context = context.clone();
             probe_item_system_distributions(item, &mut item_context).await;
             let candidates = DistributionSelector::select(item, &item_context, None)?;
@@ -119,8 +178,9 @@ impl AppService {
                 {
                     return false;
                 }
-                let upstream_newer = upstream_versions
-                    .get(&item.id)
+                let upstream_newer = meta
+                    .upstream_info
+                    .as_ref()
                     .map(|up| {
                         crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
                             &up.version,
@@ -141,7 +201,7 @@ impl AppService {
             }
             views.push(AgentMarketItemView {
                 id: item.id.clone(),
-                catalog_version: catalog.catalog().catalog_version.clone(),
+                catalog_version: meta.catalog_version.clone(),
                 display_name: item.display_name.clone(),
                 description: item.description.clone(),
                 protocol: item.protocol.clone(),
@@ -164,37 +224,45 @@ impl AppService {
     }
 
     pub async fn list_installed_agents(&self) -> AppResult<Vec<AgentInstallationView>> {
-        let catalog = CatalogCache::best_available().ok();
-        let upstream_versions = CatalogCache::in_app_cache()
-            .map(|cache| cache.read_upstream_versions())
-            .unwrap_or_default();
+        self.ensure_agent_catalog_releases_seeded().await?;
+        let repo = ExtensionCatalogReleaseRepository::new(self.db.pool().clone());
+        let releases = repo.list_by_capability("agent").await.unwrap_or_default();
+        let mut metas: std::collections::HashMap<String, AgentCatalogReleaseMeta> =
+            std::collections::HashMap::new();
+        for release in releases {
+            if !metas.contains_key(&release.extension_id) {
+                if let Ok(meta) = release.parse_agent_meta() {
+                    metas.insert(release.extension_id.clone(), meta);
+                }
+            }
+        }
         Ok(self
             .list_agent_installations()
             .await?
             .iter()
             .map(|inst| {
                 let mut view = installation_view(inst);
-                if let Some(ref cat) = catalog {
-                    if let Some(item) = cat.catalog().items.iter().find(|i| i.id == inst.agent_id) {
-                        let is_compatible = view.installation_status != "incompatible"
-                            && view.protocol == item.protocol;
-                        if is_compatible {
-                            let upstream_newer = upstream_versions
-                                .get(&inst.agent_id)
-                                .map(|up| {
-                                    crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
-                                        &up.version,
-                                        &view.version,
-                                    )
-                                })
-                                .unwrap_or(false);
-                            let catalog_newer =
+                if let Some(meta) = metas.get(&inst.agent_id) {
+                    let item = &meta.item;
+                    let is_compatible = view.installation_status != "incompatible"
+                        && view.protocol == item.protocol;
+                    if is_compatible {
+                        let upstream_newer = meta
+                            .upstream_info
+                            .as_ref()
+                            .map(|up| {
                                 crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
-                                    &item.version,
+                                    &up.version,
                                     &view.version,
-                                );
-                            view.update_available = upstream_newer || catalog_newer;
-                        }
+                                )
+                            })
+                            .unwrap_or(false);
+                        let catalog_newer =
+                            crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
+                                &item.version,
+                                &view.version,
+                            );
+                        view.update_available = upstream_newer || catalog_newer;
                     }
                 }
                 view
@@ -203,42 +271,35 @@ impl AppService {
     }
 
     pub async fn get_installed_agent(&self, agent_id: String) -> AppResult<AgentInstallationView> {
-        let catalog = CatalogCache::best_available().ok();
-        let upstream_versions = CatalogCache::in_app_cache()
-            .map(|cache| cache.read_upstream_versions())
-            .unwrap_or_default();
+        let repo = ExtensionCatalogReleaseRepository::new(self.db.pool().clone());
+        let meta = repo.get_latest_agent_meta(&agent_id).await.ok().flatten();
         self.list_agent_installations()
             .await?
             .into_iter()
             .find(|installation| installation.agent_id == agent_id)
             .map(|installation| {
                 let mut view = installation_view(&installation);
-                if let Some(ref cat) = catalog {
-                    if let Some(item) = cat
-                        .catalog()
-                        .items
-                        .iter()
-                        .find(|i| i.id == installation.agent_id)
-                    {
-                        let is_compatible = view.installation_status != "incompatible"
-                            && view.protocol == item.protocol;
-                        if is_compatible {
-                            let upstream_newer = upstream_versions
-                                .get(&installation.agent_id)
-                                .map(|up| {
-                                    crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
-                                        &up.version,
-                                        &view.version,
-                                    )
-                                })
-                                .unwrap_or(false);
-                            let catalog_newer =
+                if let Some((_, meta)) = meta {
+                    let item = meta.item;
+                    let is_compatible = view.installation_status != "incompatible"
+                        && view.protocol == item.protocol;
+                    if is_compatible {
+                        let upstream_newer = meta
+                            .upstream_info
+                            .as_ref()
+                            .map(|up| {
                                 crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
-                                    &item.version,
+                                    &up.version,
                                     &view.version,
-                                );
-                            view.update_available = upstream_newer || catalog_newer;
-                        }
+                                )
+                            })
+                            .unwrap_or(false);
+                        let catalog_newer =
+                            crate::backend::infrastructure::agent_market::UpstreamProbe::semver_is_newer(
+                                &item.version,
+                                &view.version,
+                            );
+                        view.update_available = upstream_newer || catalog_newer;
                     }
                 }
                 view

@@ -6544,8 +6544,7 @@
               "null"
             ],
             "enum": [
-              "acp",
-              "native"
+              "acp"
             ],
             "description": "Optional Agent protocol filter"
           },

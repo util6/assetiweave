@@ -164,6 +164,18 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                 };
                 render::render_json_value(&res);
             }
+            ConversationAdapterCommands::Upgrade(u) => {
+                let params = asset_core::application::ConversationAdapterWorkspaceUpgradeParams {
+                    package_dir: u.package_dir,
+                    developer: u.developer,
+                    dry_run: u.dry_run,
+                };
+                let res = service
+                    .conversation()
+                    .upgrade_adapter_workspace(params)
+                    .await?;
+                render::render_json_value(&res);
+            }
         },
         ConversationCommands::Source(s) => match s.command {
             ConversationSourceCommands::List => {

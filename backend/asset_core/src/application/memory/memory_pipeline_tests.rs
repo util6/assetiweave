@@ -199,13 +199,10 @@ async fn test_force_rebuild_resets_watermarks() {
     // 磁盘存储目录必须已被清理并重新初始化干净分层结构
     assert!(!storage.root_dir().join("sessions/fake-sess-1.md").exists());
     assert!(!storage.root_dir().join("recent/latest.md").exists());
-    assert!(storage.sessions_dir().exists());
+    assert!(storage.state_dir().exists());
+    assert!(storage.state_projects_dir().exists());
     assert!(storage.recent_dir().exists());
     assert!(storage.projects_dir().exists());
-    assert_eq!(
-        std::fs::read_dir(storage.sessions_dir()).unwrap().count(),
-        0
-    );
     assert_eq!(std::fs::read_dir(storage.recent_dir()).unwrap().count(), 0);
     assert_eq!(
         std::fs::read_dir(storage.projects_dir()).unwrap().count(),

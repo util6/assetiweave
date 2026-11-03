@@ -40,6 +40,18 @@ pub trait DomainPackageSystem: Send + Sync {
     fn inspect(&self, dir: &Path) -> Result<InspectedPackage, ExtensionError>;
 }
 
+pub mod installers;
+pub mod layout;
+pub mod manifest;
+pub mod upstream_probe;
+
+pub use layout::{
+    cleanup_runtime_directories, default_runtime_root, ensure_runtime_root,
+    is_safe_managed_install_path, STAGING_RETENTION,
+};
+pub use manifest::*;
+pub use upstream_probe::*;
+
 #[cfg(test)]
 #[path = "extensions_tests.rs"]
 mod tests;

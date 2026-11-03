@@ -54,14 +54,9 @@ pub(crate) fn refresh_agent_market(
         let task_id = snapshot.id.clone();
         let runtime = state.runtime.clone();
         tauri::async_runtime::spawn(async move {
-            let result = match tauri::async_runtime::spawn_blocking(move || {
-                AppService::from_runtime(&runtime).refresh_agent_market_catalog()
-            })
-            .await
-            {
-                Ok(result) => result,
-                Err(error) => Err(AppError::External(error.to_string())),
-            };
+            let result = AppService::from_runtime(&runtime)
+                .refresh_agent_market_catalog()
+                .await;
             if let Ok(snapshot) = tasks.finish_agent_market_refresh(&task_id, result) {
                 let _ = app.emit(AGENT_MARKET_REFRESH_TASK_UPDATED_EVENT, &snapshot);
             }

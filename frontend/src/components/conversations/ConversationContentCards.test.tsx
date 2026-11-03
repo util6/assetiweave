@@ -119,6 +119,42 @@ describe("ConversationContentCards", () => {
     expect(html).toContain("Declared result");
   });
 
+  it("keeps the cards grid from being inflated by long unbreakable tokens", () => {
+    const blocks = buildConversationContentBlocks([
+      {
+        id: "part-result-long-token",
+        turn_id: "turn-1",
+        part_index: 0,
+        role: "tool",
+        kind: "tool",
+        text: `hash: ${"a".repeat(300)}`,
+        content_card: {
+          schema_version: 1,
+          kind: "result",
+          renderer: "markdown",
+        },
+      },
+    ]);
+
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={blocks}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    // 卡片列容器必须显式声明 minmax(0, 1fr) 单列，否则隐式 auto 轨道会按
+    // 卡片正文里不可断 token 的 min-content 撑宽，整列溢出内容面板。
+    expect(html).toContain("grid grid-cols-[minmax(0,1fr)] gap-3");
+  });
+
   it("renders identical cards regardless of whether metadata_json is provided or stripped", () => {
     const partWithMeta: ConversationPart = {
       id: "part-test",

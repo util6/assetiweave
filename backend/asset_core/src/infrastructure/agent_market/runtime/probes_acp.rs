@@ -16,8 +16,8 @@ use crate::backend::{
         agent_execution::{
             backends::{
                 acp::{
-                    AcpConnectionStage, AcpExecutionBackend, AcpModelDiscoveryOutcome,
-                    AcpProbeReport, AcpProtocolConnectionOutcome,
+                    AcpConnectionStage, AcpModelDiscoveryOutcome, AcpProbeReport,
+                    AcpProtocolConnectionOutcome,
                 },
                 acp_guard::is_transient_probe_failure,
             },
@@ -31,7 +31,6 @@ use super::{
     definition::definition_from_installation,
     model_cache::{AgentProbeIdentity, ProbeFlight, SharedProbeError},
     probes_acp_health::*,
-    probes_native::unavailable_models,
     AgentRuntimeManager,
 };
 
@@ -420,8 +419,8 @@ impl AgentRuntimeManager {
             )
         })?;
 
-        let backend = AcpExecutionBackend::new(self.workspace_root.clone());
-        let report = backend
+        let report = self
+            .executor
             .probe_connection_and_models(&definition, cancellation)
             .await;
         Ok(report)

@@ -39,17 +39,6 @@ pub async fn run_prompt_and_aggregate(
             request.limits.text_bytes,
             ["memory_recall_search", "memory_recall_block"],
         ))
-    } else if request.memory_generation_tools.is_some() {
-        PromptAggregator::ReadOnlyTools(ReadOnlyToolTextAggregator::new(
-            session_id.clone(),
-            request.limits.text_bytes,
-            [
-                "get_session_outline",
-                "search_session_content",
-                "read_question_content",
-                "read_content_node",
-            ],
-        ))
     } else {
         PromptAggregator::Translation(TranslationTextAggregator::new(
             session_id.clone(),

@@ -178,6 +178,24 @@ describe("ConversationMarkdown", () => {
     });
   });
 
+  it("constrains markdown images and long unbreakable tokens to the content column", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent
+        value={[
+          "![receipt](https://example.com/receipt.png)",
+          "",
+          "hash: " + "a".repeat(300),
+        ].join("\n\n")}
+      />,
+    );
+
+    // 未接管 img 时天生的 max-width:none 会把卡片与整列撑开；
+    // overflow-wrap: anywhere 让超长不可断 token 参与 min-content 计算并允许换行。
+    expect(html).toContain('class="max-w-full h-auto rounded-lg"');
+    expect(html).toContain("[overflow-wrap:anywhere]");
+    expect(html).toContain("https://example.com/receipt.png");
+  });
+
   it("parses aiwc://session URI correctly and triggers onNavigateSession on click", () => {
     expect(parseAiwcSessionUri("aiwc://session/38623279/turn/2")).toEqual({
       sessionId: "38623279",

@@ -367,6 +367,9 @@
 
   .conversation-column-scroll {
     display: grid;
+    /* 隐式 auto 轨道的最小尺寸取子项 min-content：Turn 轨里的单行省略文本会把它撑到整行宽度，
+       整列随之溢出并在可视边界处被硬裁（省略号画在可视区之外）。显式声明 minmax(0, 1fr) 收口。 */
+    grid-template-columns: minmax(0, 1fr);
     align-content: start;
     gap: 0.5rem;
     padding: 0.5rem;
@@ -540,6 +543,7 @@
 
   .conversation-search-group {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.5rem;
     padding: 0.5rem;
   }

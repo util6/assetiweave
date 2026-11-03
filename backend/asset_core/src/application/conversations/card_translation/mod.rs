@@ -51,7 +51,6 @@ impl AppService {
                 replay: false,
                 restore_only: false,
                 recall_tools: None,
-                memory_generation_tools: None,
                 account: None,
             })
             .await

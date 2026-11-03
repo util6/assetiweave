@@ -27,6 +27,9 @@ pub async fn seed_prepared_builtin_adapters(
     Ok(())
 }
 
+/// Collapse legacy host-absolute paths back into portable anchors for one
+/// tenant: conversation adapters, adapter packages, package versions and
+/// conversation sources. Idempotent; only changed rows are rewritten.
 pub async fn normalize_conversation_paths(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
     for mut adapter in store::list_conversation_adapters_sqlx(pool, tenant_id).await? {
         crate::backend::infrastructure::path_utils::normalize_conversation_adapter_paths(
@@ -34,6 +37,11 @@ pub async fn normalize_conversation_paths(pool: &SqlitePool, tenant_id: &str) ->
         )?;
         store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter).await?;
     }
+
+    crate::backend::application::conversations::conversation_sources::normalize_persisted_sources(
+        pool, tenant_id,
+    )
+    .await?;
 
     for mut package in store::list_conversation_adapter_packages_sqlx(pool).await? {
         crate::backend::infrastructure::path_utils::normalize_conversation_adapter_package_paths(

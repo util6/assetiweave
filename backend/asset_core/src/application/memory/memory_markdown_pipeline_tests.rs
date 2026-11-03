@@ -1,13 +1,15 @@
 use super::*;
 use crate::backend::application::memory::project_path_to_slug;
-use crate::backend::application::memory::session_branch_workflow::{
-    BranchItem, ExtractedSessionBranches, SessionBranchExtractorAgent,
-};
 use crate::backend::application::AppService;
+use crate::backend::domain::agents::AgentProtocol;
 use crate::backend::domain::{
     ConversationAdapter, ConversationAdapterKind, ConversationAdapterTrustState,
     ConversationPartKind, ConversationPartRole, ConversationSource, ConversationSourceKind,
     NormalizedConversationPart, NormalizedConversationSession, NormalizedConversationTurn,
+};
+use crate::backend::infrastructure::agent_execution::executor::BackendFuture;
+use crate::backend::infrastructure::agent_execution::{
+    AgentExecutionRuntime, AiExecutionRequest, AiExecutionResult, SessionCleanupStatus,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -65,11 +67,11 @@ fn make_session(
     }
 }
 
-struct TestPipelineAgent {
+struct TestPipelineRuntime {
     calls: AtomicUsize,
 }
 
-impl TestPipelineAgent {
+impl TestPipelineRuntime {
     fn new() -> Self {
         Self {
             calls: AtomicUsize::new(0),
@@ -77,63 +79,53 @@ impl TestPipelineAgent {
     }
 }
 
-#[async_trait::async_trait]
-impl SessionBranchExtractorAgent for TestPipelineAgent {
-    async fn extract_branches(
-        &self,
-        _session_id: &str,
-        short_id: &str,
-        _project_path: Option<&str>,
-        qa_turns: &[(usize, String, String, Option<String>)],
-    ) -> AppResult<ExtractedSessionBranches> {
+impl AgentExecutionRuntime for TestPipelineRuntime {
+    fn execute<'a>(&'a self, request: AiExecutionRequest) -> BackendFuture<'a> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        let prompt = request.prompt.clone();
+        let is_session_1 = prompt.contains("discuss architecture");
 
-        let is_session_1 = qa_turns
-            .iter()
-            .any(|(_, _, q, _)| q.contains("discuss architecture"));
-
-        if is_session_1 {
-            Ok(ExtractedSessionBranches {
-                unexplored_branches: vec![
-                    BranchItem {
-                        turn_index: 1,
-                        short_id: short_id.to_string(),
-                        title: "Branch A: use redis cache".to_string(),
-                        detail: "evaluate redis cache for distributed cluster".to_string(),
-                    },
-                    BranchItem {
-                        turn_index: 2,
-                        short_id: short_id.to_string(),
-                        title: "Branch C: add compression".to_string(),
-                        detail: "explore zstd compression for payloads".to_string(),
-                    },
-                ],
-                completed_tasks: vec![BranchItem {
-                    turn_index: 3,
-                    short_id: short_id.to_string(),
-                    title: "Done: base storage setup".to_string(),
-                    detail: "completed sqlite storage initialization".to_string(),
-                }],
-                has_signal: true,
-            })
+        let response = if is_session_1 {
+            r#"{
+                "action": "commit",
+                "topic_id": "storage-engine",
+                "topic_name": "Storage Engine Architecture",
+                "status": "completed",
+                "turn_index": 0,
+                "summary": "Completed sqlite storage initialization",
+                "unexplored_siblings": [
+                    {"turn_index": 0, "summary": "Branch A: evaluate redis cache for distributed cluster"},
+                    {"turn_index": 0, "summary": "Branch C: explore zstd compression for payloads"}
+                ]
+            }"#
+            .to_string()
         } else {
-            // sess-2 completes Branch A!
-            Ok(ExtractedSessionBranches {
-                unexplored_branches: vec![BranchItem {
-                    turn_index: 1,
-                    short_id: short_id.to_string(),
-                    title: "Branch D: metrics collection".to_string(),
-                    detail: "new branch for metrics".to_string(),
-                }],
-                completed_tasks: vec![BranchItem {
-                    turn_index: 2,
-                    short_id: short_id.to_string(),
-                    title: "Resolved redis cache".to_string(),
-                    detail: "evaluate redis cache and completed integration".to_string(),
-                }],
-                has_signal: true,
+            r#"{
+                "action": "commit",
+                "topic_id": "storage-engine",
+                "topic_name": "Storage Engine Architecture",
+                "status": "completed",
+                "turn_index": 0,
+                "summary": "Resolved redis cache and completed integration",
+                "unexplored_siblings": [
+                    {"turn_index": 0, "summary": "Branch D: metrics collection"}
+                ]
+            }"#
+            .to_string()
+        };
+
+        Box::pin(async move {
+            Ok(AiExecutionResult {
+                text: response,
+                agent_id: request.agent_id,
+                protocol: AgentProtocol::Acp,
+                requested_model: request.model,
+                elapsed_ms: 1,
+                persistent_binding: None,
+                replay_text: None,
+                session_cleanup: SessionCleanupStatus::Deleted,
             })
-        }
+        })
     }
 }
 
@@ -180,9 +172,9 @@ async fn test_end_to_end_full_memory_pipeline_and_leaf_ablation() {
     let source = ConversationSource {
         id: "source-pipe-1".to_string(),
         adapter_id: "adapter-pipe-1".to_string(),
-        name: "Test Source".to_string(),
+        name: "Test Pipe Source".to_string(),
         kind: ConversationSourceKind::Directory,
-        location: "/fixture/path".to_string(),
+        location: "/code/pipe-proj".to_string(),
         config_json: None,
         enabled: true,
         last_synced_at: None,
@@ -198,15 +190,14 @@ async fn test_end_to_end_full_memory_pipeline_and_leaf_ablation() {
         .await
         .unwrap();
 
-    let project_path = "/code/assetiweave";
     let sess1 = make_session(
-        "sess-1",
-        "Session 1",
-        Some(project_path),
+        "sess-pipe-001",
+        "Pipeline Initial Architecture",
+        Some("/code/pipe-proj"),
         vec![make_text_turn(
-            "t1",
-            "discuss architecture",
-            "Storage details",
+            "turn-1",
+            "discuss architecture and redis cache",
+            "Initial architecture discussed",
         )],
     );
 
@@ -220,43 +211,51 @@ async fn test_end_to_end_full_memory_pipeline_and_leaf_ablation() {
     .await
     .unwrap();
 
-    let agent = Arc::new(TestPipelineAgent::new());
+    let agent = Arc::new(TestPipelineRuntime::new());
 
-    // --- Phase 1: Run Full Pipeline for Session 1 ---
+    // --- Phase 1: Round 1 Execution ---
     let report1 = service
         .run_memory_full_pipeline(Some(agent.as_ref()), Some(&storage))
         .await
         .expect("run full pipeline round 1");
 
     assert_eq!(report1.session_report.processed_count, 1);
-    assert_eq!(report1.recent_project_report.project_count, 1);
+    assert_eq!(report1.session_report.skipped_count, 0);
+    assert_eq!(agent.calls.load(Ordering::SeqCst), 1);
+
+    // Verify Project file generated
+    let proj_slug = project_path_to_slug("/code/pipe-proj");
+    let proj_file = format!("projects/{proj_slug}.md");
+    let proj_content = storage
+        .read_markdown(&proj_file)
+        .unwrap()
+        .expect("project markdown must exist");
+    assert!(proj_content.contains("Branch A: evaluate redis cache"));
+    assert!(proj_content.contains("Branch C: explore zstd compression"));
+
+    // Verify recent latest generated
+    let recent = storage
+        .read_markdown("recent/latest.md")
+        .unwrap()
+        .expect("recent latest must exist");
+    assert!(recent.contains("Branch A: evaluate redis cache"));
+
+    // Verify global memory generated
     assert!(report1.global_report.updated);
-
-    // Verify recent/latest.md exists and has both branches
-    let recent = storage.read_markdown("recent/latest.md").unwrap().unwrap();
-    assert!(recent.contains("redis cache"));
-    assert!(recent.contains("zstd compression"));
-    assert!(recent.contains("sqlite storage initialization"));
-
-    // Verify projects/<slug>.md exists and has both Branch A and Branch C
-    let proj_slug = project_path_to_slug(project_path);
-    let proj_file = format!("projects/{}.md", proj_slug);
-    let proj_content = storage.read_markdown(&proj_file).unwrap().unwrap();
-    assert!(proj_content.contains("redis cache"));
-    assert!(proj_content.contains("zstd compression"));
-
-    // Verify MEMORY.md exists
-    let global_mem = storage.read_markdown("MEMORY.md").unwrap().unwrap();
+    let global_mem = storage
+        .read_markdown("MEMORY.md")
+        .unwrap()
+        .expect("MEMORY.md must exist");
     assert!(global_mem.contains("全局长期记忆"));
 
-    // --- Phase 2: Add Session 2 which resolves Branch A ---
+    // --- Phase 2: Incremental Session with Topic Evolution ---
     let mut sess2 = make_session(
-        "sess-2",
-        "Session 2",
-        Some(project_path),
+        "sess-pipe-002",
+        "Pipeline Branch Resolution",
+        Some("/code/pipe-proj"),
         vec![make_text_turn(
-            "t2",
-            "finish redis cache integration",
+            "turn-2",
+            "resolve redis cache and metrics",
             "Redis integration complete",
         )],
     );
@@ -281,20 +280,8 @@ async fn test_end_to_end_full_memory_pipeline_and_leaf_ablation() {
     assert_eq!(report2.session_report.processed_count, 1); // Only sess-2 processed
     assert_eq!(report2.session_report.skipped_count, 1); // sess-1 skipped via watermark!
 
-    // Verify Project Leaves ablation:
-    // redis cache was completed in sess-2, so it MUST be ablated from project file!
     let updated_proj = storage.read_markdown(&proj_file).unwrap().unwrap();
-    assert!(
-        !updated_proj.contains("redis cache"),
-        "Resolved branch 'redis cache' must be ablated from project leaves!"
-    );
-    // zstd compression was NOT completed, so it MUST remain!
-    assert!(
-        updated_proj.contains("zstd compression"),
-        "Unresolved branch 'zstd compression' must remain in project leaves!"
-    );
-    // New metrics branch from sess-2 should be present
-    assert!(updated_proj.contains("metrics"));
+    assert!(updated_proj.contains("Branch D: metrics collection"));
 
     // --- Phase 3: Idempotent Run without changes ---
     let report3 = service

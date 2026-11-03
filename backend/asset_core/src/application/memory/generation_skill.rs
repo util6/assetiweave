@@ -19,8 +19,11 @@ impl AppService {
 
         if let Some(asset_id) = custom_skill_id {
             let asset = self.validate_generation_skill_asset(asset_id).await?;
-            return fs::read_to_string(PathBuf::from(asset.absolute_path).join("SKILL.md"))
-                .map_err(AppError::external);
+            return fs::read_to_string(
+                crate::backend::infrastructure::path_utils::resolve_asset_path(&asset)?
+                    .join("SKILL.md"),
+            )
+            .map_err(AppError::external);
         }
 
         let template_root = system_skill_root()?.join("assetiweave-memory-generation");
@@ -74,7 +77,7 @@ impl AppService {
             )));
         }
 
-        let skill_dir = PathBuf::from(&asset.absolute_path);
+        let skill_dir = crate::backend::infrastructure::path_utils::resolve_asset_path(&asset)?;
         let entry_path = skill_dir.join("SKILL.md");
 
         if !entry_path.exists() || !entry_path.is_file() {
@@ -144,7 +147,7 @@ impl AppService {
         if let Some(asset_id) = custom_skill_id {
             // 用户配置了自定义 Skill，必须严格校验；失败时不静默回退
             let asset = self.validate_generation_skill_asset(asset_id).await?;
-            let skill_dir = PathBuf::from(&asset.absolute_path);
+            let skill_dir = crate::backend::infrastructure::path_utils::resolve_asset_path(&asset)?;
             let entry_path = skill_dir.join("SKILL.md");
 
             let entry_bytes = fs::read(&entry_path).map_err(AppError::external)?;
@@ -261,7 +264,8 @@ impl AppService {
             .into_iter()
             .find(|a| {
                 a.kind == AssetKind::Skill
-                    && a.absolute_path == target_dir.to_string_lossy().to_string()
+                    && crate::backend::infrastructure::path_utils::resolve_asset_path(a)
+                        .is_ok_and(|path| path == target_dir)
             })
             .ok_or_else(|| {
                 AppError::NotFound(

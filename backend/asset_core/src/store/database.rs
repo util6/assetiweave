@@ -2,7 +2,7 @@ use crate::backend::store::{StoreError, StoreResult};
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    AssertSqlSafe, Row, SqlSafeStr, SqlitePool,
+    AssertSqlSafe, Row, SqlitePool,
 };
 use std::{path::Path, time::Duration};
 
@@ -97,7 +97,7 @@ pub async fn count_rows(pool: &SqlitePool, tenant_id: &str, table: &str) -> Stor
         other => {
             return Err(StoreError::Validation(format!(
                 "unsupported count table: {other}"
-            )))
+            )));
         }
     };
     Ok(count as usize)
@@ -127,12 +127,61 @@ pub async fn open_migrated_pool(db_path: &Path) -> StoreResult<SqlitePool> {
     if is_untracked_legacy_database(&pool).await? {
         upgrade_legacy_schema(&pool).await?;
     }
-    repair_known_modified_catalog_release_migration(&pool).await?;
+    repair_legacy_migration_ledger_versions(&pool).await?;
     repair_known_modified_conversation_question_contract_migration(&pool).await?;
     repair_known_modified_cleanup_util6_orphans_migration(&pool).await?;
     normalize_legacy_part_ids(&pool).await?;
     MIGRATOR.run(&pool).await.map_err(StoreError::external)?;
+    converge_asset_stored_paths(&pool).await?;
     Ok(pool)
+}
+
+/// 把历史遗留的主机绝对路径回填为便携锚点。
+///
+/// 迁移脚本是纯 SQL，拿不到当前主机的 home / 系统数据目录，因此锚点回填放在启动阶段完成。
+/// 幂等：锚点形式的路径经 `normalize_path_for_storage` 归一后与原值相同，不会产生任何写入；
+/// 无法折叠（不在用户目录与系统数据目录之下）的路径保持原样，跨平台时由调用方降级提示。
+async fn converge_asset_stored_paths(pool: &SqlitePool) -> StoreResult<()> {
+    if !table_exists(pool, "assets").await? {
+        return Ok(());
+    }
+
+    let rows = sqlx::query("SELECT tenant_id, id, stored_path FROM assets")
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::external)?;
+
+    let mut pending = Vec::new();
+    for row in &rows {
+        let tenant_id: String = row.try_get(0).map_err(StoreError::external)?;
+        let asset_id: String = row.try_get(1).map_err(StoreError::external)?;
+        let stored_path: String = row.try_get(2).map_err(StoreError::external)?;
+        let Ok(portable) =
+            crate::backend::store::path_codec::normalize_path_for_storage(&stored_path)
+        else {
+            continue;
+        };
+        if portable != stored_path {
+            pending.push((tenant_id, asset_id, portable));
+        }
+    }
+
+    if pending.is_empty() {
+        return Ok(());
+    }
+
+    let mut tx = pool.begin().await.map_err(StoreError::external)?;
+    for (tenant_id, asset_id, portable) in pending {
+        sqlx::query("UPDATE assets SET stored_path = ?1 WHERE tenant_id = ?2 AND id = ?3")
+            .bind(&portable)
+            .bind(&tenant_id)
+            .bind(&asset_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(StoreError::external)?;
+    }
+    tx.commit().await.map_err(StoreError::external)?;
+    Ok(())
 }
 
 async fn is_untracked_legacy_database(pool: &SqlitePool) -> StoreResult<bool> {
@@ -161,41 +210,20 @@ async fn upgrade_legacy_schema(pool: &SqlitePool) -> StoreResult<()> {
     Ok(())
 }
 
-async fn repair_known_modified_catalog_release_migration(pool: &SqlitePool) -> StoreResult<()> {
+async fn repair_legacy_migration_ledger_versions(pool: &SqlitePool) -> StoreResult<()> {
     if !table_exists(pool, "_sqlx_migrations").await? {
         return Ok(());
     }
-    let checksum: Option<String> = sqlx::query_scalar(
-        "SELECT upper(hex(checksum)) FROM _sqlx_migrations WHERE version = 202607150002",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(StoreError::external)?;
-    if checksum.as_deref() != Some(KNOWN_MODIFIED_CATALOG_RELEASE_DETAILS_CHECKSUM) {
-        return Ok(());
-    }
-    if !column_exists(pool, "conversation_adapter_catalog_releases", "source_json").await? {
-        return Ok(());
-    }
-
-    let mut transaction = pool.begin().await.map_err(StoreError::external)?;
     sqlx::query(
-        "UPDATE _sqlx_migrations SET checksum = X'E75F75A803B17920C2E1498962D6DCB8A34167DE66AAB216FBC2F4CA056A383E0600CAEFE44633CDA48A0F9FE61DC581' WHERE version = 202607150002",
+        "UPDATE _sqlx_migrations \
+         SET version = (version / 10000) * 1000000 + (version % 10000) \
+         WHERE version < 10000000000000",
     )
-    .execute(&mut *transaction)
+    .execute(pool)
     .await
     .map_err(StoreError::external)?;
-    sqlx::query(
-        "INSERT OR IGNORE INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (202607160001, 'conversation adapter catalog release source', 1, X'39DC30B774A3C414B1AC69B49F0036E713F2B75A973B8F75A5E796064373FE4170FC9E2B3305509DF928C85A26C5736E', 0)",
-    )
-    .execute(&mut *transaction)
-    .await
-    .map_err(StoreError::external)?;
-    transaction.commit().await.map_err(StoreError::external)
+    Ok(())
 }
-
-const KNOWN_MODIFIED_CATALOG_RELEASE_DETAILS_CHECKSUM: &str =
-    "863286E8B8E292E94EB63E42AC751D8EAD340500965B16ADCB4EEF61BEB38187B9E8FF4F19379B7C817F18DDD3BF0A83";
 
 async fn repair_known_modified_conversation_question_contract_migration(
     pool: &SqlitePool,
@@ -204,7 +232,7 @@ async fn repair_known_modified_conversation_question_contract_migration(
         return Ok(());
     }
     let checksum: Option<String> = sqlx::query_scalar(
-        "SELECT upper(hex(checksum)) FROM _sqlx_migrations WHERE version = 202608250005",
+        "SELECT upper(hex(checksum)) FROM _sqlx_migrations WHERE version = 20260825000005",
     )
     .fetch_optional(pool)
     .await
@@ -225,7 +253,7 @@ async fn repair_known_modified_conversation_question_contract_migration(
             ] {
                 if column_exists(pool, table, removed_column).await? {
                     return Err(StoreError::Validation(format!(
-                        "cannot repair migration 202608250005 checksum: {table}.{removed_column} still exists"
+                        "cannot repair migration 20260825000005 checksum: {table}.{removed_column} still exists"
                     )));
                 }
             }
@@ -233,7 +261,7 @@ async fn repair_known_modified_conversation_question_contract_migration(
     }
 
     sqlx::query(
-        "UPDATE _sqlx_migrations SET checksum = X'85BFCAA1EDBB892E90FB943086A77885E6A6C7D349106049CA71A43F9655A60682B18A9D69CCE576EEA3CCDCEE1E0CF2' WHERE version = 202608250005",
+        "UPDATE _sqlx_migrations SET checksum = X'85BFCAA1EDBB892E90FB943086A77885E6A6C7D349106049CA71A43F9655A60682B18A9D69CCE576EEA3CCDCEE1E0CF2' WHERE version = 20260825000005",
     )
     .execute(pool)
     .await
@@ -241,11 +269,9 @@ async fn repair_known_modified_conversation_question_contract_migration(
     Ok(())
 }
 
-const KNOWN_MODIFIED_QUESTION_CONTRACT_CHECKSUM: &str =
-    "E9A07424F1C86E99CED78966A8CB750B73D6C00E089576DD5C077B357B259BE2C34C14F0BEC320A2FB991B98B6BB9D38";
+const KNOWN_MODIFIED_QUESTION_CONTRACT_CHECKSUM: &str = "E9A07424F1C86E99CED78966A8CB750B73D6C00E089576DD5C077B357B259BE2C34C14F0BEC320A2FB991B98B6BB9D38";
 
-const KNOWN_MODIFIED_CLEANUP_UTIL6_ORPHANS_CHECKSUM: &str =
-    "B45D2395822AF941B7760B9F39EC3E2ED35B8101540955EE01D219895637506A553E8620D57E48BD30BB66B5943FD928";
+const KNOWN_MODIFIED_CLEANUP_UTIL6_ORPHANS_CHECKSUM: &str = "B45D2395822AF941B7760B9F39EC3E2ED35B8101540955EE01D219895637506A553E8620D57E48BD30BB66B5943FD928";
 
 async fn repair_known_modified_cleanup_util6_orphans_migration(
     pool: &SqlitePool,
@@ -254,7 +280,7 @@ async fn repair_known_modified_cleanup_util6_orphans_migration(
         return Ok(());
     }
     let checksum: Option<String> = sqlx::query_scalar(
-        "SELECT upper(hex(checksum)) FROM _sqlx_migrations WHERE version = 202610240005",
+        "SELECT upper(hex(checksum)) FROM _sqlx_migrations WHERE version = 20261024000005",
     )
     .fetch_optional(pool)
     .await
@@ -271,8 +297,8 @@ async fn repair_known_modified_cleanup_util6_orphans_migration(
         "UPDATE conversation_parts \
          SET attrs_json = json_remove(attrs_json, '$.has_command') \
          WHERE kind = 'command' \
-           AND json_extract(attrs_json, '$.has_command') = 0 \
-           AND content IS NOT NULL",
+            AND json_extract(attrs_json, '$.has_command') = 0 \
+            AND content IS NOT NULL",
     )
     .execute(&mut *transaction)
     .await
@@ -282,7 +308,7 @@ async fn repair_known_modified_cleanup_util6_orphans_migration(
     sqlx::query(
         "UPDATE _sqlx_migrations \
          SET checksum = X'9C3FE1960034A1516BDDAEC65B2C5C0E25D78B56193B4631E1AA07BA19600CE8B5E845FAF77BC7C4C5117EB1C861B2D7' \
-         WHERE version = 202610240005",
+         WHERE version = 20261024000005",
     )
     .execute(&mut *transaction)
     .await

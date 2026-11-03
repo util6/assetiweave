@@ -1925,3 +1925,243 @@ test("Codex adapter degrades cyclic subagent thread references to leaf turns", (
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
+
+test("Codex adapter extracts single Turn usage and first event UTC timestamp", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-usage-single-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    writeFileSync(
+      rolloutPath,
+      [
+        JSON.stringify({ timestamp: "2026-07-27T00:00:00.100Z", type: "session_meta", payload: { model_provider: "openai" } }),
+        JSON.stringify({ timestamp: "2026-07-27T00:00:00.200Z", type: "turn_context", payload: { model: "gpt-5.4" } }),
+        JSON.stringify({ timestamp: "2026-07-27T00:00:00.300Z", type: "message", role: "user", content: "Implement feature" }),
+        JSON.stringify({
+          timestamp: "2026-07-27T00:00:01.456Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              last_token_usage: {
+                input_tokens: 100,
+                cached_input_tokens: 30,
+                output_tokens: 50,
+                reasoning_output_tokens: 20,
+                cache_write_input_tokens: 10,
+                total_tokens: 210,
+              },
+            },
+          },
+        }),
+      ].join("\n")
+    );
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('sess-codex-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-07-27T00:00:02Z');`,
+    ].join("\n"));
+
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.snapshot_complete, true);
+    assert.equal(complete.usage_event_count, 1);
+    assert.equal(complete.decoder_profile, "codex-rollout-v1");
+    assert.equal(events.length, 1);
+
+    const event = events[0];
+    assert.equal(event.session_id, "sess-codex-1");
+    assert.equal(event.turn_id, "turn-0");
+    assert.equal(event.external_event_id, "sess-codex-1-turn-0");
+    assert.equal(event.logical_request_id, "sess-codex-1-turn-0");
+    assert.equal(event.attempt_index, 0);
+    assert.equal(event.provider, "openai");
+    assert.equal(event.model, "gpt-5.4");
+    assert.equal(event.timestamp, "2026-07-27T00:00:00.200Z"); // First event timestamp in turn
+    assert.equal(event.input_tokens, 100);
+    assert.equal(event.cache_read_tokens, 30);
+    assert.equal(event.output_tokens, 50);
+    assert.equal(event.reasoning_tokens, 20);
+    assert.equal(event.cache_write_tokens, 10);
+    assert.equal(event.total_tokens, 210);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter accumulates multi-step tool calls / token_count events within single Turn", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-usage-multi-step-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    writeFileSync(
+      rolloutPath,
+      [
+        JSON.stringify({ timestamp: "2026-07-27T00:00:00.000Z", type: "turn_context", payload: { model: "gpt-5.4" } }),
+        JSON.stringify({ timestamp: "2026-07-27T00:00:00.100Z", type: "message", role: "user", content: "Run multiple tools" }),
+        JSON.stringify({
+          timestamp: "2026-07-27T00:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              last_token_usage: {
+                input_tokens: 100,
+                cached_input_tokens: 20,
+                output_tokens: 30,
+                total_tokens: 150,
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-07-27T00:00:03.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              last_token_usage: {
+                input_tokens: 120,
+                cached_input_tokens: 10,
+                output_tokens: 40,
+                total_tokens: 170,
+              },
+            },
+          },
+        }),
+      ].join("\n")
+    );
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('sess-multi', '${sqlString(rolloutPath)}', 'Fixture', '2026-07-27T00:00:05Z');`,
+    ].join("\n"));
+
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.usage_event_count, 1);
+    assert.equal(events.length, 1);
+
+    const event = events[0];
+    assert.equal(event.turn_id, "turn-0");
+    assert.equal(event.external_event_id, "sess-multi-turn-0");
+    assert.equal(event.timestamp, "2026-07-27T00:00:00.000Z");
+    assert.equal(event.input_tokens, 220);
+    assert.equal(event.cache_read_tokens, 30);
+    assert.equal(event.output_tokens, 70);
+    assert.equal(event.total_tokens, 320);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter preserves separate historical UTC timestamps for cross-day multi-turn sessions", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-usage-cross-day-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    writeFileSync(
+      rolloutPath,
+      [
+        // Turn 0 on Day 1
+        JSON.stringify({ timestamp: "2026-07-27T10:00:00.000Z", type: "turn_context", payload: { model: "gpt-5.4" } }),
+        JSON.stringify({ timestamp: "2026-07-27T10:00:00.100Z", type: "message", role: "user", content: "Day 1 query" }),
+        JSON.stringify({
+          timestamp: "2026-07-27T10:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: { input_tokens: 50, output_tokens: 25, total_tokens: 75 } },
+          },
+        }),
+        // Turn 1 on Day 2
+        JSON.stringify({ timestamp: "2026-07-28T11:00:00.000Z", type: "turn_context", payload: { model: "gpt-5.4" } }),
+        JSON.stringify({ timestamp: "2026-07-28T11:00:00.200Z", type: "message", role: "user", content: "Day 2 query" }),
+        JSON.stringify({
+          timestamp: "2026-07-28T11:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: { input_tokens: 60, output_tokens: 30, total_tokens: 90 } },
+          },
+        }),
+      ].join("\n")
+    );
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('sess-cross', '${sqlString(rolloutPath)}', 'Fixture', '2026-07-28T12:00:00Z');`,
+    ].join("\n"));
+
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.usage_event_count, 2);
+    assert.equal(events.length, 2);
+
+    assert.equal(events[0].turn_id, "turn-0");
+    assert.equal(events[0].external_event_id, "sess-cross-turn-0");
+    assert.equal(events[0].timestamp, "2026-07-27T10:00:00.000Z");
+    assert.equal(events[0].input_tokens, 50);
+    assert.equal(events[0].output_tokens, 25);
+
+    assert.equal(events[1].turn_id, "turn-1");
+    assert.equal(events[1].external_event_id, "sess-cross-turn-1");
+    assert.equal(events[1].timestamp, "2026-07-28T11:00:00.000Z");
+    assert.equal(events[1].input_tokens, 60);
+    assert.equal(events[1].output_tokens, 30);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter filters out empty zero-token turns from usage event stream", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-usage-zero-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    writeFileSync(
+      rolloutPath,
+      [
+        // Turn 0: empty, zero tokens
+        JSON.stringify({ timestamp: "2026-07-27T10:00:00.000Z", type: "turn_context", payload: { model: "gpt-5.4" } }),
+        JSON.stringify({ timestamp: "2026-07-27T10:00:00.100Z", type: "message", role: "user", content: "No tokens in this turn" }),
+        // Turn 1: has tokens
+        JSON.stringify({ timestamp: "2026-07-27T10:05:00.000Z", type: "turn_context", payload: { model: "gpt-5.4" } }),
+        JSON.stringify({ timestamp: "2026-07-27T10:05:00.100Z", type: "message", role: "user", content: "Real query with tokens" }),
+        JSON.stringify({
+          timestamp: "2026-07-27T10:05:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: { input_tokens: 80, output_tokens: 40, total_tokens: 120 } },
+          },
+        }),
+      ].join("\n")
+    );
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('sess-zero', '${sqlString(rolloutPath)}', 'Fixture', '2026-07-27T10:10:00Z');`,
+    ].join("\n"));
+
+    const { events, complete } = readFixtureUsage(fixtureRoot);
+    assert.equal(complete.usage_event_count, 1);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].turn_id, "turn-1");
+    assert.equal(events[0].external_event_id, "sess-zero-turn-1");
+    assert.equal(events[0].total_tokens, 120);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+function readFixtureUsage(location, params = {}) {
+  const result = spawnSync(process.execPath, [adapterPath], {
+    encoding: "utf8",
+    input: JSON.stringify({
+      method: "read_usage",
+      source: { location },
+      params,
+    }),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const messages = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const events = messages
+    .filter((message) => message.type === "usage_event")
+    .map((message) => message.usage_event);
+  const complete = messages.find((message) => message.type === "complete")?.item ?? null;
+  return { messages, events, complete };
+}

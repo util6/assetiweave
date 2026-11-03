@@ -42,7 +42,7 @@ describe("path display utilities", () => {
   it("prefers the backend display path over the runtime absolute path", () => {
     expect(
       displayAssetPath({
-        absolute_path: "D:\\shared\\skills\\review",
+        stored_path: "D:\\shared\\skills\\review",
         display_path: "~/portable-label/review",
         relative_path: "review",
       } as Asset),

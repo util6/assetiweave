@@ -28,7 +28,7 @@ export interface Asset {
   kind: AssetKind;
   format: AssetFormat;
   relative_path: string;
-  absolute_path: string;
+  stored_path: string;
   display_path?: string;
   entry_file?: string | null;
   description?: string | null;

@@ -22,6 +22,10 @@ impl AppService {
             std::fs::create_dir_all(parent).map_err(AppError::external)?;
         }
         crate::backend::infrastructure::runtime::storage_migration::migrate_legacy_storage_if_needed(&db_path)?;
+        if let Some(target_home) = db_path.parent() {
+            let _ = crate::backend::infrastructure::runtime::storage_migration::migrate_legacy_skills_library_if_needed(target_home);
+        }
+        let _ = crate::backend::infrastructure::agent_market::purge_legacy_agent_market_cache_disk_files();
         let pool = store::open_migrated_pool(&db_path).await?;
         let orphaned_tasks = store::reconcile_orphaned_tasks_sqlx(&pool).await?;
         if !orphaned_tasks.is_empty() {

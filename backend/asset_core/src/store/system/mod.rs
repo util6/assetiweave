@@ -1,9 +1,11 @@
 pub use super::{codec, sql};
 
+pub mod agent_installation_mappers;
 pub mod agent_installations;
 pub mod backup_repo;
 pub mod consumer_offset_repo;
 pub mod execution_binding;
+pub mod extension_catalog_releases;
 pub mod menu_repo;
 pub mod outbox_repo;
 pub mod settings_repo;
@@ -15,6 +17,7 @@ pub use agent_installations::*;
 pub use backup_repo::*;
 pub use consumer_offset_repo::*;
 pub use execution_binding::*;
+pub use extension_catalog_releases::*;
 pub use menu_repo::*;
 pub use outbox_repo::*;
 pub use settings_repo::*;

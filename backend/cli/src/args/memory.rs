@@ -26,6 +26,15 @@ pub enum MemoryCommand {
 
     #[command(about = "Search and continue persistent Recall sessions")]
     Recall(MemoryRecallArgs),
+
+    #[command(about = "Inspect strong-typed memory state")]
+    State(MemoryStateArgs),
+
+    #[command(about = "Commit topic evolution to project memory")]
+    Commit(MemoryCommitArgs),
+
+    #[command(about = "Check or advance session watermarks")]
+    Watermark(MemoryWatermarkArgs),
 }
 
 #[derive(Args, Debug)]
@@ -273,4 +282,117 @@ pub struct MemoryRecallTurnSendArgs {
 pub struct MemoryRecallTurnCancelArgs {
     #[arg(help = "turn ID")]
     pub turn_id: String,
+}
+
+#[derive(Args, Debug)]
+pub struct MemoryStateArgs {
+    #[command(subcommand)]
+    pub command: MemoryStateCommand,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MemoryStateCommand {
+    #[command(about = "Get memory state (project state or recent state)")]
+    Get(MemoryStateGetArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct MemoryStateGetArgs {
+    #[arg(long, help = "project slug (if omitted, gets recent state)")]
+    pub project: Option<String>,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "print raw state JSON un-enveloped"
+    )]
+    pub raw: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct MemoryCommitArgs {
+    #[arg(long, help = "project slug (required if not using --payload)")]
+    pub project: Option<String>,
+
+    #[arg(long, help = "topic ID")]
+    pub topic: Option<String>,
+
+    #[arg(long, help = "optional human-readable topic name")]
+    pub topic_name: Option<String>,
+
+    #[arg(long, help = "optional parent node ID")]
+    pub parent_id: Option<String>,
+
+    #[arg(
+        long,
+        help = "optional parent node new status (continued or completed)"
+    )]
+    pub parent_status: Option<String>,
+
+    #[arg(long, help = "node turn summary")]
+    pub summary: Option<String>,
+
+    #[arg(long, help = "source session full UUID")]
+    pub session_id: Option<String>,
+
+    #[arg(long, help = "source session short ID")]
+    pub short_id: Option<String>,
+
+    #[arg(long, help = "turn index (1-based)")]
+    pub turn: Option<u32>,
+
+    #[arg(
+        long,
+        default_value = "completed",
+        help = "new node status (completed, continued, unexplored)"
+    )]
+    pub status: String,
+
+    #[arg(
+        long,
+        help = "full TopicEvolutionCommitPayload as JSON string, or @filepath"
+    )]
+    pub payload: Option<String>,
+
+    #[arg(
+        long,
+        help = "path to JSON file containing TopicEvolutionCommitPayload"
+    )]
+    pub file: Option<std::path::PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct MemoryWatermarkArgs {
+    #[command(subcommand)]
+    pub command: MemoryWatermarkCommand,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MemoryWatermarkCommand {
+    #[command(about = "Check session watermark")]
+    Check(MemoryWatermarkCheckArgs),
+
+    #[command(about = "Advance session watermark")]
+    Advance(MemoryWatermarkAdvanceArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct MemoryWatermarkCheckArgs {
+    #[arg(long, help = "project slug")]
+    pub project: String,
+
+    #[arg(long, help = "session ID")]
+    pub session_id: String,
+}
+
+#[derive(Args, Debug)]
+pub struct MemoryWatermarkAdvanceArgs {
+    #[arg(long, help = "project slug")]
+    pub project: String,
+
+    #[arg(long, help = "session ID")]
+    pub session_id: String,
+
+    #[arg(long, help = "turn number to advance to")]
+    pub turn: u32,
 }

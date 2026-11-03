@@ -143,7 +143,7 @@ impl AppService {
             }
             let source_is_library = source.source_origin == SourceOrigin::AssetiweaveLibrary;
             let target_dir = if source_is_library {
-                PathBuf::from(&asset.absolute_path)
+                crate::backend::infrastructure::path_utils::resolve_asset_path(asset)?
             } else {
                 let asset_name =
                     crate::backend::infrastructure::host_filesystem::HostFilesystem::current()
@@ -167,7 +167,8 @@ impl AppService {
         for index in 0..targets.len() {
             let target = &targets[index];
             if !target.source_is_library {
-                let source_path = Path::new(&target.asset.absolute_path);
+                let source_path =
+                    &crate::backend::infrastructure::path_utils::resolve_asset_path(&target.asset)?;
                 if target.target_dir.exists() {
                     let source_hash =
                         crate::backend::infrastructure::path_utils::hash_path(source_path)?;
@@ -210,7 +211,10 @@ impl AppService {
                 .iter()
                 .find(|candidate| {
                     candidate.asset.id == target.asset.id
-                        || std::path::Path::new(&candidate.asset.absolute_path) == target_dir
+                        || crate::backend::infrastructure::path_utils::resolve_asset_path(
+                            &candidate.asset,
+                        )
+                        .is_ok_and(|path| path == target_dir)
                         || (target.asset.content_hash.is_some()
                             && candidate.asset.content_hash.as_deref()
                                 == target.asset.content_hash.as_deref())
@@ -313,7 +317,8 @@ impl AppService {
         let asset = library_assets
             .into_iter()
             .find(|candidate| {
-                std::path::Path::new(&candidate.absolute_path) == target_dir.as_path()
+                crate::backend::infrastructure::path_utils::resolve_asset_path(candidate)
+                    .is_ok_and(|path| path == target_dir.as_path())
             })
             .ok_or_else(|| {
                 AppError::NotFound(
@@ -373,7 +378,7 @@ impl AppService {
             )
             .await?;
         }
-        let asset_path = PathBuf::from(&asset.absolute_path);
+        let asset_path = crate::backend::infrastructure::path_utils::resolve_asset_path(&asset)?;
         if asset_path.exists() {
             crate::backend::infrastructure::host_filesystem::HostFilesystem::current()
                 .remove_path(&asset_path)?;

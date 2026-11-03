@@ -4,11 +4,11 @@ use crate::backend::domain::agents::{
     market::CatalogCapabilities, market::Verification, AgentInstallation, AgentMarketProtocol,
     CatalogItem, Distribution, DistributionCandidate, DistributionSelectionContext,
     DistributionSelector, DistributionType, InstallationStatus, Ownership, ProtocolStatus,
-    RuntimeStatus, SystemObservation,
+    RuntimeStatus,
 };
 use crate::backend::infrastructure::agent_market::{
     AgentInstallationView, AgentMarketError, AgentMarketErrorView, CatalogCache,
-    CatalogRefreshOutcome, InstallContext, Installer, SystemInstaller,
+    CatalogRefreshOutcome, InstallContext, Installer,
 };
 use serde_json::Value;
 
@@ -40,18 +40,6 @@ impl From<crate::backend::domain::agents::market::distribution::DistributionErro
                 message:
                     "The selected Agent distribution requires a runtime that is not installed."
                         .to_string(),
-                retryable: false,
-                details: Some(serde_json::json!({
-                    "agentId": agent_id,
-                    "distributionId": distribution_id,
-                })),
-            },
-            DistributionError::SystemVersionIncompatible {
-                agent_id,
-                distribution_id,
-            } => Self::Domain {
-                code: "system_version_incompatible".to_string(),
-                message: "The selected system Agent runtime could not be used.".to_string(),
                 retryable: false,
                 details: Some(serde_json::json!({
                     "agentId": agent_id,
@@ -246,8 +234,6 @@ pub fn host_distribution_context() -> DistributionSelectionContext {
         crate::backend::infrastructure::host_process::resolve_host_executable("node").is_some();
     context.npm_available =
         crate::backend::infrastructure::host_process::resolve_host_executable("npm").is_some();
-    context.uv_available =
-        crate::backend::infrastructure::host_process::resolve_host_executable("uv").is_some();
     context
 }
 
@@ -265,45 +251,9 @@ pub fn installability(_item: &CatalogItem, candidates: &[DistributionCandidate])
 }
 
 pub async fn probe_item_system_distributions(
-    item: &CatalogItem,
-    context: &mut DistributionSelectionContext,
+    _item: &CatalogItem,
+    _context: &mut DistributionSelectionContext,
 ) {
-    for distribution in &item.distributions {
-        let Distribution::System {
-            command_candidates, ..
-        } = distribution
-        else {
-            continue;
-        };
-        for command in command_candidates {
-            let Some(program) =
-                crate::backend::infrastructure::host_process::resolve_host_executable(&command)
-            else {
-                continue;
-            };
-            let install_context = InstallContext::new(
-                std::env::temp_dir().join("assetiweave-agent-market-preview"),
-                item.version.clone(),
-            );
-            let result = SystemInstaller {
-                resolver: Some(program.clone()),
-            };
-            let observation =
-                match Installer::materialize(&result, &distribution, &install_context).await {
-                    Ok(runtime) => SystemObservation {
-                        resolved_program: Some(runtime.resolved_program),
-                        version: Some(runtime.version),
-                        error_code: None,
-                    },
-                    Err(error) => SystemObservation {
-                        resolved_program: Some(program),
-                        version: None,
-                        error_code: Some(error.to_string()),
-                    },
-                };
-            context.system.insert(command.clone(), observation);
-        }
-    }
 }
 
 pub fn installation_view(installation: &AgentInstallation) -> AgentInstallationView {

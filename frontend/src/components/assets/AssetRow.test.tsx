@@ -65,7 +65,7 @@ const asset: Asset = {
   kind: "skill",
   format: "directory",
   relative_path: "claude-skills",
-  absolute_path: "/Users/util6/fork-code/skills-fork/claude-skills",
+  stored_path: "/Users/util6/fork-code/skills-fork/claude-skills",
   entry_file: null,
   description: null,
   content_hash: null,

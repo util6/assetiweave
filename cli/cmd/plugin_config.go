@@ -29,5 +29,5 @@ func pluginConfigPath(f *cmdutil.Factory) string {
 	if err != nil || home == "" {
 		return ""
 	}
-	return filepath.Join(home, ".assetiweave-cli", "plugins.json")
+	return filepath.Join(home, ".assetiweave", "plugins.json")
 }

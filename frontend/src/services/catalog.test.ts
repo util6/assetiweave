@@ -47,7 +47,7 @@ describe("catalog services", () => {
         kind: "skill",
         format: "directory",
         relative_path: args.assetId,
-        absolute_path: `/tmp/${args.assetId}`,
+        stored_path: `/tmp/${args.assetId}`,
         entry_file: null,
         description: null,
         content_hash: null,

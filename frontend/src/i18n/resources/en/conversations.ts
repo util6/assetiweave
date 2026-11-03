@@ -275,6 +275,7 @@ export const conversationsEn = {
   "conversation.project.summary":
     "{{sessions}} sessions · {{questions}} questions · {{turns}} turns",
   "conversation.session.open": "Open session {{title}}",
+  "conversation.session.back": "Back",
   "conversation.session.backToBrowser": "Back to apps / sessions",
   "conversation.session.loading": "Loading session...",
   "conversation.session.noProject": "No project path",
@@ -283,6 +284,8 @@ export const conversationsEn = {
   "conversation.session.counts": "{{questions}} questions · {{turns}} turns",
   "conversation.session.questionCountChip": "{{count}} questions",
   "conversation.session.turnCountChip": "{{count}} turns",
+  "conversation.session.copyShortId":
+    "Copy session short ID {{id}} for use in an agent",
   "conversation.session.emptyForApp": "This app has no sessions yet.",
   "conversation.session.emptyForProject":
     "This project folder has no sessions yet.",

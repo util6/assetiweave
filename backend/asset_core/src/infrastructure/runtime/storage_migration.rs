@@ -5,6 +5,60 @@ use std::{
 
 use crate::backend::infrastructure::{InfraError, InfraResult};
 
+pub fn migrate_legacy_skills_library_if_needed(target_home: &Path) -> InfraResult<bool> {
+    let legacy_skills = target_home.join("library").join("skills");
+    if !legacy_skills.exists() {
+        return Ok(false);
+    }
+
+    let target_skills = target_home.join("skills");
+    let mut moved_any = false;
+
+    let src_backed_up = legacy_skills.join("backed-up");
+    let dst_backed_up = target_skills.join("backed-up");
+    if src_backed_up.exists() && !dst_backed_up.exists() {
+        move_or_copy_dir_recursively(&src_backed_up, &dst_backed_up)?;
+        let _ = fs::remove_dir_all(&src_backed_up);
+        moved_any = true;
+    }
+
+    let src_imported = legacy_skills.join("imported");
+    let dst_imported = target_skills.join("imported");
+    if src_imported.exists() && !dst_imported.exists() {
+        move_or_copy_dir_recursively(&src_imported, &dst_imported)?;
+        let _ = fs::remove_dir_all(&src_imported);
+        moved_any = true;
+    }
+
+    let tenant_legacy = target_home
+        .join("tenants")
+        .join("default")
+        .join("library")
+        .join("skills");
+    if tenant_legacy.exists() {
+        let _ = fs::remove_dir_all(&tenant_legacy);
+    }
+
+    if let Ok(entries) = fs::read_dir(&legacy_skills) {
+        let non_ds_store_count = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name() != ".DS_Store")
+            .count();
+        if non_ds_store_count == 0 {
+            let _ = fs::remove_dir_all(&legacy_skills);
+        }
+    }
+
+    if moved_any {
+        tracing::info!(
+            target_skills = %target_skills.display(),
+            "Migrated legacy library/skills to skills/"
+        );
+    }
+
+    Ok(moved_any)
+}
+
 pub fn legacy_app_data_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "AssetIWeave").map(|proj| proj.data_dir().to_path_buf())
 }

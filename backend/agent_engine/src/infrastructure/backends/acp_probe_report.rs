@@ -304,7 +304,6 @@ pub fn connection_probe_request(definition: &AgentDefinition) -> AiExecutionRequ
         replay: false,
         restore_only: false,
         recall_tools: None,
-        memory_generation_tools: None,
         account: None,
     }
 }

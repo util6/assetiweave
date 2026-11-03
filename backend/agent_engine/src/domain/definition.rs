@@ -42,14 +42,12 @@ impl fmt::Display for AgentId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentProtocol {
     Acp,
-    Native,
 }
 
 impl AgentProtocol {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Acp => "acp",
-            Self::Native => "native",
         }
     }
 }
@@ -145,17 +143,34 @@ impl DeclaredAgentCapabilities {
             resume_args: None,
         }
     }
+}
 
-    pub fn native_text_with_resume(resume_args: Vec<String>) -> Self {
-        Self {
-            text_prompt: true,
-            resume: true,
-            history_replay: false,
-            live_events: false,
-            rich_history_replay: false,
-            resume_args: Some(resume_args),
-        }
-    }
+pub fn materialize_acp_definition(
+    id: AgentId,
+    display_name: String,
+    program: std::path::PathBuf,
+    args: Vec<String>,
+    env: Vec<AgentEnvEntry>,
+    declared_capabilities: DeclaredAgentCapabilities,
+    session_cleanup: Option<AgentCommandDefinition>,
+    session_cleanup_not_found_markers: Vec<String>,
+) -> Result<AgentDefinition, AgentDefinitionError> {
+    let definition = AgentDefinition {
+        id,
+        installation_id: None,
+        display_name,
+        protocol: AgentProtocol::Acp,
+        command: program.to_string_lossy().to_string(),
+        args,
+        env,
+        declared_capabilities,
+        availability_probe: None,
+        model_discovery: None,
+        session_cleanup,
+        session_cleanup_not_found_markers,
+    };
+    definition.validate()?;
+    Ok(definition)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

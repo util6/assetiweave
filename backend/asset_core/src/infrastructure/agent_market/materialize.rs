@@ -8,21 +8,17 @@ use crate::backend::{
     domain::agents::{
         definition::{AgentCommandDefinition, AgentDefinition, AgentId, AgentProtocol},
         market::{validation::is_safe_artifact_url, CatalogItem},
-        AgentConnectionCheckMode, AgentEnvEntry, AgentMarketProtocol, Distribution,
-        MaterializedRuntime, Ownership, ProtocolStatus,
+        AgentEnvEntry, Distribution, MaterializedRuntime, Ownership, ProtocolStatus,
     },
     infrastructure::agent_execution::{
         backends::acp::{AcpExecutionBackend, AcpProtocolConnectionOutcome},
-        check_agent_connection,
-        executor::AgentExecutor,
-        registry::AgentRegistry,
         AiExecutionCancellation,
     },
     infrastructure::agent_market::{
         error::{AgentMarketError, LifecycleTaskPhase},
         installers::{
-            binary::BinaryInstaller, npx::NpxInstaller, system::SystemInstaller, uvx::UvxInstaller,
-            InstallContext, InstallError, Installer, MAX_BINARY_BYTES,
+            binary::BinaryInstaller, npx::NpxInstaller, InstallContext, InstallError, Installer,
+            MAX_BINARY_BYTES,
         },
     },
     infrastructure::InfraError,
@@ -66,16 +62,11 @@ pub async fn materialize_and_activate(
     context.progress_sink = progress_sink;
     context.report_phase(LifecycleTaskPhase::Preparing);
     context.report_phase(match distribution {
-        Distribution::System { .. } => LifecycleTaskPhase::ProbingRuntime,
         Distribution::Binary { .. } => LifecycleTaskPhase::Downloading,
-        Distribution::Npx { .. } | Distribution::Uvx { .. } => LifecycleTaskPhase::Installing,
+        Distribution::Npx { .. } => LifecycleTaskPhase::Installing,
     });
 
     let materialized = match distribution {
-        Distribution::System { .. } => SystemInstaller::default()
-            .materialize(distribution, &context)
-            .await
-            .map_err(install_error)?,
         Distribution::Binary { url, size, .. } => {
             let dist = distribution.clone();
             let ctx = context.clone();
@@ -94,10 +85,6 @@ pub async fn materialize_and_activate(
             })??
         }
         Distribution::Npx { .. } => NpxInstaller::default()
-            .materialize(distribution, &context)
-            .await
-            .map_err(install_error)?,
-        Distribution::Uvx { .. } => UvxInstaller::default()
             .materialize(distribution, &context)
             .await
             .map_err(install_error)?,
@@ -306,15 +293,11 @@ pub fn definition_for(
 ) -> Result<AgentDefinition, AgentMarketError> {
     let id = AgentId::parse(item.id.clone())
         .map_err(|error| market_error("definition_invalid", error, false))?;
-    let protocol = match &item.protocol {
-        AgentMarketProtocol::Acp => AgentProtocol::Acp,
-        AgentMarketProtocol::Native => AgentProtocol::Native,
-    };
     let definition = AgentDefinition {
         id,
         installation_id: Some(runtime.installation_id.clone()),
         display_name: item.display_name.clone(),
-        protocol,
+        protocol: AgentProtocol::Acp,
         command: runtime.resolved_program.to_string_lossy().to_string(),
         args: runtime.args.clone(),
         env: runtime
@@ -343,19 +326,11 @@ pub fn definition_for(
 
 fn model_discovery_args(distribution: &Distribution) -> Option<Vec<String>> {
     match distribution {
-        Distribution::System {
-            model_discovery_args,
-            ..
-        }
-        | Distribution::Binary {
+        Distribution::Binary {
             model_discovery_args,
             ..
         }
         | Distribution::Npx {
-            model_discovery_args,
-            ..
-        }
-        | Distribution::Uvx {
             model_discovery_args,
             ..
         } => model_discovery_args.clone(),
@@ -364,19 +339,11 @@ fn model_discovery_args(distribution: &Distribution) -> Option<Vec<String>> {
 
 fn session_cleanup_args(distribution: &Distribution) -> Option<Vec<String>> {
     match distribution {
-        Distribution::System {
-            session_cleanup_args,
-            ..
-        }
-        | Distribution::Binary {
+        Distribution::Binary {
             session_cleanup_args,
             ..
         }
         | Distribution::Npx {
-            session_cleanup_args,
-            ..
-        }
-        | Distribution::Uvx {
             session_cleanup_args,
             ..
         } => session_cleanup_args.clone(),
@@ -387,70 +354,28 @@ pub async fn conformance(
     definition: &AgentDefinition,
     workspace_root: &Path,
 ) -> (ProtocolStatus, Option<AgentMarketError>, Vec<String>) {
-    if definition.protocol == AgentProtocol::Acp {
-        let report = AcpExecutionBackend::new(workspace_root.join("conformance"))
-            .probe_connection_and_models(definition, AiExecutionCancellation::default())
-            .await;
-        return match report.protocol_connection {
-            AcpProtocolConnectionOutcome::Connected => (ProtocolStatus::Ready, None, Vec::new()),
-            AcpProtocolConnectionOutcome::Failed { error_message, .. } => {
-                let warning = format!("protocol conformance did not complete: {error_message}");
-                (
-                    ProtocolStatus::Failed,
-                    Some(market_error("acp_connection_failed", error_message, true)),
-                    vec![warning],
-                )
-            }
-            AcpProtocolConnectionOutcome::Cancelled => (
+    let report = AcpExecutionBackend::new(workspace_root.join("conformance"))
+        .probe_connection_and_models(definition, AiExecutionCancellation::default())
+        .await;
+    match report.protocol_connection {
+        AcpProtocolConnectionOutcome::Connected => (ProtocolStatus::Ready, None, Vec::new()),
+        AcpProtocolConnectionOutcome::Failed { error_message, .. } => {
+            let warning = format!("protocol conformance did not complete: {error_message}");
+            (
                 ProtocolStatus::Failed,
-                Some(market_error(
-                    "cancelled",
-                    "Agent protocol conformance was cancelled.",
-                    true,
-                )),
-                Vec::new(),
-            ),
-        };
-    }
-
-    let registry = match AgentRegistry::from_definitions([definition.clone()]) {
-        Ok(registry) => Arc::new(registry),
-        Err(error) => {
-            return (
-                ProtocolStatus::Failed,
-                Some(market_error("definition_invalid", error, false)),
-                Vec::new(),
+                Some(market_error("acp_connection_failed", error_message, true)),
+                vec![warning],
             )
         }
-    };
-    let executor = AgentExecutor::with_backends(
-        registry,
-        Arc::new(AcpExecutionBackend::new(workspace_root.join("conformance"))),
-        Arc::new(
-            crate::backend::infrastructure::agent_execution::backends::native::NativeExecutionBackend::new(
-                workspace_root.join("conformance"),
-            ),
-        ),
-        1,
-    );
-    let id = definition.id.clone();
-    let result =
-        check_agent_connection(Arc::new(executor), id, AgentConnectionCheckMode::Connection).await;
-    if result.connected {
-        (ProtocolStatus::Ready, None, Vec::new())
-    } else {
-        let code = result
-            .error_code
-            .unwrap_or_else(|| "protocol_failed".to_string());
-        let message = result
-            .error
-            .unwrap_or_else(|| "Agent protocol conformance failed.".to_string());
-        let warning = format!("protocol conformance did not complete: {message}");
-        (
+        AcpProtocolConnectionOutcome::Cancelled => (
             ProtocolStatus::Failed,
-            Some(market_error(&code, message, true)),
-            vec![warning],
-        )
+            Some(market_error(
+                "cancelled",
+                "Agent protocol conformance was cancelled.",
+                true,
+            )),
+            Vec::new(),
+        ),
     }
 }
 

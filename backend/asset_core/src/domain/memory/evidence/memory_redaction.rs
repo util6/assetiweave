@@ -124,7 +124,16 @@ fn looks_like_high_entropy_secret(value: &str) -> bool {
 }
 
 fn is_hex_hash(value: &str) -> bool {
-    (value.len() == 40 || value.len() == 64) && value.chars().all(|c| c.is_ascii_hexdigit())
+    let unredacted = value
+        .strip_prefix("conversation-session-")
+        .or_else(|| value.strip_prefix("conversation-turn-"))
+        .or_else(|| value.strip_prefix("conversation-part-"))
+        .or_else(|| value.strip_prefix("web-record-session-"))
+        .or_else(|| value.strip_prefix("web-record-turn-"))
+        .or_else(|| value.strip_prefix("web-record-part-"))
+        .unwrap_or(value);
+    (unredacted.len() == 40 || unredacted.len() == 64)
+        && unredacted.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 fn is_uuid_like(value: &str) -> bool {

@@ -1196,9 +1196,55 @@ function readUsage() {
       const text = readFileSync(filePath, "utf8");
       const lines = text.split("\n");
 
-      let lineIdx = 0;
+      let turnIndex = -1;
+      let currentTurn = null;
+
+      const flushTurn = () => {
+        if (!currentTurn) return;
+        const totalTokens =
+          currentTurn.inputTokens +
+          currentTurn.outputTokens +
+          currentTurn.cacheReadTokens +
+          currentTurn.cacheWriteTokens +
+          currentTurn.reasoningTokens;
+
+        if (totalTokens > 0) {
+          const turnId = `turn-${currentTurn.turnIndex}`;
+          const eventId = `${sessionId}-${turnId}`;
+          const timestamp =
+            currentTurn.firstResponseTimestamp ||
+            currentTurn.userTimestamp ||
+            stat.mtime.toISOString();
+
+          const event = {
+            external_event_id: eventId,
+            session_id: sessionId,
+            turn_id: turnId,
+            logical_request_id: eventId,
+            attempt_index: 0,
+            timestamp,
+            provider: "anthropic",
+            model: currentTurn.model || "claude-3-7-sonnet-20250219",
+            input_tokens: currentTurn.inputTokens,
+            output_tokens: currentTurn.outputTokens,
+            cache_read_tokens: currentTurn.cacheReadTokens,
+            cache_write_tokens: currentTurn.cacheWriteTokens,
+            reasoning_tokens: currentTurn.reasoningTokens,
+            total_tokens: totalTokens,
+            status: "success",
+            currency: null,
+            cost: null,
+            metadata: {
+              file: path.basename(filePath),
+            },
+          };
+          emit("usage_event", { usage_event: event });
+          eventCount++;
+        }
+        currentTurn = null;
+      };
+
       for (const line of lines) {
-        lineIdx++;
         if (!line.trim()) continue;
         let p;
         try {
@@ -1207,48 +1253,97 @@ function readUsage() {
           continue;
         }
 
+        const payload = eventPayload(p);
+        const role = roleOf(payload) ?? roleOf(p);
+        const recordType = stringField(payload, ["type"]) ?? stringField(p, ["type"]) ?? "";
+        const userText = realUserText(p, payload, role, recordType);
+        const isUser = Boolean(userText) || (
+          !p.isSidechain &&
+          (role === "user" || recordType === "user" || p.type === "user") &&
+          !isUserToolResultMessage(payload) &&
+          !isIgnoredContentValue(p) &&
+          !isIgnoredContentValue(payload)
+        );
+
+        if (isUser && !p.isSidechain) {
+          flushTurn();
+          turnIndex++;
+          let userTs = null;
+          const rawTs = p.timestamp || p.created_at;
+          if (rawTs) {
+            try {
+              userTs = new Date(rawTs).toISOString();
+            } catch {}
+          }
+          currentTurn = {
+            turnIndex,
+            userTimestamp: userTs,
+            firstResponseTimestamp: null,
+            model: null,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            reasoningTokens: 0,
+          };
+          continue;
+        }
+
         const usage = p.message?.usage || p.usage || p.payload?.usage || p.item?.usage;
-        if (!usage) continue;
+        const inputTokens = Number(usage?.input_tokens || 0);
+        const outputTokens = Number(usage?.output_tokens || 0);
+        const cacheReadTokens = Number(usage?.cache_read_input_tokens || usage?.cache_read_tokens || 0);
+        const cacheWriteTokens = Number(usage?.cache_creation_input_tokens || usage?.cache_write_tokens || 0);
+        const reasoningTokens = Number(usage?.reasoning_tokens || 0);
+        const hasTokens = (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + reasoningTokens) > 0;
 
-        const inputTokens = Number(usage.input_tokens || 0);
-        const outputTokens = Number(usage.output_tokens || 0);
-        const cacheReadTokens = Number(usage.cache_read_input_tokens || usage.cache_read_tokens || 0);
-        const cacheWriteTokens = Number(usage.cache_creation_input_tokens || usage.cache_write_tokens || 0);
-        const reasoningTokens = Number(usage.reasoning_tokens || 0);
-        const totalTokens = Number(usage.total_tokens || (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + reasoningTokens));
+        if (!currentTurn) {
+          if (hasTokens) {
+            turnIndex++;
+            let initTs = null;
+            const rawTs = p.timestamp || p.created_at;
+            if (rawTs) {
+              try {
+                initTs = new Date(rawTs).toISOString();
+              } catch {}
+            }
+            currentTurn = {
+              turnIndex,
+              userTimestamp: initTs,
+              firstResponseTimestamp: null,
+              model: null,
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              reasoningTokens: 0,
+            };
+          } else {
+            continue;
+          }
+        }
 
-        if (totalTokens <= 0) continue;
+        const modelStr = String(p.message?.model || p.model || p.payload?.model || "");
+        if (modelStr && !currentTurn.model) {
+          currentTurn.model = modelStr;
+        }
 
-        const eventId = String(p.uuid || p.id || `${sessionId}-${lineIdx}`);
-        const timestamp = p.timestamp || stat.mtime.toISOString();
-        const modelStr = String(p.message?.model || p.model || "claude-3-7-sonnet-20250219");
+        const respRawTs = p.timestamp || p.created_at || p.message?.created_at;
+        if (!currentTurn.firstResponseTimestamp && respRawTs) {
+          try {
+            currentTurn.firstResponseTimestamp = new Date(respRawTs).toISOString();
+          } catch {}
+        }
 
-        const event = {
-          external_event_id: eventId,
-          session_id: sessionId,
-          turn_id: null,
-          logical_request_id: eventId,
-          attempt_index: 0,
-          timestamp,
-          provider: "anthropic",
-          model: modelStr,
-          input_tokens: inputTokens,
-          output_tokens: outputTokens,
-          cache_read_tokens: cacheReadTokens,
-          cache_write_tokens: cacheWriteTokens,
-          reasoning_tokens: reasoningTokens,
-          total_tokens: totalTokens,
-          status: "success",
-          currency: null,
-          cost: null,
-          metadata: {
-            line: lineIdx,
-            file: path.basename(filePath),
-          },
-        };
-        emit("usage_event", { usage_event: event });
-        eventCount++;
+        if (usage) {
+          currentTurn.inputTokens += inputTokens;
+          currentTurn.outputTokens += outputTokens;
+          currentTurn.cacheReadTokens += cacheReadTokens;
+          currentTurn.cacheWriteTokens += cacheWriteTokens;
+          currentTurn.reasoningTokens += reasoningTokens;
+        }
       }
+      flushTurn();
       newProcessedFiles.push(filePath);
     } catch {}
   }

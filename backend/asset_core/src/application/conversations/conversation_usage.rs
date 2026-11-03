@@ -275,7 +275,7 @@ impl AppService {
                         }
                     }
 
-                    if is_full_mode && run_result.snapshot_complete {
+                    if (is_full_mode || cursor.is_none()) && run_result.snapshot_complete {
                         let _ = prune_unseen_usage_events_sqlx(
                             pool,
                             tenant_id,

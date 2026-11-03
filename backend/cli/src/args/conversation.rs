@@ -13,12 +13,14 @@ pub struct ConversationArgs {
 #[derive(Subcommand, Debug)]
 pub enum ConversationCommands {
     #[command(
+        alias = "s",
         about = "Search normalized conversation cards for memory retrieval",
         after_long_help = crate::affordance::conversation::help("search")
     )]
     Search(ConversationSearchArgs),
 
     #[command(
+        alias = "ls",
         about = "List normalized conversation sessions",
         after_long_help = crate::affordance::conversation::help("list")
     )]
@@ -43,12 +45,14 @@ pub enum ConversationCommands {
     Sync(ConversationSyncArgs),
 
     #[command(
+        alias = "ad",
         about = "Manage conversation adapters",
         after_long_help = crate::affordance::conversation::help("adapter")
     )]
     Adapter(ConversationAdapterArgs),
 
     #[command(
+        alias = "src",
         about = "Inspect and sync conversation sources",
         after_long_help = crate::affordance::conversation::help("source")
     )]
@@ -244,17 +248,42 @@ pub struct ConversationAdapterArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum ConversationAdapterCommands {
-    #[command(about = "List installed conversation adapters and their health")]
+    #[command(
+        alias = "ls",
+        about = "List installed conversation adapters and their health"
+    )]
     List,
 
     #[command(about = "Inspect one conversation adapter")]
     Inspect(ConversationAdapterInspectArgs),
+
+    #[command(
+        alias = "up",
+        about = "Validate and promote editable adapter scripts to the runtime package store"
+    )]
+    Upgrade(ConversationAdapterUpgradeArgs),
 }
 
 #[derive(Args, Debug)]
 pub struct ConversationAdapterInspectArgs {
     #[arg(help = "Adapter ID")]
     pub adapter_id: String,
+}
+
+#[derive(Args, Debug)]
+pub struct ConversationAdapterUpgradeArgs {
+    #[arg(help = "optional adapter directory path")]
+    pub package_dir: Option<String>,
+
+    #[arg(
+        short = 'd',
+        long,
+        help = "upgrade adapters from this repository's builtin-assets/adapters directory"
+    )]
+    pub developer: bool,
+
+    #[arg(long, help = "validate and preview without promoting runtime packages")]
+    pub dry_run: bool,
 }
 
 #[derive(Args, Debug)]

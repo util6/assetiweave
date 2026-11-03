@@ -260,6 +260,7 @@ export const conversationsZh = {
   "conversation.project.summary":
     "{{sessions}} 个 Session · {{questions}} 个问题 · {{turns}} 个 Turn",
   "conversation.session.open": "打开 Session {{title}}",
+  "conversation.session.back": "返回",
   "conversation.session.backToBrowser": "返回 APP / Session",
   "conversation.session.loading": "正在加载 Session...",
   "conversation.session.noProject": "无项目路径",
@@ -268,6 +269,8 @@ export const conversationsZh = {
   "conversation.session.counts": "{{questions}} 个问题 · {{turns}} 个 Turn",
   "conversation.session.questionCountChip": "{{count}} 个问题",
   "conversation.session.turnCountChip": "{{count}} 个 Turn",
+  "conversation.session.copyShortId":
+    "复制会话短 ID {{id}}，可直接在 Agent 中使用",
   "conversation.session.emptyForApp": "当前 APP 暂无 Session。",
   "conversation.session.emptyForProject": "当前项目文件夹暂无 Session。",
   "conversation.question.select": "预览问题 {{title}}",

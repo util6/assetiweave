@@ -17,7 +17,7 @@ export const fallbackAssets: Asset[] = [
     kind: "skill",
     format: "directory",
     relative_path: "skills/algorithmic-art/SKILL.md",
-    absolute_path: "/assets/skills/algorithmic-art/SKILL.md",
+    stored_path: "/assets/skills/algorithmic-art/SKILL.md",
     entry_file: "SKILL.md",
     description:
       "Creating algorithmic art using p5.js with seeded randomness and interactive parameter exploration.",
@@ -31,7 +31,7 @@ export const fallbackAssets: Asset[] = [
     kind: "skill",
     format: "directory",
     relative_path: "skills/android-native-dev/SKILL.md",
-    absolute_path: "/assets/skills/android-native-dev/SKILL.md",
+    stored_path: "/assets/skills/android-native-dev/SKILL.md",
     entry_file: "SKILL.md",
     description:
       "Android native application development and UI design guide covering Material Design 3 and Kotlin/Compose.",
@@ -51,7 +51,7 @@ export const fallbackAssets: Asset[] = [
     kind: "rule",
     format: "markdown",
     relative_path: "rules/brand-guidelines.md",
-    absolute_path: "/assets/rules/brand-guidelines.md",
+    stored_path: "/assets/rules/brand-guidelines.md",
     description:
       "Applies official brand colors, typography, and presentation guidance to generated artifacts.",
     discovered_at: new Date().toISOString(),
@@ -64,7 +64,7 @@ export const fallbackAssets: Asset[] = [
     kind: "agent",
     format: "script",
     relative_path: "agents/browser-harness.ts",
-    absolute_path: "/assets/agents/browser-harness.ts",
+    stored_path: "/assets/agents/browser-harness.ts",
     description:
       "Direct browser control for automation, scraping, testing, and local web page interaction.",
     discovered_at: new Date().toISOString(),
@@ -77,7 +77,7 @@ export const fallbackAssets: Asset[] = [
     kind: "skill",
     format: "directory",
     relative_path: "skills/canvas-design/SKILL.md",
-    absolute_path: "/assets/skills/canvas-design/SKILL.md",
+    stored_path: "/assets/skills/canvas-design/SKILL.md",
     entry_file: "SKILL.md",
     description:
       "Create polished visual art in PNG and PDF documents using layout and design constraints.",
@@ -91,7 +91,7 @@ export const fallbackAssets: Asset[] = [
     kind: "rule",
     format: "markdown",
     relative_path: "rules/claude-api.md",
-    absolute_path: "/assets/rules/claude-api.md",
+    stored_path: "/assets/rules/claude-api.md",
     description:
       "Build apps with the Claude API or Anthropic SDK using provider-specific patterns.",
     discovered_at: new Date().toISOString(),

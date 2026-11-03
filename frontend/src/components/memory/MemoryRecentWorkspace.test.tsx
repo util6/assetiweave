@@ -292,7 +292,7 @@ describe("MemoryRecentWorkspace (M35-UI-01 through M35-UI-07)", () => {
     expect(onNavigateSession).toHaveBeenCalledTimes(1);
   });
 
-  it("DOM strictly contains NO refresh, generate, rebuild, or recall input controls (M35-UI-05)", async () => {
+  it("DOM strictly contains manual refresh button but NO destructive rebuild or recall input controls (M35-UI-05)", async () => {
     memoryService.getRecentMemorySnapshot.mockResolvedValue({
       status: "ready",
       snapshot: mockSnapshot(),
@@ -303,14 +303,211 @@ describe("MemoryRecentWorkspace (M35-UI-01 through M35-UI-07)", () => {
     renderWorkspace();
     await screen.findAllByText("Alpha Project");
 
-    // 严格校验 M35-UI-05：无刷新、窗口修改、生成、重建、编辑、删除、反馈、置顶或 Recall 输入框
-    expect(screen.queryByText("刷新")).toBeNull();
+    // Refresh button exists and triggers snapshot reload
+    const refreshBtn = screen.getByRole("button", { name: "刷新" });
+    expect(refreshBtn).toBeTruthy();
+    fireEvent.click(refreshBtn);
+    expect(memoryService.getRecentMemorySnapshot).toHaveBeenCalledTimes(2);
+
+    // 严格校验 M35-UI-05：无窗口修改、生成、重建、编辑、删除、反馈、置顶或 Recall 输入框
     expect(screen.queryByText("生成")).toBeNull();
     expect(screen.queryByText("立即生成")).toBeNull();
     expect(screen.queryByText("重建")).toBeNull();
     expect(screen.queryByText("编辑")).toBeNull();
     expect(screen.queryByText("删除")).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("triggers hot revalidation on window focus with throttling", async () => {
+    vi.useFakeTimers();
+    try {
+      memoryService.getRecentMemorySnapshot.mockResolvedValue({
+        status: "ready",
+        snapshot: mockSnapshot(),
+        latestAttemptTaskId: null,
+        latestAttemptError: null,
+      } satisfies RecentMemoryStateView);
+
+      renderWorkspace();
+      await vi.waitFor(() => {
+        expect(memoryService.getRecentMemorySnapshot).toHaveBeenCalledTimes(1);
+      });
+
+      // Rapid focus events within throttle window (< 1000ms) only trigger once
+      act(() => {
+        window.dispatchEvent(new Event("focus"));
+      });
+      // Immediately within 100ms
+      act(() => {
+        vi.advanceTimersByTime(100);
+        window.dispatchEvent(new Event("focus"));
+      });
+      expect(memoryService.getRecentMemorySnapshot).toHaveBeenCalledTimes(2);
+
+      // After 1000ms throttle interval passes
+      act(() => {
+        vi.advanceTimersByTime(1100);
+        window.dispatchEvent(new Event("focus"));
+      });
+      expect(memoryService.getRecentMemorySnapshot).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stress-tests high-frequency burst (50 focus events in 50ms) and exact throttle boundary (999ms vs 1000ms)", async () => {
+    vi.useFakeTimers();
+    try {
+      memoryService.getRecentMemorySnapshot.mockResolvedValue({
+        status: "ready",
+        snapshot: mockSnapshot(),
+        latestAttemptTaskId: null,
+        latestAttemptError: null,
+      } satisfies RecentMemoryStateView);
+
+      renderWorkspace();
+      await vi.waitFor(() => {
+        expect(memoryService.getRecentMemorySnapshot).toHaveBeenCalledTimes(1);
+      });
+
+      // 1. Initial focus event triggers 2nd call
+      act(() => {
+        window.dispatchEvent(new Event("focus"));
+      });
+      expect(memoryService.getRecentMemorySnapshot).toHaveBeenCalledTimes(2);
+
+      // 2. High-frequency burst: 50 focus events at 1ms intervals
+      for (let i = 0; i < 50; i++) {
+        act(() => {
+          vi.advanceTimersByTime(1);
+          window.dispatchEvent(new Event("focus"));
+        });
+      }
+      // Zero additional calls should have been made
+      expect(memoryService.getRecentMemorySnapshot).toHaveBeenCalledTimes(2);
+
+      // 3. Exact boundary: advance to 999ms after the 2nd call (we advanced 50ms so advance 949ms more)
+      act(() => {
+        vi.advanceTimersByTime(949); // now at 999ms
+        window.dispatchEvent(new Event("focus"));
+      });
+      expect(memoryService.getRecentMemorySnapshot).toHaveBeenCalledTimes(2);
+
+      // 4. Advance 1ms more (reaching exactly 1000ms boundary)
+      act(() => {
+        vi.advanceTimersByTime(1); // now at 1000ms
+        window.dispatchEvent(new Event("focus"));
+      });
+      // Now throttle guard opens and 3rd call is executed
+      expect(memoryService.getRecentMemorySnapshot).toHaveBeenCalledTimes(3);
+
+      // 5. Test error resilience: if snapshot fails during focus revalidation, it recovers without throwing
+      memoryService.getRecentMemorySnapshot.mockRejectedValueOnce(
+        new Error("Backend I/O error during window focus"),
+      );
+      act(() => {
+        vi.advanceTimersByTime(1005);
+        window.dispatchEvent(new Event("focus"));
+      });
+      expect(memoryService.getRecentMemorySnapshot).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+
+  it("renders multi-way topic tree, status badges, lineage notes, and handles jump chip clicks", async () => {
+    const onNavigateSession = vi.fn();
+    const treeSnapshot: RecentMemorySnapshotView = {
+      ...mockSnapshot(),
+      projects: [
+        {
+          projectKey: "tree-proj",
+          projectTitle: "Tree Project",
+          projectPath: "/code/tree-proj",
+          summary: "Tree visualization project",
+          noMaterialChange: false,
+          latestActivityAt: "2026-11-02T12:00:00Z",
+          sourceSessionCount: 1,
+          items: [],
+          topics: [
+            {
+              topicId: "topic-arch",
+              topic: "Memory Subsystem Architecture",
+              updatedAt: "2026-11-02T12:00:00Z",
+              nodes: [
+                {
+                  id: "098b0c4b#T13",
+                  parentId: null,
+                  status: "completed",
+                  label: "Implement .state/ storage",
+                  summary: "Direct JSON storage schema",
+                  recordedAt: "2026-11-02T10:00:00Z",
+                },
+                {
+                  id: "098b0c4b#T14",
+                  parentId: "098b0c4b#T13",
+                  status: "continued",
+                  label: "Tree UI visualization",
+                  summary: "Render hierarchical multi-way tree",
+                  recordedAt: "2026-11-02T11:00:00Z",
+                },
+                {
+                  id: "098b0c4b#T14.1",
+                  parentId: "098b0c4b#T13",
+                  status: "unexplored",
+                  label: "Explore query caching",
+                  summary: "Investigate fast SQLite cache",
+                  recordedAt: "2026-11-02T11:30:00Z",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    memoryService.getRecentMemorySnapshot.mockResolvedValue({
+      status: "ready",
+      snapshot: treeSnapshot,
+      latestAttemptTaskId: null,
+      latestAttemptError: null,
+    });
+
+    renderWorkspace({ onNavigateSession });
+    // Switch to project view
+    const projectTab = await screen.findByText("按项目");
+    fireEvent.click(projectTab);
+
+    // Verify Project and Topic headers
+    expect(await screen.findByText("Tree Project")).toBeTruthy();
+    expect(screen.getByText("topic-arch")).toBeTruthy();
+    expect(screen.getByText("Memory Subsystem Architecture")).toBeTruthy();
+
+    // Verify status badges
+    expect(screen.getAllByText("已完成").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("推进中").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("待探索").length).toBeGreaterThan(0);
+
+    // Verify lineage note
+    expect(screen.getAllByText(/\(↖ 继承自 098b0c4b#T13\)/).length).toBe(2);
+
+    // Verify interactive jump chip
+    const jumpChip = screen.getByRole("button", {
+      name: /098b0c4b #T13/,
+    });
+    expect(jumpChip).toBeTruthy();
+    fireEvent.click(jumpChip);
+
+    expect(onNavigateSession).toHaveBeenCalledWith({
+      record_kind: "session",
+      source_id: null,
+      session_id: "098b0c4b",
+      question_id: null,
+      turn_id: "13",
+      part_id: null,
+      block_id: "13",
+    });
   });
 
   it("displays correct status indicators for generated, reused, and failed states (M35-UI-06)", async () => {
@@ -409,6 +606,7 @@ function renderWorkspace(
   const dummyT = (key: string) => {
     const dict: Record<string, string> = {
       "common.loading": "加载中...",
+      "common.refresh": "刷新",
       "memory.recent.timeView": "按时间",
       "memory.recent.projectView": "按项目",
       "memory.recent.emptyTitle": "最近 72 小时没有工作记录",
@@ -416,6 +614,7 @@ function renderWorkspace(
         "Conversation 同步后，近期工作会在这里按项目或时间展示。",
       "memory.recent.generating": "近期记忆生成中...",
       "memory.recent.items": "条目",
+      "memory.recent.topics": "个主题",
       "memory.recent.whatChanged": "工作进展",
       "memory.recent.suggestedNext": "建议下一步",
       "memory.recent.noSuggestions": "本窗口没有形成明确下一步",

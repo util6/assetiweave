@@ -3,7 +3,7 @@ use std::{future::Future, pin::Pin, time::Duration};
 use crate::domain::{AgentCatalogEntry, AgentDefinition, AgentId, DeclaredAgentCapabilities};
 
 use super::{
-    backends::{acp::AcpExecutionBackend, native::NativeExecutionBackend},
+    backends::acp::AcpExecutionBackend,
     registry::{AgentAvailability, AgentProbeError},
     AgentConnectionResult, AgentModelOption, AgentModelsResult, AiExecutionError,
     AiExecutionRequest, AiExecutionResult,
@@ -23,6 +23,13 @@ pub type BackendModelsFuture<'a> = Pin<
     >,
 >;
 pub type AgentModelsFuture<'a> = Pin<Box<dyn Future<Output = AgentModelsResult> + Send + 'a>>;
+pub type BackendProbeFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = crate::infrastructure::backends::acp_probe_report::AcpProbeReport>
+            + Send
+            + 'a,
+    >,
+>;
 
 pub trait AgentExecutionBackend: Send + Sync {
     fn execute<'a>(
@@ -44,6 +51,28 @@ pub trait AgentExecutionBackend: Send + Sync {
             Err(AiExecutionError::Protocol {
                 operation: "agent_model_discovery",
             })
+        })
+    }
+
+    fn probe_connection_and_models<'a>(
+        &'a self,
+        _definition: &'a AgentDefinition,
+        _cancellation: super::AiExecutionCancellation,
+    ) -> BackendProbeFuture<'a> {
+        Box::pin(async {
+            crate::infrastructure::backends::acp_probe_report::AcpProbeReport {
+                protocol_connection:
+                    crate::infrastructure::backends::acp_probe_report::AcpProtocolConnectionOutcome::Connected,
+                model_discovery:
+                    crate::infrastructure::backends::acp_probe_report::AcpModelDiscoveryOutcome::Empty,
+                cleanup: crate::infrastructure::backends::acp_probe_report::AcpCleanupOutcome {
+                    process_reaped: true,
+                    workspace_removed: true,
+                    timed_out: false,
+                    failures: Vec::new(),
+                },
+                timings: Default::default(),
+            }
         })
     }
 }
@@ -160,22 +189,14 @@ impl AgentExecutionBackend for AcpExecutionBackend {
     fn discover_models<'a>(&'a self, definition: AgentDefinition) -> BackendModelsFuture<'a> {
         Box::pin(async move { AcpExecutionBackend::discover_models(self, &definition).await })
     }
-}
 
-impl AgentExecutionBackend for NativeExecutionBackend {
-    fn execute<'a>(
+    fn probe_connection_and_models<'a>(
         &'a self,
-        definition: AgentDefinition,
-        request: AiExecutionRequest,
-    ) -> BackendFuture<'a> {
-        Box::pin(async move { NativeExecutionBackend::execute(self, &definition, request).await })
-    }
-
-    fn check_connection<'a>(&'a self, definition: AgentDefinition) -> BackendConnectionFuture<'a> {
-        Box::pin(async move { NativeExecutionBackend::check_connection(self, &definition).await })
-    }
-
-    fn discover_models<'a>(&'a self, definition: AgentDefinition) -> BackendModelsFuture<'a> {
-        Box::pin(async move { NativeExecutionBackend::discover_models(self, &definition).await })
+        definition: &'a AgentDefinition,
+        cancellation: super::AiExecutionCancellation,
+    ) -> BackendProbeFuture<'a> {
+        Box::pin(async move {
+            AcpExecutionBackend::probe_connection_and_models(self, definition, cancellation).await
+        })
     }
 }

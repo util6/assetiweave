@@ -105,6 +105,31 @@ fn scan_skill_source_keeps_canonical_locale_for_duplicate_skill_names() {
     assert_eq!(assets[0].description.as_deref(), Some("zh"));
 }
 
+#[test]
+fn scanned_home_assets_store_portable_anchors_instead_of_host_absolute_paths() {
+    let home = dirs::home_dir().expect("resolve home directory");
+    let root = home.join(format!(".assetiweave-portable-{}", uuid::Uuid::new_v4()));
+    let skill_dir = root.join("portable-skill");
+    fs::create_dir_all(&skill_dir).expect("create portable skill");
+    fs::write(skill_dir.join("SKILL.md"), "description: portable").expect("write skill");
+
+    let assets = scan_skill_source(&test_source(&root)).expect("scan skill source");
+    fs::remove_dir_all(&root).ok();
+
+    let home_text = home.to_string_lossy().to_string();
+    let asset = assets.first().expect("scanned asset");
+    assert!(
+        asset.stored_path.starts_with("~/"),
+        "home assets must be stored with the portable home anchor, got {}",
+        asset.stored_path
+    );
+    assert!(
+        !asset.stored_path.contains(&home_text),
+        "stored path must not leak the host absolute home path: {}",
+        asset.stored_path
+    );
+}
+
 fn test_source(root: &Path) -> Source {
     Source {
         id: "source-a".to_string(),
@@ -142,7 +167,7 @@ fn test_skill_asset(path: &Path) -> Asset {
         detector_version: 1,
         format: AssetFormat::Directory,
         relative_path: name.clone(),
-        absolute_path: path.to_string_lossy().to_string(),
+        stored_path: path.to_string_lossy().to_string(),
         entry_file: Some(format!("{name}/SKILL.md")),
         description: None,
         content_hash: None,

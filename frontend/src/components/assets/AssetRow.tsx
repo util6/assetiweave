@@ -89,7 +89,7 @@ export function AssetRow({
             className="asset-description mt-2 block max-w-full font-mono text-body-sm text-on-surface-variant/80 transition-colors hover:text-primary"
             onClick={(event) => {
               event.stopPropagation();
-              onRevealPath(asset.absolute_path);
+              onRevealPath(asset.stored_path);
             }}
             title={t("asset.revealPath")}
             type="button"

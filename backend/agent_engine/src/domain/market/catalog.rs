@@ -4,7 +4,7 @@ use chrono::{DateTime, NaiveDate};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::types::{Catalog, CatalogItem, Distribution};
+use super::types::{Catalog, CatalogItem};
 
 const CATALOG_SCHEMA: &str = "assetiweave.agent-market/v1";
 const MAX_CATALOG_BYTES: usize = 5 * 1024 * 1024;
@@ -186,13 +186,6 @@ fn validate_distribution_fields(item: &CatalogItem) -> Result<(), CatalogError> 
         if has_secret_like_field {
             return Err(CatalogError::Invalid(format!(
                 "distribution contains forbidden field: {}",
-                distribution.id()
-            )));
-        }
-        if matches!(distribution, Distribution::System { command_candidates, .. } if command_candidates.iter().any(|command| !super::validation::is_safe_command_candidate(command)))
-        {
-            return Err(CatalogError::Invalid(format!(
-                "system candidate is not an executable name: {}",
                 distribution.id()
             )));
         }

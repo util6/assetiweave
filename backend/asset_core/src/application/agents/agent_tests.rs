@@ -39,7 +39,7 @@ async fn persisted_acp_probe_uses_a_process_capable_runtime_after_restart() {
         agent_version: "1.0.0".to_string(),
         protocol: AgentMarketProtocol::Acp,
         distribution_id: "system-fixture".to_string(),
-        distribution_type: DistributionType::System,
+        distribution_type: DistributionType::Binary,
         ownership: Ownership::System,
         install_dir: None,
         resolved_program: program.clone(),
@@ -126,16 +126,16 @@ async fn persisted_acp_probe_uses_a_process_capable_runtime_after_restart() {
 }
 
 #[tokio::test]
-async fn native_connection_probe_refreshes_persisted_health_after_it_becomes_stale() {
-    let (service, repository, root) = native_service_fixture().await;
+async fn acp_connection_probe_refreshes_persisted_health_after_it_becomes_stale() {
+    let (service, repository, root) = acp_service_fixture().await;
 
     let result = service
         .check_agent_connection(AgentConnectionCheckRequest {
-            agent_id: "native-fixture".to_string(),
+            agent_id: "acp-fixture".to_string(),
             mode: AgentConnectionCheckMode::Connection,
         })
         .await
-        .expect("native connection probe");
+        .expect("acp connection probe");
     assert!(result.available);
     assert!(result.connected);
     assert!(result.execution_ready);
@@ -144,10 +144,10 @@ async fn native_connection_probe_refreshes_persisted_health_after_it_becomes_sta
     let installation = service
         .list_installed_agents()
         .await
-        .expect("list refreshed native installation")
+        .expect("list refreshed acp installation")
         .into_iter()
-        .find(|installation| installation.agent_id == "native-fixture")
-        .expect("native installation view");
+        .find(|installation| installation.agent_id == "acp-fixture")
+        .expect("acp installation view");
     assert!(!installation.health_stale);
 
     drop(service);
@@ -156,21 +156,21 @@ async fn native_connection_probe_refreshes_persisted_health_after_it_becomes_sta
 }
 
 #[tokio::test]
-async fn native_startup_health_refresh_checks_installed_native_agents() {
-    let (service, repository, root) = native_service_fixture().await;
+async fn acp_startup_health_refresh_checks_installed_agents() {
+    let (service, repository, root) = acp_service_fixture().await;
 
     let scheduled = service
         .agent_runtime_manager
         .prepare_startup_health_refresh()
         .await
-        .expect("mark native health unchecked");
+        .expect("mark acp health unchecked");
     assert_eq!(scheduled, 1);
     let summary = service
         .agent_runtime_manager
         .clone()
         .refresh_installed_agent_health()
         .await
-        .expect("refresh native startup health");
+        .expect("refresh acp startup health");
     assert_eq!(summary.checked, 1);
     assert_eq!(summary.available, 1);
     assert_eq!(summary.unavailable, 0);
@@ -178,10 +178,10 @@ async fn native_startup_health_refresh_checks_installed_native_agents() {
     let installation = service
         .list_installed_agents()
         .await
-        .expect("list refreshed native installation")
+        .expect("list refreshed acp installation")
         .into_iter()
-        .find(|installation| installation.agent_id == "native-fixture")
-        .expect("native installation view");
+        .find(|installation| installation.agent_id == "acp-fixture")
+        .expect("acp installation view");
     assert!(!installation.health_stale);
 
     drop(service);
@@ -190,27 +190,18 @@ async fn native_startup_health_refresh_checks_installed_native_agents() {
 }
 
 #[tokio::test]
-async fn native_model_discovery_refreshes_persisted_health() {
-    let (service, repository, root) = native_service_fixture().await;
+async fn acp_model_discovery_lists_available_models() {
+    let (service, repository, root) = acp_service_fixture().await;
 
     let result = service
         .list_agent_models(AgentModelsRequest {
-            agent_id: "native-fixture".to_string(),
+            agent_id: "acp-fixture".to_string(),
         })
         .await
-        .expect("native model discovery");
+        .expect("acp model discovery");
     assert!(result.available);
-    assert_eq!(result.models.len(), 1);
-    assert_eq!(result.models[0].id, "fixture-model");
-
-    let installation = service
-        .list_installed_agents()
-        .await
-        .expect("list refreshed native installation")
-        .into_iter()
-        .find(|installation| installation.agent_id == "native-fixture")
-        .expect("native installation view");
-    assert!(!installation.health_stale);
+    assert_eq!(result.models.len(), 2);
+    assert_eq!(result.models[0].id, "fixture/model-fast");
 
     drop(service);
     drop(repository);
@@ -218,13 +209,13 @@ async fn native_model_discovery_refreshes_persisted_health() {
 }
 
 #[tokio::test]
-async fn incompatible_native_installation_does_not_run_model_discovery() {
-    let (service, repository, root) = native_service_fixture().await;
+async fn incompatible_installation_does_not_run_model_discovery() {
+    let (service, repository, root) = acp_service_fixture().await;
     let mut installation = repository
-        .get("native-fixture")
+        .get("acp-fixture")
         .await
-        .expect("load native fixture")
-        .expect("native fixture exists");
+        .expect("load acp fixture")
+        .expect("acp fixture exists");
     installation.installation_status = InstallationStatus::Incompatible;
     installation.runtime_error_code = Some("catalog_distribution_incompatible".to_string());
     installation.runtime_error_message = Some(
@@ -234,11 +225,11 @@ async fn incompatible_native_installation_does_not_run_model_discovery() {
     repository
         .upsert_active(&installation)
         .await
-        .expect("mark native fixture incompatible");
+        .expect("mark acp fixture incompatible");
 
     let result = service
         .list_agent_models(AgentModelsRequest {
-            agent_id: "native-fixture".to_string(),
+            agent_id: "acp-fixture".to_string(),
         })
         .await
         .expect("incompatible model request should be represented as unavailable");
@@ -250,10 +241,10 @@ async fn incompatible_native_installation_does_not_run_model_discovery() {
         Some("agent_reinstall_required")
     );
     let persisted = repository
-        .get("native-fixture")
+        .get("acp-fixture")
         .await
-        .expect("reload native fixture")
-        .expect("native fixture still exists");
+        .expect("reload acp fixture")
+        .expect("acp fixture still exists");
     assert_eq!(
         persisted.installation_status,
         InstallationStatus::Incompatible
@@ -265,13 +256,13 @@ async fn incompatible_native_installation_does_not_run_model_discovery() {
 }
 
 #[tokio::test]
-async fn incompatible_native_installation_does_not_run_connection_probe() {
-    let (service, repository, root) = native_service_fixture().await;
+async fn incompatible_installation_does_not_run_connection_probe() {
+    let (service, repository, root) = acp_service_fixture().await;
     let mut installation = repository
-        .get("native-fixture")
+        .get("acp-fixture")
         .await
-        .expect("load native fixture")
-        .expect("native fixture exists");
+        .expect("load acp fixture")
+        .expect("acp fixture exists");
     installation.installation_status = InstallationStatus::Incompatible;
     installation.runtime_error_code = Some("catalog_distribution_incompatible".to_string());
     installation.runtime_error_message = Some(
@@ -281,11 +272,11 @@ async fn incompatible_native_installation_does_not_run_connection_probe() {
     repository
         .upsert_active(&installation)
         .await
-        .expect("mark native fixture incompatible");
+        .expect("mark acp fixture incompatible");
 
     let result = service
         .check_agent_connection(AgentConnectionCheckRequest {
-            agent_id: "native-fixture".to_string(),
+            agent_id: "acp-fixture".to_string(),
             mode: AgentConnectionCheckMode::Connection,
         })
         .await
@@ -299,10 +290,10 @@ async fn incompatible_native_installation_does_not_run_connection_probe() {
         Some("agent_reinstall_required")
     );
     let persisted = repository
-        .get("native-fixture")
+        .get("acp-fixture")
         .await
-        .expect("reload native fixture")
-        .expect("native fixture still exists");
+        .expect("reload acp fixture")
+        .expect("acp fixture still exists");
     assert_eq!(
         persisted.installation_status,
         InstallationStatus::Incompatible
@@ -313,16 +304,16 @@ async fn incompatible_native_installation_does_not_run_connection_probe() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-async fn native_service_fixture() -> (
+async fn acp_service_fixture() -> (
     AppService,
     crate::backend::store::system::AgentInstallationRepository,
     std::path::PathBuf,
 ) {
     let root = std::env::temp_dir().join(format!(
-        "assetiweave-native-agent-health-{}",
+        "assetiweave-acp-agent-health-{}",
         uuid::Uuid::new_v4()
     ));
-    std::fs::create_dir_all(&root).expect("create native fixture root");
+    std::fs::create_dir_all(&root).expect("create acp fixture root");
     let db_path = root.join("app.db");
     let db = Database::open_initialized_async(&db_path)
         .await
@@ -332,33 +323,34 @@ async fn native_service_fixture() -> (
         .await
         .expect("load request context");
     let program = crate::backend::infrastructure::host_process::resolve_host_executable("node")
-        .expect("node runtime for native fixture");
+        .expect("node runtime for acp fixture");
+    let fixture =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/fake-acp-agent.mjs");
+    let args = vec![fixture.to_string_lossy().to_string()];
     let stale = (chrono::Utc::now() - chrono::Duration::minutes(31)).to_rfc3339();
     let installation = AgentInstallation {
-        agent_id: "native-fixture".to_string(),
+        agent_id: "acp-fixture".to_string(),
         installation_id: uuid::Uuid::new_v4().to_string(),
-        display_name: "Native Fixture".to_string(),
+        display_name: "ACP Fixture".to_string(),
         catalog_item_version: "1.0.0".to_string(),
         agent_version: "1.0.0".to_string(),
-        protocol: AgentMarketProtocol::Native,
+        protocol: AgentMarketProtocol::Acp,
         distribution_id: "system-fixture".to_string(),
-        distribution_type: DistributionType::System,
+        distribution_type: DistributionType::Binary,
         ownership: Ownership::System,
         install_dir: None,
         resolved_program: program.clone(),
-        args: Vec::new(),
+        args: args.clone(),
         definition_json: serde_json::json!({
-            "id": "native-fixture",
-            "display_name": "Native Fixture",
-            "protocol": "native",
+            "id": "acp-fixture",
+            "display_name": "ACP Fixture",
+            "protocol": "acp",
             "program": program.to_string_lossy(),
-            "args": [],
+            "args": args,
             "env": [],
-            "capabilities": { "textPrompt": true, "modelDiscovery": true },
-            "modelDiscoveryArgs": ["-e", "process.stdout.write('fixture-model\\tFixture Model\\n')"]
         }),
         integrity_json: None,
-        source_registry: "native-fixture".to_string(),
+        source_registry: "acp-fixture".to_string(),
         catalog_version: "2026.09.01.1".to_string(),
         enabled: true,
         installation_status: InstallationStatus::Ready,
@@ -380,7 +372,7 @@ async fn native_service_fixture() -> (
     repository
         .upsert_active(&installation)
         .await
-        .expect("persist native fixture");
+        .expect("persist acp fixture");
     let manager = Arc::new(AgentRuntimeManager::new(
         db.pool().clone(),
         root.join("agent-executions"),
@@ -388,7 +380,7 @@ async fn native_service_fixture() -> (
     manager
         .reload()
         .await
-        .expect("restore native fixture registry");
+        .expect("restore acp fixture registry");
     let agent_runtime = manager.runtime();
     let app_runtime = AppRuntime::for_test(
         db_path.clone(),

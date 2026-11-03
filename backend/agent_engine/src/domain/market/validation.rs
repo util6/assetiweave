@@ -23,16 +23,12 @@ pub enum CatalogValidationError {
     InvalidSessionCleanupArgs(String),
     #[error("invalid session cleanup not-found marker: {0}")]
     InvalidSessionCleanupMarker(String),
-    #[error("invalid system distribution: {0}")]
-    InvalidSystemDistribution(String),
     #[error("invalid binary integrity metadata: {0}")]
     InvalidBinaryIntegrity(String),
     #[error("invalid binary executable path: {0}")]
     InvalidBinaryExecutable(String),
     #[error("invalid npx distribution: {0}")]
     InvalidNpxDistribution(String),
-    #[error("invalid uvx distribution: {0}")]
-    InvalidUvxDistribution(String),
     #[error("{id}: {message}")]
     FieldValidation { id: String, message: String },
 }

@@ -1029,11 +1029,16 @@ function readUsage() {
   }
   const lastTime = cursor?.last_time_created ? Number(cursor.last_time_created) : 0;
 
-  const whereClause = lastTime > 0
+  const messageColumns = sqliteJson(dbPath, "PRAGMA table_info(message)").map((row) => row.name);
+  const hasTimeCreated = messageColumns.includes("time_created");
+  const timeExpr = hasTimeCreated ? "time_created" : "NULL AS time_created";
+
+  const whereClause = (hasTimeCreated && lastTime > 0)
     ? `WHERE time_created > ${lastTime} AND data LIKE '%"tokens"%'`
     : `WHERE data LIKE '%"tokens"%'`;
+  const orderClause = hasTimeCreated ? "ORDER BY time_created ASC, id ASC" : "ORDER BY rowid ASC";
 
-  const sql = `SELECT id, session_id, time_created, data FROM message ${whereClause} ORDER BY time_created ASC, id ASC LIMIT 10000;`;
+  const sql = `SELECT id, session_id, ${timeExpr}, data FROM message ${whereClause} ${orderClause} LIMIT 10000;`;
   let rows = [];
   try {
     rows = sqliteJson(dbPath, sql);
@@ -1046,11 +1051,6 @@ function readUsage() {
   let eventCount = 0;
 
   for (const row of rows) {
-    const timeCreated = Number(row.time_created || 0);
-    if (timeCreated > maxTime) {
-      maxTime = timeCreated;
-    }
-
     let data;
     try {
       data = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
@@ -1058,6 +1058,27 @@ function readUsage() {
       continue;
     }
     if (!data || typeof data !== "object") continue;
+
+    let timeCreated = Number(row.time_created || 0);
+    if (!timeCreated || isNaN(timeCreated) || timeCreated <= 0) {
+      const candidate = data.time?.created ?? data.time?.created_at ?? data.created_at;
+      if (typeof candidate === "number" && !isNaN(candidate) && candidate > 0) {
+        timeCreated = candidate;
+      } else if (typeof candidate === "string") {
+        const parsed = Date.parse(candidate);
+        if (!isNaN(parsed) && parsed > 0) {
+          timeCreated = parsed;
+        }
+      }
+    }
+
+    if (timeCreated > maxTime) {
+      maxTime = timeCreated;
+    }
+
+    if (!hasTimeCreated && lastTime > 0 && timeCreated > 0 && timeCreated <= lastTime) {
+      continue;
+    }
 
     const tokens = data.tokens;
     if (!tokens || typeof tokens !== "object") continue;
@@ -1071,9 +1092,21 @@ function readUsage() {
 
     if (totalTokens <= 0) continue;
 
-    const eventId = String(row.id);
     const sessionId = String(row.session_id);
-    const timestamp = timeCreated > 0 ? new Date(timeCreated).toISOString() : new Date().toISOString();
+    const rawId = String(row.id);
+    const turnId = rawId.startsWith("msg-") ? rawId : `msg-${rawId}`;
+    const eventId = `${sessionId}-${turnId}`;
+    let timestamp;
+    if (timeCreated > 0) {
+      timestamp = new Date(timeCreated).toISOString();
+    } else {
+      const candidate = data.time?.created ?? data.time?.created_at ?? data.created_at;
+      if (typeof candidate === "string" && !isNaN(Date.parse(candidate))) {
+        timestamp = new Date(candidate).toISOString();
+      } else {
+        timestamp = new Date().toISOString();
+      }
+    }
     const modelStr = String(data.modelID || data.model || "unknown");
     const providerStr = String(data.providerID || data.provider || "opencode");
     const cost = typeof data.cost === "number" ? data.cost : null;
@@ -1081,7 +1114,7 @@ function readUsage() {
     const event = {
       external_event_id: eventId,
       session_id: sessionId,
-      turn_id: null,
+      turn_id: turnId,
       logical_request_id: eventId,
       attempt_index: 0,
       timestamp,

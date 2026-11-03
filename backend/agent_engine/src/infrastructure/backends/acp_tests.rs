@@ -9,12 +9,11 @@ use crate::backend::{
         },
         types::{
             AgentSessionMode, AiExecutionCancellation, AiExecutionLimits, AiExecutionPhase,
-            AiExecutionProgressSink, AiExecutionPurpose, AiMemoryGenerationTools, AiRecallTools,
+            AiExecutionProgressSink, AiExecutionPurpose, AiRecallTools,
         },
     },
 };
 use crate::infrastructure::protocol::acp::{AcpError, AcpRuntimeEvent, AcpToolStatus};
-use agent_client_protocol::schema::v1::{EnvVariable, McpServer, McpServerStdio};
 use std::path::Path;
 use std::{
     fs,
@@ -41,27 +40,6 @@ fn provider_routing_failure_is_reported_as_an_actionable_model_error() {
     assert!(view.message.contains("Upstream request failed: [404]"));
     assert!(!view.message.contains("Internal error"));
     assert!(!view.message.contains("Error from provider (Console)"));
-}
-
-#[test]
-fn memory_generation_mcp_is_injected_with_the_job_lease_binding() {
-    let servers = memory_generation_mcp_servers(Some(&AiMemoryGenerationTools {
-        tenant_id: "tenant-fixture".to_string(),
-        job_id: "job-fixture".to_string(),
-        ownership_token: "lease-fixture".to_string(),
-        database_path: "/tmp/fixture.db".to_string(),
-    }))
-    .unwrap();
-    let serialized = serde_json::to_value(&servers).unwrap();
-    let rendered = serialized.to_string();
-
-    assert_eq!(servers.len(), 1);
-    assert!(rendered.contains("assetiweave-memory-generation"));
-    assert!(rendered.contains("--memory-generation-mcp-stdio"));
-    assert!(rendered.contains("ASSETIWEAVE_MEMORY_GENERATION_JOB_ID"));
-    assert!(rendered.contains("job-fixture"));
-    assert!(rendered.contains("ASSETIWEAVE_MEMORY_GENERATION_OWNERSHIP_TOKEN"));
-    assert!(rendered.contains("lease-fixture"));
 }
 
 fn definition(mode: &str, record_path: &Path) -> AgentDefinition {
@@ -132,7 +110,6 @@ fn request(model: Option<&str>) -> AiExecutionRequest {
         replay: false,
         restore_only: false,
         recall_tools: None,
-        memory_generation_tools: None,
         account: None,
     }
 }

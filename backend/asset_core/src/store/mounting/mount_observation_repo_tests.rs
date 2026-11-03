@@ -140,7 +140,7 @@ async fn insert_asset(pool: &SqlitePool, asset_id: &str) -> StoreResult<()> {
     sqlx::query(
         r#"
         INSERT INTO assets (
-            id, source_id, name, kind, format, relative_path, absolute_path,
+            id, source_id, name, kind, format, relative_path, stored_path,
             entry_file, description, content_hash, discovered_at, updated_at
         ) VALUES (?1, 'source-a', ?1, 'skill', 'markdown', ?1, ?1, NULL, NULL, NULL, ?2, ?2)
         "#,

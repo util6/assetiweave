@@ -5,6 +5,7 @@ pub mod database;
 pub mod error;
 pub mod memory;
 pub mod mounting;
+pub mod path_codec;
 pub mod sql;
 pub mod sql_system;
 pub mod system;
@@ -19,6 +20,7 @@ pub use database::{
 pub use error::*;
 pub use memory::*;
 pub use mounting::*;
+pub use path_codec::*;
 pub use sql::*;
 pub use system::*;
 

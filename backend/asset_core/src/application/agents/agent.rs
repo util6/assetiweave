@@ -66,15 +66,6 @@ impl AppService {
                 .refresh_acp_connection(agent_id.as_str())
                 .await
                 .map_err(AppError::external)?
-        } else if matches!(mode, AgentConnectionCheckMode::Connection)
-            && existing_installation.as_ref().is_some_and(|installation| {
-                installation.protocol == crate::backend::domain::agents::AgentMarketProtocol::Native
-            })
-        {
-            self.agent_runtime_manager
-                .refresh_native_health(agent_id.as_str())
-                .await
-                .map_err(AppError::external)?
         } else {
             crate::backend::infrastructure::agent_execution::check_agent_connection(
                 self.agent_runtime.clone(),
@@ -156,15 +147,6 @@ impl AppService {
             return self
                 .agent_runtime_manager
                 .get_or_refresh_acp_models(agent_id.as_str())
-                .await
-                .map_err(AppError::external);
-        }
-        if existing_installation.as_ref().is_some_and(|installation| {
-            installation.protocol == crate::backend::domain::agents::AgentMarketProtocol::Native
-        }) {
-            return self
-                .agent_runtime_manager
-                .refresh_native_models(agent_id.as_str())
                 .await
                 .map_err(AppError::external);
         }

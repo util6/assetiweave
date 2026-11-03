@@ -7,7 +7,6 @@ use crate::backend::infrastructure::host_process::{
 use crate::backend::{
     domain::agents::definition::{AgentId, AgentProtocol},
     infrastructure::agent_execution::{
-        backends::native::*,
         executor::BackendFuture,
         registry::{AgentAvailability, AgentProbeError},
         AgentExecutionRuntime, AiExecutionCancellation, AiExecutionError, AiExecutionLimits,

@@ -12,7 +12,6 @@ use crate::backend::{
         RuntimeStatus,
     },
     infrastructure::agent_market::{
-        cache::CatalogCache,
         error::{AgentMarketError, LifecycleTaskPhase},
         runtime::{definition::definition_from_installation, AgentRuntimeManager},
         types::{AgentInstallStartRequest, AgentUninstallStartRequest},
@@ -36,7 +35,7 @@ impl AgentLifecycleCoordinator {
         runtime_manager: Arc<AgentRuntimeManager>,
         runtime_root: PathBuf,
     ) -> Result<Self, AgentMarketError> {
-        let catalog = CatalogCache::best_available()?;
+        let catalog = CatalogService::bundled().map_err(AgentMarketError::Catalog)?;
         Ok(Self::new_with_catalog(
             pool,
             runtime_manager,

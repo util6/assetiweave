@@ -19,8 +19,6 @@ pub enum AiExecutionError {
     ResumeUnavailable,
     #[error("Recall execution requires an ACP agent with read-only Recall tools")]
     RecallToolsUnavailable,
-    #[error("Memory Generation tools require an ACP agent")]
-    MemoryGenerationToolsUnavailable,
     #[error("AI agent '{agent_id}' is not registered")]
     AgentNotFound { agent_id: AgentId },
     #[error("{command_name} was not found on this host. Install it and make `{command_name}` available on PATH or from a login shell.")]
@@ -93,11 +91,6 @@ impl AiExecutionError {
             Self::RecallToolsUnavailable => (
                 "recall_tools_unavailable",
                 "Recall execution requires an ACP agent with the read-only Recall tool capability.",
-                false,
-            ),
-            Self::MemoryGenerationToolsUnavailable => (
-                "memory_generation_tools_unavailable",
-                "Memory Generation tools require an ACP agent.",
                 false,
             ),
             Self::AgentNotFound { .. } => (

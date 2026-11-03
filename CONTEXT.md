@@ -12,6 +12,10 @@ _Avoid_: 文件、条目、插件、工具包
 提供资产的外部或应用自有目录；其内容默认只读，目录数据不承载 AssetIWeave 元数据。
 _Avoid_: 文件夹、仓库
 
+**便携路径锚点（Portable Path Anchor）**：
+以 `~/`、`@config/`、`@local-data/` 等锚点前缀替代主机物理前缀的路径持久化形态，仅在读取 I/O 前展开为当前主机的真实路径；`sources.root_path` 与 `assets.stored_path` 一律以此形态存储。
+_Avoid_: 相对路径、绝对路径、波浪线路径
+
 **目标 Profile（Profile）**：
 宿主 Agent（如 Codex、Claude Code、Cursor、Pi Agent）的运行环境投射点，定义其支持的资产类型与挂载路径。
 _Avoid_: 目标、配置文件、环境
@@ -106,18 +110,26 @@ _Avoid_: 搜索框、Recall 页面、检索器
 
 ## 扩展生态与运行时（Extension & Runtime）
 
+**能力契约（Capability Contract）**：
+宿主与能力实现之间的标准化业务协议边界。核心业务流程仅依赖能力契约与领域事件协同，不绑定具体提供方。
+_Avoid_: 内部方法调用、硬编码实现、脚本回调
+
 **应用插件（Application Plugin）**：
-实现 AssetIWeave 某项可替换业务能力的应用扩展；内置实现与外部实现遵守对应的能力契约。它不是被 AssetIWeave 管理或挂载的 Skill、Rule 等资产。
+遵循特定能力契约、向宿主提供可替换业务能力的应用扩展。按交付形态分为两类：连接外部智能体生态的桥梁插件（如可执行 AI 智能体与对话适配器）通过插件市场独立分发与治理；核心业务能力（如记忆提炼、多智能体协同）可作为内置插件共享同一能力契约与生命周期语义。它不是被 AssetIWeave 管理或挂载的 Skill、Rule 等资产。
 _Avoid_: 资产、技能资产、插件资产
 
 **扩展内核（Extension Kernel）**：
-负责应用插件接入与生命周期管理的共享基座；Agent 与 Conversation Adapter 的扩展接入属于其覆盖场景，而非全部范围。
+负责应用插件身份标识、信任准入、能力注册与生命周期回滚的共享基座；外部桥梁插件与内置插件均挂接于该基座之上。
 _Avoid_: 领域业务服务、任务调度器
 
+**插件市场（Extension Market）**：
+统一发现、安装、升级与回滚外部桥梁插件（涵盖 Agent 市场与对话适配器市场）的声明式目录与分发通道。
+_Avoid_: 资产市场、模型市场
+
 **Agent 市场（Agent Market）**：
-发现、安装与管理可执行 AI 智能体（Agent Package）的声明式目录与分发通道。
+插件市场中面向可执行 AI 智能体（Agent Package）的领域视图与分发通道。
 _Avoid_: 模型市场、插件商店
 
 **对话适配器市场（Adapter Market）**：
-发现、安装与更新各宿主对话解析插件（Adapter Package）的声明式目录与分发通道。
+插件市场中面向各宿主对话解析插件（Adapter Package）的领域视图与分发通道。
 _Avoid_: 解析器市场、适配器仓库

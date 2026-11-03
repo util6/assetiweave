@@ -60,7 +60,7 @@ pub struct AgentMarketListArgs {
     #[arg(long, help = "search Agent id, name or description")]
     pub query: Option<String>,
 
-    #[arg(long, help = "protocol filter: acp or native")]
+    #[arg(long, help = "protocol filter: acp")]
     pub protocol: Option<String>,
 
     #[arg(long, help = "only list installed Agents")]

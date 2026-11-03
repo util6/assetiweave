@@ -12,7 +12,7 @@ fn fixture_asset() -> Asset {
         detector_version: 1,
         format: crate::backend::domain::AssetFormat::Directory,
         relative_path: "fixture".to_string(),
-        absolute_path: "/fixture".to_string(),
+        stored_path: "/fixture".to_string(),
         entry_file: None,
         description: None,
         content_hash: None,
