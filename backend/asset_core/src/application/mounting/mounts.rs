@@ -186,32 +186,6 @@ impl AppService {
             errors,
         })
     }
-
-    pub async fn execute_plan(
-        &self,
-        plan: DeploymentPlan,
-        action_ids: Option<Vec<String>>,
-    ) -> AppResult<ExecutionResult> {
-        let pool = self.db.pool();
-        let tenant_id = self.tenant_id();
-        let profiles =
-            crate::backend::application::mounting::profile_ops::load_target_profiles_sqlx(
-                pool, tenant_id,
-            )
-            .await?;
-        let assets = crate::backend::store::load_assets_sqlx(pool, tenant_id, None).await?;
-        super::deployment_execution::execute_deployment_plan(
-            pool,
-            tenant_id,
-            &profiles,
-            &assets,
-            &plan,
-            action_ids.as_deref(),
-            self.runtime.target_catalog().as_ref(),
-        )
-        .await
-        .map_err(AppError::external)
-    }
 }
 
 pub async fn load_mount_asset_and_profile(

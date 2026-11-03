@@ -100,33 +100,10 @@ ON CONFLICT(tenant_id, asset_id, profile_id) DO UPDATE SET
     updated_at = excluded.updated_at
 "#;
 
-pub const UPSERT_ASSET_MOUNT_OBSERVATION: &str = r#"
-INSERT INTO asset_mount_observations (
-    tenant_id, asset_id, profile_id, target_dir, target_path, state, linked_source, observed_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-ON CONFLICT(tenant_id, asset_id, profile_id) DO UPDATE SET
-    target_dir = excluded.target_dir,
-    target_path = excluded.target_path,
-    state = excluded.state,
-    linked_source = excluded.linked_source,
-    observed_at = excluded.observed_at
-"#;
-
-#[cfg(test)]
-pub const LIST_ASSET_MOUNT_OBSERVATIONS: &str = r#"
-SELECT asset_id, profile_id, target_dir, target_path, state, linked_source, observed_at
-FROM asset_mount_observations
-WHERE tenant_id = ?1
-ORDER BY asset_id ASC, profile_id ASC
-"#;
-
-pub const DELETE_ORPHAN_ASSET_MOUNT_OBSERVATIONS: &str = r#"
-DELETE FROM asset_mount_observations
-WHERE tenant_id = ?1 AND NOT EXISTS (
-    SELECT 1 FROM assets
-    WHERE assets.tenant_id = asset_mount_observations.tenant_id
-    AND assets.id = asset_mount_observations.asset_id
-)
+pub const DISABLE_ASSET_MOUNT_IF_ENABLED: &str = r#"
+UPDATE asset_mounts
+SET enabled = 0, updated_at = ?4
+WHERE tenant_id = ?1 AND asset_id = ?2 AND profile_id = ?3 AND enabled = 1
 "#;
 
 pub const LIST_ASSET_GROUPS_BY_KIND: &str = r#"
@@ -237,12 +214,6 @@ pub const DELETE_APP_SHORTCUT_BY_PROFILE: &str =
 pub const DELETE_ASSET_MOUNTS_BY_PROFILE: &str =
     "DELETE FROM asset_mounts WHERE tenant_id = ?1 AND profile_id = ?2";
 
-pub const DELETE_ASSET_MOUNT_OBSERVATIONS_BY_PROFILE: &str =
-    "DELETE FROM asset_mount_observations WHERE tenant_id = ?1 AND profile_id = ?2";
-
-pub const COUNT_DEPLOYMENT_STATE_BY_PROFILE: &str =
-    "SELECT COUNT(*) FROM deployment_state WHERE tenant_id = ?1 AND profile_id = ?2";
-
 pub const DELETE_ASSETS_BY_SOURCE: &str =
     "DELETE FROM assets WHERE tenant_id = ?1 AND source_id = ?2";
 
@@ -314,41 +285,4 @@ INSERT INTO assets (
     entry_file, description, content_hash, discovered_at, updated_at,
     detector_id, detector_version
 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-"#;
-
-pub const UPSERT_DEPLOYMENT_STATE: &str = r#"
-INSERT INTO deployment_state (
-    tenant_id, profile_id, asset_id, target_path, strategy, source_hash, deployed_at, managed_by
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-ON CONFLICT(tenant_id, profile_id, asset_id, target_path) DO UPDATE SET
-    strategy = excluded.strategy,
-    source_hash = excluded.source_hash,
-    deployed_at = excluded.deployed_at,
-    managed_by = excluded.managed_by
-"#;
-
-pub const GET_MANAGED_DEPLOYMENT: &str = r#"
-SELECT managed_by
-FROM deployment_state
-WHERE tenant_id = ?1 AND profile_id = ?2 AND asset_id = ?3 AND target_path = ?4
-"#;
-
-pub const LIST_MANAGED_DEPLOYMENT_TARGETS_BY_PROFILE: &str = r#"
-SELECT asset_id, target_path
-FROM deployment_state
-WHERE tenant_id = ?1 AND profile_id = ?2 AND managed_by = 'assetiweave'
-"#;
-
-pub const DELETE_DEPLOYMENT_STATE: &str = r#"
-DELETE FROM deployment_state
-WHERE tenant_id = ?1 AND profile_id = ?2 AND asset_id = ?3 AND target_path = ?4
-"#;
-
-pub const DELETE_ORPHAN_DEPLOYMENT_STATE: &str = r#"
-DELETE FROM deployment_state
-WHERE tenant_id = ?1 AND NOT EXISTS (
-    SELECT 1 FROM assets
-    WHERE assets.tenant_id = deployment_state.tenant_id
-    AND assets.id = deployment_state.asset_id
-)
 "#;

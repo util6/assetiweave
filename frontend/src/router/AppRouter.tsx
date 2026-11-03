@@ -97,7 +97,6 @@ export function AppRouter() {
     void (async () => {
       try {
         await catalog.refreshOverview();
-        catalog.clearDeploymentPlan();
       } catch (error) {
         if (skillBackupTask.status === "completed") {
           catalog.showNotification({

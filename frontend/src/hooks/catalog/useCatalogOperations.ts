@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  createPlan,
-  executePlan,
   scanSources,
   type SourceScanScope,
 } from "../../services/catalog";
@@ -9,8 +7,6 @@ import type { TaskView } from "../../types/taskCenter";
 import type {
   Asset,
   AssetKind,
-  DeploymentPlan,
-  ExecutionResult,
 } from "../../types";
 
 export function useCatalogOperations(
@@ -22,9 +18,6 @@ export function useCatalogOperations(
   ) => Promise<TaskView>,
   sourceScan?: TaskView | null,
 ) {
-  const [plan, setPlan] = useState<DeploymentPlan | null>(null);
-  const [executionResult, setExecutionResult] =
-    useState<ExecutionResult | null>(null);
   const [busy, setBusy] = useState(false);
   const startedScanIdsRef = useRef(new Set<string>());
   const settledScanIdsRef = useRef(new Set<string>());
@@ -62,8 +55,6 @@ export function useCatalogOperations(
       }
       const scannedAssets = await scanSources(activeAssetKind);
       await refreshOverview(scannedAssets);
-      setPlan(null);
-      setExecutionResult(null);
     } finally {
       setBusy(false);
     }
@@ -71,43 +62,10 @@ export function useCatalogOperations(
 
   async function settleSourceScan(_task: TaskView) {
     await refreshOverview();
-    setPlan(null);
-    setExecutionResult(null);
-  }
-
-  async function createDeploymentPlan() {
-    setBusy(true);
-    try {
-      setPlan(await createPlan());
-      setExecutionResult(null);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function executeDeploymentPlan() {
-    if (!plan) return;
-    setBusy(true);
-    try {
-      setExecutionResult(await executePlan(plan));
-      await refreshOverview();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function clearDeploymentPlan() {
-    setPlan(null);
-    setExecutionResult(null);
   }
 
   return {
     busy,
-    clearDeploymentPlan,
-    createDeploymentPlan,
-    executeDeploymentPlan,
-    executionResult,
-    plan,
     scan,
   };
 }

@@ -99,3 +99,33 @@ async fn application_profile_persistence_normalizes_paths_around_store_access() 
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
 }
+
+#[tokio::test]
+async fn ensure_profile_can_be_deleted_allows_unmounted_profile() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-profile-delete-unmounted-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+
+    // Deleting default profile should be rejected:
+    let default_err = ensure_profile_can_be_deleted_sqlx(database.pool(), "default", "codex")
+        .await
+        .expect_err("default profile cannot be deleted");
+    assert!(default_err
+        .to_string()
+        .contains("default app cannot be deleted"));
+
+    // Deleting custom unmounted profile should succeed:
+    let result =
+        ensure_profile_can_be_deleted_sqlx(database.pool(), "default", "custom-profile").await;
+    assert!(
+        result.is_ok(),
+        "unmounted profile must be allowed to be deleted"
+    );
+
+    drop(database);
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+}

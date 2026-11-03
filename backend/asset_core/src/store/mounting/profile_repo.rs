@@ -77,11 +77,6 @@ pub async fn delete_profile_sqlx(
         .bind(profile_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query(sql::DELETE_ASSET_MOUNT_OBSERVATIONS_BY_PROFILE)
-        .bind(tenant_id)
-        .bind(profile_id)
-        .execute(&mut *tx)
-        .await?;
     sqlx::query(sql::DELETE_ASSET_MOUNTS_BY_PROFILE)
         .bind(tenant_id)
         .bind(profile_id)

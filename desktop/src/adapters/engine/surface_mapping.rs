@@ -396,11 +396,6 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
-        canonical_method: "create_plan",
-        tauri_command: Some("create_plan"),
-        note: None,
-    },
-    SurfaceMapping {
         canonical_method: "create_profile",
         tauri_command: Some("create_profile"),
         note: None,
@@ -429,11 +424,6 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         canonical_method: "doctor.run",
         tauri_command: None,
         note: Some("engine-only capability"),
-    },
-    SurfaceMapping {
-        canonical_method: "execute_plan",
-        tauri_command: Some("execute_plan"),
-        note: None,
     },
     SurfaceMapping {
         canonical_method: "get_navigation_model",

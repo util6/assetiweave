@@ -325,7 +325,6 @@ export const commonZh = {
   "toolbar.sort.direction.ascTitle": "当前：升序，点击切换为降序",
   "toolbar.export": "导出",
   "toolbar.cancel": "取消",
-  "toolbar.createDeploymentPlan": "生成部署计划",
   "toolbar.refreshMountStatus": "刷新链接状态",
   "toolbar.scanSources": "扫描资产源",
   "toolbar.generatePlan": "生成计划",

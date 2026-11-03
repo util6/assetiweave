@@ -1,13 +1,7 @@
 use super::types::{AssetGroupInput, SkillGroupExclusiveMountInput, TargetProfileInput};
-use crate::backend::domain::{AssetGroup, DeploymentPlan, DeploymentStrategy, TargetProfile};
+use crate::backend::domain::{AssetGroup, DeploymentStrategy, TargetProfile};
 use schemars::JsonSchema;
 use serde::Deserialize;
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ProfileIdParams {
-    #[serde(alias = "profileId")]
-    pub profile_id: Option<String>,
-}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct IdParams {
@@ -78,13 +72,6 @@ pub struct SetSkillGroupManualMembersParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SkillGroupExclusiveMountParams {
     pub input: SkillGroupExclusiveMountInput,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ExecutePlanParams {
-    pub plan: DeploymentPlan,
-    #[serde(alias = "actionIds")]
-    pub action_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

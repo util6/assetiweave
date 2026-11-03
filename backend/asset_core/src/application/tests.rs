@@ -2,8 +2,8 @@ use super::prelude::*;
 use crate::backend::domain::{
     AssetFormat, AssetGroupRules, ConversationAdapterKind, ConversationAdapterTrustState,
     ConversationGroupingOrigin, ConversationPartKind, ConversationPartRole, ConversationSource,
-    ConversationSourceKind, DeploymentState, NormalizedConversationPart,
-    NormalizedConversationSession, NormalizedConversationTurn, SourceKind,
+    ConversationSourceKind, NormalizedConversationPart, NormalizedConversationSession,
+    NormalizedConversationTurn, SourceKind,
 };
 use sqlx::AssertSqlSafe;
 use std::fs;
@@ -3561,12 +3561,18 @@ async fn app_shortcuts_update_through_sqlx_path() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn profile_delete_guard_blocks_sqlx_deployment_state() {
+async fn profile_delete_guard_allows_delete_when_unmounted_and_blocks_when_mounted() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-sqlx-profile-delete-{}",
         Uuid::new_v4()
     ));
-    fs::create_dir_all(&root).expect("create test root");
+    let target_dir = root.join("target");
+    let source_dir = root.join("source");
+    let skill_dir = source_dir.join("skill-a");
+    fs::create_dir_all(&target_dir).expect("create target root");
+    fs::create_dir_all(&skill_dir).expect("create skill dir");
+    fs::write(skill_dir.join("SKILL.md"), "---\nname: skill-a\n---\n").expect("write skill");
+
     let service = AppService::open_with_db_path(root.join("app.db"))
         .await
         .expect("open application service");
@@ -3576,7 +3582,7 @@ async fn profile_delete_guard_blocks_sqlx_deployment_state() {
             name: "Team App".to_string(),
             app_kind: None,
             target_provider_id: None,
-            target_paths: Some(vec![root.join("target").to_string_lossy().to_string()]),
+            target_paths: Some(vec![target_dir.to_string_lossy().to_string()]),
             supported_kinds: None,
             deployment_strategy: None,
             enabled: Some(true),
@@ -3587,28 +3593,12 @@ async fn profile_delete_guard_blocks_sqlx_deployment_state() {
         .await
         .expect("create profile");
 
-    crate::backend::store::upsert_deployment_state_sqlx(
-        service.db.pool(),
-        service.tenant_id(),
-        &DeploymentState {
-            profile_id: profile.id.clone(),
-            asset_id: "asset-a".to_string(),
-            target_path: "/target/a".to_string(),
-            strategy: DeploymentStrategy::SymlinkToSource,
-            source_hash: "hash".to_string(),
-            deployed_at: "2026-06-18T00:00:00Z".to_string(),
-            managed_by: "assetiweave".to_string(),
-        },
-    )
-    .await
-    .expect("insert deployment state");
-
-    let error = service
-        .delete_profile(profile.id)
+    // Deleting profile succeeds when no assets are mounted:
+    service
+        .delete_profile(profile.id.clone())
         .await
-        .expect_err("delete blocked by deployment state");
+        .expect("delete profile must succeed when no mounted assets exist");
 
-    assert!(error.to_string().contains("managed deployments"));
     drop(service);
     fs::remove_dir_all(root).ok();
 }
@@ -3833,13 +3823,6 @@ async fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {
                     'orphan-asset', 'codex', 1, 'symlink_to_source',
                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
                 );
-                INSERT INTO deployment_state (
-                    profile_id, asset_id, target_path, strategy,
-                    source_hash, deployed_at, managed_by
-                ) VALUES (
-                    'codex', 'orphan-asset', '/tmp/orphan-asset', 'symlink_to_source',
-                    'hash', '2026-01-01T00:00:00Z', 'assetiweave'
-                );
                 INSERT INTO skill_remote_sources (
                     asset_id, provider, source_url, repo_url, branch,
                     acquired_at, status
@@ -3872,7 +3855,6 @@ async fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {
 
     for table in [
         "asset_mounts",
-        "deployment_state",
         "skill_remote_sources",
         "asset_group_members",
     ] {
@@ -3945,11 +3927,7 @@ async fn disabled_mount_preference_persists_through_sqlx_path() {
     let service = AppService::open_with_db_path(root.join("app.db"))
         .await
         .expect("open application service");
-    clear_test_tables(
-        &service,
-        &["asset_mounts", "deployment_state", "assets", "sources"],
-    )
-    .await;
+    clear_test_tables(&service, &["asset_mounts", "assets", "sources"]).await;
     let source = Source {
         id: "source-a".to_string(),
         name: "Source A".to_string(),
@@ -4047,11 +4025,7 @@ async fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
     let service = AppService::open_with_db_path(root.join("app.db"))
         .await
         .expect("open application service");
-    clear_test_tables(
-        &service,
-        &["asset_mounts", "deployment_state", "assets", "sources"],
-    )
-    .await;
+    clear_test_tables(&service, &["asset_mounts", "assets", "sources"]).await;
     let source = Source {
         id: "source-a".to_string(),
         name: "Source A".to_string(),
@@ -4331,18 +4305,6 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
             .map(|status| status.hidden_asset_ids.len()),
         Some(1)
     );
-
-    let plan = service
-        .create_plan(Some(&profile.id))
-        .await
-        .expect("create deployment plan");
-    assert_eq!(plan.actions.len(), 1);
-    assert_eq!(
-        plan.actions[0].asset_id.as_deref(),
-        Some(source_asset.id.as_str())
-    );
-    assert_eq!(plan.summary.create_count, 1);
-    assert_eq!(plan.summary.conflict_count, 0);
 
     let target_statuses = service
         .list_asset_mount_statuses(None)
@@ -4632,12 +4594,6 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
     assert_eq!(status.asset_id, catalog[0].asset.id);
     assert_eq!(status.state, PhysicalMountStateDto::NotMounted);
 
-    let plan = service
-        .create_plan(Some(&profile.id))
-        .await
-        .expect("create deployment plan");
-    assert_eq!(plan.summary.conflict_count, 0);
-
     let mounted = service
         .mount_asset_by_id(&catalog[0].asset.id, &profile.id)
         .await
@@ -4718,7 +4674,7 @@ async fn refreshing_target_catalog_reconciles_existing_default_profiles() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
+async fn injected_target_catalog_drives_seed_detect_and_mount() {
     let root = std::env::temp_dir().join(format!("assetiweave-target-runtime-{}", Uuid::new_v4()));
     let source_root = root.join("fixture-source");
     let target_root = root.join("fixture-target");
@@ -4845,16 +4801,11 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
             profile.id,
         ),
     ).await.expect("record fixture mount intent");
-    let plan = service
-        .create_plan(Some(&profile.id))
+    let mounted = service
+        .mount_asset_by_id("fixture-asset", &profile.id)
         .await
-        .expect("build plan from injected catalog");
-    assert_eq!(plan.summary.create_count, 1);
-    let execution = service
-        .execute_plan(plan, None)
-        .await
-        .expect("execute plan from injected catalog");
-    assert_eq!(execution.executed_count, 1);
+        .expect("mount asset from injected catalog");
+    assert_eq!(mounted.status.state, PhysicalMountStateDto::Mounted);
     assert!(target_root.join("Fixture Skill.md").is_symlink());
 
     let invalid = service

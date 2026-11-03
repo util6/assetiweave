@@ -832,46 +832,4 @@ export interface ApplySkillGroupExclusiveMountResult extends SkillGroupExclusive
   errors: SkillGroupExclusiveMountError[];
 }
 
-export type DeploymentActionType =
-  "create" | "update" | "remove" | "skip" | "conflict";
-export type RiskLevel = "low" | "medium" | "high";
-
-export interface DeploymentAction {
-  id: string;
-  action_type: DeploymentActionType;
-  asset_id?: string | null;
-  profile_id: string;
-  source_path?: string | null;
-  target_path: string;
-  display_source_path?: string | null;
-  display_target_path?: string;
-  strategy: DeploymentStrategy;
-  reason: string;
-  risk: RiskLevel;
-  selectable: boolean;
-}
-
-export interface DeploymentPlanSummary {
-  create_count: number;
-  update_count: number;
-  remove_count: number;
-  skip_count: number;
-  conflict_count: number;
-}
-
-export interface DeploymentPlan {
-  id: string;
-  created_at: string;
-  profile_id?: string | null;
-  actions: DeploymentAction[];
-  summary: DeploymentPlanSummary;
-}
-
-export interface ExecutionResult {
-  executed_count: number;
-  skipped_count: number;
-  conflict_count: number;
-  errors: string[];
-}
-
 export * from "./taskCenter";

@@ -69,7 +69,6 @@ export function SourcesPage({
   onAssetReveal,
   onApplyAssetUpdate,
   onCatalogRefresh,
-  onClearDeploymentPlan,
   onManualOpen,
   onNotifyError,
   onOpenSettings,
@@ -89,7 +88,6 @@ export function SourcesPage({
   onAssetReveal: (path: string) => void;
   onApplyAssetUpdate: (asset: Asset) => void;
   onCatalogRefresh: (assets?: Asset[]) => Promise<void>;
-  onClearDeploymentPlan: () => void;
   onManualOpen: () => void;
   onNotifyError: (message: string) => void;
   onOpenSettings: () => void;
@@ -276,7 +274,6 @@ export function SourcesPage({
       const nextAsset = { ...editingAsset, ...savedAsset };
       onApplyAssetUpdate(nextAsset);
       sources.applySourceAssetUpdate(nextAsset);
-      onClearDeploymentPlan();
       setEditingAsset(null);
     } catch (error) {
       onNotifyError(errorMessage(error));
@@ -295,7 +292,6 @@ export function SourcesPage({
       const deletedAsset = await deleteAsset(deletingAsset.id, unmount);
       onRemoveAsset(deletedAsset.id);
       sources.removeSourceAsset(deletedAsset.id);
-      onClearDeploymentPlan();
       setDeletingAsset(null);
     } catch (error) {
       onNotifyError(errorMessage(error));

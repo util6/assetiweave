@@ -13,8 +13,7 @@ use crate::backend::application::AppError as RuntimeAppError;
 use crate::backend::application::{AppError, AppResult};
 use crate::backend::domain::catalog::{Asset, AssetKind, Source, SourceOrigin};
 use crate::backend::domain::mounting::{
-    AssetMount, AssetMountUpdateResult, DeploymentState, DeploymentStrategy, PhysicalMountState,
-    TargetProfile,
+    AssetMount, AssetMountUpdateResult, DeploymentStrategy, PhysicalMountState, TargetProfile,
 };
 
 pub async fn set_asset_mount_record(
@@ -129,15 +128,8 @@ pub async fn mount_preloaded_asset_mount_record(
         match inspection.state {
             crate::backend::domain::PhysicalMountState::Mounted => {
                 let inspection = repair_mounted_symlink_to_real_source(asset, profile, inspection)?;
-                let mount = persist_verified_mount(
-                    pool,
-                    tenant_id,
-                    asset,
-                    profile,
-                    &inspection.target_path,
-                    strategy,
-                )
-                .await?;
+                let mount =
+                    persist_verified_mount(pool, tenant_id, asset, profile, strategy).await?;
                 return Ok(AssetMountUpdateResult {
                     mount,
                     status: asset_mount_status(&asset.id, &profile.id, inspection),
@@ -168,16 +160,7 @@ pub async fn mount_preloaded_asset_mount_record(
             )));
         }
 
-        let mount = match persist_verified_mount(
-            pool,
-            tenant_id,
-            asset,
-            profile,
-            &inspection.target_path,
-            strategy,
-        )
-        .await
-        {
+        let mount = match persist_verified_mount(pool, tenant_id, asset, profile, strategy).await {
             Ok(mount) => mount,
             Err(error) => {
                 remove_created_mount_symlink(&target_path).ok();
@@ -275,9 +258,7 @@ pub async fn unmount_preloaded_asset_mount_record(
             )));
         }
 
-        match persist_verified_unmount(pool, tenant_id, asset, profile, &inspection.target_path)
-            .await
-        {
+        match persist_verified_unmount(pool, tenant_id, asset, profile).await {
             Ok(mount) => Ok(AssetMountUpdateResult {
                 mount,
                 status: asset_mount_status(&asset.id, &profile.id, inspection),
@@ -399,22 +380,16 @@ async fn persist_verified_mount(
     tenant_id: &str,
     asset: &Asset,
     profile: &TargetProfile,
-    target_path: &str,
     strategy: DeploymentStrategy,
 ) -> AppResult<AssetMount> {
-    let state = DeploymentState {
-        profile_id: profile.id.clone(),
-        asset_id: asset.id.clone(),
-        target_path: target_path.to_string(),
+    Ok(crate::backend::store::persist_verified_mount_sqlx(
+        pool,
+        tenant_id,
+        &asset.id,
+        &profile.id,
         strategy,
-        source_hash: asset.content_hash.clone().unwrap_or_default(),
-        deployed_at: Utc::now().to_rfc3339(),
-        managed_by: "assetiweave".to_string(),
-    };
-    Ok(
-        crate::backend::store::persist_verified_mount_sqlx(pool, tenant_id, &state, strategy)
-            .await?,
     )
+    .await?)
 }
 
 async fn persist_verified_unmount(
@@ -422,14 +397,12 @@ async fn persist_verified_unmount(
     tenant_id: &str,
     asset: &Asset,
     profile: &TargetProfile,
-    target_path: &str,
 ) -> AppResult<AssetMount> {
     Ok(crate::backend::store::persist_verified_unmount_sqlx(
         pool,
         tenant_id,
         &asset.id,
         &profile.id,
-        target_path,
         profile.deployment_strategy,
     )
     .await?)

@@ -338,7 +338,6 @@ export const commonEn = {
     "Current: ascending. Click to switch to descending.",
   "toolbar.export": "Export",
   "toolbar.cancel": "Cancel",
-  "toolbar.createDeploymentPlan": "Create deployment plan",
   "toolbar.refreshMountStatus": "Refresh link state",
   "toolbar.scanSources": "Scan sources",
   "toolbar.generatePlan": "Generate plan",
