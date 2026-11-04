@@ -212,6 +212,7 @@ pub async fn handle_memory(args: MemoryArgs, format: OutputFormat) -> Result<()>
                     status,
                     source_session_id: session_id,
                     turn_index: turn,
+                    turn_started_at: None,
                     created_at: now.clone(),
                     updated_at: now,
                 };

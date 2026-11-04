@@ -138,10 +138,8 @@ pub fn convert_recent_memory_state_to_file(
                     let nodes: Vec<RecentTreeNodeView> = node_keys
                         .into_iter()
                         .filter_map(|n_id| tree.nodes.get(&n_id))
-                        .map(|node| RecentTreeNodeView {
-                            id: node.id.clone(),
-                            parent_id: node.parent_id.clone(),
-                            status: match node.status {
+                        .filter_map(|node| {
+                            let status = match node.status {
                                 crate::backend::domain::memory::tree::NodeStatus::Completed => {
                                     RecentNodeStatus::Completed
                                 }
@@ -151,10 +149,18 @@ pub fn convert_recent_memory_state_to_file(
                                 crate::backend::domain::memory::tree::NodeStatus::Unexplored => {
                                     RecentNodeStatus::Unexplored
                                 }
-                            },
-                            label: node.summary.clone(),
-                            summary: node.summary.clone(),
-                            recorded_at: Some(node.created_at.clone()),
+                                crate::backend::domain::memory::tree::NodeStatus::Dismissed => {
+                                    return None;
+                                }
+                            };
+                            Some(RecentTreeNodeView {
+                                id: node.id.clone(),
+                                parent_id: node.parent_id.clone(),
+                                status,
+                                label: node.summary.clone(),
+                                summary: node.summary.clone(),
+                                recorded_at: Some(node.created_at.clone()),
+                            })
                         })
                         .collect();
 

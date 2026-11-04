@@ -64,6 +64,7 @@ fn test_memory_storage_state_atomic_read_write() {
         status: NodeStatus::Completed,
         source_session_id: "sess-001".to_string(),
         turn_index: 3,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };

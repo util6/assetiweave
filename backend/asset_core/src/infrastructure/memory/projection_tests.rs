@@ -31,6 +31,7 @@ fn test_project_state_to_markdown_populated_and_deterministic() {
         status: NodeStatus::Completed,
         source_session_id: "s1".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -42,6 +43,7 @@ fn test_project_state_to_markdown_populated_and_deterministic() {
         status: NodeStatus::Unexplored,
         source_session_id: "s1".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -82,6 +84,7 @@ fn test_recent_state_to_markdown_and_one_way_sync() {
         status: NodeStatus::Completed,
         source_session_id: "abc00000".to_string(),
         turn_index: 5,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };

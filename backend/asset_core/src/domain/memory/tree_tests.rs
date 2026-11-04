@@ -5,8 +5,10 @@ fn test_node_status_conversions() {
     assert_eq!(NodeStatus::Completed.as_str(), "completed");
     assert_eq!(NodeStatus::Continued.as_str(), "continued");
     assert_eq!(NodeStatus::Unexplored.as_str(), "unexplored");
+    assert_eq!(NodeStatus::Dismissed.as_str(), "dismissed");
 
     assert_eq!(NodeStatus::Completed.to_string(), "completed");
+    assert_eq!(NodeStatus::Dismissed.to_string(), "dismissed");
     assert_eq!(
         "completed".parse::<NodeStatus>().unwrap(),
         NodeStatus::Completed
@@ -18,6 +20,22 @@ fn test_node_status_conversions() {
     assert_eq!(
         "unexplored".parse::<NodeStatus>().unwrap(),
         NodeStatus::Unexplored
+    );
+    assert_eq!(
+        "dismissed".parse::<NodeStatus>().unwrap(),
+        NodeStatus::Dismissed
+    );
+    assert_eq!(
+        "DISMISSED".parse::<NodeStatus>().unwrap(),
+        NodeStatus::Dismissed
+    );
+    assert_eq!(
+        serde_json::to_string(&NodeStatus::Dismissed).unwrap(),
+        "\"dismissed\""
+    );
+    assert_eq!(
+        serde_json::from_str::<NodeStatus>("\"dismissed\"").unwrap(),
+        NodeStatus::Dismissed
     );
     assert!("invalid".parse::<NodeStatus>().is_err());
 }
@@ -51,15 +69,53 @@ fn test_json_serde_roundtrip() {
         status: NodeStatus::Completed,
         source_session_id: "session-uuid-12345678".to_string(),
         turn_index: 1,
+        turn_started_at: Some("2026-11-02T09:59:00Z".to_string()),
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
 
     let json = serde_json::to_string(&node).expect("serialize node");
     assert!(json.contains("\"status\":\"completed\""));
+    assert!(json.contains("\"turn_started_at\":\"2026-11-02T09:59:00Z\""));
     let deserialized: MemoryTreeNode = serde_json::from_str(&json).expect("deserialize node");
     assert_eq!(deserialized, node);
     assert_eq!(deserialized.short_id(), "73c20273");
+}
+
+#[test]
+fn test_memory_tree_node_backward_compatibility_without_turn_started_at() {
+    // Old schema without turn_started_at field must deserialize gracefully to None
+    let old_json = r#"{
+        "id": "73c20273#T1",
+        "parent_id": null,
+        "topic_id": "acp-migration",
+        "summary": "Refactor ACP executor",
+        "status": "completed",
+        "source_session_id": "session-uuid-12345678",
+        "turn_index": 1,
+        "created_at": "2026-11-02T10:00:00Z",
+        "updated_at": "2026-11-02T10:00:00Z"
+    }"#;
+    let node: MemoryTreeNode = serde_json::from_str(old_json).expect("deserialize old json");
+    assert_eq!(node.turn_started_at, None);
+    assert_eq!(node.status, NodeStatus::Completed);
+
+    // Explicit null turn_started_at must also deserialize to None
+    let null_json = r#"{
+        "id": "73c20273#T1",
+        "topic_id": "acp-migration",
+        "summary": "Refactor ACP executor",
+        "status": "dismissed",
+        "source_session_id": "session-uuid-12345678",
+        "turn_index": 1,
+        "turn_started_at": null,
+        "created_at": "2026-11-02T10:00:00Z",
+        "updated_at": "2026-11-02T10:00:00Z"
+    }"#;
+    let node_null: MemoryTreeNode =
+        serde_json::from_str(null_json).expect("deserialize null field json");
+    assert_eq!(node_null.turn_started_at, None);
+    assert_eq!(node_null.status, NodeStatus::Dismissed);
 }
 
 #[test]
@@ -78,6 +134,7 @@ fn test_project_memory_state_apply_evolution_root_and_child() {
         status: NodeStatus::Completed,
         source_session_id: "session-001".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -90,6 +147,7 @@ fn test_project_memory_state_apply_evolution_root_and_child() {
         status: NodeStatus::Unexplored,
         source_session_id: "session-001".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -131,6 +189,7 @@ fn test_project_memory_state_apply_evolution_root_and_child() {
         status: NodeStatus::Completed,
         source_session_id: "session-002".to_string(),
         turn_index: 2,
+        turn_started_at: None,
         created_at: "2026-11-02T11:00:00Z".to_string(),
         updated_at: "2026-11-02T11:00:00Z".to_string(),
     };
@@ -194,6 +253,7 @@ fn test_short_id_utf8_multibyte_safety() {
         status: NodeStatus::Completed,
         source_session_id: "会话测试-12345".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -228,6 +288,7 @@ fn test_validate_parent_node_must_exist() {
         status: NodeStatus::Completed,
         source_session_id: "sess-1".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -255,6 +316,7 @@ fn test_protect_progressed_sibling_nodes() {
         status: NodeStatus::Completed,
         source_session_id: "s1".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -266,6 +328,7 @@ fn test_protect_progressed_sibling_nodes() {
         status: NodeStatus::Unexplored,
         source_session_id: "s1".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -289,6 +352,7 @@ fn test_protect_progressed_sibling_nodes() {
         status: NodeStatus::Completed,
         source_session_id: "s2".to_string(),
         turn_index: 2,
+        turn_started_at: None,
         created_at: "2026-11-02T11:00:00Z".to_string(),
         updated_at: "2026-11-02T11:00:00Z".to_string(),
     };
@@ -316,5 +380,61 @@ fn test_protect_progressed_sibling_nodes() {
     assert_eq!(
         tree2.nodes.get("r1#T1.1").unwrap().status,
         NodeStatus::Continued
+    );
+}
+
+#[test]
+fn test_protect_dismissed_nodes_from_resurrection() {
+    let mut state = ProjectMemoryState::new("proj-dismissed");
+    let root = MemoryTreeNode {
+        id: "d1#T1".to_string(),
+        parent_id: None,
+        topic_id: "topic-d".to_string(),
+        summary: "Root".to_string(),
+        status: NodeStatus::Completed,
+        source_session_id: "s1".to_string(),
+        turn_index: 1,
+        turn_started_at: None,
+        created_at: "2026-11-02T10:00:00Z".to_string(),
+        updated_at: "2026-11-02T10:00:00Z".to_string(),
+    };
+    let sib = MemoryTreeNode {
+        id: "d1#T1.1".to_string(),
+        parent_id: None,
+        topic_id: "topic-d".to_string(),
+        summary: "Sibling to be dismissed".to_string(),
+        status: NodeStatus::Unexplored,
+        source_session_id: "s1".to_string(),
+        turn_index: 1,
+        turn_started_at: None,
+        created_at: "2026-11-02T10:00:00Z".to_string(),
+        updated_at: "2026-11-02T10:00:00Z".to_string(),
+    };
+    let payload = TopicEvolutionCommitPayload {
+        project_slug: "proj-dismissed".to_string(),
+        topic_id: "topic-d".to_string(),
+        topic_name: None,
+        parent_node_id: None,
+        parent_new_status: None,
+        new_node: root.clone(),
+        unexplored_siblings: vec![sib.clone()],
+    };
+    state.apply_evolution(payload.clone()).unwrap();
+
+    // Mark sibling as Dismissed
+    {
+        let tree = state.topic_trees.get_mut("topic-d").unwrap();
+        let node = tree.nodes.get_mut("d1#T1.1").unwrap();
+        node.status = NodeStatus::Dismissed;
+    }
+
+    // Re-commit payload containing unexplored sibling with the same ID
+    state.apply_evolution(payload).unwrap();
+
+    // Node must stay Dismissed, not resurrected to Unexplored
+    let tree = state.topic_trees.get("topic-d").unwrap();
+    assert_eq!(
+        tree.nodes.get("d1#T1.1").unwrap().status,
+        NodeStatus::Dismissed
     );
 }

@@ -10,6 +10,7 @@ pub enum NodeStatus {
     Completed,
     Continued,
     Unexplored,
+    Dismissed,
 }
 
 impl NodeStatus {
@@ -18,6 +19,7 @@ impl NodeStatus {
             Self::Completed => "completed",
             Self::Continued => "continued",
             Self::Unexplored => "unexplored",
+            Self::Dismissed => "dismissed",
         }
     }
 }
@@ -36,6 +38,7 @@ impl std::str::FromStr for NodeStatus {
             "completed" => Ok(Self::Completed),
             "continued" => Ok(Self::Continued),
             "unexplored" => Ok(Self::Unexplored),
+            "dismissed" => Ok(Self::Dismissed),
             other => Err(format!("unknown node status: {}", other)),
         }
     }
@@ -53,6 +56,8 @@ pub struct MemoryTreeNode {
     pub status: NodeStatus,
     pub source_session_id: String,
     pub turn_index: u32,
+    #[serde(default)]
+    pub turn_started_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -197,12 +202,13 @@ impl ProjectMemoryState {
         let committed_node_id = new_node.id.clone();
         tree.insert_node(new_node.clone(), is_root);
 
-        // 3. Mount unexplored siblings, protecting nodes already continued or completed
+        // 3. Mount unexplored siblings, protecting nodes already continued, completed, or dismissed
         let mut unexplored_node_ids = Vec::new();
         for mut sibling in payload.unexplored_siblings {
             if let Some(existing) = tree.nodes.get(&sibling.id) {
                 if existing.status == NodeStatus::Continued
                     || existing.status == NodeStatus::Completed
+                    || existing.status == NodeStatus::Dismissed
                 {
                     continue;
                 }
