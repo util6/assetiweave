@@ -16,6 +16,8 @@ export const memoryZh = {
   "memory.recent.reused": "内容复用",
   "memory.recent.updateIncomplete": "更新未完成",
   "memory.recent.generating": "近期记忆生成中...",
+  "memory.recent.generateNow": "立即提炼近期记忆",
+  "memory.recent.triggerGenerate": "提炼记忆",
   "memory.recent.whatChanged": "工作进展",
   "memory.recent.suggestedNext": "建议下一步",
   "memory.recent.noSuggestions": "本窗口没有形成明确下一步",

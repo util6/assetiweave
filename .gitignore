@@ -8,6 +8,15 @@ Desktop.ini
 
 # Local agent and IDE state
 **/.claude/settings.local.json
+.claude/
+!.claude/settings.json
+.cursor/
+.windsurf/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
 .idea/
 *.iml
 .workbuddy/
@@ -33,8 +42,8 @@ target/
 /build/
 /out/
 .tauri/
-src-tauri/bundled-cli/cli/*
-!src-tauri/bundled-cli/cli/.gitkeep
+desktop/bundled-cli/cli/*
+!desktop/bundled-cli/cli/.gitkeep
 
 # Frontend caches and incremental compiler state
 **/.vite/
@@ -88,6 +97,10 @@ yarn-error.log*
 pnpm-debug.log*
 *.tmp
 *.temp
+*.tmp_*
+.tmp_*
+.tmp/
+tmp/
 *.swp
 *.swo
 *~
@@ -98,5 +111,8 @@ pnpm-debug.log*
 # Scratch and one-off debug scripts
 scratch/
 .agents/
+.superpowers/
+.archify/
 PROJECT.md
 TEST_INFRA.md
+TEST_READY.md

@@ -463,6 +463,20 @@ fn conversation_incremental_adapter_output_parses_complete_session_discovery() {
 }
 
 #[test]
+fn adapter_output_parses_explicit_session_skipped_signal() {
+    let output = br#"{"type":"item","item":{"kind":"session_skipped","external_id":"subagent-run","reason":"no_turns"}}
+{"type":"complete","item":{"session_count":0}}"#;
+
+    let result = parse_external_adapter_output("read_session", output.to_vec(), Vec::new())
+        .expect("parse explicit skip signal");
+
+    assert!(result.sessions.is_empty());
+    assert_eq!(result.skipped_sessions.len(), 1);
+    assert_eq!(result.skipped_sessions[0].external_id, "subagent-run");
+    assert_eq!(result.skipped_sessions[0].reason, "no_turns");
+}
+
+#[test]
 fn adapter_line_size_rejects_item_above_atomic_limit() {
     let error = validate_external_adapter_line_size(1, DEFAULT_MAX_ITEM_LINE_BYTES + 1, true)
         .expect_err("session items must still respect the atomic line safety cap");

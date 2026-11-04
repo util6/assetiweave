@@ -296,7 +296,7 @@ pub fn build_step1_prompt(
     prompt.push_str("       {\"title\": \"<orthogonal open topic>\", \"detail\": \"<brief>\"}\n");
     prompt.push_str("     ]\n");
     prompt.push_str("   }\n\n");
-    prompt.push_str("OUTPUT ONLY THE JSON OBJECT. No explanation, no markdown backticks.\n");
+    prompt.push_str("OUTPUT ONLY THE JSON OBJECT. No explanation, no backticks, DO NOT call any tools or functions.\n");
     prompt
 }
 
@@ -315,7 +315,7 @@ pub fn build_step2_prompt(
     ));
     prompt.push_str("=== Step 2 Final Requirement ===\n");
     prompt.push_str("You have received the requested detail. You MUST now output action: \"commit\". No further inspect is permitted.\n");
-    prompt.push_str("OUTPUT ONLY THE JSON OBJECT.\n");
+    prompt.push_str("OUTPUT ONLY THE JSON OBJECT. DO NOT call any tools or functions.\n");
     prompt
 }
 

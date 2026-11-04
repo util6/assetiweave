@@ -4511,3 +4511,40 @@ async fn sqlx_payload_policy_bump_reparses_unchanged_sessions_in_the_same_run() 
     drop(database);
     cleanup_database(&db_path);
 }
+
+// ---------------------------------------------------------------------------
+// 内部执行判定：只认运行时工作区，不认应用数据目录前缀
+// ---------------------------------------------------------------------------
+
+#[test]
+fn internal_execution_detection_ignores_user_sessions_inside_app_data_dir() {
+    // 用户会话读 memory / 写 library 时 projectPath 落在 ~/.assetiweave 下，
+    // 这类路径必须保留，否则正常会话会被整条丢弃。
+    assert!(!is_internal_execution_workspace_path(Some(
+        "/Users/util6/.assetiweave/memories/default/projects"
+    )));
+    assert!(!is_internal_execution_workspace_path(Some(
+        "/Users/util6/.assetiweave/memories/util6"
+    )));
+    assert!(!is_internal_execution_workspace_path(Some(
+        "/Users/util6/.assetiweave-cli"
+    )));
+    assert!(!is_internal_execution_workspace_path(Some(
+        "/Users/util6/code-space/assetiweave"
+    )));
+
+    // 真正的运行时工作区仍然要丢弃。
+    assert!(is_internal_execution_workspace_path(Some(
+        "/Users/developer/.assetiweave/agent-runs/translations/execution-123"
+    )));
+    assert!(is_internal_execution_workspace_path(Some(
+        "/Users/developer/Library/Application Support/AssetIWeave/agent-executions/execution-456"
+    )));
+    assert!(is_internal_execution_workspace_path(Some(
+        "/Users/developer/.assetiweave/agent-runtimes/active/test-agent"
+    )));
+    assert!(is_internal_execution_workspace_path(Some(
+        "C:\\Users\\developer\\.assetiweave\\agent-runs\\run-1"
+    )));
+    assert!(!is_internal_execution_workspace_path(None));
+}

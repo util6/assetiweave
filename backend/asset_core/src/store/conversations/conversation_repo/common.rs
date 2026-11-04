@@ -70,13 +70,28 @@ pub(super) fn builtin_sources(now: &str) -> Vec<ConversationSource> {
 
 pub use super::row_mappers::*;
 
+// 内部运行时目录白名单：只有真正落在应用运行时工作区里的会话才丢弃。
+// 不能用 `.assetiweave` 前缀判定——用户的正常会话读 memory / 写 library 时
+// projectPath 也会指向 `~/.assetiweave/...`，用前缀会把用户会话整条吞掉。
+const INTERNAL_EXECUTION_DIR_SEGMENTS: [&str; 6] = [
+    "/agent-executions/",
+    "/agent-runs/",
+    "/agent-runtimes/",
+    "/smoke_workspace/",
+    "/.system_generated/",
+    "/test-scratch/",
+];
+
 pub(super) fn is_internal_execution_workspace_path(project_path: Option<&str>) -> bool {
     let Some(path) = project_path else {
         return false;
     };
-    path.contains("agent-executions")
-        || path.contains("agent-runs")
-        || path.contains(".assetiweave")
+    let normalized = path.replace('\\', "/").to_lowercase();
+    // 补一个尾斜杠，兼容路径正好停在运行时目录名上的情况。
+    let padded = format!("{normalized}/");
+    INTERNAL_EXECUTION_DIR_SEGMENTS
+        .iter()
+        .any(|segment| padded.contains(segment))
 }
 
 pub(super) fn is_droppable_internal_session(

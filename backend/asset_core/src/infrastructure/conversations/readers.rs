@@ -164,9 +164,25 @@ pub async fn read_source_sessions_with_progress_listener(
                         message: sanitize_with_system_home(&w),
                     });
                 }
+                let skipped_reason = result
+                    .skipped_sessions
+                    .iter()
+                    .find(|skip| skip.external_id == descriptor.external_id)
+                    .map(|skip| skip.reason.clone());
                 let mut read = result.sessions;
                 if read.is_empty() {
                     empty_session_count += 1;
+                    if let Some(reason) = skipped_reason {
+                        // 适配器显式声明了跳过原因（子代理轨迹、内部工单等），
+                        // 只有这类结构性跳过才能写入增量水位，避免重复解析。
+                        if reason != "no_turns" {
+                            session_warnings.push(SessionSyncWarning {
+                                session_external_id: Some(descriptor.external_id.clone()),
+                                code: "adapter_skipped_session".to_string(),
+                                message: format!("adapter skipped session: {reason}"),
+                            });
+                        }
+                    }
                     skipped_clean_external_ids.push(descriptor.external_id.clone());
                     continue;
                 }
@@ -187,7 +203,19 @@ pub async fn read_source_sessions_with_progress_listener(
                     continue;
                 }
                 if !session_matches_descriptor(&read[0], descriptor) {
+                    // 版本指纹与发现阶段不一致（读取期间源文件被改写）：同样按失败重试。
                     empty_session_count += 1;
+                    let actual = read[0].source_fingerprint.as_deref().unwrap_or("<none>");
+                    session_failures.push(SessionSyncFailure {
+                        session_external_id: descriptor.external_id.clone(),
+                        stage: "validate".to_string(),
+                        error_code: "session_version_drift".to_string(),
+                        error_message: format!(
+                            "session content no longer matches the discovered version (expected {}, got {})",
+                            descriptor.version_token, actual
+                        ),
+                        retryable: true,
+                    });
                     continue;
                 }
                 sessions.append(&mut read);

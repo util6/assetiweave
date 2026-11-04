@@ -350,7 +350,9 @@ function inferProjectPathFromToolCalls(toolCalls) {
     ]) {
       const raw = args[key];
       const value = typeof raw === "string" ? raw.replace(/^"|"$/g, "") : null;
-      if (value && value.startsWith("/") && !value.includes("/.gemini/")) {
+      // 应用私有数据目录（~/.assetiweave、~/.gemini 等）里的路径不具项目语义，
+      // 继续看后面的工具调用，而不是把整条会话钉在数据目录上。
+      if (value && value.startsWith("/") && !isAppDataPath(value)) {
         let dir = value;
         try {
           if (existsSync(value)) {
@@ -362,7 +364,8 @@ function inferProjectPathFromToolCalls(toolCalls) {
           dir = path.dirname(value);
         }
         const gitRoot = findGitRoot(dir);
-        return gitRoot || dir;
+        if (gitRoot) return gitRoot;
+        if (!isAppDataPath(dir)) return dir;
       }
     }
   }
@@ -1573,18 +1576,45 @@ function buildTurnsFromSteps(steps, options = {}) {
   return { turns, projectPath, dispatches };
 }
 
+// 内部运行时目录使用白名单片段，而不是整个 `~/.assetiweave/` 前缀：
+// 用户的正常会话只要读写 memory/library 就会落在 `~/.assetiweave/` 下，
+// 用前缀判定会把「用户会话」误判成「应用自己的内部执行」并整条丢弃。
+const INTERNAL_RUNTIME_DIR_SEGMENTS = [
+  "/agent-executions/",
+  "/agent-runs/",
+  "/agent-runtimes/",
+  "/smoke_workspace/",
+  "/.system_generated/",
+  "/test-scratch/",
+];
+
 function isInternalExecutionPath(cwd) {
   if (!cwd || typeof cwd !== "string") return false;
   const norm = cwd.replace(/\\/g, "/").toLowerCase();
   return (
-    norm.includes("/agent-executions/") ||
-    norm.includes("/agent-runs/") ||
-    norm.includes("/.assetiweave/") ||
-    norm.includes("/agent-runtimes/") ||
-    norm.includes("/smoke_workspace/") ||
-    norm.includes("/.system_generated/") ||
-    norm.includes("/test-scratch/") ||
+    INTERNAL_RUNTIME_DIR_SEGMENTS.some((segment) => norm.includes(segment)) ||
     norm.includes("/mock_")
+  );
+}
+
+// 应用自身的私有数据目录：可以出现在会话里（读 memory、写 library），
+// 但不能被当成会话的 projectPath，否则会污染项目归属与内部执行判定。
+const APP_DATA_DIR_SEGMENTS = [
+  "/.assetiweave/",
+  "/library/application support/assetiweave/",
+  "/.gemini/",
+  "/.codebuddy/",
+  "/.claude/",
+  "/.codex/",
+];
+
+function isAppDataPath(candidate) {
+  if (!candidate || typeof candidate !== "string") return false;
+  const norm = candidate.replace(/\\/g, "/").toLowerCase();
+  const trimmed = norm.replace(/\/+$/, "");
+  return (
+    APP_DATA_DIR_SEGMENTS.some((segment) => norm.includes(segment)) ||
+    trimmed.endsWith("/.assetiweave")
   );
 }
 
@@ -1595,7 +1625,6 @@ function isInternalSessionMeta(metaPath) {
     if (
       raw.includes("agent-executions") ||
       raw.includes("agent-runs") ||
-      raw.includes(".assetiweave") ||
       raw.includes("agent-runtimes") ||
       raw.includes("smoke_workspace") ||
       raw.includes(".system_generated") ||
@@ -2192,15 +2221,101 @@ function getSummaryTitle(externalId, startLocation = null) {
   return cachedSummaryTitles.get(externalId) || null;
 }
 
+let cachedSummaryWorkspaces = null;
+function getSummaryWorkspacePath(externalId, startLocation = null) {
+  if (!externalId) return null;
+  if (cachedSummaryWorkspaces === null) {
+    cachedSummaryWorkspaces = new Map();
+    const roots = resolveCandidateRoots(startLocation || expandPath(input.source?.location));
+    for (const root of roots) {
+      const sumDbPath = path.join(root, "conversation_summaries.db");
+      if (!existsSync(sumDbPath)) continue;
+      let rows = [];
+      if (DatabaseSync) {
+        let db;
+        try {
+          db = new DatabaseSync(sumDbPath, { readOnly: true });
+          rows = db.prepare("SELECT conversation_id, workspace_uris FROM conversation_summaries;").all();
+        } catch {
+          rows = [];
+        } finally {
+          if (db) db.close();
+        }
+      } else {
+        try {
+          const raw = execFileSync("sqlite3", ["-json", sumDbPath, "SELECT conversation_id, workspace_uris FROM conversation_summaries;"], {
+            encoding: "utf8",
+            maxBuffer: 50 * 1024 * 1024,
+          });
+          rows = JSON.parse(raw || "[]");
+        } catch {
+          rows = [];
+        }
+      }
+      for (const row of rows) {
+        if (!row.conversation_id || cachedSummaryWorkspaces.has(row.conversation_id)) continue;
+        let uris = row.workspace_uris;
+        if (typeof uris === "string") {
+          try {
+            uris = JSON.parse(uris);
+          } catch {
+            uris = [uris];
+          }
+        }
+        const first = Array.isArray(uris) ? uris.find((uri) => typeof uri === "string" && uri.trim()) : null;
+        const resolved = fileUriToProjectPath(first);
+        if (resolved && !isAppDataPath(resolved)) {
+          cachedSummaryWorkspaces.set(row.conversation_id, resolved);
+        }
+      }
+    }
+  }
+  return cachedSummaryWorkspaces.get(externalId) || null;
+}
+
+function fileUriToProjectPath(uri) {
+  if (!uri || typeof uri !== "string") return null;
+  const trimmed = uri.trim();
+  if (!trimmed.startsWith("file://")) return trimmed.startsWith("/") ? trimmed : null;
+  let rest = trimmed.slice("file://".length);
+  if (!rest.startsWith("/")) {
+    const slash = rest.indexOf("/");
+    rest = slash >= 0 ? rest.slice(slash) : `/${rest}`;
+  }
+  try {
+    return decodeURIComponent(rest);
+  } catch {
+    return rest;
+  }
+}
+
+// 会话的 projectPath 优先级：工具调用推断的 git 根 → 摘要库 workspace_uris → 原始推断值。
+// 关键点是不要用应用私有数据目录冒充项目路径。
+function resolveProjectPath(inferred, externalId, startLocation = null) {
+  if (inferred && !isAppDataPath(inferred) && !isInternalExecutionPath(inferred)) return inferred;
+  const fallback = getSummaryWorkspacePath(externalId, startLocation);
+  return fallback || inferred || null;
+}
+
+// 单条会话解析被丢弃时记录原因，供 read_session 显式回传 `session_skipped`。
+// 只有显式标注的跳过才会被上层当作「结构性跳过」写进增量水位；
+// 没有信号的零产出会被上层当成解析失败并重试。
+let lastParseSkipReason = null;
+function skipParsedSession(reason) {
+  lastParseSkipReason = reason;
+  return null;
+}
+
 function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
-  if (!targetPath || !existsSync(targetPath)) return null;
+  if (!targetPath || !existsSync(targetPath)) return skipParsedSession("missing_source");
   const flavor = detectClientFlavor(targetPath);
   try {
     const stat = statSync(targetPath);
     if (stat.isFile()) {
       if (targetPath.endsWith(".db")) {
         const metaP = targetPath.replace(/\.db$/, ".meta");
-        if (isInternalSessionMeta(metaP) || !hasValidConversationSteps(targetPath)) return null;
+        if (isInternalSessionMeta(metaP)) return skipParsedSession("internal_session_meta");
+        if (!hasValidConversationSteps(targetPath)) return skipParsedSession("no_valid_steps");
 
         const externalId = externalIdHint || path.basename(targetPath, ".db");
         emitProgress({
@@ -2212,15 +2327,14 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
         });
         const parsed = parseSqliteDb(targetPath);
         const turns = displayTurns(parsed.turns);
-        if (!turns.length) return null;
-        if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) {
-          return null;
-        }
+        if (!turns.length) return skipParsedSession("no_turns");
+        if (isInternalExecutionPath(parsed.projectPath)) return skipParsedSession("internal_execution");
+        if (isSyntheticWorkOrderText(turns[0]?.user_text)) return skipParsedSession("synthetic_work_order");
         const title = getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text);
         return applyTextBudgets(finalizeStructuredContentCards({
           external_id: externalId,
           title,
-          project_path: parsed.projectPath ?? inferProjectPath(turns),
+          project_path: resolveProjectPath(parsed.projectPath ?? inferProjectPath(turns), externalId),
           started_at: turns[0]?.started_at ?? null,
           updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
           source_locator: targetPath,
@@ -2241,16 +2355,15 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
       const text = readFileSync(targetPath, "utf8");
       const parsed = parseTranscript(text, conversationDirForTranscript(targetPath));
       const turns = displayTurns(parsed.turns);
-      if (!turns.length) return null;
-      if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) {
-        return null;
-      }
+      if (!turns.length) return skipParsedSession("no_turns");
+      if (isInternalExecutionPath(parsed.projectPath)) return skipParsedSession("internal_execution");
+      if (isSyntheticWorkOrderText(turns[0]?.user_text)) return skipParsedSession("synthetic_work_order");
       const externalId = externalIdHint || path.basename(path.resolve(targetPath, "../../..")) || "antigravity-session";
       const title = getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text);
       return applyTextBudgets(finalizeStructuredContentCards({
         external_id: externalId,
         title,
-        project_path: parsed.projectPath ?? inferProjectPath(turns),
+        project_path: resolveProjectPath(parsed.projectPath ?? inferProjectPath(turns), externalId),
         started_at: turns[0]?.started_at ?? null,
         updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
         source_locator: targetPath,
@@ -2274,15 +2387,14 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
       const text = readFileSync(transcriptInDir, "utf8");
       const parsed = parseTranscript(text, targetPath);
       const turns = displayTurns(parsed.turns);
-      if (!turns.length) return null;
-      if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) {
-        return null;
-      }
+      if (!turns.length) return skipParsedSession("no_turns");
+      if (isInternalExecutionPath(parsed.projectPath)) return skipParsedSession("internal_execution");
+      if (isSyntheticWorkOrderText(turns[0]?.user_text)) return skipParsedSession("synthetic_work_order");
       const title = getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text);
       return applyTextBudgets(finalizeStructuredContentCards({
         external_id: externalId,
         title,
-        project_path: parsed.projectPath ?? inferProjectPath(turns),
+        project_path: resolveProjectPath(parsed.projectPath ?? inferProjectPath(turns), externalId),
         started_at: turns[0]?.started_at ?? null,
         updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
         source_locator: transcriptInDir,
@@ -2291,8 +2403,10 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
         turns,
       }));
     }
-  } catch {}
-  return null;
+  } catch {
+    return skipParsedSession("parse_error");
+  }
+  return skipParsedSession("not_found");
 }
 
 function listSessions() {
@@ -2338,13 +2452,22 @@ function listSessions() {
         if (isSyntheticWorkOrderText(row.title)) continue;
         seenExternalIds.add(id);
 
+        // 摘要库只在该 flavor 下索引到自己目录里的文件；会话文件可能已经被
+        // 迁移到别的 flavor 目录（antigravity ↔ antigravity-cli ↔ antigravity-ide）。
+        // 这里必须跨 root 定位，保证 descriptor 的版本令牌与 read_session
+        // 实际解析的文件是同一个，否则每轮都会判成版本漂移。
         let locator = null;
-        const transcript = findTranscriptFile(path.join(root, "brain", id));
-        if (transcript) {
-          locator = transcript;
-        } else {
-          const dbF = path.join(root, "conversations", `${id}.db`);
-          if (existsSync(dbF)) locator = dbF;
+        for (const candidateRoot of roots) {
+          const transcript = findTranscriptFile(path.join(candidateRoot, "brain", id));
+          if (transcript) {
+            locator = transcript;
+            break;
+          }
+          const dbF = path.join(candidateRoot, "conversations", `${id}.db`);
+          if (existsSync(dbF)) {
+            locator = dbF;
+            break;
+          }
         }
 
         const updatedAt = row.last_modified_time ? new Date(row.last_modified_time).toISOString() : new Date().toISOString();
@@ -2527,14 +2650,24 @@ function readSession(onSession = null) {
     }
     const parsed = parseTranscript(text, convDir);
     const turns = displayTurns(parsed.turns);
-    if (!turns.length) continue;
-    if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) continue;
+    if (!turns.length) {
+      lastParseSkipReason = "no_turns";
+      continue;
+    }
+    if (isInternalExecutionPath(parsed.projectPath)) {
+      lastParseSkipReason = "internal_execution";
+      continue;
+    }
+    if (isSyntheticWorkOrderText(turns[0]?.user_text)) {
+      lastParseSkipReason = "synthetic_work_order";
+      continue;
+    }
     seenExternalIds.add(externalId);
 
     const s = applyTextBudgets(finalizeStructuredContentCards({
       external_id: externalId,
       title: getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text),
-      project_path: parsed.projectPath ?? inferProjectPath(turns),
+      project_path: resolveProjectPath(parsed.projectPath ?? inferProjectPath(turns), externalId),
       started_at: turns[0]?.started_at ?? null,
       updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
       source_locator: transcriptPath,
@@ -2567,13 +2700,23 @@ function readSession(onSession = null) {
     try {
       const parsed = parseSqliteDb(dbPath);
       const turns = displayTurns(parsed.turns);
-      if (!turns.length) continue;
-      if (isInternalExecutionPath(parsed.projectPath) || isSyntheticWorkOrderText(turns[0]?.user_text)) continue;
+      if (!turns.length) {
+        lastParseSkipReason = "no_turns";
+        continue;
+      }
+      if (isInternalExecutionPath(parsed.projectPath)) {
+        lastParseSkipReason = "internal_execution";
+        continue;
+      }
+      if (isSyntheticWorkOrderText(turns[0]?.user_text)) {
+        lastParseSkipReason = "synthetic_work_order";
+        continue;
+      }
       seenExternalIds.add(externalId);
       const s = applyTextBudgets(finalizeStructuredContentCards({
         external_id: externalId,
         title: getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text),
-        project_path: parsed.projectPath ?? inferProjectPath(turns),
+        project_path: resolveProjectPath(parsed.projectPath ?? inferProjectPath(turns), externalId),
         started_at: turns[0]?.started_at ?? null,
         updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
         source_locator: dbPath,
@@ -3060,6 +3203,16 @@ try {
       });
       emit("item", { item: { kind: "session", session: finalizeStructuredContentCards(session) } });
     });
+    const requestedSessionId = input.params?.session_id ?? null;
+    if (emittedCount === 0 && requestedSessionId) {
+      emit("item", {
+        item: {
+          kind: "session_skipped",
+          external_id: requestedSessionId,
+          reason: lastParseSkipReason || "no_turns",
+        },
+      });
+    }
     emit("complete", { item: { session_count: emittedCount } });
   } else if (input.method === "read_usage") {
     emitProgress({ stage: "reading", operation: "read_usage" });

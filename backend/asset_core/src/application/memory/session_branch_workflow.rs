@@ -187,7 +187,7 @@ impl AppService {
                 .unwrap_or_default();
 
             // 执行 2 步轻量 Agent 循环（含 JSON 脱壳与单次重试）
-            let payload = execute_inspect_commit_loop(
+            let loop_res = execute_inspect_commit_loop(
                 runtime,
                 &agent_id,
                 model.as_deref(),
@@ -199,14 +199,31 @@ impl AppService {
                 &existing_summary,
                 |turn| qa_map.get(&turn).cloned(),
             )
-            .await?;
+            .await;
 
-            // 提交主题演进（自动维护多叉树并原子写入 .state/ 与 Markdown 投影）
-            self.commit_memory_topic_evolution_to(payload, storage)
-                .await?;
-            self.advance_memory_session_watermark_in(&project_slug, &session.id, max_turn, storage)
-                .await?;
-            report.processed_count += 1;
+            match loop_res {
+                Ok(payload) => {
+                    // 提交主题演进（自动维护多叉树并原子写入 .state/ 与 Markdown 投影）
+                    self.commit_memory_topic_evolution_to(payload, storage)
+                        .await?;
+                    self.advance_memory_session_watermark_in(
+                        &project_slug,
+                        &session.id,
+                        max_turn,
+                        storage,
+                    )
+                    .await?;
+                    report.processed_count += 1;
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        session_id = %session.id,
+                        error = %err,
+                        "Session cognitive extraction failed; skipping session to ensure pipeline resilience"
+                    );
+                    report.skipped_count += 1;
+                }
+            }
         }
 
         Ok(report)

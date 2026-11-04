@@ -18,6 +18,7 @@ import type {
 
 const memoryService = vi.hoisted(() => ({
   getRecentMemorySnapshot: vi.fn(),
+  rebuildMemoryScope: vi.fn(),
   subscribeMemoryTasks: vi.fn(),
 }));
 
@@ -125,6 +126,12 @@ beforeEach(() => {
   localStorage.setItem("assetiweave.locale", "zh");
   vi.clearAllMocks();
   memoryService.subscribeMemoryTasks.mockResolvedValue(() => undefined);
+  memoryService.rebuildMemoryScope.mockResolvedValue({
+    accepted: true,
+    scheduled_task_ids: ["task-1"],
+    target_watermark: null,
+    reused: false,
+  });
 });
 
 afterEach(() => {
@@ -598,6 +605,36 @@ describe("MemoryRecentWorkspace (M35-UI-01 through M35-UI-07)", () => {
     expect(screen.getByText("2026-09-15")).toBeTruthy();
     expect(screen.getByText("2026-09-14")).toBeTruthy();
   });
+
+  it("triggers memory rebuild from empty state CTA and header action button", async () => {
+    memoryService.getRecentMemorySnapshot.mockResolvedValue({
+      status: "empty",
+      snapshot: null,
+      latestAttemptTaskId: null,
+      latestAttemptError: null,
+    } satisfies RecentMemoryStateView);
+
+    renderWorkspace();
+    await screen.findByText("最近 72 小时没有工作记录");
+
+    // 空状态 CTA 按钮
+    const ctaBtn = screen.getByRole("button", { name: "立即提炼近期记忆" });
+    expect(ctaBtn).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(ctaBtn);
+    });
+    expect(memoryService.rebuildMemoryScope).toHaveBeenCalledWith(undefined, {
+      target: "recent",
+    });
+
+    // 顶部常驻操作按钮
+    const headerBtn = screen.getByRole("button", { name: "提炼记忆" });
+    expect(headerBtn).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(headerBtn);
+    });
+    expect(memoryService.rebuildMemoryScope).toHaveBeenCalledTimes(2);
+  });
 });
 
 function renderWorkspace(
@@ -629,6 +666,8 @@ function renderWorkspace(
       "memory.recent.updated": "已更新",
       "memory.recent.reused": "内容复用",
       "memory.recent.updateIncomplete": "更新未完成",
+      "memory.recent.generateNow": "立即提炼近期记忆",
+      "memory.recent.triggerGenerate": "提炼记忆",
       "memory.recent.latestUpdate": "最近更新",
       "memory.recent.today": "今天",
       "memory.recent.yesterday": "昨天",

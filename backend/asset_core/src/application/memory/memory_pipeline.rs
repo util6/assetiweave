@@ -98,8 +98,8 @@ impl AppService {
                 guard.record_step(
                     "session_facts_scanned",
                     Some(format!(
-                        "扫描 {} 个会话，未注入认知提取器，跳过写入 {} 个会话",
-                        report.scanned_count, report.skipped_count
+                        "扫描 {} 个会话，成功提炼 {} 个会话，跳过 {} 个会话",
+                        report.scanned_count, report.processed_count, report.skipped_count
                     )),
                     Some(1),
                     Some(1),
@@ -115,18 +115,37 @@ impl AppService {
                 if cx.is_cancelled() {
                     return Err(InfraError::Cancelled("memory pipeline cancelled".into()));
                 }
-                guard.progress(0, Some(1), Some("检查近期快照与项目状态...".into()));
-                guard.record_metric("recent_sessions", 0);
-                guard.record_metric("projects_updated", 0);
-                guard.record_step(
-                    "recent_snapshot_skipped",
-                    Some("未注入有效认知提取器，跳过近期快照自动写入以防止产物污染".into()),
-                    Some(1),
-                    Some(1),
-                );
+                guard.progress(0, Some(1), Some("同步近期工作快照与项目状态...".into()));
+                let has_recent_state = storage.read_recent_state().ok().flatten().is_some();
+                let report = if has_recent_state || session_report.processed_count > 0 {
+                    let r = service
+                        .run_recent_and_project_workflow(&storage)
+                        .await
+                        .map_err(|e| InfraError::External(format!("近期快照维护失败: {e}")))?;
+                    guard.record_step(
+                        "recent_snapshot_synced",
+                        Some(format!(
+                            "成功同步 {} 个关联会话，更新 {} 个项目的近期工作与状态",
+                            r.session_count, r.project_count
+                        )),
+                        Some(1),
+                        Some(1),
+                    );
+                    r
+                } else {
+                    guard.record_step(
+                        "recent_snapshot_skipped",
+                        Some("无近期记忆状态且未产生新提炼节点，跳过快照写入".into()),
+                        Some(1),
+                        Some(1),
+                    );
+                    super::memory_workflow_recent_project::RecentAndProjectWorkflowReport::default()
+                };
+                guard.record_metric("recent_sessions", report.session_count as u64);
+                guard.record_metric("projects_updated", report.project_count as u64);
                 guard.progress(1, Some(1), Some("近期快照维护完成".into()));
                 guard.finish_with_status(StageStatus::Succeeded);
-                super::memory_workflow_recent_project::RecentAndProjectWorkflowReport::default()
+                report
             };
 
             // 阶段 3: GLOBAL_CONSOLIDATION
@@ -135,17 +154,37 @@ impl AppService {
                 if cx.is_cancelled() {
                     return Err(InfraError::Cancelled("memory pipeline cancelled".into()));
                 }
-                guard.progress(0, Some(1), Some("检查全局长期经验状态...".into()));
-                guard.record_metric("global_updated", 0);
-                guard.record_step(
-                    "global_skipped",
-                    Some("未注入有效认知提取器，跳过全局长期记忆自动写入以防止产物污染".into()),
-                    Some(1),
-                    Some(1),
-                );
+                guard.progress(0, Some(1), Some("维护全局长期经验与工程准则...".into()));
+                let has_recent_md = storage.root_dir().join("recent/latest.md").exists();
+                let report = if has_recent_md {
+                    let r = service
+                        .run_global_memory_workflow(&storage)
+                        .await
+                        .map_err(|e| InfraError::External(format!("全局记忆维护失败: {e}")))?;
+                    guard.record_step(
+                        "global_memory_synced",
+                        Some(if r.updated {
+                            "已同步更新 MEMORY.md 全局长期记忆与架构准则".into()
+                        } else {
+                            "MEMORY.md 全局长期记忆已是最新，无需更新".into()
+                        }),
+                        Some(1),
+                        Some(1),
+                    );
+                    r
+                } else {
+                    guard.record_step(
+                        "global_skipped",
+                        Some("暂无近期工作沉淀，跳过全局长期记忆写入以防止空白模板污染".into()),
+                        Some(1),
+                        Some(1),
+                    );
+                    super::memory_workflow_global::GlobalMemoryWorkflowReport::default()
+                };
+                guard.record_metric("global_updated", if report.updated { 1 } else { 0 });
                 guard.progress(1, Some(1), Some("全局长期记忆维护完成".into()));
                 guard.finish_with_status(StageStatus::Succeeded);
-                super::memory_workflow_global::GlobalMemoryWorkflowReport::default()
+                report
             };
 
             let summary = format!(

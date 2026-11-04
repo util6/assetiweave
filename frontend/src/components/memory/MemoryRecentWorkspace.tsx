@@ -16,8 +16,10 @@ import clsx from "clsx";
 import type { Translator } from "../../i18n/I18nProvider";
 import {
   getRecentMemorySnapshot,
+  rebuildMemoryScope,
   subscribeMemoryTasks,
 } from "../../services/memory";
+import { useMemoryTasks } from "../../app/backgroundTasks/MemoryTaskProvider";
 import type {
   MemoryNavigationTarget,
   RecentMemoryEvent,
@@ -57,6 +59,25 @@ export function MemoryRecentWorkspace({
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(
     new Set(),
   );
+  const { task } = useMemoryTasks();
+  const [triggering, setTriggering] = useState(false);
+
+  const isGenerating = Boolean(
+    triggering ||
+      task?.status === "running" ||
+      stateView?.status === "generating",
+  );
+
+  const handleTriggerRebuild = useCallback(async () => {
+    setTriggering(true);
+    try {
+      await rebuildMemoryScope(undefined, { target: "recent" });
+    } catch {
+      // 容错处理
+    } finally {
+      setTriggering(false);
+    }
+  }, []);
 
   const toggleItem = useCallback((itemId: string) => {
     setExpandedItemIds((prev) => {
@@ -249,6 +270,26 @@ export function MemoryRecentWorkspace({
 
           <div className="flex items-center gap-2">
             <Button
+              aria-label={t("memory.recent.triggerGenerate") || "提炼记忆"}
+              className="h-8 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/70 px-2.5 text-caption font-medium hover:bg-theme-control shadow-xs"
+              disabled={isGenerating}
+              onClick={() => void handleTriggerRebuild()}
+              size="sm"
+              variant="outline"
+            >
+              <Sparkles
+                className={clsx(
+                  "size-3.5 text-primary",
+                  isGenerating && "animate-spin",
+                )}
+              />
+              <span className="hidden sm:inline">
+                {isGenerating
+                  ? t("memory.recent.generating")
+                  : t("memory.recent.triggerGenerate") || "提炼记忆"}
+              </span>
+            </Button>
+            <Button
               aria-label={t("common.refresh") || "刷新"}
               className="h-8 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/70 px-2.5 text-caption font-medium hover:bg-theme-control shadow-xs"
               disabled={refreshing}
@@ -326,6 +367,24 @@ export function MemoryRecentWorkspace({
                           {t("memory.recent.emptyDescription")}
                         </p>
                       </div>
+                      <Button
+                        className="mt-1 h-10 gap-2 rounded-xl px-5 font-medium shadow-xs"
+                        disabled={isGenerating}
+                        onClick={() => void handleTriggerRebuild()}
+                        variant="default"
+                      >
+                        <Sparkles
+                          className={clsx(
+                            "size-4",
+                            isGenerating && "animate-spin",
+                          )}
+                        />
+                        <span>
+                          {isGenerating
+                            ? t("memory.recent.generating")
+                            : t("memory.recent.generateNow") || "立即提炼近期记忆"}
+                        </span>
+                      </Button>
                       {stateView?.latestAttemptError && (
                         <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-status-issue/30 bg-status-issue/10 px-3 py-1.5 text-[12px] text-status-issue">
                           <AlertCircle size={14} />
@@ -353,6 +412,24 @@ export function MemoryRecentWorkspace({
                   {t("memory.recent.emptyDescription")}
                 </p>
               </div>
+              <Button
+                className="mt-1 h-10 gap-2 rounded-xl px-5 font-medium shadow-xs"
+                disabled={isGenerating}
+                onClick={() => void handleTriggerRebuild()}
+                variant="default"
+              >
+                <Sparkles
+                  className={clsx(
+                    "size-4",
+                    isGenerating && "animate-spin",
+                  )}
+                />
+                <span>
+                  {isGenerating
+                    ? t("memory.recent.generating")
+                    : t("memory.recent.generateNow") || "立即提炼近期记忆"}
+                </span>
+              </Button>
             </Panel>
           )}
         </div>
@@ -377,6 +454,26 @@ export function MemoryRecentWorkspace({
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            aria-label={t("memory.recent.triggerGenerate") || "提炼记忆"}
+            className="h-8 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/70 px-2.5 text-caption font-medium hover:bg-theme-control shadow-xs"
+            disabled={isGenerating}
+            onClick={() => void handleTriggerRebuild()}
+            size="sm"
+            variant="outline"
+          >
+            <Sparkles
+              className={clsx(
+                "size-3.5 text-primary",
+                isGenerating && "animate-spin",
+              )}
+            />
+            <span className="hidden sm:inline">
+              {isGenerating
+                ? t("memory.recent.generating")
+                : t("memory.recent.triggerGenerate") || "提炼记忆"}
+            </span>
+          </Button>
           <Button
             aria-label={t("common.refresh") || "刷新"}
             className="h-8 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/70 px-2.5 text-caption font-medium hover:bg-theme-control shadow-xs"

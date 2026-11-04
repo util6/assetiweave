@@ -11,6 +11,7 @@ pub fn parse_external_adapter_output_impl(
     let mut session_descriptors = Vec::new();
     let mut snapshot_complete = false;
     let mut sessions = Vec::new();
+    let mut skipped_sessions = Vec::new();
     let mut command_projections = Vec::new();
     let mut usage_events = Vec::new();
     let mut next_cursor = None;
@@ -56,6 +57,9 @@ pub fn parse_external_adapter_output_impl(
                             legacy_cards_upgraded += upgraded;
                             sessions.push(session);
                         }
+                    }
+                    "session_skipped" => {
+                        skipped_sessions.push(parse_adapter_skipped_session_item(item)?);
                     }
                     "markdown_export" => {
                         if markdown_export.is_some() {
@@ -158,6 +162,7 @@ pub fn parse_external_adapter_output_impl(
         session_descriptors,
         snapshot_complete,
         sessions,
+        skipped_sessions,
         command_projections,
         markdown_export,
         warnings,
@@ -216,6 +221,29 @@ pub fn parse_adapter_command_projection_item(
         }
     }
     Ok(projection)
+}
+
+pub fn parse_adapter_skipped_session_item(item: Value) -> InfraResult<AdapterSkippedSession> {
+    let external_id = item
+        .get("external_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            InfraError::external("adapter session_skipped item missing external_id".to_string())
+        })?
+        .to_string();
+    let reason = item
+        .get("reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("skipped")
+        .to_string();
+    Ok(AdapterSkippedSession {
+        external_id,
+        reason,
+    })
 }
 
 pub fn parse_adapter_session_descriptor_item(

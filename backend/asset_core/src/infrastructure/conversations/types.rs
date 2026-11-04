@@ -221,6 +221,9 @@ pub struct ExternalAdapterRunResult {
     pub session_descriptors: Vec<ConversationSessionDescriptor>,
     pub snapshot_complete: bool,
     pub sessions: Vec<NormalizedConversationSession>,
+    /// 适配器显式声明的「结构性跳过」（子代理轨迹、内部工单等）。
+    /// 只有这类跳过才允许写入增量水位；没有信号的零产出按失败处理并重试。
+    pub skipped_sessions: Vec<AdapterSkippedSession>,
     pub command_projections: Vec<ConversationCommandProjection>,
     pub markdown_export: Option<ExternalMarkdownExport>,
     pub usage_events: Vec<crate::backend::store::conversations::usage_repo::RawUsageEventInput>,
@@ -229,6 +232,12 @@ pub struct ExternalAdapterRunResult {
     pub diagnostics: Vec<String>,
     pub warnings: Vec<String>,
     pub stderr: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdapterSkippedSession {
+    pub external_id: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

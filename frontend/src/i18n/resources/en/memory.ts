@@ -16,6 +16,8 @@ export const memoryEn = {
   "memory.recent.reused": "Content reused",
   "memory.recent.updateIncomplete": "Update incomplete",
   "memory.recent.generating": "Generating recent memory...",
+  "memory.recent.generateNow": "Extract Recent Memory Now",
+  "memory.recent.triggerGenerate": "Extract Memory",
   "memory.recent.whatChanged": "What changed",
   "memory.recent.suggestedNext": "Suggested next steps",
   "memory.recent.noSuggestions": "No suggested next steps in this window",
