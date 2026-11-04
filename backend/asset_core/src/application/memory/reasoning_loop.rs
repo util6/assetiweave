@@ -146,6 +146,7 @@ impl MemoryCommitDecision {
                 status,
                 source_session_id: session_id.to_string(),
                 turn_index,
+                turn_started_at: None,
                 created_at: now.clone(),
                 updated_at: now.clone(),
             }
@@ -180,6 +181,7 @@ impl MemoryCommitDecision {
                 status: NodeStatus::Unexplored,
                 source_session_id: session_id.to_string(),
                 turn_index: branch.turn_index.unwrap_or(turn_index),
+                turn_started_at: None,
                 created_at: now.clone(),
                 updated_at: now.clone(),
             });
