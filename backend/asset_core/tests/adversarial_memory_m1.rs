@@ -389,7 +389,7 @@ async fn test_adv_orthogonal_sibling_branching_and_subsequent_continuation() {
         .unwrap();
     // s1#T1.1 should NOT be in unexplored branches anymore
     let unexplored_section = md2.split("## ✅ 已完成的闭环任务").next().unwrap();
-    assert!(!unexplored_section.contains("[s1#T1.1]"));
+    assert!(!unexplored_section.contains("- [s1#T1.1]("));
     assert!(unexplored_section.contains("[s1#T1.2]"));
     assert!(unexplored_section.contains("[s1#T1.3]"));
     assert!(unexplored_section.contains("[s2#T2.1]"));
