@@ -134,31 +134,47 @@ pub struct ConversationListArgs {
 
     #[arg(long, help = "Search query filter")]
     pub query: Option<String>,
+
+    #[arg(
+        long,
+        help = "Filter to sessions with unprocessed turns (watermark < turn_count)"
+    )]
+    pub unprocessed: bool,
 }
 
 #[derive(Args, Debug)]
 pub struct ConversationOutlineArgs {
-    #[arg(help = "Any identifier (session ID, turn ID, card ID or 8-hex prefix)")]
-    pub id: String,
+    #[arg(
+        num_args = 1..,
+        help = "Any identifier (session ID, turn ID, card ID or 8-hex prefix)"
+    )]
+    pub ids: Vec<String>,
 
     #[arg(
         long,
-        conflicts_with_all = ["qa", "full"],
-        help = "Show questions only: [index, turn_id, question, turn_kind, agent_role, parent_turn_id]"
+        conflicts_with_all = ["qa", "qa_digest", "full"],
+        help = "Show questions only: [index, turn_id, question, turn_kind, agent_role, parent_turn_id, started_at]"
     )]
     pub questions: bool,
 
     #[arg(
         long,
-        conflicts_with_all = ["questions", "full"],
-        help = "Show QA pairs with answers: [index, turn_id, question, answer, turn_kind, agent_role, parent_turn_id]"
+        conflicts_with_all = ["questions", "qa_digest", "full"],
+        help = "Show QA pairs with answers: [index, turn_id, question, answer, turn_kind, agent_role, parent_turn_id, started_at]"
     )]
     pub qa: bool,
 
     #[arg(
         long,
-        conflicts_with_all = ["questions", "qa"],
-        help = "Show full outline including answers: [index, turn_id, question, activities, cards, answer, turn_kind, agent_role, parent_turn_id]"
+        conflicts_with_all = ["questions", "qa", "full"],
+        help = "Show QA pairs with digested answers: [index, turn_id, question, answer, turn_kind, agent_role, parent_turn_id, started_at]"
+    )]
+    pub qa_digest: bool,
+
+    #[arg(
+        long,
+        conflicts_with_all = ["questions", "qa", "qa_digest"],
+        help = "Show full outline including answers: [index, turn_id, question, activities, cards, answer, turn_kind, agent_role, parent_turn_id, started_at]"
     )]
     pub full: bool,
 }
@@ -171,6 +187,8 @@ impl ConversationOutlineArgs {
             asset_core::backend::domain::conversations::outline::ConversationOutlineDetailLevel::Questions
         } else if self.qa {
             asset_core::backend::domain::conversations::outline::ConversationOutlineDetailLevel::Qa
+        } else if self.qa_digest {
+            asset_core::backend::domain::conversations::outline::ConversationOutlineDetailLevel::QaDigest
         } else if self.full {
             asset_core::backend::domain::conversations::outline::ConversationOutlineDetailLevel::Full
         } else {

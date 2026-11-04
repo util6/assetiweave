@@ -31,6 +31,7 @@ fn test_project_state_to_markdown_populated_and_deterministic() {
         status: NodeStatus::Completed,
         source_session_id: "s1".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -42,6 +43,7 @@ fn test_project_state_to_markdown_populated_and_deterministic() {
         status: NodeStatus::Unexplored,
         source_session_id: "s1".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -82,6 +84,7 @@ fn test_recent_state_to_markdown_and_one_way_sync() {
         status: NodeStatus::Completed,
         source_session_id: "abc00000".to_string(),
         turn_index: 5,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -124,4 +127,89 @@ fn test_recent_state_to_markdown_and_one_way_sync() {
     assert!(read_back_recent.contains("Recent Work"));
 
     std::fs::remove_dir_all(tmp).ok();
+}
+
+#[test]
+fn test_projection_with_timestamps_parent_and_dismissed_exclusion() {
+    let mut state = ProjectMemoryState::new("proj-ts");
+
+    let node_completed = MemoryTreeNode {
+        id: "sess1#T1".to_string(),
+        parent_id: None,
+        topic_id: "core".to_string(),
+        summary: "Initialize memory engine".to_string(),
+        status: NodeStatus::Completed,
+        source_session_id: "sess1".to_string(),
+        turn_index: 1,
+        turn_started_at: Some("2026-11-04T08:30:00Z".to_string()),
+        created_at: "2026-11-04T08:30:00Z".to_string(),
+        updated_at: "2026-11-04T08:30:00Z".to_string(),
+    };
+
+    let node_unexplored = MemoryTreeNode {
+        id: "sess1#T1.1".to_string(),
+        parent_id: Some("sess1#T1".to_string()),
+        topic_id: "core".to_string(),
+        summary: "Explore Tantivy multi-field ranking".to_string(),
+        status: NodeStatus::Unexplored,
+        source_session_id: "sess1".to_string(),
+        turn_index: 1,
+        turn_started_at: Some("2026-11-04T08:30:00+08:00".to_string()),
+        created_at: "2026-11-04T08:30:00Z".to_string(),
+        updated_at: "2026-11-04T08:30:00Z".to_string(),
+    };
+
+    let node_dismissed = MemoryTreeNode {
+        id: "sess1#T1.2".to_string(),
+        parent_id: Some("sess1#T1".to_string()),
+        topic_id: "core".to_string(),
+        summary: "Obsolete branch to drop".to_string(),
+        status: NodeStatus::Dismissed,
+        source_session_id: "sess1".to_string(),
+        turn_index: 1,
+        turn_started_at: Some("2026-11-04T08:30:00Z".to_string()),
+        created_at: "2026-11-04T08:30:00Z".to_string(),
+        updated_at: "2026-11-04T08:30:00Z".to_string(),
+    };
+
+    let mut topic_tree = crate::backend::domain::memory::TopicTree::new("core", "Core Engine");
+    topic_tree
+        .nodes
+        .insert(node_completed.id.clone(), node_completed);
+    topic_tree
+        .nodes
+        .insert(node_unexplored.id.clone(), node_unexplored);
+    topic_tree
+        .nodes
+        .insert(node_dismissed.id.clone(), node_dismissed);
+    state.topic_trees.insert("core".to_string(), topic_tree);
+
+    // 1. Verify project_state_to_markdown
+    let proj_md = project_state_to_markdown(&state);
+
+    // Completed node with timestamp, without parent
+    assert!(proj_md.contains(
+        "- [sess1#T1](aiwc://session/sess1/turn/1): [2026-11-04 08:30] Initialize memory engine\n"
+    ));
+    // Unexplored node with timestamp and parent
+    assert!(
+        proj_md.contains("- [sess1#T1.1](aiwc://session/sess1/turn/1): [2026-11-04 08:30] Explore Tantivy multi-field ranking *(演进自 [sess1#T1])*\n")
+    );
+    // Dismissed node is EXCLUDED completely
+    assert!(!proj_md.contains("sess1#T1.2"));
+    assert!(!proj_md.contains("Obsolete branch to drop"));
+
+    // 2. Verify recent_state_to_markdown
+    let mut recent = RecentMemoryState::new();
+    recent.upsert_project(state);
+    let recent_md = recent_state_to_markdown(&recent);
+
+    assert!(recent_md.contains(
+        "- [sess1#T1](aiwc://session/sess1/turn/1): [2026-11-04 08:30] Initialize memory engine\n"
+    ));
+    assert!(
+        recent_md.contains("- [sess1#T1.1](aiwc://session/sess1/turn/1): [2026-11-04 08:30] Explore Tantivy multi-field ranking *(演进自 [sess1#T1])*\n")
+    );
+    assert!(!recent_md.contains("sess1#T1.2"));
+    assert!(!recent_md.contains("Obsolete branch to drop"));
 }

@@ -25,35 +25,81 @@ impl AppService {
                 .await
                 .map_err(AppError::from)?;
 
-        match target {
+        let (record_kind, session_id) = match &target {
             ResolvedOutlineTarget::Session {
                 record_kind,
                 session_id,
-            } => {
-                let detail =
-                    load_session_detail_by_kind(pool, tenant_id, record_kind, &session_id).await?;
+            }
+            | ResolvedOutlineTarget::Turn {
+                record_kind,
+                session_id,
+                ..
+            }
+            | ResolvedOutlineTarget::Card {
+                record_kind,
+                session_id,
+                ..
+            } => (*record_kind, session_id.as_str()),
+        };
+        let detail = load_session_detail_by_kind(pool, tenant_id, record_kind, session_id).await?;
+
+        match target {
+            ResolvedOutlineTarget::Session { .. } => {
                 build_session_outline(detail, params.detail_level)
             }
-            ResolvedOutlineTarget::Turn {
-                record_kind,
-                session_id,
-                turn_id,
-            } => {
-                let detail =
-                    load_session_detail_by_kind(pool, tenant_id, record_kind, &session_id).await?;
-                build_turn_outline(detail, &turn_id)
-            }
+            ResolvedOutlineTarget::Turn { turn_id, .. } => build_turn_outline(detail, &turn_id),
             ResolvedOutlineTarget::Card {
-                record_kind,
-                session_id,
-                turn_id,
-                card_id,
-            } => {
-                let detail =
-                    load_session_detail_by_kind(pool, tenant_id, record_kind, &session_id).await?;
-                build_card_outline(detail, &turn_id, &card_id)
+                turn_id, card_id, ..
+            } => build_card_outline(detail, &turn_id, &card_id),
+        }
+    }
+
+    pub async fn get_conversation_outlines(
+        &self,
+        ids: &[String],
+        detail_level: ConversationOutlineDetailLevel,
+    ) -> AppResult<ConversationOutline> {
+        if ids.is_empty() {
+            return Ok(ConversationOutline::Batch {
+                items: Vec::new(),
+                truncated: false,
+            });
+        }
+        if ids.len() == 1 {
+            return self
+                .get_conversation_outline(ConversationOutlineParams {
+                    id: ids[0].clone(),
+                    detail_level,
+                })
+                .await;
+        }
+
+        let mut items = Vec::with_capacity(ids.len());
+        for id in ids {
+            let item = self
+                .get_conversation_outline(ConversationOutlineParams {
+                    id: id.clone(),
+                    detail_level,
+                })
+                .await?;
+            items.push(item);
+        }
+
+        let mut truncated = false;
+        if matches!(
+            detail_level,
+            ConversationOutlineDetailLevel::Qa | ConversationOutlineDetailLevel::Full
+        ) {
+            let total_bytes = serde_json::to_vec(&items).map(|v| v.len()).unwrap_or(0);
+            if total_bytes > 64 * 1024 {
+                for item in &mut items {
+                    degrade_outline_to_qa_digest(item);
+                }
+                truncated = true;
             }
         }
+
+        Ok(ConversationOutline::Batch { items, truncated })
     }
 
     pub async fn get_conversation_card(
@@ -149,13 +195,7 @@ fn collect_turn_cards(question: &ConversationQuestionDetail, turn_id: &str) -> V
     unprojected_parts.sort_by_key(|p| p.part_index);
 
     for part in unprojected_parts {
-        let chars = part
-            .text
-            .as_deref()
-            .or(part.command.as_deref())
-            .unwrap_or_default()
-            .chars()
-            .count();
+        let text_ref = part.text.as_deref().or(part.command.as_deref());
         cards.push(SimpleCardNode {
             node_id: part.id.clone(),
             part_id: part.id.clone(),
@@ -163,7 +203,7 @@ fn collect_turn_cards(question: &ConversationQuestionDetail, turn_id: &str) -> V
             command_label: part.command_label.clone(),
             status: part.status.clone(),
             role: part.role,
-            content_chars: chars,
+            content_chars: text_ref.map_or(0, |t| t.chars().count()),
         });
     }
 
@@ -219,6 +259,12 @@ fn build_session_outline(
                 "Question".to_string()
             };
 
+            let answer = if detail_level == ConversationOutlineDetailLevel::QaDigest {
+                turn.response.as_deref().map(truncate_qa_digest)
+            } else {
+                turn.response.clone()
+            };
+
             all_turns.push((
                 turn.turn_index,
                 SessionTurnFacts {
@@ -226,10 +272,11 @@ fn build_session_outline(
                     question: question_text,
                     activities,
                     cards: cards_count,
-                    answer: turn.response.clone(),
+                    answer,
                     turn_kind: turn.turn_kind.clone(),
                     agent_role: turn.agent_role.clone(),
                     parent_turn_id: short_parent_turn_id(turn.parent_turn_id.as_deref()),
+                    started_at: turn.started_at.clone(),
                 },
             ));
         }
@@ -313,6 +360,7 @@ fn build_turn_outline(
         turn_kind: turn.turn_kind.clone(),
         agent_role: turn.agent_role.clone(),
         parent_turn_id: short_parent_turn_id(turn.parent_turn_id.as_deref()),
+        started_at: turn.started_at.clone(),
         cards: MatrixView {
             columns: vec![
                 "order".into(),
@@ -422,6 +470,36 @@ fn build_card_outline(
             rows: neighbor_rows,
         },
     }))
+}
+
+/// Truncates an answer for QA digest: if length > 500 characters,
+/// keep head 200 chars + `... [省略 N 字] ...` + tail 300 chars.
+pub fn truncate_qa_digest(text: &str) -> String {
+    let char_count = text.chars().count();
+    if char_count <= 500 {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(200).collect();
+    let omitted = char_count - 500;
+    let tail: String = text.chars().skip(char_count - 300).collect();
+    format!("{head}... [省略 {omitted} 字] ...{tail}")
+}
+
+/// Degrades session outline answers within an outline to QA digest format.
+pub fn degrade_outline_to_qa_digest(outline: &mut ConversationOutline) {
+    if let ConversationOutline::Session(session_outline) = outline {
+        for row in &mut session_outline.turns.rows {
+            if let SessionTurnRow::Qa {
+                answer: Some(ans), ..
+            }
+            | SessionTurnRow::Full {
+                answer: Some(ans), ..
+            } = row
+            {
+                *ans = truncate_qa_digest(ans);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

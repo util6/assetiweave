@@ -53,6 +53,15 @@ impl CliService {
         }
     }
 
+    pub fn tenant_id(&self) -> &str {
+        self.app_service.tenant_id()
+    }
+
+    #[allow(dead_code)]
+    pub fn app_service(&self) -> &AppService {
+        &self.app_service
+    }
+
     pub async fn get_overview(&self) -> Result<OverviewViewModel> {
         let overview = self
             .app_service
@@ -389,10 +398,34 @@ impl CliService {
             window: args.window.clone(),
             range: args.range.clone(),
         };
-        self.app_service
+        let mut sessions = self
+            .app_service
             .list_conversation_sessions(params)
             .await
-            .context("failed to list conversation sessions")
+            .context("failed to list conversation sessions")?;
+        if args.unprocessed {
+            let storage = asset_core::infrastructure::memory::MemoryStorage::new(
+                self.app_service.tenant_id(),
+            );
+            sessions.retain(|s| {
+                let effective_path = s
+                    .session
+                    .project_path
+                    .as_deref()
+                    .or(s.session.last_cwd.as_deref());
+                let slug = asset_core::application::memory::project_path_to_slug(
+                    effective_path.unwrap_or(""),
+                );
+                let watermark = storage
+                    .read_project_state(&slug)
+                    .ok()
+                    .flatten()
+                    .and_then(|st| st.get_watermark(&s.session.id))
+                    .unwrap_or(0);
+                watermark < (s.turn_count as u32) && s.turn_count > 0
+            });
+        }
+        Ok(sessions)
     }
 
     pub fn list_conversation_adapters(

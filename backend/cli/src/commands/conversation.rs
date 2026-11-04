@@ -59,12 +59,17 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                 list_args.until = until;
             }
             let sessions = service.list_conversation_sessions(&list_args).await?;
-            render::render_conversation_sessions(&sessions, format, window_desc.as_deref());
+            render::render_conversation_sessions(
+                &sessions,
+                format,
+                window_desc.as_deref(),
+                service.tenant_id(),
+            );
         }
         ConversationCommands::Outline(o) => {
             let outline = match service
                 .conversation()
-                .get_outline(o.id.clone(), o.detail_level())
+                .get_outlines(o.ids.clone(), o.detail_level())
                 .await
             {
                 Ok(outline) => outline,
@@ -74,7 +79,12 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                         || full_err.contains("NotFound")
                         || full_err.contains("no session")
                     {
-                        return Err(CliError::outline_not_found(&o.id).into());
+                        let id_label = if o.ids.len() == 1 {
+                            o.ids[0].clone()
+                        } else {
+                            o.ids.join(", ")
+                        };
+                        return Err(CliError::outline_not_found(&id_label).into());
                     } else {
                         return Err(CliError::new_with_hint(
                             "OUTLINE_FAILED",

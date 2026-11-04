@@ -141,6 +141,7 @@ async fn test_recent_and_project_workflow_projects_state_files() {
         status: NodeStatus::Completed,
         source_session_id: "sess-alpha-1".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: now_str.clone(),
         updated_at: now_str.clone(),
     };
@@ -152,6 +153,7 @@ async fn test_recent_and_project_workflow_projects_state_files() {
         status: NodeStatus::Unexplored,
         source_session_id: "sess-alpha-1".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: now_str.clone(),
         updated_at: now_str.clone(),
     };

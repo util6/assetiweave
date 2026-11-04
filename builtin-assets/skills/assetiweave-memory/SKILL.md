@@ -1,205 +1,172 @@
 ---
 name: assetiweave-memory
-description: 通过 AssetIWeave 的统一 Memory API 与会话逐级取证体系（Outline 骨架还原、意图透视、卡片按需单点下钻）查询近期工作、历史会话与项目上下文。
+description: 通过 AssetIWeave 的纯读写 Memory CLI 与会话逐级取证体系（批量 Outline 骨架还原、问答摘要透视、卡片按需单点下钻）查询近期工作、历史会话、项目悬空分支并管理节点状态。
 ---
 
 # AssetIWeave Memory
 
-所有操作都通过 AssetIWeave CLI 的 Engine 合同完成。脚本不直接读写底层 SQLite，不绕过 Engine 访问第三方会话数据库，也不自行决定工具权限。
+所有操作均通过 AssetIWeave 原生 CLI（`aiwc`）纯读写契约完成。Agent 不直接读写底层 SQLite，也不绕过 CLI 直接修改 `.state/` 内部文件。
+
+## 0. AI 调用最高铁律 (Mandatory JSON Output Rule)
+
+- **所有命令强制携带 `--format json`**：
+  AI 调用任何 `aiwc` CLI 命令时，**必须显式附加 `--format json` 参数**，统一解析标准 JSON 信封 `{"ok": true, "data": ...}`（错误时为 `{"ok": false, "error": ...}`）。严禁在不带 `--format json` 的默认终端表格（Table）模式下调用。
+- **乐观执行与零试探原则**：
+  默认假设运行时正常，直接按本文档契约调用业务命令；**严禁在启动时执行 `doctor` 或 `--help` 试探命令**。
+
+---
 
 ## 1. 逐级取证事实求证协议 (Progressive Evidence & Fact Verification Protocol)
-
-### 乐观执行原则 (Optimistic Execution)
-- 默认假设运行时与合同环境正常，直接调用各业务命令执行，**严禁在启动时强制执行 `doctor` 诊断**！
-- 只有在遇到不可恢复的环境报错、CLI 缺失或版本/契约断裂时，才跳转至文末的“故障排查”章节。
 
 ### 双入口取证流 (Dual-Entry Verification Flow)
 用户的使用场景分为两种入口，**两者必须最终无缝汇入 4-Tier 逐级取证链路**：
 
 1. **入口 A：精确短 ID 入口 (Direct Short-ID Entry)**
-   - 当用户 Prompt、问题输入或上下文中已提供 8 位十六进制会话短 ID（例如 `2e003a42`）或完整 Session ID 时：
+   - 当用户 Prompt、问题输入或记忆锚点中已提供 8 位十六进制短 ID（例如 `dff13ef0`）或完整 Session/Turn/Card ID 时（支持一次传入 1 个或多个 ID）：
    - **第一步直接调用**骨架还原命令：
      ```bash
-     aiwc conversation outline <session-id>
+     aiwc conversation outline <id1> [<id2> ...] --qa-digest --format json
      ```
 
-2. **入口 B：自然语言模糊回忆入口 (Natural Language Recall Entry · 用户核心场景)**
-   - 当用户用自然语言提问回忆历史事实、排查经过或技术方案时，用户**不可能预先知道短 ID**。
-   - **第 1 步：快速定位**：
+2. **入口 B：自然语言模糊回忆与近期工作入口 (Natural Language Recall Entry · 用户核心场景)**
+   - 当用户用自然语言提问回忆历史事实、近期研发进展、待探索悬空分支或排查经过时：
+   - **第 1 步：快速定位候选会话或记忆分支**：
      ```bash
-     aiwc memory context resolve --current-project --query "<关键词/描述>" --token-budget 2000
+     # 按关键词跨会话检索命中卡片
+     aiwc conversation search --query "<关键词>" --limit 10 --format json
+
+     # 或查看近期窗口内的活跃会话列表（含 project_slug 与水位）
+     aiwc conversation list --window 48h --format json
+
+     # 或读取近期工作 / 当前项目记忆视图（内含 [short_id#Tn] 协议锚点）
+     aiwc memory recent get --format json
+     aiwc memory project get --current-project --format json
      ```
-     （或使用 `aiwc conversation search --query "<关键词>" --current-project --limit 5`）
    - **第 2 步：提取 Session 短 ID 并立刻衔接取证**：
-     `context resolve` 输出包含明确的会话标记 `## Session Memory [Session: <short-id>]`（且 references 中附带 `session_id`）。
-     **强制规则**：一旦定位到候选会话，**必须当场提取其 8 位短 ID，并立即无缝触发 Tier 0 骨架还原**：
+     一旦从搜索命中结果、会话列表或记忆锚点（`[<short-id>#T<turn>]`）中定位到候选会话，**必须当场提取其 8 位短 ID，立即无缝触发 Tier 0 骨架还原**（若有多个候选短 ID，可一次批量传入）：
      ```bash
-     aiwc conversation outline <short-id>
+     aiwc conversation outline <short-id-1> [<short-id-2> ...] --qa-digest --format json
      ```
    - **严禁二手摘要交差 (No Second-hand Summary)**：
-     对于任何涉及技术方案、Bug 修复细节、关键配置或历史讨论的提问，**严禁仅凭 `context resolve` 的 3 行粗略摘要草草回复**！必须在第 1 轮对话内完成取证核实，将原始验证细节连同 **Session 短 ID** 一同交付给用户！
+     对于任何涉及技术方案、Bug 修复细节、关键配置或历史讨论的提问，**严禁仅凭记忆文件中的单行结论草草回复**！必须在第 1 轮对话内下钻到会话骨架或卡片正文完成核实，将原始验证细节连同 **Session 短 ID 与轮次时间** 一同交付给用户。
+
+---
 
 ### 命令拓扑 (Agent-Facing Command Map)
 
-| 目的 | 命令 | 说明 |
+| 目的 | 命令（均须携带 `--format json`） | 说明 |
 | --- | --- | --- |
-| 骨架（唯一入口） | `aiwc conversation outline <id>` | 按 ID 类型自适应返回 **session / turn / card** 三级骨架，支持 8 位短 ID。Session 级支持 `--questions` / `--qa` / `--full` 详细度选项 |
-| 单卡正文 | `aiwc conversation card get <card_id>` | O(1) 直读正文；`--raw` 直接输出纯文本到 stdout |
-| 定位会话 | `aiwc conversation list [--window 24h]` | 人读表格，用于拿到短 ID |
-| 跨会话检索 | `aiwc conversation search --query <q>` | 关键词命中卡片 |
-| 记忆上下文（组装） | `aiwc memory context resolve --current-project [--query <q>] [--token-budget 2000]` | 从 `MEMORY.md`、当前项目的 `projects/<slug>.md` 与 `recent/latest.md` 组装返回有界 Markdown 上下文 |
-| 近期工作（Recent） | `aiwc memory recent get [--date <YYYY-MM-DD>]` | 直读 `recent/latest.md`（或指定日期文件），查看最新思维分支与闭环任务 |
-| 项目记忆（Project） | `aiwc memory project get <project_path> / --current-project` | 直读 `projects/<slug>.md` 悬空叶子池，查看当前项目尚未探索的思维分支 |
+| **大纲骨架（支持批量）** | `aiwc conversation outline <id1> [<id2> ...] [--questions \| --qa-digest \| --qa \| --full] --format json` | 按 ID 类型自适应返回 **session / turn / card** 三级骨架（多 ID 时返回 `level: "batch"`），含轮次真实开始时间 `started_at` |
+| **单卡正文** | `aiwc conversation card get <card_id> [--raw] --format json` | O(1) 直读单张卡片正文；加 `--raw` 直接输出纯文本到 stdout |
+| **定位会话** | `aiwc conversation list [--window 48h] [--unprocessed] [--current-project] --format json` | 返回会话列表及 `project_slug`、`watermark`、`unprocessed_turns` |
+| **跨会话检索** | `aiwc conversation search --query "<q>" [--limit 20] --format json` | 按关键词检索命中的会话卡片与摘要片段 |
+| **近期工作视图（读）** | `aiwc memory recent get [--date <YYYY-MM-DD>] --format json` | 读取 `recent/latest.md`（或指定日期快照），查看近期闭环任务与常驻悬空叶子 |
+| **项目记忆视图（读）** | `aiwc memory project get [<project_path> \| --current-project] --format json` | 读取目标项目的 `projects/<slug>.md` 记忆视图 |
+| **结构化状态树（读）** | `aiwc memory state get [--project <path_or_slug> \| --current-project] --format json` | 读取 `.state/projects/<slug>.json`（不传项目时读 `.state/recent.json`）强类型多叉树与水位 |
+| **节点状态修正（写）** | `aiwc memory status <node_id> <completed\|dismissed\|unexplored\|continued> [--project <slug>] --format json` | 将指定节点（如 `73c20273#T1`）标为已完成或废案（`dismissed`），并自动重绘 Markdown |
+| **演进提交（写）** | `aiwc memory commit --file <json_path> --format json` | 批量或单条提交主题树演进节点与水位（详见 `assetiweave-memory-generation` Skill） |
 
-- `card get` 默认输出 `{card_id, session_id, turn_id, kind, label?, status?, content}`；加 `--raw` 则只吐 `content` 纯文本，适合管道与代码/日志提取。
+---
 
 ### 输出形态：列式 Matrix JSON (Columnar Matrix)
 
-所有骨架统一为 `{"columns": [...], "rows": [[...]]}`：列名只声明一次，行是**定长元组数组**。
-必须按 **columns 的列序**取值，不要指望行内出现字段名。
+所有骨架统一为 `{"columns": [...], "rows": [[...]]}`：列名只声明一次，行是**定长元组数组**。必须严格按 **columns 的列序**取值。
 
-**Session 级**（`level: "session"`）：`session_id`、`source_id`、`total_turns`、`created_at?`。
-支持三档互斥详细度开关与默认骨架：
-- 默认（不带开关）：`turns.columns = ["index", "turn_id", "question", "activities", "cards", "turn_kind", "agent_role", "parent_turn_id"]`
-- `--questions`（最精简）：`turns.columns = ["index", "turn_id", "question", "turn_kind", "agent_role", "parent_turn_id"]`，仅输出用户问题主干。
-- `--qa`（问答主干，思维分支寻回主力档）：`turns.columns = ["index", "turn_id", "question", "answer", "turn_kind", "agent_role", "parent_turn_id"]`，直接返回最终回答内容（`turn.response`），不含 activities 与 cards 噪音。
-- `--full`（最详细）：`turns.columns = ["index", "turn_id", "question", "activities", "cards", "answer", "turn_kind", "agent_role", "parent_turn_id"]`，包含卡片/活动概况与最终回答。
-- `activities`：该轮工具/命令活动的**连续去重**摘要（如 `["Git status check","Build desktop crate"]`），不是逐条流水。
-- `cards`：该轮卡片数量（整数），据此判断是否需要放大到 Turn 级。
-- `index` 为 **1-based** 轮次序号。
-- `turn_kind`：轮次种类（如 `user`、`subagent`、`continuation`），历史数据可能为 `null`。
-- `agent_role`：子代理语义角色（如 `Rust Core Reviewer 2`），主代理轮次为 `null`。
-- `parent_turn_id`：派发该子代理的父轮次 **8 位短 ID**，与 `turn_id` 列同一取值域，可直接拼接回本表定位父轮次；顶层轮次为 `null`。
+#### 1. Session 级（`level: "session"`）
+顶层字段：`session_id`、`source_id`、`total_turns`、`created_at?`、`turns { columns, rows }`。
+支持四档互斥详细度开关与默认骨架（末尾均包含轮次真实开始时间 `started_at`）：
+- **默认（不带开关，9 列）**：
+  `turns.columns = ["index", "turn_id", "question", "activities", "cards", "turn_kind", "agent_role", "parent_turn_id", "started_at"]`
+- **`--questions`（最精简，7 列）**：
+  `turns.columns = ["index", "turn_id", "question", "turn_kind", "agent_role", "parent_turn_id", "started_at"]`
+- **`--qa-digest`（问答摘要主力档，防爆上下文，8 列）**：
+  `turns.columns = ["index", "turn_id", "question", "answer", "turn_kind", "agent_role", "parent_turn_id", "started_at"]`
+  返回完整 `question` 与首尾高信号截取的 `answer`（超过 500 字时保留前 200 字与后 300 字），非常适合多会话批量快速浏览。
+- **`--qa`（完整问答档，8 列）**：
+  `turns.columns = ["index", "turn_id", "question", "answer", "turn_kind", "agent_role", "parent_turn_id", "started_at"]`
+  返回未截断的最终回答内容（当批量请求总体积超过 64 KB 安全预算时会自动降级截断并标记 `truncated: true`）。
+- **`--full`（最详细，10 列）**：
+  `turns.columns = ["index", "turn_id", "question", "activities", "cards", "answer", "turn_kind", "agent_role", "parent_turn_id", "started_at"]`
 
-**Turn 级**（`level: "turn"`）：`session_id`、`turn_id`、`turn_index`、`total_turns`、`user_question`、`turn_kind`、`agent_role`、`parent_turn_id`（语义同 Session 级，主代理轮次为 `null`），以及
-`cards.columns = ["order","card_id","kind","label","status","chars"]`
-- `label`：命令/工具的语义标签（Agent 设计里的 command_label），是判断卡片价值的最强信号。
-- `chars`：正文长度预估。**先看 chars 再决定是否下钻**，避免把超长输出拉进上下文。
-- 本层**绝不输出正文**。
+列语义说明：
+- `index`：**1-based** 轮次序号。
+- `activities`：该轮工具/命令活动的**连续去重**摘要（如 `["Git status check", "Build desktop crate"]`）。
+- `cards`：该轮卡片数量（整数），据此判断是否需要下钻到 Turn 级。
+- `turn_kind` / `agent_role` / `parent_turn_id`：子代理轮次种类、语义角色与父轮次 8 位短 ID（主代理顶层轮次为 `null`）。
+- `started_at`：该交互轮次真实的开始时间戳（RFC3339）。
 
-**Card 级**（`level: "card"`）：`session_id`、`turn_id`、`turn_index`、`turn_user_question`，以及
-`target { card_id, order, kind, label?, status?, chars }`，以及
-`neighborhood.columns = ["order","card_id","kind","label","is_target"]`
-- 邻域给出该卡在轮内的前后文坐标，用 `is_target` 定位自身。
+#### 2. 批量模式（`level: "batch"`）
+当向 `aiwc conversation outline` 传入 2 个及以上 ID 时，`data` 返回：
+```json
+{
+  "level": "batch",
+  "items": [
+    { "level": "session", "session_id": "dff13ef0", ... },
+    { "level": "session", "session_id": "21c6034c", ... }
+  ],
+  "truncated": false
+}
+```
 
-**统一信封与体积基线**
-- 所有命令输出统一为 `{"ok": true, "data": ...}`，`data` 才是骨架主体。
-- `outline` / `card get` **恒为 JSON**，`--format` 对它们无效，不要传（传了也不会改变形态）。
-- 体积参考：20 轮左右会话的 Session 级骨架约 **10~15 KB**，可直接整段读入；再往上放大才需要预算控制。
+#### 3. Turn 级（`level: "turn"`）
+顶层字段：`session_id`、`turn_id`、`turn_index`、`total_turns`、`user_question`、`turn_kind`、`agent_role`、`parent_turn_id`、`started_at`，以及：
+`cards.columns = ["order", "card_id", "kind", "label", "status", "chars"]`
+- `label`：命令/工具的语义标签，是判断卡片价值的最强信号。
+- `chars`：正文长度预估。**先看 `chars` 再决定是否下钻**，避免把超长输出拉进上下文。
+
+#### 4. Card 级（`level: "card"`）
+顶层字段：`session_id`、`turn_id`、`turn_index`、`turn_user_question`、`target { card_id, order, kind, label?, status?, chars }`，以及邻域矩阵 `neighborhood.columns = ["order", "card_id", "kind", "label", "is_target"]`。
+
+---
 
 ### 4 级逐级取证梯级 (4-Tier Progressive Evidence Protocol)
 
-1. **Tier 0 · 会话骨架**：`aiwc conversation outline <session-id>` → 一轮一行的全景地图。
-2. **Tier 1 · 意图透视**：只读 `question` 列自顶向下扫一遍，多数事实追溯/方案回顾在此即可定论。
+1. **Tier 0 · 会话骨架**：`aiwc conversation outline <session-id> [--qa-digest] --format json` → 一轮一行的全景地图。
+2. **Tier 1 · 意图与结论透视**：扫描 `question` 与 `answer` 摘要列（及 `started_at` 时间戳），多数事实追溯与方案回顾在此即可定论。
 3. **Tier 2 · 门禁判定**：
    - **推断充足** → 立即输出结论，**严禁多余下钻**；
-   - **事实缺失**（需要 diff、堆栈、配置、精确回复）→ 才进入 Tier 3。
-4. **Tier 3 · 逐级放大（三级缩放进阶，禁止跳级 dump）**：
+   - **事实缺失**（需要完整回答、代码 diff、堆栈或具体命令输出）→ 进入 Tier 3。
+4. **Tier 3 · 逐级放大（禁止盲目全量 dump）**：
    ```bash
-   aiwc conversation outline <turn-id>    # 该轮卡片清单：kind/label/status/chars
-   aiwc conversation outline <card-id>    # 单卡邻域坐标（可选，用于确认上下文）
-   aiwc conversation card get <card-id>   # 仅此时才取正文
+   aiwc conversation outline <session-id> --qa --format json   # 查看该会话完整回答
+   aiwc conversation outline <turn-id> --format json           # 查看该轮卡片清单：kind/label/status/chars
+   aiwc conversation card get <card-id> --format json          # O(1) 获取目标单卡精确正文
    ```
-   - **严禁全量 dump 会话正文**，每次仅 `card get` 1~2 张关键卡片，查完即止。
-   - 优先按 `label` 与 `chars` 选卡：语义标签明确、体积适中的卡片命中率最高。
+   - 每次仅 `card get` 1~2 张关键卡片，查完即止。
 
-### 开发模式环境指引 (Development Mode Guidance)
-在 `assetiweave` 源码工作区内开发联调时，设置环境变量：
-```bash
-export ASSETIWEAVE_ENV=development
-```
-设置后，CLI、Engine 与脚本将强制锁定工作区 `./target/debug/` 编译产物，杜绝与系统全局安装版本冲突。
+---
 
 ## 2. 严格防逃逸与爬虫熔断规约 (Anti-Crawling & Circuit Breaker)
 
 - **翻页深度熔断 (Pagination Hard Limit)**：
-  调用 `aiwc conversation search` 时，**严禁无节制深度翻页**！
-  `--offset` 参数**严禁超过 50**（即最多只允许查看第 1 页 offset 0 和第 2 页 offset 25/50，上限 2 页）。
+  调用 `aiwc conversation search` 时，**严禁无节制深度翻页**！`--offset` 参数**严禁超过 50**（最多查看 2 页）。
 - **逃逸熔断 (Search Escape Circuit Breaker)**：
-  如果在 2 页（offset <= 50）内仍未找到目标记录，必须**立即熔断停止检索**，向用户如实反馈未检索到相关内容，并引导用户提供更具体的关键词、时间范围或 8 字符短 ID。**严禁以自作主张的机械翻页替代向用户反馈**。
-- **范围与边界意识**：
-  结果严格带有租户和范围（scope）边界，严禁跨租户拼接结果；当指定范围返回为空时，说明该范围无记录，不擅自扩大到全局范围。
+  若在 2 页（`offset <= 50`）内仍未找到目标记录，必须**立即熔断停止检索**，向用户如实反馈并引导提供更具体的关键词、时间范围或 8 位短 ID。
 
-## 3. 常规 Memory 读取与上下文编译
+---
 
-### 最近工作
+## 3. 记忆节点状态管理（修正误判与清理废案）
+
+记忆树中的节点具有四种状态：
+- `unexplored`（🍂 待探索悬空叶子）：跨时间窗口常驻保留在 Markdown 与 GUI 中；
+- `continued`（🌿 演进中）：中间演进节点；
+- `completed`（✅ 已完成闭环）：在 Recent 视图中按 `turn_started_at` 时间窗口滚动展示；
+- `dismissed`（🗑️ 已废弃/误报墓碑）：在 `.state/` JSON 中保留墓碑防止后续重跑再次提取，但在 Markdown 与 GUI 主视图中自动隐藏。
+
+当用户指示某个悬空叶子“其实已经解决”或“是个废案、以后不再考虑”时，直接调用：
 ```bash
-aiwc memory recent get
-```
-需要限定当前项目时增加 `--current-project`。
+# 标记为废案/忽略（立即从 recent/latest.md 与 projects/<slug>.md 悬空列表中移除）
+aiwc memory status <node_id> dismissed --format json
 
-### 编译上下文 (Context Resolve)
-```bash
-aiwc memory context resolve --current-project --query "<主题>" --token-budget 2000
-```
-上下文为有界投影。回答时必须区分返回的直接内容与基于内容作出的推断，并保留 `revision`。
-
-### 项目投影与维护重建
-```bash
-aiwc memory project get "<PROJECT_PATH>"
-aiwc memory rebuild --target project --project "<PROJECT_PATH>"
-aiwc memory rebuild --target global
-aiwc memory rebuild --target recent
-aiwc memory rebuild --target all
-aiwc memory rebuild --target all --reason projection_repair
-aiwc memory task list --active-only
-```
-重建立即返回任务状态快照；使用 `aiwc memory task get <task-id>` 跟踪，不阻塞宿主。
-
-## 4. Recall 结构化多轮工作流
-
-### 快速单次检索
-```bash
-aiwc memory recall search --query "<QUERY>" --current-project --limit 24
+# 标记为已完成闭环
+aiwc memory status <node_id> completed --format json
 ```
 
-### 结构化多轮问答 (使用 recall.py)
-```bash
-python3 "$MEMORY_SKILL_DIR/scripts/recall.py" recall \
-  --query "<QUERY>" \
-  --current-project
-```
-脚本按顺序创建 Session、发送 Turn、轮询直到完成或失败。后续追问复用返回的 `session_id`：
-```bash
-aiwc memory recall turn send <SESSION_ID> --query "<FOLLOW_UP>"
-aiwc memory recall session get <SESSION_ID>
-```
-同一 Session 同时仅允许一个活动 Turn。取消使用：
-```bash
-aiwc memory recall turn cancel <TURN_ID>
-```
-只将 Recall 输出中的 `answer`、`sessionReferences`、`contentReferences` 和 `followUpSuggestions` 作为产品结果。
+---
 
-## 5. 故障排查 (Troubleshooting)
+## 4. 开发模式与瞬时锁重试指引
 
-### 瞬时故障先重试，不要急着诊断
-
-- `error returned from database: (code: 5) database is locked`：桌面版 AssetIWeave 正在写 `app.db`，属**瞬时占用**。
-  直接重试同一命令（建议间隔 3~20 秒、最多 10 次左右），通常第 2~5 次即成功，**不要**因此改走其他命令或放弃取证。
-
-### 环境诊断
-
-仅在 CLI 报错、Engine 连通性异常或怀疑协议契约不匹配时，按需执行环境诊断：
-
-```bash
-MEMORY_SKILL_DIR="${ASSETIWEAVE_MEMORY_SKILL_DIR:-}"
-if [ -z "$MEMORY_SKILL_DIR" ]; then
-  for candidate in \
-    "${CODEX_HOME:-$HOME/.codex}/skills/assetiweave-memory" \
-    "$HOME/.claude/skills/assetiweave-memory" \
-    "$HOME/.assetiweave/skills/.system/assetiweave-memory"; do
-    if [ -f "$candidate/scripts/recall.py" ]; then MEMORY_SKILL_DIR="$candidate"; break; fi
-  done
-fi
-python3 "$MEMORY_SKILL_DIR/scripts/recall.py" doctor
-```
-
-`doctor` 会单次聚合校验 Engine 协议契约与以下能力方法：
-- `memory.recent.snapshot.get`
-- `memory.context.resolve`
-- `memory.project.get`
-- `memory.recall.search`
-- `memory.recall.session.create`
-- `memory.recall.session.get`
-- `memory.recall.turn.send`
-- `memory.recall.turn.cancel`
+- **开发模式环境变量**：
+  在 `assetiweave` 源码工作区内开发联调时，设置 `export ASSETIWEAVE_ENV=development` 以锁定 `./target/debug/` 编译产物。
+- **SQLite 瞬时占用重试**：
+  若遇到 `error returned from database: (code: 5) database is locked`，说明桌面版正在写库，属瞬时占用；直接间隔 3~5 秒重试同一命令即可，不要放弃取证。

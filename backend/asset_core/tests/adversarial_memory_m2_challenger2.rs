@@ -72,6 +72,7 @@ async fn test_adv_multi_tree_sibling_preservation_and_status_transitions() {
         status: NodeStatus::Completed,
         source_session_id: "session-root-000".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: Utc::now().to_rfc3339(),
         updated_at: Utc::now().to_rfc3339(),
     };
@@ -84,6 +85,7 @@ async fn test_adv_multi_tree_sibling_preservation_and_status_transitions() {
         status: NodeStatus::Unexplored,
         source_session_id: "session-root-000".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: Utc::now().to_rfc3339(),
         updated_at: Utc::now().to_rfc3339(),
     };
@@ -95,6 +97,7 @@ async fn test_adv_multi_tree_sibling_preservation_and_status_transitions() {
         status: NodeStatus::Unexplored,
         source_session_id: "session-root-000".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: Utc::now().to_rfc3339(),
         updated_at: Utc::now().to_rfc3339(),
     };
@@ -106,6 +109,7 @@ async fn test_adv_multi_tree_sibling_preservation_and_status_transitions() {
         status: NodeStatus::Unexplored,
         source_session_id: "session-root-000".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: Utc::now().to_rfc3339(),
         updated_at: Utc::now().to_rfc3339(),
     };
@@ -162,6 +166,7 @@ async fn test_adv_multi_tree_sibling_preservation_and_status_transitions() {
         status: NodeStatus::Completed,
         source_session_id: "session-child-001".to_string(),
         turn_index: 2,
+        turn_started_at: None,
         created_at: Utc::now().to_rfc3339(),
         updated_at: Utc::now().to_rfc3339(),
     };
@@ -173,6 +178,7 @@ async fn test_adv_multi_tree_sibling_preservation_and_status_transitions() {
         status: NodeStatus::Unexplored,
         source_session_id: "session-child-001".to_string(),
         turn_index: 2,
+        turn_started_at: None,
         created_at: Utc::now().to_rfc3339(),
         updated_at: Utc::now().to_rfc3339(),
     };
@@ -236,6 +242,7 @@ async fn test_adv_multi_tree_sibling_preservation_and_status_transitions() {
         status: NodeStatus::Completed,
         source_session_id: "session-child-002".to_string(),
         turn_index: 3,
+        turn_started_at: None,
         created_at: Utc::now().to_rfc3339(),
         updated_at: Utc::now().to_rfc3339(),
     };
@@ -304,6 +311,7 @@ async fn test_adv_protect_continued_completed_siblings_from_stale_overwrites() {
         status: NodeStatus::Completed,
         source_session_id: "sess-init".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: Utc::now().to_rfc3339(),
         updated_at: Utc::now().to_rfc3339(),
     };
@@ -315,6 +323,7 @@ async fn test_adv_protect_continued_completed_siblings_from_stale_overwrites() {
         status: NodeStatus::Unexplored,
         source_session_id: "sess-init".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: Utc::now().to_rfc3339(),
         updated_at: Utc::now().to_rfc3339(),
     };
@@ -343,6 +352,7 @@ async fn test_adv_protect_continued_completed_siblings_from_stale_overwrites() {
         status: NodeStatus::Completed,
         source_session_id: "sess-adv".to_string(),
         turn_index: 2,
+        turn_started_at: None,
         created_at: Utc::now().to_rfc3339(),
         updated_at: Utc::now().to_rfc3339(),
     };
@@ -388,6 +398,7 @@ async fn test_adv_protect_continued_completed_siblings_from_stale_overwrites() {
             status: NodeStatus::Completed,
             source_session_id: "sess-stale".to_string(),
             turn_index: 3,
+            turn_started_at: None,
             created_at: Utc::now().to_rfc3339(),
             updated_at: Utc::now().to_rfc3339(),
         },
@@ -443,6 +454,7 @@ async fn test_adv_multi_topic_evolution_coexistence() {
             status: NodeStatus::Completed,
             source_session_id: format!("sess-{}", t_id),
             turn_index: 1,
+            turn_started_at: None,
             created_at: Utc::now().to_rfc3339(),
             updated_at: Utc::now().to_rfc3339(),
         };
@@ -454,6 +466,7 @@ async fn test_adv_multi_topic_evolution_coexistence() {
             status: NodeStatus::Unexplored,
             source_session_id: format!("sess-{}", t_id),
             turn_index: 1,
+            turn_started_at: None,
             created_at: Utc::now().to_rfc3339(),
             updated_at: Utc::now().to_rfc3339(),
         };
@@ -490,6 +503,7 @@ async fn test_adv_multi_topic_evolution_coexistence() {
             status: NodeStatus::Completed,
             source_session_id: "sess-db-2".to_string(),
             turn_index: 2,
+            turn_started_at: None,
             created_at: Utc::now().to_rfc3339(),
             updated_at: Utc::now().to_rfc3339(),
         },
@@ -578,6 +592,7 @@ async fn test_adv_sessionless_integrity_zero_sessions_markdown_files() {
             status: NodeStatus::Completed,
             source_session_id: format!("session-{}", p),
             turn_index: 1,
+            turn_started_at: None,
             created_at: Utc::now().to_rfc3339(),
             updated_at: Utc::now().to_rfc3339(),
         };
@@ -686,6 +701,7 @@ async fn test_adv_utf8_multibyte_safety_stress_all_patterns() {
             status: NodeStatus::Completed,
             source_session_id: session_id.to_string(),
             turn_index: 1,
+            turn_started_at: None,
             created_at: Utc::now().to_rfc3339(),
             updated_at: Utc::now().to_rfc3339(),
         };
@@ -733,6 +749,7 @@ async fn test_adv_utf8_multibyte_safety_stress_all_patterns() {
             status: NodeStatus::Completed,
             source_session_id: session_id.to_string(),
             turn_index: 1,
+            turn_started_at: None,
             created_at: Utc::now().to_rfc3339(),
             updated_at: Utc::now().to_rfc3339(),
         };

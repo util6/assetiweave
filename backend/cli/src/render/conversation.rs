@@ -68,11 +68,13 @@ pub fn render_conversation_sessions(
     sessions: &[asset_core::domain::conversations::ConversationSessionListItem],
     format: OutputFormat,
     window_expr: Option<&str>,
+    tenant: &str,
 ) {
     let now = chrono::Utc::now();
+    let storage = asset_core::infrastructure::memory::MemoryStorage::new(tenant);
     let view_models: Vec<ConversationSessionViewModel> = sessions
         .iter()
-        .map(|s| ConversationSessionViewModel::from_item(s, now))
+        .map(|s| ConversationSessionViewModel::from_item_with_storage(s, now, &storage))
         .collect();
 
     match format {
