@@ -71,6 +71,7 @@ async fn test_adv_deeply_nested_tree_generations() {
         status: NodeStatus::Completed,
         source_session_id: "session-root".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -100,6 +101,7 @@ async fn test_adv_deeply_nested_tree_generations() {
             status: NodeStatus::Completed,
             source_session_id: format!("session-{}", gen),
             turn_index: gen as u32,
+            turn_started_at: None,
             created_at: "2026-11-02T10:00:00Z".to_string(),
             updated_at: "2026-11-02T10:00:00Z".to_string(),
         };
@@ -189,6 +191,7 @@ async fn test_adv_commit_with_nonexistent_parent_id() {
         status: NodeStatus::Completed,
         source_session_id: "sess-orphan".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -236,6 +239,7 @@ async fn test_adv_orthogonal_sibling_branching_and_subsequent_continuation() {
         status: NodeStatus::Completed,
         source_session_id: "session-root".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -248,6 +252,7 @@ async fn test_adv_orthogonal_sibling_branching_and_subsequent_continuation() {
         status: NodeStatus::Unexplored,
         source_session_id: "session-root".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -260,6 +265,7 @@ async fn test_adv_orthogonal_sibling_branching_and_subsequent_continuation() {
         status: NodeStatus::Unexplored,
         source_session_id: "session-root".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -272,6 +278,7 @@ async fn test_adv_orthogonal_sibling_branching_and_subsequent_continuation() {
         status: NodeStatus::Unexplored,
         source_session_id: "session-root".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -310,6 +317,7 @@ async fn test_adv_orthogonal_sibling_branching_and_subsequent_continuation() {
         status: NodeStatus::Completed,
         source_session_id: "session-oauth".to_string(),
         turn_index: 2,
+        turn_started_at: None,
         created_at: "2026-11-02T11:00:00Z".to_string(),
         updated_at: "2026-11-02T11:00:00Z".to_string(),
     };
@@ -322,6 +330,7 @@ async fn test_adv_orthogonal_sibling_branching_and_subsequent_continuation() {
         status: NodeStatus::Unexplored,
         source_session_id: "session-oauth".to_string(),
         turn_index: 2,
+        turn_started_at: None,
         created_at: "2026-11-02T11:00:00Z".to_string(),
         updated_at: "2026-11-02T11:00:00Z".to_string(),
     };
@@ -404,6 +413,7 @@ async fn test_adv_recommitting_parent_overwrites_continued_sibling() {
         status: NodeStatus::Completed,
         source_session_id: "s1".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -415,6 +425,7 @@ async fn test_adv_recommitting_parent_overwrites_continued_sibling() {
         status: NodeStatus::Unexplored,
         source_session_id: "s1".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -441,6 +452,7 @@ async fn test_adv_recommitting_parent_overwrites_continued_sibling() {
         status: NodeStatus::Completed,
         source_session_id: "s2".to_string(),
         turn_index: 2,
+        turn_started_at: None,
         created_at: "2026-11-02T11:00:00Z".to_string(),
         updated_at: "2026-11-02T11:00:00Z".to_string(),
     };
@@ -519,6 +531,7 @@ async fn test_adv_watermark_out_of_order_commit_and_advance() {
         status: NodeStatus::Completed,
         source_session_id: session_id.to_string(),
         turn_index: 3,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -553,6 +566,7 @@ async fn test_adv_watermark_out_of_order_commit_and_advance() {
         status: NodeStatus::Completed,
         source_session_id: session_id.to_string(),
         turn_index: 2,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -656,6 +670,7 @@ async fn test_adv_project_slug_with_path_separators() {
         status: NodeStatus::Completed,
         source_session_id: "session-path".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -699,6 +714,7 @@ async fn test_adv_chinese_characters_and_markdown_special_chars() {
         status: NodeStatus::Completed,
         source_session_id: "session-zh-001".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -759,6 +775,7 @@ fn test_adv_short_id_utf8_char_boundary_panic() {
         // '测' = 3 bytes (6..9) -> byte 8 is inside '测'!
         source_session_id: "会话测试-123".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -812,6 +829,7 @@ async fn test_adv_malformed_project_state_json_returns_error_not_panic() {
         status: NodeStatus::Completed,
         source_session_id: "sess1".to_string(),
         turn_index: 1,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };

@@ -44,6 +44,7 @@ async fn test_state_service_commit_evolution_and_watermarks() {
         status: NodeStatus::Completed,
         source_session_id: "session-100".to_string(),
         turn_index: 4,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
@@ -55,6 +56,7 @@ async fn test_state_service_commit_evolution_and_watermarks() {
         status: NodeStatus::Unexplored,
         source_session_id: "session-100".to_string(),
         turn_index: 4,
+        turn_started_at: None,
         created_at: "2026-11-02T10:00:00Z".to_string(),
         updated_at: "2026-11-02T10:00:00Z".to_string(),
     };
