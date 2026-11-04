@@ -381,34 +381,24 @@ fn test_memory_project_get_empty_state_text() {
 }
 
 #[test]
-fn test_memory_rebuild_force_args() {
+fn test_memory_cli_help_removes_dead_commands() {
     let mut cmd = aiwc_command();
-    let assert = cmd
-        .args(["memory", "rebuild", "--force", "--format", "json"])
-        .assert()
-        .success();
+    let assert = cmd.args(["memory", "--help"]).assert().success();
     let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let json: Value = serde_json::from_str(&output).unwrap();
-    assert_eq!(json["ok"], true);
-}
 
-#[test]
-fn test_memory_context_resolve() {
-    let mut cmd = aiwc_command();
-    let assert = cmd
-        .args([
-            "memory",
-            "context",
-            "resolve",
-            "--current-project",
-            "--format",
-            "json",
-        ])
-        .assert()
-        .success();
-    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let json: Value = serde_json::from_str(&output).unwrap();
-    assert_eq!(json["ok"], true);
+    // Active subcommands
+    assert!(output.contains("recent"));
+    assert!(output.contains("project"));
+    assert!(output.contains("state"));
+    assert!(output.contains("commit"));
+    assert!(output.contains("watermark"));
+    assert!(output.contains("status"));
+
+    // Removed / dead subcommands
+    assert!(!output.contains("rebuild"));
+    assert!(!output.contains("task"));
+    assert!(!output.contains("recall"));
+    assert!(!output.contains("context"));
 }
 
 #[test]
@@ -450,33 +440,6 @@ fn test_memory_cli_read_path_rendered_markdown() {
     let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     assert!(output.contains("项目记忆: /test-proj"));
     assert!(output.contains("[s1#T1](aiwc://session/s1/turn/1)"));
-
-    // 3. aiwc memory context resolve
-    let mut cmd = aiwc_command();
-    let assert = cmd
-        .env("ASSETIWEAVE_MEMORY_ROOT", tmp.path())
-        .args([
-            "memory",
-            "context",
-            "resolve",
-            "--project",
-            "/test-proj",
-            "--format",
-            "json",
-        ])
-        .assert()
-        .success();
-    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let json: Value = serde_json::from_str(&output).unwrap();
-    assert_eq!(json["ok"], true);
-    assert!(json["data"]["text"]
-        .as_str()
-        .unwrap()
-        .contains("Global Memory"));
-    assert!(json["data"]["text"]
-        .as_str()
-        .unwrap()
-        .contains("Recent Work"));
 }
 
 #[test]
@@ -627,9 +590,8 @@ fn test_memory_cli_state_commit_and_watermark() {
         .success();
     let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     assert!(output.contains("# 项目记忆: test-slug"));
-    assert!(
-        output.contains("[s123#T6](aiwc://session/s123/turn/6): State tree migration completed")
-    );
+    assert!(output.contains("[s123#T6](aiwc://session/s123/turn/6): "));
+    assert!(output.contains("State tree migration completed"));
 
     // 8. Test memory state get --raw (un-enveloped)
     let mut cmd = aiwc_command();
@@ -683,6 +645,251 @@ fn test_memory_cli_state_commit_and_watermark() {
     let json: Value = serde_json::from_str(&output).unwrap();
     assert_eq!(json["ok"], true);
     assert_eq!(json["data"]["committed_node_id"], "s123#T7");
+}
+
+#[test]
+fn test_memory_cli_minimal_commit_and_batch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let memory_root = tmp.path().join("memories");
+    std::fs::create_dir_all(&memory_root).unwrap();
+
+    // 1. Commit evolution with simplified agent schema and unexplored siblings
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args([
+            "memory",
+            "commit",
+            "--project",
+            "my-app",
+            "--summary",
+            "Initial setup completed",
+            "--session-id",
+            "sess-9999",
+            "--short-id",
+            "s9999",
+            "--turn",
+            "1",
+            "--unexplored",
+            "Explore database caching",
+            "--unexplored",
+            "Explore background workers",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["committed_node_id"], "s9999#T1");
+    let unexp = json["data"]["unexplored_node_ids"].as_array().unwrap();
+    assert_eq!(unexp.len(), 2);
+    assert_eq!(unexp[0], "s9999#T1.1");
+    assert_eq!(unexp[1], "s9999#T1.2");
+
+    // 2. Batch commit with simplified JSON: evolve child, advance watermark
+    let batch_file = tmp.path().join("batch.json");
+    let batch_json = serde_json::json!({
+        "window": "24h",
+        "commits": [
+            {
+                "project": "my-app",
+                "session_id": "sess-9999",
+                "short_id": "s9999",
+                "turn": 2,
+                "summary": "Implemented database caching",
+                "parent_id": "s9999#T1.1",
+                "parent_new_status": "completed",
+                "status": "completed"
+            }
+        ],
+        "advance_watermarks": [
+            {
+                "project": "my-app",
+                "session_id": "sess-9999",
+                "turn": 2
+            }
+        ]
+    });
+    std::fs::write(&batch_file, serde_json::to_string(&batch_json).unwrap()).unwrap();
+
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args([
+            "memory",
+            "commit",
+            "--file",
+            batch_file.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert!(json["data"]["commits"].is_array());
+    assert_eq!(json["data"]["commits"][0]["committed_node_id"], "s9999#T2");
+
+    // 3. Check projects/my-app.md markdown projection
+    let proj_md_path = memory_root
+        .join("default")
+        .join("projects")
+        .join("my-app.md");
+    let proj_md = std::fs::read_to_string(&proj_md_path).unwrap();
+    // Must contain timestamp and ancestry
+    assert!(proj_md.contains("- [s9999#T2](aiwc://session/s9999/turn/2): ["));
+    assert!(proj_md.contains("Implemented database caching *(演进自 [s9999#T1.1])*"));
+
+    // 4. Check recent/latest.md projection
+    let recent_md_path = memory_root.join("default").join("recent").join("latest.md");
+    let recent_md = std::fs::read_to_string(&recent_md_path).unwrap();
+    assert!(recent_md.contains("## 项目: my-app"));
+    assert!(recent_md.contains("- [s9999#T2](aiwc://session/s9999/turn/2): ["));
+    assert!(recent_md.contains("Implemented database caching *(演进自 [s9999#T1.1])*"));
+}
+
+#[test]
+fn test_memory_cli_status_dismissed_tombstone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let memory_root = tmp.path().join("memories");
+    std::fs::create_dir_all(&memory_root).unwrap();
+
+    // 1. Commit initial turn with unexplored sibling s88#T1.1
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args([
+            "memory",
+            "commit",
+            "--project",
+            "tombstone-proj",
+            "--summary",
+            "Root feature explored",
+            "--session-id",
+            "sess-8888",
+            "--short-id",
+            "s88",
+            "--turn",
+            "1",
+            "--unexplored",
+            "Flawed idea to dismiss",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["unexplored_node_ids"][0], "s88#T1.1");
+
+    // Verify s88#T1.1 is in project markdown and recent markdown
+    let proj_md_path = memory_root
+        .join("default")
+        .join("projects")
+        .join("tombstone-proj.md");
+    let proj_md = std::fs::read_to_string(&proj_md_path).unwrap();
+    assert!(proj_md.contains("s88#T1.1"));
+
+    let recent_md_path = memory_root.join("default").join("recent").join("latest.md");
+    let recent_md = std::fs::read_to_string(&recent_md_path).unwrap();
+    assert!(recent_md.contains("s88#T1.1"));
+
+    // 2. Change status of s88#T1.1 to dismissed
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args([
+            "memory",
+            "status",
+            "s88#T1.1",
+            "dismissed",
+            "--project",
+            "tombstone-proj",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["status"], "dismissed");
+
+    // 3. Check .state/projects/tombstone-proj.json: node has status dismissed
+    let state_file = memory_root
+        .join("default")
+        .join(".state")
+        .join("projects")
+        .join("tombstone-proj.json");
+    let state_str = std::fs::read_to_string(&state_file).unwrap();
+    let state_val: Value = serde_json::from_str(&state_str).unwrap();
+    let node_status = state_val["topic_trees"]["general"]["nodes"]["s88#T1.1"]["status"]
+        .as_str()
+        .unwrap();
+    assert_eq!(node_status, "dismissed");
+
+    // 4. Node disappears from projects/tombstone-proj.md and recent/latest.md
+    let proj_md = std::fs::read_to_string(&proj_md_path).unwrap();
+    assert!(!proj_md.contains("s88#T1.1"));
+    let recent_md = std::fs::read_to_string(&recent_md_path).unwrap();
+    assert!(!recent_md.contains("s88#T1.1"));
+
+    // 5. Re-committing with unexplored sibling with identical ID does NOT resurrect it
+    let resurrect_payload = serde_json::json!({
+        "project": "tombstone-proj",
+        "session_id": "sess-8888",
+        "short_id": "s88",
+        "turn": 2,
+        "summary": "Turn 2 attempt resurrection",
+        "unexplored": [
+            {
+                "id": "s88#T1.1",
+                "summary": "Resurrection attempt"
+            }
+        ]
+    });
+    let resurrect_file = tmp.path().join("resurrect.json");
+    std::fs::write(
+        &resurrect_file,
+        serde_json::to_string(&resurrect_payload).unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = aiwc_command();
+    let assert = cmd
+        .env("ASSETIWEAVE_MEMORY_ROOT", &memory_root)
+        .args([
+            "memory",
+            "commit",
+            "--file",
+            resurrect_file.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+
+    // Verify node is STILL dismissed in .state and NOT in markdown!
+    let state_str = std::fs::read_to_string(&state_file).unwrap();
+    let state_val: Value = serde_json::from_str(&state_str).unwrap();
+    let node_status = state_val["topic_trees"]["general"]["nodes"]["s88#T1.1"]["status"]
+        .as_str()
+        .unwrap();
+    assert_eq!(node_status, "dismissed");
+
+    let proj_md = std::fs::read_to_string(&proj_md_path).unwrap();
+    assert!(!proj_md.contains("s88#T1.1"));
 }
 
 #[test]
