@@ -58,13 +58,34 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                 list_args.since = since;
                 list_args.until = until;
             }
-            let sessions = service.list_conversation_sessions(&list_args).await?;
+            let mut sessions = service.list_conversation_sessions(&list_args).await?;
+            if list_args.unprocessed {
+                let storage =
+                    asset_core::infrastructure::memory::MemoryStorage::new(service.tenant_id());
+                sessions.retain(|s| {
+                    let effective_path = s
+                        .session
+                        .project_path
+                        .as_deref()
+                        .or(s.session.last_cwd.as_deref());
+                    let slug = asset_core::application::memory::project_path_to_slug(
+                        effective_path.unwrap_or(""),
+                    );
+                    let watermark = storage
+                        .read_project_state(&slug)
+                        .ok()
+                        .flatten()
+                        .and_then(|st| st.get_watermark(&s.session.id))
+                        .unwrap_or(0);
+                    watermark < (s.turn_count as u32) && s.turn_count > 0
+                });
+            }
             render::render_conversation_sessions(&sessions, format, window_desc.as_deref());
         }
         ConversationCommands::Outline(o) => {
             let outline = match service
                 .conversation()
-                .get_outline(o.id.clone(), o.detail_level())
+                .get_outlines(o.ids.clone(), o.detail_level())
                 .await
             {
                 Ok(outline) => outline,
@@ -74,7 +95,12 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                         || full_err.contains("NotFound")
                         || full_err.contains("no session")
                     {
-                        return Err(CliError::outline_not_found(&o.id).into());
+                        let id_label = if o.ids.len() == 1 {
+                            o.ids[0].clone()
+                        } else {
+                            o.ids.join(", ")
+                        };
+                        return Err(CliError::outline_not_found(&id_label).into());
                     } else {
                         return Err(CliError::new_with_hint(
                             "OUTLINE_FAILED",

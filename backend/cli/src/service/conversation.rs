@@ -163,6 +163,7 @@ impl<'a> ConversationOperations<'a> {
         Ok(serde_json::to_value(result)?)
     }
 
+    #[allow(dead_code)]
     pub async fn get_outline(
         &self,
         id: String,
@@ -172,6 +173,19 @@ impl<'a> ConversationOperations<'a> {
         let outline = self
             .app_service
             .get_conversation_outline(params)
+            .await
+            .context("failed to get conversation outline")?;
+        Ok(serde_json::to_value(outline)?)
+    }
+
+    pub async fn get_outlines(
+        &self,
+        ids: Vec<String>,
+        detail_level: asset_core::backend::domain::conversations::outline::ConversationOutlineDetailLevel,
+    ) -> Result<Value> {
+        let outline = self
+            .app_service
+            .get_conversation_outlines(&ids, detail_level)
             .await
             .context("failed to get conversation outline")?;
         Ok(serde_json::to_value(outline)?)

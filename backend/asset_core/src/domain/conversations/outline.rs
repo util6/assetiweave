@@ -10,6 +10,7 @@ pub enum ConversationOutlineDetailLevel {
     Default,
     Questions,
     Qa,
+    QaDigest,
     Full,
 }
 
@@ -200,6 +201,8 @@ pub struct TurnOutline {
     pub agent_role: Option<String>,
     #[serde(default)]
     pub parent_turn_id: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<String>,
     pub cards: MatrixView<TurnCardRow>,
 }
 
@@ -219,6 +222,10 @@ pub enum ConversationOutline {
     Session(SessionOutline),
     Turn(TurnOutline),
     Card(CardOutline),
+    Batch {
+        items: Vec<ConversationOutline>,
+        truncated: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
