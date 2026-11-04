@@ -26,7 +26,8 @@ fn deserializes_legacy_three_four_five_element_rows() {
 
 #[test]
 fn keeps_subagent_semantics_for_current_formats() {
-    let row: SessionTurnRow = serde_json::from_value(json!([
+    // 兼容历史 8 元素 (Default 带 3 列语义，无 started_at)
+    let legacy_row: SessionTurnRow = serde_json::from_value(json!([
         4,
         "turn-d",
         "Question D",
@@ -37,11 +38,13 @@ fn keeps_subagent_semantics_for_current_formats() {
         "turn-parent"
     ]))
     .unwrap();
-    assert_eq!(row.turn_kind(), Some("subagent"));
-    assert_eq!(row.agent_role(), Some("guard_audit"));
-    assert_eq!(row.parent_turn_id(), Some("turn-parent"));
+    assert_eq!(legacy_row.turn_kind(), Some("subagent"));
+    assert_eq!(legacy_row.agent_role(), Some("guard_audit"));
+    assert_eq!(legacy_row.parent_turn_id(), Some("turn-parent"));
+    assert_eq!(legacy_row.started_at(), None);
 
-    let full: SessionTurnRow = serde_json::from_value(json!([
+    // 兼容历史 9 元素 (Full 带 3 列语义，无 started_at)
+    let legacy_full: SessionTurnRow = serde_json::from_value(json!([
         5,
         "turn-e",
         "Question E",
@@ -53,10 +56,48 @@ fn keeps_subagent_semantics_for_current_formats() {
         "turn-parent"
     ]))
     .unwrap();
-    assert_eq!(full.answer(), Some("Answer E"));
-    assert_eq!(full.turn_kind(), Some("subagent"));
-    assert_eq!(full.agent_role(), None);
-    assert_eq!(full.parent_turn_id(), Some("turn-parent"));
+    assert_eq!(legacy_full.answer(), Some("Answer E"));
+    assert_eq!(legacy_full.turn_kind(), Some("subagent"));
+    assert_eq!(legacy_full.agent_role(), None);
+    assert_eq!(legacy_full.parent_turn_id(), Some("turn-parent"));
+    assert_eq!(legacy_full.started_at(), None);
+
+    // 当前 9 元素格式 (Default 带 started_at)
+    let cur_default: SessionTurnRow = serde_json::from_value(json!([
+        6,
+        "turn-f",
+        "Question F",
+        ["run cargo test"],
+        2,
+        "user",
+        null,
+        null,
+        "2026-10-21T10:00:00Z"
+    ]))
+    .unwrap();
+    assert_eq!(cur_default.cards(), Some(2));
+    assert_eq!(cur_default.turn_kind(), Some("user"));
+    assert_eq!(cur_default.started_at(), Some("2026-10-21T10:00:00Z"));
+
+    // 当前 10 元素格式 (Full 带 started_at)
+    let cur_full: SessionTurnRow = serde_json::from_value(json!([
+        7,
+        "turn-g",
+        "Question G",
+        [],
+        0,
+        "Answer G",
+        "subagent",
+        "reviewer",
+        "turn-parent",
+        "2026-10-21T10:05:00Z"
+    ]))
+    .unwrap();
+    assert_eq!(cur_full.answer(), Some("Answer G"));
+    assert_eq!(cur_full.turn_kind(), Some("subagent"));
+    assert_eq!(cur_full.agent_role(), Some("reviewer"));
+    assert_eq!(cur_full.parent_turn_id(), Some("turn-parent"));
+    assert_eq!(cur_full.started_at(), Some("2026-10-21T10:05:00Z"));
 }
 
 #[test]
@@ -73,6 +114,7 @@ fn serializes_rows_with_semantics_columns_at_the_tail() {
             turn_kind: Some("subagent".to_string()),
             agent_role: Some("reviewer".to_string()),
             parent_turn_id: Some("turn-parent".to_string()),
+            started_at: Some("2026-10-21T10:00:00Z".to_string()),
         },
     );
     assert_eq!(
@@ -83,7 +125,8 @@ fn serializes_rows_with_semantics_columns_at_the_tail() {
             "Question F",
             "subagent",
             "reviewer",
-            "turn-parent"
+            "turn-parent",
+            "2026-10-21T10:00:00Z"
         ])
     );
     assert_eq!(
@@ -94,7 +137,8 @@ fn serializes_rows_with_semantics_columns_at_the_tail() {
             "question",
             "turn_kind",
             "agent_role",
-            "parent_turn_id"
+            "parent_turn_id",
+            "started_at"
         ]
     );
     assert_eq!(
@@ -108,7 +152,8 @@ fn serializes_rows_with_semantics_columns_at_the_tail() {
             "answer",
             "turn_kind",
             "agent_role",
-            "parent_turn_id"
+            "parent_turn_id",
+            "started_at"
         ]
     );
 }

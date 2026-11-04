@@ -215,7 +215,8 @@ async fn test_conversation_outline_and_card_get_full_suite() {
                     "cards",
                     "turn_kind",
                     "agent_role",
-                    "parent_turn_id"
+                    "parent_turn_id",
+                    "started_at",
                 ]
             );
             assert_eq!(s.turns.rows.len(), 2);
@@ -342,7 +343,7 @@ async fn test_conversation_outline_and_card_get_full_suite() {
     let json_session = serde_json::to_string(&outline_session).expect("serialize session outline");
     assert!(json_session.contains("\"level\":\"session\""));
     assert!(json_session.contains(
-        "\"columns\":[\"index\",\"turn_id\",\"question\",\"activities\",\"cards\",\"turn_kind\",\"agent_role\",\"parent_turn_id\"]"
+        "\"columns\":[\"index\",\"turn_id\",\"question\",\"activities\",\"cards\",\"turn_kind\",\"agent_role\",\"parent_turn_id\",\"started_at\"]"
     ));
     assert!(!json_session.contains("\"stats\""));
     assert!(!json_session.contains("\"title\""));
@@ -375,7 +376,8 @@ async fn test_conversation_outline_and_card_get_full_suite() {
                 "question",
                 "turn_kind",
                 "agent_role",
-                "parent_turn_id"
+                "parent_turn_id",
+                "started_at",
             ]
         );
         assert_eq!(s.turns.rows.len(), 2);
@@ -393,7 +395,8 @@ async fn test_conversation_outline_and_card_get_full_suite() {
                 "Please run diagnostics and show status",
                 null,
                 null,
-                null
+                null,
+                timestamp
             ])
         );
     } else {
@@ -418,13 +421,14 @@ async fn test_conversation_outline_and_card_get_full_suite() {
                 "answer",
                 "turn_kind",
                 "agent_role",
-                "parent_turn_id"
+                "parent_turn_id",
+                "started_at",
             ]
         );
         assert_eq!(s.turns.rows.len(), 2);
         let qa_val = serde_json::to_value(&s.turns.rows[0]).unwrap();
         assert!(qa_val.is_array());
-        assert_eq!(qa_val.as_array().unwrap().len(), 7);
+        assert_eq!(qa_val.as_array().unwrap().len(), 8);
     } else {
         panic!("expected session outline");
     }
@@ -449,13 +453,14 @@ async fn test_conversation_outline_and_card_get_full_suite() {
                 "answer",
                 "turn_kind",
                 "agent_role",
-                "parent_turn_id"
+                "parent_turn_id",
+                "started_at",
             ]
         );
         assert_eq!(s.turns.rows.len(), 2);
         let full_val = serde_json::to_value(&s.turns.rows[0]).unwrap();
         assert!(full_val.is_array());
-        assert_eq!(full_val.as_array().unwrap().len(), 9);
+        assert_eq!(full_val.as_array().unwrap().len(), 10);
     } else {
         panic!("expected session outline");
     }
@@ -766,7 +771,10 @@ async fn test_qa_digest_and_batch_outline_suite() {
 
     // With --qa, total JSON size of two 40KB sessions will exceed 64KB
     let huge_batch = service
-        .get_conversation_outlines(&[h1_id, h2_id], ConversationOutlineDetailLevel::Qa)
+        .get_conversation_outlines(
+            &[h1_id.clone(), h2_id.clone()],
+            ConversationOutlineDetailLevel::Qa,
+        )
         .await
         .expect("huge qa batch outline");
 
@@ -782,6 +790,32 @@ async fn test_qa_digest_and_batch_outline_suite() {
                 assert!(
                     ans.contains("... [省略 "),
                     "answer should be degraded to qa_digest"
+                );
+            } else {
+                panic!("expected session outline");
+            }
+        }
+        _ => panic!("expected batch outline"),
+    }
+
+    // With --full, total JSON size of two 40KB sessions will also exceed 64KB
+    let huge_batch_full = service
+        .get_conversation_outlines(&[h1_id, h2_id], ConversationOutlineDetailLevel::Full)
+        .await
+        .expect("huge full batch outline");
+
+    match huge_batch_full {
+        ConversationOutline::Batch { items, truncated } => {
+            assert_eq!(items.len(), 2);
+            assert!(
+                truncated,
+                "expected output budget degradation to set truncated: true in Full mode"
+            );
+            if let ConversationOutline::Session(s) = &items[0] {
+                let ans = s.turns.rows[0].answer().unwrap();
+                assert!(
+                    ans.contains("... [省略 "),
+                    "full answer should be degraded to qa_digest"
                 );
             } else {
                 panic!("expected session outline");
