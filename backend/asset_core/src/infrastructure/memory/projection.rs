@@ -1,6 +1,47 @@
 use super::storage::MemoryStorage;
-use crate::backend::domain::memory::{NodeStatus, ProjectMemoryState, RecentMemoryState};
+use crate::backend::domain::memory::{
+    MemoryTreeNode, NodeStatus, ProjectMemoryState, RecentMemoryState,
+};
 use std::path::PathBuf;
+
+fn format_turn_timestamp(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        return dt.format("%Y-%m-%d %H:%M").to_string();
+    }
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S") {
+        return dt.format("%Y-%m-%d %H:%M").to_string();
+    }
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M") {
+        return dt.format("%Y-%m-%d %H:%M").to_string();
+    }
+    if trimmed.len() >= 16 && trimmed.chars().nth(10) == Some('T') {
+        let date_part = &trimmed[..10];
+        let time_part = &trimmed[11..16];
+        return format!("{} {}", date_part, time_part);
+    }
+    trimmed.to_string()
+}
+
+fn format_node_line(node: &MemoryTreeNode) -> String {
+    let ts_prefix = match &node.turn_started_at {
+        Some(raw) if !raw.trim().is_empty() => format!("[{}] ", format_turn_timestamp(raw)),
+        _ => String::new(),
+    };
+    let parent_suffix = match &node.parent_id {
+        Some(pid) if !pid.trim().is_empty() => format!(" *(演进自 [{}])*", pid.trim()),
+        _ => String::new(),
+    };
+    format!(
+        "- [{}](aiwc://session/{}/turn/{}): {}{}{}\n",
+        node.id,
+        node.short_id(),
+        node.turn_index,
+        ts_prefix,
+        node.summary,
+        parent_suffix
+    )
+}
 
 /// Pure function that projects a `ProjectMemoryState` into markdown format.
 pub fn project_state_to_markdown(state: &ProjectMemoryState) -> String {
@@ -38,13 +79,7 @@ pub fn project_state_to_markdown(state: &ProjectMemoryState) -> String {
                 };
                 md.push_str(&format!("\n### 🏷️ Topic: {}\n", topic_display));
                 for node in unex_nodes {
-                    md.push_str(&format!(
-                        "- [{}](aiwc://session/{}/turn/{}): {}\n",
-                        node.id,
-                        node.short_id(),
-                        node.turn_index,
-                        node.summary
-                    ));
+                    md.push_str(&format_node_line(node));
                 }
             }
         }
@@ -77,13 +112,7 @@ pub fn project_state_to_markdown(state: &ProjectMemoryState) -> String {
                 };
                 md.push_str(&format!("\n### 🏷️ Topic: {}\n", topic_display));
                 for node in comp_nodes {
-                    md.push_str(&format!(
-                        "- [{}](aiwc://session/{}/turn/{}): {}\n",
-                        node.id,
-                        node.short_id(),
-                        node.turn_index,
-                        node.summary
-                    ));
+                    md.push_str(&format_node_line(node));
                 }
             }
         }
@@ -138,13 +167,7 @@ pub fn recent_state_to_markdown(state: &RecentMemoryState) -> String {
                         };
                         md.push_str(&format!("\n### 🏷️ Topic: {}\n", topic_display));
                         for node in unex_nodes {
-                            md.push_str(&format!(
-                                "- [{}](aiwc://session/{}/turn/{}): {}\n",
-                                node.id,
-                                node.short_id(),
-                                node.turn_index,
-                                node.summary
-                            ));
+                            md.push_str(&format_node_line(node));
                         }
                     }
                 }
@@ -177,13 +200,7 @@ pub fn recent_state_to_markdown(state: &RecentMemoryState) -> String {
                         };
                         md.push_str(&format!("\n### 🏷️ Topic: {}\n", topic_display));
                         for node in comp_nodes {
-                            md.push_str(&format!(
-                                "- [{}](aiwc://session/{}/turn/{}): {}\n",
-                                node.id,
-                                node.short_id(),
-                                node.turn_index,
-                                node.summary
-                            ));
+                            md.push_str(&format_node_line(node));
                         }
                     }
                 }
