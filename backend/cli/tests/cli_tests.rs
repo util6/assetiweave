@@ -1798,3 +1798,390 @@ fn test_conversation_search_command_keyword_vfox() {
         "文本输出必须包含命中命令关键字 'vfox'"
     );
 }
+
+#[test]
+fn test_conversation_list_unprocessed_flag_and_watermark_view_model() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().join("unprocessed_test.db");
+    let mem_dir = tempfile::tempdir().unwrap();
+
+    let project_path = "/code/test-unprocessed-proj";
+    let project_slug = asset_core::application::memory::project_path_to_slug(project_path);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let pool = asset_core::store::open_migrated_pool(&db_path)
+            .await
+            .expect("open migrated pool");
+        let tenant_id = "default";
+        let now = "2026-11-04T00:00:00Z".to_string();
+
+        let adapter = asset_core::domain::ConversationAdapter {
+            id: "test-adapter-unproc".to_string(),
+            name: "Test Adapter".to_string(),
+            kind: asset_core::domain::ConversationAdapterKind::External,
+            version: "0.1.0".to_string(),
+            enabled: true,
+            manifest_path: None,
+            executable_path: None,
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: asset_core::domain::ConversationAdapterTrustState::Trusted,
+            protocol_version: Some(1),
+            capabilities: vec!["list".to_string()],
+            input_kinds: vec![asset_core::domain::ConversationSourceKind::Directory],
+            card_contract_version: Some(1),
+            card_kinds: Vec::new(),
+            projection_version: Some(1),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        let source = asset_core::domain::ConversationSource {
+            id: "test-source-unproc".to_string(),
+            adapter_id: "test-adapter-unproc".to_string(),
+            name: "Test Source".to_string(),
+            kind: asset_core::domain::ConversationSourceKind::Directory,
+            location: temp_dir.path().to_string_lossy().to_string(),
+            config_json: None,
+            enabled: true,
+            last_synced_at: None,
+            last_sync_status: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+
+        asset_core::store::upsert_conversation_adapter_sqlx(&pool, tenant_id, &adapter)
+            .await
+            .expect("upsert adapter");
+        asset_core::store::upsert_conversation_source_sqlx(&pool, tenant_id, &source)
+            .await
+            .expect("upsert source");
+
+        let make_turn =
+            |idx: i64, q: &str, a: &str| asset_core::domain::NormalizedConversationTurn {
+                external_id: format!("turn-{idx}"),
+                turn_index: idx,
+                user_text: q.to_string(),
+                parts: vec![asset_core::domain::NormalizedConversationPart {
+                    role: asset_core::domain::ConversationPartRole::Assistant,
+                    kind: asset_core::domain::ConversationPartKind::Text,
+                    text: Some(a.to_string()),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                }],
+                ..Default::default()
+            };
+
+        let session_a = asset_core::domain::NormalizedConversationSession {
+            external_id: "sess-a-ext".to_string(),
+            title: Some("Session A".to_string()),
+            project_path: Some(project_path.to_string()),
+            turns: vec![make_turn(0, "A1", "Ans A1"), make_turn(1, "A2", "Ans A2")],
+            ..Default::default()
+        };
+
+        let session_b = asset_core::domain::NormalizedConversationSession {
+            external_id: "sess-b-ext".to_string(),
+            title: Some("Session B".to_string()),
+            project_path: Some(project_path.to_string()),
+            turns: vec![
+                make_turn(0, "B1", "Ans B1"),
+                make_turn(1, "B2", "Ans B2"),
+                make_turn(2, "B3", "Ans B3"),
+            ],
+            ..Default::default()
+        };
+
+        asset_core::store::import_conversation_sessions_sqlx(
+            &pool,
+            tenant_id,
+            &source,
+            &[session_a, session_b],
+            false,
+        )
+        .await
+        .expect("import sessions");
+    });
+
+    let mut cmd_init = aiwc_command();
+    let assert_init = cmd_init
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "list", "--format", "json"])
+        .assert()
+        .success();
+    let init_json: Value = serde_json::from_slice(&assert_init.get_output().stdout).unwrap();
+    let init_items = init_json["data"].as_array().unwrap();
+    let sess_a_id = init_items
+        .iter()
+        .find(|i| i["latest_user_prompt"].as_str() == Some("A2"))
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let sess_b_id = init_items
+        .iter()
+        .find(|i| i["latest_user_prompt"].as_str() == Some("B3"))
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Write watermarks to .state/projects/<slug>.json in mem_dir
+    let storage = asset_core::infrastructure::memory::MemoryStorage::new_with_root(
+        mem_dir.path().to_path_buf(),
+        "default",
+    );
+    storage.init_dirs().unwrap();
+    let mut proj_state = asset_core::domain::memory::ProjectMemoryState::new(&project_slug);
+    proj_state.set_watermark(&sess_a_id, 2);
+    proj_state.set_watermark(&sess_b_id, 1);
+    storage
+        .write_project_state_atomic(&project_slug, &proj_state)
+        .unwrap();
+
+    // 1. Regular list --format json: both sessions returned with watermark view models
+    let mut cmd_list = aiwc_command();
+    let assert_list = cmd_list
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .env("ASSETIWEAVE_MEMORY_ROOT", mem_dir.path())
+        .args(["conversation", "list", "--format", "json"])
+        .assert()
+        .success();
+
+    let output_json =
+        String::from_utf8(assert_list.get_output().stdout.clone()).expect("valid utf8");
+    let res_json: Value = serde_json::from_str(&output_json).expect("valid json list");
+    assert_eq!(res_json["ok"], true);
+    let items = res_json["data"].as_array().expect("items is array");
+    assert_eq!(items.len(), 2);
+
+    let item_a = items
+        .iter()
+        .find(|item| item["session_id"].as_str() == Some(&sess_a_id))
+        .expect("item a found");
+    assert_eq!(item_a["project_slug"], project_slug);
+    assert_eq!(item_a["turn_count"], 2);
+    assert_eq!(item_a["watermark"], 2);
+    assert_eq!(item_a["unprocessed_turns"], 0);
+
+    let item_b = items
+        .iter()
+        .find(|item| item["session_id"].as_str() == Some(&sess_b_id))
+        .expect("item b found");
+    assert_eq!(item_b["project_slug"], project_slug);
+    assert_eq!(item_b["turn_count"], 3);
+    assert_eq!(item_b["watermark"], 1);
+    assert_eq!(item_b["unprocessed_turns"], 2);
+
+    // 2. Unprocessed filter list: only session B should appear
+    let mut cmd_unprocessed = aiwc_command();
+    let assert_unprocessed = cmd_unprocessed
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .env("ASSETIWEAVE_MEMORY_ROOT", mem_dir.path())
+        .args(["conversation", "list", "--unprocessed", "--format", "json"])
+        .assert()
+        .success();
+
+    let output_unproc =
+        String::from_utf8(assert_unprocessed.get_output().stdout.clone()).expect("valid utf8");
+    let res_unproc: Value = serde_json::from_str(&output_unproc).expect("valid json list");
+    assert_eq!(res_unproc["ok"], true);
+    let items_unproc = res_unproc["data"].as_array().expect("items is array");
+    assert_eq!(
+        items_unproc.len(),
+        1,
+        "Only session B should be unprocessed"
+    );
+    assert_eq!(items_unproc[0]["session_id"], sess_b_id);
+}
+
+#[test]
+fn test_conversation_batch_outline_and_qa_digest_cli() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().join("batch_outline_test.db");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let pool = asset_core::store::open_migrated_pool(&db_path)
+            .await
+            .expect("open migrated pool");
+        let tenant_id = "default";
+        let now = "2026-11-04T00:00:00Z".to_string();
+
+        let adapter = asset_core::domain::ConversationAdapter {
+            id: "test-adapter-batch".to_string(),
+            name: "Test Adapter".to_string(),
+            kind: asset_core::domain::ConversationAdapterKind::External,
+            version: "0.1.0".to_string(),
+            enabled: true,
+            manifest_path: None,
+            executable_path: None,
+            content_hash: None,
+            trusted_hash: None,
+            trust_state: asset_core::domain::ConversationAdapterTrustState::Trusted,
+            protocol_version: Some(1),
+            capabilities: vec!["list".to_string()],
+            input_kinds: vec![asset_core::domain::ConversationSourceKind::Directory],
+            card_contract_version: Some(1),
+            card_kinds: Vec::new(),
+            projection_version: Some(1),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        let source = asset_core::domain::ConversationSource {
+            id: "test-source-batch".to_string(),
+            adapter_id: "test-adapter-batch".to_string(),
+            name: "Test Source".to_string(),
+            kind: asset_core::domain::ConversationSourceKind::Directory,
+            location: temp_dir.path().to_string_lossy().to_string(),
+            config_json: None,
+            enabled: true,
+            last_synced_at: None,
+            last_sync_status: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+
+        asset_core::store::upsert_conversation_adapter_sqlx(&pool, tenant_id, &adapter)
+            .await
+            .expect("upsert adapter");
+        asset_core::store::upsert_conversation_source_sqlx(&pool, tenant_id, &source)
+            .await
+            .expect("upsert source");
+
+        let long_answer: String = (0..200)
+            .map(|_| 'M')
+            .chain((0..50).map(|_| 'N'))
+            .chain((0..300).map(|_| 'O'))
+            .collect();
+
+        let session1 = asset_core::domain::NormalizedConversationSession {
+            external_id: "batch-s1-ext".to_string(),
+            title: Some("Batch S1".to_string()),
+            turns: vec![asset_core::domain::NormalizedConversationTurn {
+                external_id: "turn-s1-1".to_string(),
+                turn_index: 0,
+                user_text: "What is machine learning?".to_string(),
+                parts: vec![asset_core::domain::NormalizedConversationPart {
+                    role: asset_core::domain::ConversationPartRole::Assistant,
+                    kind: asset_core::domain::ConversationPartKind::Text,
+                    text: Some(long_answer),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let session2 = asset_core::domain::NormalizedConversationSession {
+            external_id: "batch-s2-ext".to_string(),
+            title: Some("Batch S2".to_string()),
+            turns: vec![asset_core::domain::NormalizedConversationTurn {
+                external_id: "turn-s2-1".to_string(),
+                turn_index: 0,
+                user_text: "Hello".to_string(),
+                parts: vec![asset_core::domain::NormalizedConversationPart {
+                    role: asset_core::domain::ConversationPartRole::Assistant,
+                    kind: asset_core::domain::ConversationPartKind::Text,
+                    text: Some("World".to_string()),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        asset_core::store::import_conversation_sessions_sqlx(
+            &pool,
+            tenant_id,
+            &source,
+            &[session1, session2],
+            false,
+        )
+        .await
+        .expect("import sessions");
+    });
+
+    let mut cmd_init = aiwc_command();
+    let assert_init = cmd_init
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "list", "--format", "json"])
+        .assert()
+        .success();
+    let init_json: Value = serde_json::from_slice(&assert_init.get_output().stdout).unwrap();
+    let init_items = init_json["data"].as_array().unwrap();
+    let s1_id = init_items
+        .iter()
+        .find(|i| i["latest_user_prompt"].as_str() == Some("What is machine learning?"))
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let s2_id = init_items
+        .iter()
+        .find(|i| i["latest_user_prompt"].as_str() == Some("Hello"))
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // 1. Single ID: returns single-item envelope {"ok": true, "data": {"level": "session", ...}}
+    let mut cmd_single = aiwc_command();
+    let assert_single = cmd_single
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "outline", &s1_id])
+        .assert()
+        .success();
+    let out_single: Value = serde_json::from_slice(&assert_single.get_output().stdout).unwrap();
+    assert_eq!(out_single["ok"], true);
+    assert_eq!(out_single["data"]["level"], "session");
+
+    // 2. Batch outline with multiple IDs: {"ok": true, "data": {"level": "batch", "items": [...], "truncated": false}}
+    let mut cmd_batch = aiwc_command();
+    let assert_batch = cmd_batch
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "outline", &s1_id, &s2_id])
+        .assert()
+        .success();
+    let out_batch: Value = serde_json::from_slice(&assert_batch.get_output().stdout).unwrap();
+    assert_eq!(out_batch["ok"], true);
+    assert_eq!(out_batch["data"]["level"], "batch");
+    assert_eq!(out_batch["data"]["items"].as_array().unwrap().len(), 2);
+    assert_eq!(out_batch["data"]["truncated"], false);
+
+    // 3. QA Digest flag: --qa-digest truncates answer > 500 characters
+    let mut cmd_digest = aiwc_command();
+    let assert_digest = cmd_digest
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "outline", &s1_id, "--qa-digest"])
+        .assert()
+        .success();
+    let out_digest: Value = serde_json::from_slice(&assert_digest.get_output().stdout).unwrap();
+    assert_eq!(out_digest["ok"], true);
+    assert_eq!(out_digest["data"]["level"], "session");
+    let ans_val = out_digest["data"]["turns"]["rows"][0][3].as_str().unwrap();
+    assert!(ans_val.contains("... [省略 50 字] ..."));
+}
