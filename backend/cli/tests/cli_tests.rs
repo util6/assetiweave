@@ -1097,7 +1097,8 @@ fn test_conversation_outline_and_card_drilldown() {
             "cards",
             "turn_kind",
             "agent_role",
-            "parent_turn_id"
+            "parent_turn_id",
+            "started_at"
         ])
     );
     assert!(json_so["data"]["turns"]["rows"].is_array());
@@ -1119,7 +1120,8 @@ fn test_conversation_outline_and_card_drilldown() {
             "question",
             "turn_kind",
             "agent_role",
-            "parent_turn_id"
+            "parent_turn_id",
+            "started_at"
         ])
     );
 
@@ -1141,7 +1143,8 @@ fn test_conversation_outline_and_card_drilldown() {
             "answer",
             "turn_kind",
             "agent_role",
-            "parent_turn_id"
+            "parent_turn_id",
+            "started_at"
         ])
     );
 
@@ -1165,7 +1168,8 @@ fn test_conversation_outline_and_card_drilldown() {
             "answer",
             "turn_kind",
             "agent_role",
-            "parent_turn_id"
+            "parent_turn_id",
+            "started_at"
         ])
     );
 
@@ -1390,7 +1394,8 @@ fn test_conversation_outline_exposes_subagent_semantics() {
             "cards",
             "turn_kind",
             "agent_role",
-            "parent_turn_id"
+            "parent_turn_id",
+            "started_at"
         ])
     );
 

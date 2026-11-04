@@ -44,19 +44,10 @@ pub struct ConversationSessionViewModel {
 }
 
 impl ConversationSessionViewModel {
-    #[allow(dead_code)]
     pub fn from_item(
         item: &asset_core::domain::conversations::ConversationSessionListItem,
         now: chrono::DateTime<chrono::Utc>,
-    ) -> Self {
-        let storage = asset_core::infrastructure::memory::MemoryStorage::new("default");
-        Self::from_item_with_storage(item, now, &storage)
-    }
-
-    pub fn from_item_with_storage(
-        item: &asset_core::domain::conversations::ConversationSessionListItem,
-        now: chrono::DateTime<chrono::Utc>,
-        storage: &asset_core::infrastructure::memory::MemoryStorage,
+        watermark: u32,
     ) -> Self {
         let short_id = asset_core::domain::conversation_id_fragment(&item.session.id);
         let updated_at_human = format_relative_time(
@@ -84,12 +75,6 @@ impl ConversationSessionViewModel {
 
         let project_slug =
             asset_core::application::memory::project_path_to_slug(effective_path.unwrap_or(""));
-        let watermark = storage
-            .read_project_state(&project_slug)
-            .ok()
-            .flatten()
-            .and_then(|s| s.get_watermark(&item.session.id))
-            .unwrap_or(0);
         let unprocessed_turns = (item.turn_count as u32).saturating_sub(watermark);
 
         Self {
@@ -115,6 +100,37 @@ impl ConversationSessionViewModel {
             watermark,
             unprocessed_turns,
         }
+    }
+
+    pub fn from_item_with_storage(
+        item: &asset_core::domain::conversations::ConversationSessionListItem,
+        now: chrono::DateTime<chrono::Utc>,
+        storage: &asset_core::infrastructure::memory::MemoryStorage,
+    ) -> Self {
+        let effective_path = item
+            .session
+            .project_path
+            .as_deref()
+            .or(item.session.last_cwd.as_deref());
+        let project_slug =
+            asset_core::application::memory::project_path_to_slug(effective_path.unwrap_or(""));
+        let watermark = storage
+            .read_project_state(&project_slug)
+            .ok()
+            .flatten()
+            .and_then(|s| s.get_watermark(&item.session.id))
+            .unwrap_or(0);
+        Self::from_item(item, now, watermark)
+    }
+
+    #[allow(dead_code)]
+    pub fn from_item_with_tenant(
+        item: &asset_core::domain::conversations::ConversationSessionListItem,
+        now: chrono::DateTime<chrono::Utc>,
+        tenant: &str,
+    ) -> Self {
+        let storage = asset_core::infrastructure::memory::MemoryStorage::new(tenant);
+        Self::from_item_with_storage(item, now, &storage)
     }
 }
 

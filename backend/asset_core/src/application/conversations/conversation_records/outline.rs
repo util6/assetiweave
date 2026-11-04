@@ -25,34 +25,32 @@ impl AppService {
                 .await
                 .map_err(AppError::from)?;
 
-        match target {
+        let (record_kind, session_id) = match &target {
             ResolvedOutlineTarget::Session {
                 record_kind,
                 session_id,
-            } => {
-                let detail =
-                    load_session_detail_by_kind(pool, tenant_id, record_kind, &session_id).await?;
+            }
+            | ResolvedOutlineTarget::Turn {
+                record_kind,
+                session_id,
+                ..
+            }
+            | ResolvedOutlineTarget::Card {
+                record_kind,
+                session_id,
+                ..
+            } => (*record_kind, session_id.as_str()),
+        };
+        let detail = load_session_detail_by_kind(pool, tenant_id, record_kind, session_id).await?;
+
+        match target {
+            ResolvedOutlineTarget::Session { .. } => {
                 build_session_outline(detail, params.detail_level)
             }
-            ResolvedOutlineTarget::Turn {
-                record_kind,
-                session_id,
-                turn_id,
-            } => {
-                let detail =
-                    load_session_detail_by_kind(pool, tenant_id, record_kind, &session_id).await?;
-                build_turn_outline(detail, &turn_id)
-            }
+            ResolvedOutlineTarget::Turn { turn_id, .. } => build_turn_outline(detail, &turn_id),
             ResolvedOutlineTarget::Card {
-                record_kind,
-                session_id,
-                turn_id,
-                card_id,
-            } => {
-                let detail =
-                    load_session_detail_by_kind(pool, tenant_id, record_kind, &session_id).await?;
-                build_card_outline(detail, &turn_id, &card_id)
-            }
+                turn_id, card_id, ..
+            } => build_card_outline(detail, &turn_id, &card_id),
         }
     }
 
@@ -88,7 +86,10 @@ impl AppService {
         }
 
         let mut truncated = false;
-        if detail_level == ConversationOutlineDetailLevel::Qa {
+        if matches!(
+            detail_level,
+            ConversationOutlineDetailLevel::Qa | ConversationOutlineDetailLevel::Full
+        ) {
             let total_bytes = serde_json::to_vec(&items).map(|v| v.len()).unwrap_or(0);
             if total_bytes > 64 * 1024 {
                 for item in &mut items {
@@ -194,13 +195,7 @@ fn collect_turn_cards(question: &ConversationQuestionDetail, turn_id: &str) -> V
     unprojected_parts.sort_by_key(|p| p.part_index);
 
     for part in unprojected_parts {
-        let chars = part
-            .text
-            .as_deref()
-            .or(part.command.as_deref())
-            .unwrap_or_default()
-            .chars()
-            .count();
+        let text_ref = part.text.as_deref().or(part.command.as_deref());
         cards.push(SimpleCardNode {
             node_id: part.id.clone(),
             part_id: part.id.clone(),
@@ -208,7 +203,7 @@ fn collect_turn_cards(question: &ConversationQuestionDetail, turn_id: &str) -> V
             command_label: part.command_label.clone(),
             status: part.status.clone(),
             role: part.role,
-            content_chars: chars,
+            content_chars: text_ref.map_or(0, |t| t.chars().count()),
         });
     }
 
@@ -281,6 +276,7 @@ fn build_session_outline(
                     turn_kind: turn.turn_kind.clone(),
                     agent_role: turn.agent_role.clone(),
                     parent_turn_id: short_parent_turn_id(turn.parent_turn_id.as_deref()),
+                    started_at: turn.started_at.clone(),
                 },
             ));
         }
@@ -493,13 +489,14 @@ pub fn truncate_qa_digest(text: &str) -> String {
 pub fn degrade_outline_to_qa_digest(outline: &mut ConversationOutline) {
     if let ConversationOutline::Session(session_outline) = outline {
         for row in &mut session_outline.turns.rows {
-            match row {
-                SessionTurnRow::Qa { answer, .. } | SessionTurnRow::Full { answer, .. } => {
-                    if let Some(ans) = answer {
-                        *ans = truncate_qa_digest(ans);
-                    }
-                }
-                _ => {}
+            if let SessionTurnRow::Qa {
+                answer: Some(ans), ..
+            }
+            | SessionTurnRow::Full {
+                answer: Some(ans), ..
+            } = row
+            {
+                *ans = truncate_qa_digest(ans);
             }
         }
     }

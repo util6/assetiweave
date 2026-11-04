@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use super::outline::ConversationOutlineDetailLevel;
 
+/// 会话级大纲行末尾追加的语义元数据列名。
+pub const TURN_ROW_SEMANTIC_COLUMNS: &[&str] =
+    &["turn_kind", "agent_role", "parent_turn_id", "started_at"];
+
 /// 会话级大纲中的单行，按 `detail_level` 决定携带的列。
 ///
 /// 序列化为位置数组（历史快照与 CLI 表格契约都依赖列序），
@@ -19,6 +23,7 @@ pub enum SessionTurnRow {
         turn_kind: Option<String>,
         agent_role: Option<String>,
         parent_turn_id: Option<String>,
+        started_at: Option<String>,
     },
     Questions {
         index: usize,
@@ -27,6 +32,7 @@ pub enum SessionTurnRow {
         turn_kind: Option<String>,
         agent_role: Option<String>,
         parent_turn_id: Option<String>,
+        started_at: Option<String>,
     },
     Qa {
         index: usize,
@@ -36,6 +42,7 @@ pub enum SessionTurnRow {
         turn_kind: Option<String>,
         agent_role: Option<String>,
         parent_turn_id: Option<String>,
+        started_at: Option<String>,
     },
     Full {
         index: usize,
@@ -47,6 +54,7 @@ pub enum SessionTurnRow {
         turn_kind: Option<String>,
         agent_role: Option<String>,
         parent_turn_id: Option<String>,
+        started_at: Option<String>,
     },
 }
 
@@ -128,6 +136,16 @@ impl SessionTurnRow {
             | Self::Full { parent_turn_id, .. } => parent_turn_id.as_deref(),
         }
     }
+
+    /// 轮次起始时间戳（RFC3339 字符串），空表示历史数据未记录。
+    pub fn started_at(&self) -> Option<&str> {
+        match self {
+            Self::Default { started_at, .. }
+            | Self::Questions { started_at, .. }
+            | Self::Qa { started_at, .. }
+            | Self::Full { started_at, .. } => started_at.as_deref(),
+        }
+    }
 }
 
 /// 构造会话级大纲行所需的 Turn 事实，与存储层结构解耦。
@@ -141,10 +159,11 @@ pub struct SessionTurnFacts {
     pub turn_kind: Option<String>,
     pub agent_role: Option<String>,
     pub parent_turn_id: Option<String>,
+    pub started_at: Option<String>,
 }
 
 impl SessionTurnRow {
-    /// 会话级大纲的列名单：语义三列固定追加在末尾，既有列序保持不变。
+    /// 会话级大纲的列名单：语义列与时间戳固定追加在末尾，既有列序保持不变。
     pub fn columns(detail_level: ConversationOutlineDetailLevel) -> Vec<String> {
         let carries_process = matches!(
             detail_level,
@@ -164,15 +183,11 @@ impl SessionTurnRow {
         if carries_answer {
             columns.push("answer".into());
         }
-        columns.extend(
-            ["turn_kind", "agent_role", "parent_turn_id"]
-                .into_iter()
-                .map(str::to_string),
-        );
+        columns.extend(TURN_ROW_SEMANTIC_COLUMNS.iter().map(|&s| s.to_string()));
         columns
     }
 
-    /// 按 detail_level 把 Turn 事实映射成一行，语义三列只搬运一次。
+    /// 按 detail_level 把 Turn 事实映射成一行，语义列只搬运一次。
     pub fn from_facts(
         detail_level: ConversationOutlineDetailLevel,
         index: usize,
@@ -187,6 +202,7 @@ impl SessionTurnRow {
             turn_kind,
             agent_role,
             parent_turn_id,
+            started_at,
         } = facts;
         match detail_level {
             ConversationOutlineDetailLevel::Questions => Self::Questions {
@@ -196,6 +212,7 @@ impl SessionTurnRow {
                 turn_kind,
                 agent_role,
                 parent_turn_id,
+                started_at,
             },
             ConversationOutlineDetailLevel::Qa | ConversationOutlineDetailLevel::QaDigest => {
                 Self::Qa {
@@ -206,6 +223,7 @@ impl SessionTurnRow {
                     turn_kind,
                     agent_role,
                     parent_turn_id,
+                    started_at,
                 }
             }
             ConversationOutlineDetailLevel::Full => Self::Full {
@@ -218,6 +236,7 @@ impl SessionTurnRow {
                 turn_kind,
                 agent_role,
                 parent_turn_id,
+                started_at,
             },
             ConversationOutlineDetailLevel::Default => Self::Default {
                 index,
@@ -228,9 +247,18 @@ impl SessionTurnRow {
                 turn_kind,
                 agent_role,
                 parent_turn_id,
+                started_at,
             },
         }
     }
+}
+
+macro_rules! serialize_elements {
+    ($serializer:expr, $len:expr, $($elem:expr),+) => {{
+        let mut seq = $serializer.serialize_seq(Some($len))?;
+        $(seq.serialize_element($elem)?;)+
+        seq.end()
+    }};
 }
 
 impl Serialize for SessionTurnRow {
@@ -247,16 +275,18 @@ impl Serialize for SessionTurnRow {
                 turn_kind,
                 agent_role,
                 parent_turn_id,
-            } => {
-                let mut seq = serializer.serialize_seq(Some(6))?;
-                seq.serialize_element(index)?;
-                seq.serialize_element(turn_id)?;
-                seq.serialize_element(question)?;
-                seq.serialize_element(turn_kind)?;
-                seq.serialize_element(agent_role)?;
-                seq.serialize_element(parent_turn_id)?;
-                seq.end()
-            }
+                started_at,
+            } => serialize_elements!(
+                serializer,
+                7,
+                index,
+                turn_id,
+                question,
+                turn_kind,
+                agent_role,
+                parent_turn_id,
+                started_at
+            ),
             Self::Qa {
                 index,
                 turn_id,
@@ -265,17 +295,19 @@ impl Serialize for SessionTurnRow {
                 turn_kind,
                 agent_role,
                 parent_turn_id,
-            } => {
-                let mut seq = serializer.serialize_seq(Some(7))?;
-                seq.serialize_element(index)?;
-                seq.serialize_element(turn_id)?;
-                seq.serialize_element(question)?;
-                seq.serialize_element(answer)?;
-                seq.serialize_element(turn_kind)?;
-                seq.serialize_element(agent_role)?;
-                seq.serialize_element(parent_turn_id)?;
-                seq.end()
-            }
+                started_at,
+            } => serialize_elements!(
+                serializer,
+                8,
+                index,
+                turn_id,
+                question,
+                answer,
+                turn_kind,
+                agent_role,
+                parent_turn_id,
+                started_at
+            ),
             Self::Default {
                 index,
                 turn_id,
@@ -285,18 +317,20 @@ impl Serialize for SessionTurnRow {
                 turn_kind,
                 agent_role,
                 parent_turn_id,
-            } => {
-                let mut seq = serializer.serialize_seq(Some(8))?;
-                seq.serialize_element(index)?;
-                seq.serialize_element(turn_id)?;
-                seq.serialize_element(question)?;
-                seq.serialize_element(activities)?;
-                seq.serialize_element(cards)?;
-                seq.serialize_element(turn_kind)?;
-                seq.serialize_element(agent_role)?;
-                seq.serialize_element(parent_turn_id)?;
-                seq.end()
-            }
+                started_at,
+            } => serialize_elements!(
+                serializer,
+                9,
+                index,
+                turn_id,
+                question,
+                activities,
+                cards,
+                turn_kind,
+                agent_role,
+                parent_turn_id,
+                started_at
+            ),
             Self::Full {
                 index,
                 turn_id,
@@ -307,19 +341,21 @@ impl Serialize for SessionTurnRow {
                 turn_kind,
                 agent_role,
                 parent_turn_id,
-            } => {
-                let mut seq = serializer.serialize_seq(Some(9))?;
-                seq.serialize_element(index)?;
-                seq.serialize_element(turn_id)?;
-                seq.serialize_element(question)?;
-                seq.serialize_element(activities)?;
-                seq.serialize_element(cards)?;
-                seq.serialize_element(answer)?;
-                seq.serialize_element(turn_kind)?;
-                seq.serialize_element(agent_role)?;
-                seq.serialize_element(parent_turn_id)?;
-                seq.end()
-            }
+                started_at,
+            } => serialize_elements!(
+                serializer,
+                10,
+                index,
+                turn_id,
+                question,
+                activities,
+                cards,
+                answer,
+                turn_kind,
+                agent_role,
+                parent_turn_id,
+                started_at
+            ),
         }
     }
 }
@@ -330,82 +366,183 @@ impl<'de> Deserialize<'de> for SessionTurnRow {
         D: serde::Deserializer<'de>,
     {
         let values = Vec::<serde_json::Value>::deserialize(deserializer)?;
-        let semantics = row_semantics(&values);
+        let index = row_index(&values)?;
+        let turn_id = row_turn_id(&values)?;
+        let question = row_question(&values)?;
+
         match values.len() {
-            // 历史格式：尚无子代理语义三列
             3 => Ok(Self::Questions {
-                index: row_index(&values)?,
-                turn_id: row_turn_id(&values)?,
-                question: row_question(&values)?,
+                index,
+                turn_id,
+                question,
                 turn_kind: None,
                 agent_role: None,
                 parent_turn_id: None,
+                started_at: None,
             }),
             4 => Ok(Self::Qa {
-                index: row_index(&values)?,
-                turn_id: row_turn_id(&values)?,
-                question: row_question(&values)?,
+                index,
+                turn_id,
+                question,
                 answer: values[3].as_str().map(|s| s.to_string()),
                 turn_kind: None,
                 agent_role: None,
                 parent_turn_id: None,
+                started_at: None,
             }),
-            5 => Ok(Self::Default {
-                index: row_index(&values)?,
-                turn_id: row_turn_id(&values)?,
-                question: row_question(&values)?,
-                activities: serde_json::from_value(values[3].clone())
-                    .map_err(serde::de::Error::custom)?,
-                cards: row_cards(&values)?,
-                turn_kind: None,
-                agent_role: None,
-                parent_turn_id: None,
-            }),
-            6 => Ok(Self::Questions {
-                index: row_index(&values)?,
-                turn_id: row_turn_id(&values)?,
-                question: row_question(&values)?,
-                turn_kind: semantics.0,
-                agent_role: semantics.1,
-                parent_turn_id: semantics.2,
-            }),
-            7 => Ok(Self::Qa {
-                index: row_index(&values)?,
-                turn_id: row_turn_id(&values)?,
-                question: row_question(&values)?,
-                answer: values[3].as_str().map(|s| s.to_string()),
-                turn_kind: semantics.0,
-                agent_role: semantics.1,
-                parent_turn_id: semantics.2,
-            }),
-            8 => Ok(Self::Default {
-                index: row_index(&values)?,
-                turn_id: row_turn_id(&values)?,
-                question: row_question(&values)?,
-                activities: serde_json::from_value(values[3].clone())
-                    .map_err(serde::de::Error::custom)?,
-                cards: row_cards(&values)?,
-                turn_kind: semantics.0,
-                agent_role: semantics.1,
-                parent_turn_id: semantics.2,
-            }),
-            9 => Ok(Self::Full {
-                index: row_index(&values)?,
-                turn_id: row_turn_id(&values)?,
-                question: row_question(&values)?,
-                activities: serde_json::from_value(values[3].clone())
-                    .map_err(serde::de::Error::custom)?,
-                cards: row_cards(&values)?,
-                answer: values[5].as_str().map(|s| s.to_string()),
-                turn_kind: semantics.0,
-                agent_role: semantics.1,
-                parent_turn_id: semantics.2,
-            }),
+            5 => {
+                let (activities, cards) = row_activities_cards(&values)?;
+                Ok(Self::Default {
+                    index,
+                    turn_id,
+                    question,
+                    activities,
+                    cards,
+                    turn_kind: None,
+                    agent_role: None,
+                    parent_turn_id: None,
+                    started_at: None,
+                })
+            }
+            6 => {
+                let (turn_kind, agent_role, parent_turn_id) = row_trailing_three(&values);
+                Ok(Self::Questions {
+                    index,
+                    turn_id,
+                    question,
+                    turn_kind,
+                    agent_role,
+                    parent_turn_id,
+                    started_at: None,
+                })
+            }
+            7 => {
+                let is_legacy_qa = values
+                    .get(4)
+                    .and_then(|v| v.as_str())
+                    .map_or(false, |k| k == "user" || k == "subagent");
+                if is_legacy_qa {
+                    let (turn_kind, agent_role, parent_turn_id) = row_trailing_three(&values);
+                    Ok(Self::Qa {
+                        index,
+                        turn_id,
+                        question,
+                        answer: values[3].as_str().map(|s| s.to_string()),
+                        turn_kind,
+                        agent_role,
+                        parent_turn_id,
+                        started_at: None,
+                    })
+                } else {
+                    let (turn_kind, agent_role, parent_turn_id, started_at) =
+                        row_trailing_four(&values);
+                    Ok(Self::Questions {
+                        index,
+                        turn_id,
+                        question,
+                        turn_kind,
+                        agent_role,
+                        parent_turn_id,
+                        started_at,
+                    })
+                }
+            }
+            8 => {
+                if values[3].is_array() {
+                    let (activities, cards) = row_activities_cards(&values)?;
+                    let (turn_kind, agent_role, parent_turn_id) = row_trailing_three(&values);
+                    Ok(Self::Default {
+                        index,
+                        turn_id,
+                        question,
+                        activities,
+                        cards,
+                        turn_kind,
+                        agent_role,
+                        parent_turn_id,
+                        started_at: None,
+                    })
+                } else {
+                    let (turn_kind, agent_role, parent_turn_id, started_at) =
+                        row_trailing_four(&values);
+                    Ok(Self::Qa {
+                        index,
+                        turn_id,
+                        question,
+                        answer: values[3].as_str().map(|s| s.to_string()),
+                        turn_kind,
+                        agent_role,
+                        parent_turn_id,
+                        started_at,
+                    })
+                }
+            }
+            9 => {
+                let (activities, cards) = row_activities_cards(&values)?;
+                let is_legacy_full = values
+                    .get(6)
+                    .and_then(|v| v.as_str())
+                    .map_or(false, |k| k == "user" || k == "subagent");
+                if is_legacy_full {
+                    let (turn_kind, agent_role, parent_turn_id) = row_trailing_three(&values);
+                    Ok(Self::Full {
+                        index,
+                        turn_id,
+                        question,
+                        activities,
+                        cards,
+                        answer: values[5].as_str().map(|s| s.to_string()),
+                        turn_kind,
+                        agent_role,
+                        parent_turn_id,
+                        started_at: None,
+                    })
+                } else {
+                    let (turn_kind, agent_role, parent_turn_id, started_at) =
+                        row_trailing_four(&values);
+                    Ok(Self::Default {
+                        index,
+                        turn_id,
+                        question,
+                        activities,
+                        cards,
+                        turn_kind,
+                        agent_role,
+                        parent_turn_id,
+                        started_at,
+                    })
+                }
+            }
+            10 => {
+                let (activities, cards) = row_activities_cards(&values)?;
+                let (turn_kind, agent_role, parent_turn_id, started_at) =
+                    row_trailing_four(&values);
+                Ok(Self::Full {
+                    index,
+                    turn_id,
+                    question,
+                    activities,
+                    cards,
+                    answer: values[5].as_str().map(|s| s.to_string()),
+                    turn_kind,
+                    agent_role,
+                    parent_turn_id,
+                    started_at,
+                })
+            }
             len => Err(serde::de::Error::custom(format!(
-                "invalid element count for session turn row: expected 3 to 9, got {len}"
+                "invalid element count for session turn row: expected 3 to 10, got {len}"
             ))),
         }
     }
+}
+
+fn row_activities_cards<E: serde::de::Error>(
+    values: &[serde_json::Value],
+) -> Result<(Vec<String>, usize), E> {
+    let activities = serde_json::from_value(values[3].clone()).map_err(E::custom)?;
+    let cards = row_cards(values)?;
+    Ok((activities, cards))
 }
 
 fn row_index<E: serde::de::Error>(values: &[serde_json::Value]) -> Result<usize, E> {
@@ -436,9 +573,37 @@ fn row_cards<E: serde::de::Error>(values: &[serde_json::Value]) -> Result<usize,
         .ok_or_else(|| E::custom("expected integer for cards"))
 }
 
-/// 读取行尾三列的子代理语义：轮次种类、角色、父轮次短 ID。
-/// 旧格式不足三列时对应位置给 `None`。
-fn row_semantics(values: &[serde_json::Value]) -> (Option<String>, Option<String>, Option<String>) {
+/// 读取行尾 4 列的语义：轮次种类、角色、父轮次短 ID、起始时间戳。
+fn row_trailing_four(
+    values: &[serde_json::Value],
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    if values.len() < 7 {
+        return (None, None, None, None);
+    }
+    let offset = values.len() - 4;
+    let optional = |idx: usize| {
+        values
+            .get(idx)
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string())
+    };
+    (
+        optional(offset),
+        optional(offset + 1),
+        optional(offset + 2),
+        optional(offset + 3),
+    )
+}
+
+/// 读取历史 3 列子代理语义：轮次种类、角色、父轮次短 ID。
+fn row_trailing_three(
+    values: &[serde_json::Value],
+) -> (Option<String>, Option<String>, Option<String>) {
     if values.len() < 6 {
         return (None, None, None);
     }
