@@ -1,526 +1,240 @@
 ---
 name: assetiweave-memory-generation
-description: AssetIWeave 记忆认知提炼工作流 SOP 与系统提示词（前置发现短路、节点 1 思维分叉与多叉树演进提交、节点 2 Recent 与 Project 单向投影、节点 3 Global 长期记忆沉淀）
+description: AssetIWeave 记忆认知提炼工作流 SOP 与 CLI 契约说明书（增量水位过滤、批量大纲抽取、JSON 数据中枢演进提交与四态动态窗口投影）
 ---
 
-# AssetIWeave Memory Generation SOP & Prompts
+# AssetIWeave Memory Generation SOP & CLI Contract
 
-本 Skill 作为 AssetIWeave 认知记忆生成体系的标准执行指导（SOP）与系统提示词（System Prompt）模板，指导智能代理（Agent）从海量会话历史中提取高信号、可验证的思维分叉事实，并以 `.state/` 多叉树状态与 Markdown 优先单向投影沉淀。
-
-## 0. 全局认知提炼三节点架构概览 (Cognitive Distillation Architecture)
-
-为了彻底根除传统机械启发式匹配带来的“复读用户长 Prompt、收录过程口语（如 ok/继续）、丢失真实分支”等认知漂移，AssetIWeave 采用分层解耦的三节点认知提炼流水线：
-
-1. **Step 0 · 前置发现与 0-Token 水位短路 (Pre-discovery & 0-Token Watermark Short-circuit)**：
-   扫描配置时间窗口（默认 48h/72h）内的活跃会话，通过轻量 CLI 探查目标项目会话处理水位（`aiwc memory watermark check`）。**若已处理轮次不小于当前轮次，直接实现 0-Token 秒级短路**，避免全量重跑与 Token 浪费。
-2. **节点 1 · 思维分叉与多叉树演进提交 (Node 1: Topic Evolution Commit)**：
-   对发生变更或未处理的有信号会话，抽取轻量 QA 骨架，通过认知提炼生成该会话的思维分叉与演进脉络，组装为演进提交（显著区分 🍂 待探索悬空叶子节点与 ✅ 已完成闭环任务），通过 `aiwc memory commit` 直接提交至 `.state/projects/<slug>.json` 多叉树事实源，彻底取消中间碎片文件层 `sessions/*.md`。
-3. **节点 2 · 单向 Markdown 投影与近期研发脉络 (Node 2: Pure-Function Projection)**：
-   底层由 `.state/projects/<slug>.json` 与 `.state/recent.json` 强类型真相源自动、纯函数单向生成 `recent/latest.md` 与 `projects/<slug>.md`，保证状态精确一致，告别脆弱的正则与字符串反向解析。
-4. **节点 3 · 全局经验与长期认知沉淀 (Node 3: Global Knowledge Consolidation)**：
-   跨项目审视近期研发脉络与架构决议，仅当存在跨项目通用、长期稳定的工程准则、架构偏好或避坑铁律时增量更新 `MEMORY.md`；严禁写入单项目业务流水。
+本 Skill 定义 AssetIWeave 近期工作（Recent Work）、项目记忆（Project Memory）与全局记忆（Global Memory）的标准生成流程与 CLI 工具调用契约。
 
 ---
 
-## 1. Step 0 · 前置发现与 0-Token 水位短路 SOP
+## 0. 核心架构与最高执行红线 (Architecture & Iron Rules)
 
-在调用任何大模型或执行昂贵文本处理前，**必须先执行 Step 0 水位检查**，确保只处理真正发生增量更新的会话。
+### 架构定性：JSON 唯一数据中枢 + 纯函数单向 Markdown 投影
+1. **唯一数据中枢（`.state/` JSON）**：
+   `~/.assetiweave/memories/<tenant>/.state/projects/<slug>.json` 是项目记忆多叉树（Topic Tree）、交互轮次开始时间戳（`turn_started_at`）、四态生命周期与会话处理水位（`session_watermarks`）的**唯一持久化真相源**；`.state/recent.json` 是按动态时间窗口切片出的近期状态缓存。
+2. **零手写 Markdown（单向确定性重绘）**：
+   `projects/<slug>.md` 与 `recent/latest.md` 完全由 Rust 后端根据 `.state/` JSON 数据中枢**自动按时间窗口切片并纯函数覆盖渲染**。
+   **Agent 只需生成并提交结构化 JSON（调用 `aiwc memory commit --format json`），严禁手动编辑或直接写入 `projects/<slug>.md` 与 `recent/*.md`！**
+3. **四态生命周期与动态窗口保留法则**：
+   - `unexplored`（🍂 待探索悬空叶子）：**跨时间窗口常驻保留**。只要状态仍为 `unexplored`，无论产生于何时，均保留在 Markdown 与 GUI 中，绝不因时间窗口滑动而丢失；
+   - `continued`（🌿 演进中节点）：作为树形父节点展示跨轮次/跨会话的演进脉络；
+   - `completed`（✅ 已完成闭环任务）：在 `recent/latest.md` 中**严格按轮次开始时间戳 `turn_started_at` 是否落在本次时间窗口内**滚动过滤展示；
+   - `dismissed`（🗑️ 已废弃/误报墓碑）：代表废案或 AI 误判。在 `.state/` JSON 中持久化保留以防后续重扫复活，但在 Markdown 与 GUI 默认视图中**自动隐藏**。
 
-### 步骤 1.1：获取近期活跃会话清单
-调用 `aiwc` CLI 获取指定窗口期内的会话元数据（默认 `--window 48h`，可根据需要指定 `24h` 或 `72h`）：
+### 三条最高执行红线（违反将导致严重耗时劣化）
+1. **强制 `--format json`**：
+   AI 调用任何 `aiwc` CLI 命令时，**必须显式加上 `--format json` 参数**，统一解析 `{"ok": true, "data": ...}` 标准信封，严禁在默认的人类终端表格（Table）模式下调用。
+2. **严禁契约摸索、源码逆向与临时采集脚本**：
+   本文件第 2 节已完整给出所有命令的参数与 JSON Schema。执行过程中**严禁运行 `--help` 试探命令、严禁 `grep` 或读取仓库 Rust 源码查字段、严禁编写临时 Python 脚本循环调用 CLI**。
+3. **批量分级控体积，防止挤爆上下文**：
+   优先使用 `aiwc conversation list --window <W> --unprocessed --format json` 一步筛出增量会话，并用 `aiwc conversation outline <id1> <id2> ... --qa-digest --format json` 批量拉取问答摘要骨架；仅对极少数短会话或需核实细节的单个会话使用 `--qa`。
+
+---
+
+## 1. 标准 4 步极速执行工作流 (4-Step Fast Workflow)
+
+一次完整的近期记忆生成应在 **3~6 次工具调用** 内完成：
+
+### Step 1：单次调用获取时间窗口内的未处理增量会话
+调用 `conversation list` 并开启 `--unprocessed` 过滤（默认窗口 `48h`，可按用户要求指定 `24h` 或 `72h`）：
 ```bash
-aiwc --format json conversation list --window 48h
+aiwc conversation list --window 48h --unprocessed --format json
 ```
+- **返回字段（`data` 数组每项）**：
+  - `short_id`：8 位会话短 ID（如 `"dff13ef0"`）
+  - `session_id`：完整会话 ID
+  - `project_path`：项目物理路径（如 `"/Users/util6/code-space/assetiweave"`）
+  - `project_slug`：后端已归一化好的项目标识（如 `"users-util6-code-space-assetiweave"`，后续命令直接使用此值，无需自行拼算）
+  - `turn_count`：会话当前总轮次数（1-based 上限）
+  - `watermark`：该会话在对应项目记忆中已处理到的轮次水位
+  - `unprocessed_turns`：尚未处理的增量轮次数（`turn_count - watermark`）
+- **0-Token 短路判定**：
+  若返回的 `data` 为空数组 `[]`，说明窗口内所有会话均已处理完毕，**立即结束流程并告知用户无需更新**。
 
-CLI 返回标准 JSON 信封数组：
+### Step 2：批量拉取增量会话问答骨架 & 读取涉及项目的既有状态
+1. **批量拉取增量会话大纲**：
+   将 Step 1 筛出的多个增量会话 `short_id` 一次性传给 `outline`（建议每批最多传 5~8 个 ID，首选 `--qa-digest` 摘要档防爆上下文；若单会话 `turn_count <= 5` 可直接用 `--qa`）：
+   ```bash
+   aiwc conversation outline <short_id_1> <short_id_2> <short_id_3> --qa-digest --format json
+   ```
+   - **增量关注范围**：对于 `watermark > 0` 的会话，前 `watermark` 轮作为背景参考，**重点提炼 `index > watermark` 的新增轮次**。
+   - 若某轮在 `--qa-digest` 下回答被省略（显示 `... [省略 N 字] ...`）且影响关键技术结论提炼，可单独对该会话调用 `aiwc conversation outline <short_id> --qa --format json`。
+2. **读取涉及项目的既有主题树状态**：
+   对 Step 1 中涉及到的每个 `project_slug`，调用 `memory state get` 查看该项目现有的 `topic_trees`（重点关注现有的 `unexplored` 悬空叶子节点及其 `id`、`topic_id`、`summary`）：
+   ```bash
+   aiwc memory state get --project <project_slug> --format json
+   ```
+
+### Step 3：认知提炼与多叉树分支演进推理
+结合各会话的增量问答与该项目既有 `topic_trees` 进行推理：
+
+1. **判定会话是否有实质技术信号**：
+   - 若某会话全篇为闲聊、简单问候或无实质结论的试探，将其归入 **无信号会话（Zero-Signal）**，仅记录到批量提交的 `advance_watermarks` 列表中推进水位，不产生树节点。
+2. **与既有主题树（Topic Tree）融合演进**：
+   - **接续或闭环旧悬空叶子**：若本次新轮次解决、验证或继续推进了该项目 `topic_trees` 中已有的某个节点（如 `73c20273#T1`），在提交时将 `topic_id` 设为该既有 Topic，将 `parent_node_id` 设为 `"73c20273#T1"`，并将 `parent_new_status` 设为：
+     - `"completed"`：旧悬空问题已被本轮彻底解决或落地；
+     - `"continued"`：本轮顺着该节点继续推进并产生新进展；
+     - `"dismissed"`：本轮对话明确决定放弃、否决或废除该旧分支方案。
+   - **开启新议题分支**：若属于全新的独立技术问题，命名清晰的语义化 `topic_id`（英文 kebab-case，如 `"memory-cli-convergence"`）与中文 `topic_name`（如 `"Memory CLI 契约收敛"`），`parent_node_id` 置为 `null`。
+3. **严守提炼颗粒度与质量红线**：
+   - ❌ **严禁照抄用户长 Prompt 原文或报错堆栈**：必须提炼为 15~45 字的单行客观技术结论。
+   - ❌ **严禁收录交互过程噪音**：`"ok"`、`"继续"`、`"可以"`、`"1"`、`"按方案一办"` 等推进短语严禁作为独立节点。
+   - 🎯 **单问题多方案不切碎**：若同一轮针对**同一个问题**探讨了备选方案 A/B/C 且尚未拍板，**只生成 1 条**涵盖方案概述的悬空分支（如 `"评估百万级数据存储伸缩方案（含物理分表、行级卡片打包与列瘦身）"`），严禁拆成 3 个碎片叶子。
+   - 🎯 **单轮多独立问题精准分流**：若同一轮诊断出多个互不相关的独立问题（如问题 X 已顺手修复闭环，问题 Y 决定暂缓搁置），则主节点记录已闭环的问题 X（`status: "completed"`），同时在 `unexplored_branches` 中挂入未决的问题 Y。
+
+### Step 4：单次批量提交演进 JSON（自动重绘 Markdown）与全局经验按需沉淀
+1. **批量提交演进状态与水位**：
+   将所有项目的演进提交项与无信号会话水位组装为一个 JSON 文件（例如写入 `/tmp/aiwc_memory_commit.json`），执行 **1 次** `memory commit` 命令：
+   ```bash
+   aiwc memory commit --file /tmp/aiwc_memory_commit.json --format json
+   ```
+   后端将自动从 SQLite 提取每个节点对应轮次的真实开始时间戳 `turn_started_at`、自动生成标准节点 ID（`<short_id>#T<turn>`）、更新 `.state/projects/<slug>.json` 与 `.state/recent.json`，并按窗口自动覆盖生成排好版的 `projects/<slug>.md` 与 `recent/latest.md`。
+2. **（可选）节点 3 · 全局长期记忆 `MEMORY.md` 增量沉淀**：
+   仅当本轮研发中出现了**跨项目通用、长期稳定的工程准则、架构铁律或重大环境避坑经验**时，读取并增量更新 `~/.assetiweave/memories/<tenant>/MEMORY.md`（控制在 100 行以内，严禁写入单项目业务功能进展、具体 Issue 流水或单次测试指标）。
+
+---
+
+## 2. CLI 工具说明书与精确 JSON 契约 (CLI Reference & Schemas)
+
+> **注意**：以下所有命令均必须携带 `--format json`。
+
+### 2.1 `aiwc conversation list` —— 查询窗口内增量会话
+```bash
+aiwc conversation list --window 48h --unprocessed --format json
+```
+输出信封示例：
 ```json
 {
   "ok": true,
   "data": [
     {
-      "short_id": "73c20273",
-      "session_id": "conversation-session-73c20273fdf1bd1d08933a5dfe16f141170ecdb12dc6980ff25745b4cf202645",
-      "updated_at": "2026-10-27T01:58:40Z",
+      "short_id": "dff13ef0",
+      "session_id": "conversation-session-dff13ef0...",
+      "updated_at": "2026-11-03T15:14:38.860Z",
       "turn_count": 3,
+      "watermark": 1,
+      "unprocessed_turns": 2,
       "project_path": "/Users/util6/code-space/assetiweave",
-      "project_name": "assetiweave"
+      "project_name": "assetiweave",
+      "project_slug": "users-util6-code-space-assetiweave"
     }
   ]
 }
 ```
 
-### 步骤 1.2：会话处理水位探查与短路判定
-使用 `aiwc` CLI 直接探查已记录的会话处理水位：
+### 2.2 `aiwc conversation outline` —— 批量或单会话大纲抽取
 ```bash
-aiwc --format json memory watermark check --project <slug> --session-id <session_id>
-```
+# 批量抽取多个会话的问答摘要（推荐主力档）
+aiwc conversation outline <id1> <id2> --qa-digest --format json
 
-CLI 返回标准 JSON 水位信封：
+# 单会话抽取完整问答（仅在短会话或摘要不足以判断结论时使用）
+aiwc conversation outline <id1> --qa --format json
+```
+- **列序契约（`--qa-digest` 与 `--qa` 完全相同，共 8 列）**：
+  `columns = ["index", "turn_id", "question", "answer", "turn_kind", "agent_role", "parent_turn_id", "started_at"]`
+  - `index`（列 0）：**1-based** 轮次序号（提交 `commit` 时的 `turn_index` 必须严格使用此序号）。
+  - `turn_id`（列 1）：轮次 8 位短 ID。
+  - `question`（列 2）：用户提问原文。
+  - `answer`（列 3）：AI 最终回复（`--qa-digest` 下超过 500 字会自动保留前 200 字与后 300 字）。
+  - `turn_kind` / `agent_role` / `parent_turn_id`（列 4~6）：轮次种类与子代理父轮次指针。
+  - `started_at`（列 7）：该交互轮次真实的开始时间戳（RFC3339）。
+- **单 ID 与多 ID 返回结构差异**：
+  - 传入 1 个 ID 时：`data` 直接为 `{"level": "session", "session_id": "...", "total_turns": 3, "turns": {"columns": [...], "rows": [...]}}`。
+  - 传入多个 ID 时：`data` 为批量容器 `{"level": "batch", "items": [ {"level": "session", ...}, ... ], "truncated": false}`。
+
+### 2.3 `aiwc memory state get` —— 读取既有项目或近期状态树
+```bash
+# 读取指定项目的 .state/projects/<slug>.json（支持传 project_slug 或项目物理路径）
+aiwc memory state get --project <project_slug_or_path> --format json
+
+# 读取当前工作目录所属项目的状态树
+aiwc memory state get --current-project --format json
+```
+返回该项目已有的 `topic_trees`（各 Topic 下的节点 `id`、`parent_id`、`summary`、`status`、`turn_started_at`）以及 `session_watermarks`。
+
+### 2.4 `aiwc memory commit` —— 提交演进节点与推进水位（核心写接口）
+推荐使用 `--file <json_path> --format json` 一次性批量提交。
+
+#### 批量提交 JSON 标准模板（Agent 唯一需要构造的结构）：
 ```json
 {
-  "ok": true,
-  "data": {
-    "project_slug": "assetiweave",
-    "session_id": "conversation-session-73c20273...",
-    "watermark": 3,
-    "has_watermark": true
-  }
-}
-```
-
-**短路比对规则**：
-1. 若 `has_watermark` 为 `true` 且 `watermark >= turn_count`：
-   说明会话自上次提炼后无新对话或轮次变动，**直接 0-Token 跳过**，严禁重复提取！
-2. 若 `has_watermark` 为 `false` 或 `watermark < turn_count`：
-   标记为增量会话（需处理的最新轮次为 `turn_count`），进入节点 1 提炼流程。
-3. 若会话无实质信号或用户决定跳过：
-   调用推进命令推进水位实现免重跑短路：
-   ```bash
-   aiwc memory watermark advance --project <slug> --session-id <session_id> --turn <turn_count>
-   ```
-
----
-
-## 2. 节点 1 · 单会话思维分叉与闭环提取 SOP
-
-### 步骤 2.1：有界问答主干抽取 (QA Backbone Extraction)
-对标记为增量的会话，通过 CLI 抽取高信噪比骨架，首选 `--qa` 模式过滤工具卡片与原始流水噪音：
-```bash
-aiwc conversation outline <short_id> --qa
-```
-*注：仅在极少数需要卡片类型或工具执行结果辅助判定的复杂排障会话中，才按需使用 `aiwc conversation outline <short_id> --full`。严禁全量 dump 原始会话全文字符串。*
-
-`--qa` 返回紧凑的列式矩阵 JSON（`turns.columns = ["index", "turn_id", "question", "answer", "turn_kind", "agent_role", "parent_turn_id"]`），其中 `index` 为 **1-based** 轮次序号；`turn_kind` / `agent_role` / `parent_turn_id` 标识子代理轮次及其父轮次（顶层轮次为 `null`）：
-```json
-{
-  "ok": true,
-  "data": {
-    "session_id": "73c20273",
-    "total_turns": 3,
-    "turns": {
-      "columns": ["index", "turn_id", "question", "answer", "turn_kind", "agent_role", "parent_turn_id"],
-      "rows": [
-        [1, "9633a9d7", "/implement-spec 落地[#135]...", null, "user", null, null],
-        [2, "faf95fe7", "/implement-spec 落地[#135]...", "# 任务完成报告...", "subagent", "Rust Core Reviewer 2", "9633a9d7"]
+  "window": "48h",
+  "commits": [
+    {
+      "project": "users-util6-code-space-assetiweave",
+      "session_id": "dff13ef0",
+      "turn_index": 3,
+      "topic_id": "memory-cli-convergence",
+      "topic_name": "Memory CLI 契约收敛与性能优化",
+      "parent_node_id": "21c6034c#T1",
+      "parent_new_status": "continued",
+      "status": "completed",
+      "summary": "确立 CLI 零 AI 纯读写定位，移除冗余子命令并支持批量大纲采集 (#174)",
+      "unexplored_branches": [
+        {
+          "turn_index": 2,
+          "summary": "重构桌面端 Recent Work 前端界面以直连 .state JSON 并提供废案一键清理按钮"
+        }
       ]
     }
-  }
+  ],
+  "advance_watermarks": [
+    {
+      "project": "users-util6-code-space-assetiweave",
+      "session_id": "a1b2c3d4",
+      "turn": 4
+    }
+  ]
 }
 ```
 
-### 步骤 2.2：认知提炼准则与核心红线 (Extraction Principles)
-
-执行事实提炼时，必须严格恪守以下规范：
-
-1. **❌ 严禁原样复刻用户长 Prompt 原文**：
-   禁止无脑照抄用户的问题输入、附带的复制粘贴内容或冗长异常日志。必须概括提炼出实质技术意图与行动结论。
-2. **❌ 严禁收录过程短语与交互噪音**：
-   对话中的过程短语（如 `"ok"`、`"继续"`、`"1"`、`"好"`、`"确认"`、`"同意方案"`、`"按方案一办"`）仅为流程推进标记，严禁当作独立任务或分支收录。
-3. **🎯 颗粒度红线：以“独立技术问题/议题”为划分单位，严禁按“备选方案”切碎**：
-   - **单问题多方案不切碎**：若一次回答针对同一个问题提出了多个候选实现方案（如方案 A、B、C），而该问题后续未被继续展开解决，它在语义上始终**仅产生 1 个**关于该问题的待探索悬空叶子（如 `- [xxx#Tn]: 探讨解决 X 问题的技术路径（涵盖 A/B/C 方案）`），严禁拆分成 3 个独立叶子制造碎片噪音。
-   - **单 Turn 多问题真实分叉**：只有当一次回答中**诊断或提出了多个不同维度的独立问题/技术隐患/阶段目标**（如问题 X、问题 Y、问题 Z），而用户或后续对话**仅顺着其中一个问题（如 X）往下推进并闭环**，其余独立问题（Y、Z）当时被搁置未办时，这同一个 Turn 才会分别产生：
-     - `## ✅ 已完成的闭环任务`：问题 X 的闭环项；
-     - `## 🍂 待探索的悬空叶子节点`：问题 Y 与问题 Z 的独立悬空叶子，均附带该轮锚点 `[<short_id>#T<turn_index>]`。
-4. **✅ 每一条提取项提炼为单行精炼结论，必须附带严格锚点**：
-   每一条提炼项提炼为独立完整的单行客观陈述（通常 15~45 字），并必须严格附带 `[<short_id>#T<turn_index>](aiwc://session/<short_id>/turn/<turn_index>)` 协议锚点，其中 `turn_index` 严格对应 `turns.rows` 中的 1-based 轮次序号 `index`。
-5. **两分法输出拓扑 (Branching Topology)**：
-   必须严格区分为两类高信号条目：
-   - `## 🍂 待探索的悬空叶子节点 (Unexplored Branches)`：对话中探讨过但未展开、提出的备选路径、后续改进点或待定方案，但本会话未实际展开、待后续探索的分支；若无，输出 `- 无待探索分支`。
-   - `## ✅ 已完成的闭环任务 (Completed Tasks)`：本会话已彻底解决、编码实现完毕或经测试验证的闭环事项；若无，输出 `- 无已完成任务`。
-6. **无信号会话判定 (Zero-Signal Detection)**：
-   若会话全篇为闲聊、环境问候或未产生任何实质性技术方案/结论，两区块均输出无条目占位符，并在 Frontmatter 中标记 `has_signal: false`。
-
-### 步骤 2.3：演进提交组装与多叉树写回 (Evolution Commit)
-提炼完成后，无需在磁盘生成任何中间单会话文件（如旧版 `sessions/*.md`），直接将提炼结论转换为演进节点并组装为提交负载，调用 CLI 提交至多叉树真相源：
-```bash
-aiwc memory commit --payload '<json_payload>'
-# 或写入临时文件提交：
-aiwc memory commit --file commit.json
-```
-底层的 Rust 核心服务将自动执行以下原子步骤：
-1. 更新目标项目的多叉树拓扑结构（`.state/projects/<slug>.json`）；
-2. 自动记录并推进该会话的处理水位；
-3. 更新全局近期快照状态（`.state/recent.json`）；
-4. 纯函数单向投影生成并刷新 `projects/<slug>.md` 与 `recent/latest.md`。
-
----
-
-## 3. 节点 1 系统提示词模板 (Node 1 System Prompt Template)
-
-当调用外部 LLM 或通过子代理执行节点 1 提炼时，使用如下标准 System Prompt：
-
-```text
-你是一个专业的高信号技术记忆架构师。你的唯一职责是从给定的会话 QA 骨架中提取高信噪比的“思维分叉与闭环事实”。
-
-【会话上下文】
-- session_id: {session_id}
-- short_id: {short_id}
-- project_path: {project_path}
-- updated_at: {updated_at}
-- turn_count: {turn_count}
-
-【输入数据】
-以下为会话各轮次的问答骨架（包含 index 轮次序号、turn_id、用户提问 question、模型回答 answer）：
-{turns_json}
-
-【提炼准则】
-1. 区分两类条目：
-   - 🍂 待探索的悬空叶子节点：会话中探讨过但未展开、提出的备选路径、后续优化方向或待决技术项；
-   - ✅ 已完成的闭环任务：已编码完成、架构方案确认落地、缺陷修复完毕或经验证通过的事项。
-2. 严禁原样复刻用户长 Prompt 原文或冗长错误日志，必须提炼概括为单行客观技术事实。
-3. 严禁收录 "ok"、"继续"、"1"、"好"、"确认" 等过程交互短语。
-4. 颗粒度红线：以“独立技术问题/议题”为最小原子单位，严禁按“备选方案”切碎：
-   - 单问题多方案不切碎：若一个问题探讨了方案 A/B/C 且未继续推进，仅产生 1 个包含方案概述的悬空叶子，绝不可拆为 3 个叶子；
-   - 单 Turn 多问题真实分叉：若单轮诊断或提出了多个独立问题（如问题 X、问题 Y），用户仅顺着问题 X 推进并解决，问题 X 记入已完成闭环，未处理的问题 Y 独立记为悬空叶子（共用该轮锚点）。
-5. 每一条提取项提炼为单行精炼结论，必须严格附带锚点格式：
-   - [{short_id}#T{turn_index}](aiwc://session/{short_id}/turn/{turn_index}): <精炼结论>
-   （turn_index 必须严格对应轮次 1-based 序号）。
-6. 若无实质进展或全为闲聊，has_signal 标为 false，两区块分别输出 "- 无待探索分支" 与 "- 无已完成任务"。
-
-【输出格式规范】
-必须严格输出以下格式的 Markdown 内容，包含 YAML Frontmatter 与两个核心区块，严禁输出任何额外闲聊：
-
----
-session_id: {session_id}
-short_id: {short_id}
-project_path: {project_path}
-updated_at: {updated_at}
-turn_count: {turn_count}
-has_signal: true|false
----
-
-# 会话 {short_id} 思维分叉与任务进展
-
-## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-- [{short_id}#T<turn_index>](aiwc://session/{short_id}/turn/<turn_index>): <精炼待探索分支>
-
-## ✅ 已完成的闭环任务 (Completed Tasks)
-- [{short_id}#T<turn_index>](aiwc://session/{short_id}/turn/<turn_index>): <精炼已闭环事实>
-```
-
----
-
-## 4. 节点 1 Few-shot 对比案例库 (Node 1 Positive vs. Negative Examples)
-
-### 案例 1：用户长指令复刻 vs. 语义闭环提炼
-- ❌ **机械复读（劣质反例）**：
-  `- [73c20273#T1](aiwc://session/73c20273/turn/1): /implement-spec 落地[#135](https://github.com/util6/assetiweave/issues/135) 极其所有子工单`
-  *(缺陷：机械照抄用户命令输入，毫无提炼，丢失最终回答中的实际闭环事实)*
-- ✅ **认知提炼（标准正例）**：
-  `- [73c20273#T2](aiwc://session/73c20273/turn/2): 落地 ADR-0018 Markdown 优先架构并完成全量单元与契约测试 (#135)`
-
-### 案例 2：过程短语噪音 vs. 过滤忽略
-- ❌ **机械复读（劣质反例）**：
-  `- [098b0c4b#T14](aiwc://session/098b0c4b/turn/14): 完成了本轮目标: ok`
-  *(缺陷：将用户的日常口语短回复当作完成任务收录，产生垃圾节点)*
-- ✅ **认知提炼（标准正例）**：
-  *(直接过滤忽略 T14，不产生无价值条目)*
-
-### 案例 3：底层错误信息 vs. 故障排查事实
-- ❌ **机械复读（劣质反例）**：
-  `- [014c6b32#T8](aiwc://session/014c6b32/turn/8): HTTP 401: Your authentication token has been invalidated. Please try signing in again.`
-  *(缺陷：直接把 HTTP 报错文本丢入记忆库)*
-- ✅ **认知提炼（标准正例）**：
-  `- [014c6b32#T8](aiwc://session/014c6b32/turn/8): 诊断 OpenClaw 本地代理网关 Token 失效并明确需重新登录鉴权`
-
-### 案例 4：口语方案讨论 vs. 待探索悬空分支
-- ❌ **机械复读（劣质反例）**：
-  `- [d3fc3bcd#T2](aiwc://session/d3fc3bcd/turn/2): 在问答中提出的备选分支或延伸方案: 那就全面脱钩Go的CLI，包括CI和默认编译安装等行为...`
-  *(缺陷：简单通过关键词启发式拼接用户口语长句)*
-- ✅ **认知提炼（标准正例）**：
-  `- [d3fc3bcd#T2](aiwc://session/d3fc3bcd/turn/2): 全面脱钩旧版 Go CLI 构建链与 CI 依赖，仅保留归档源码作为历史留存`
-
-### 案例 5：单问题多方案 vs. 错误切成多叶子
-- 场景：用户探讨百万级数据下的性能与分表问题，模型在 T2 回复中提出了方案 A（物理分表）、方案 B（行级多卡片压缩打包）、方案 C（列结构瘦身），本轮未做决策。
-- ❌ **按方案切碎（劣质反例）**：
-  ```markdown
-  ## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-  - [f9c9af3c#T2](aiwc://session/f9c9af3c/turn/2): 方案一：采用按时间或按项目物理分表解决百万级数据膨胀
-  - [f9c9af3c#T2](aiwc://session/f9c9af3c/turn/2): 方案二：采用行级多卡片压缩打包方案将单轮卡片存入一行
-  - [f9c9af3c#T2](aiwc://session/f9c9af3c/turn/2): 方案三：采用统一 Content 列并收敛稀疏列进 JSON 的瘦身方案
-  ```
-  *(缺陷：将同一个问题的 3 个备选方案错误拆分成 3 个独立叶子，制造碎片噪音，丢失了“解决数据膨胀”这一个核心问题主题)*
-- ✅ **问题级收敛（标准正例）**：
-  ```markdown
-  ## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-  - [f9c9af3c#T2](aiwc://session/f9c9af3c/turn/2): 评估百万级数据量下的存储伸缩方案（涵盖物理分表、行级卡片打包与列瘦身）
-  ```
-
-### 案例 6：单 Turn 多独立问题与部分闭环 (True Multi-problem Branching)
-- 场景：在代码审查轮次（T30）中，审查员指出了两个完全独立的架构违规：(1) 前端裸写 HTML 按钮；(2) 业务实现文件超过 800 行硬红线。后续轮次中仅修复了按钮（闭环），文件超限未重构（搁置）。
-- ❌ **忽视未解决问题或打包归并（劣质反例）**：
-  ```markdown
-  ## ✅ 已完成的闭环任务 (Completed Tasks)
-  - [6ca23ccf#T34](aiwc://session/6ca23ccf/turn/34): 完成 Code Review 中发现的前端与文件规范问题修复
-  ```
-  *(缺陷：强行抹平两个独立问题，导致未被修复的文件超限技术债凭空消失)*
-- ✅ **问题解耦与精准分流（标准正例）**：
-  ```markdown
-  ## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-  - [6ca23ccf#T30](aiwc://session/6ca23ccf/turn/30): 针对核心业务文件逼近 500/800 行架构红线进行模块瘦身与拆分
-
-  ## ✅ 已完成的闭环任务 (Completed Tasks)
-  - [6ca23ccf#T34](aiwc://session/6ca23ccf/turn/34): 修复前端组件分层违规并将裸 HTML 按钮替换为统一组件规范
-  ```
-  *(正例亮点：顺着做完的问题进入闭环，未处理的独立问题挂在该轮作为悬空叶子，清晰表达现场)*
-
----
-
-## 5. 节点 2 · Recent 窗口聚合与 Project 悬空叶子语义消融 SOP
-
-节点 2 负责将窗口期内的单会话产物汇聚为全局研发脉络快照，并针对各项目既有的悬空叶子池进行**大模型语义级消融与增量演进**。
-
-### 步骤 5.1：有信号会话聚合与 Recent 快照生成
-1. **聚合范围**：严格仅聚合当前近期窗口内的有信号会话事实（无信号会话直接略过）。在多叉树演进提交完成后，系统已通过 `aiwc memory commit` 自动更新 `.state/recent.json` 并投影至 `recent/latest.md`。
-2. **分组输出**：按 `project_path`（或归一化后的项目标示）对有信号会话进行分组，汇集该项目在近期窗口内的所有悬空叶子与闭环任务。
-3. **生成 Recent 快照**：
-   - 输出到 `recent/latest.md`（始终反映最新研发脉络）；
-   - 同步原子快照归档到 `recent/<YYYY-MM-DD>.md`（以当前日期命名）。
-   - 格式规范：
-     ```markdown
-     # 近期研发进展与待探索分支 (Recent Work & Unexplored Branches)
-
-     ## 项目: /Users/util6/code-space/assetiweave
-
-     ### 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-     - [73c20273#T1](aiwc://session/73c20273/turn/1): 探索 SQLite WAL 模式高并发评测
-     - [s2#T2](aiwc://session/s2/turn/2): 评估 Tantivy 索引剪枝机制
-
-     ### ✅ 已完成的闭环任务 (Completed Tasks)
-     - [73c20273#T2](aiwc://session/73c20273/turn/2): 落地 ADR-0018 Markdown 优先架构并完成全量测试
-     ```
-
-### 步骤 5.2：项目现有悬空叶子读取与语义消融决策 (Semantic Leaf Ablation)
-传统的文本字符串精确匹配无法识别“同一个方案在后续会话中用不同词汇被实现并验证”。因此，悬空叶子的消融必须由 Agent 基于技术语义进行推理判定：
-
-1. **读取现有池**：
-   读取目标项目的现有记忆文件 `projects/<slug>.md`（如 `projects/assetiweave.md`），提取其中的 `existing_leaves`。
-2. **收集本轮增量**：
-   从本轮 Recent 聚合中获取该项目的 `completed_tasks`（已闭环任务）与 `new_leaves`（本轮新增待探索分支）。
-3. **大模型语义消融规则**：
-   - **规则 A（闭环即消融）**：若旧悬空叶子中的设想、优化或探索目标已经在 `completed_tasks` 中被编码解决、落地实现或验证通过，坚决将其从叶子池中消融剔除。
-   - **规则 B（路线变更即废弃）**：若旧悬空叶子因最新技术决策、架构重构被明确否定、废弃或替代（例如旧叶子提议维护旧格式兼容，但最新决策已确立彻底脱钩），坚决将其从叶子池中剔除。
-   - **规则 C（增量悬空叶子合入）**：将 `new_leaves` 中未在池中、且未被本轮闭环的事项加入叶子池。
-   - **规则 D（未决历史叶子原样保留）**：本轮未被触及、未被解决的既有悬空叶子，原样保留在池中。
-   - **规则 E（锚点与单行完整性）**：所有保留与新增的叶子必须严格保持 `- [<short_id>#T<turn>](aiwc://...): <精炼陈述>` 单行格式，严禁自由多行展开。
-
-### 步骤 5.3：原子写回 `projects/<slug>.md`
-将消融并合入后的最终叶子集合，按规范原子写回对应项目文件：
-```markdown
----
-project_path: /Users/util6/code-space/assetiweave
-updated_at: 2026-10-27T07:20:00Z
----
-
-# 项目记忆: /Users/util6/code-space/assetiweave
-
-## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-- [73c20273#T1](aiwc://session/73c20273/turn/1): 探索 SQLite WAL 模式高并发评测
-- [old1#T3](aiwc://session/old1/turn/3): 调研跨平台文件监视器 Notify 深度集成
-```
-
----
-
-## 6. 节点 2 系统提示词模板 (Node 2 System Prompt Template)
-
-当调用外部 LLM 或子代理执行项目悬空叶子池语义消融时，使用如下标准 System Prompt：
-
-```text
-你是一个精通技术演化与代码库生命周期的记忆架构师。你的唯一职责是对目标项目的“待探索悬空叶子池”执行语义级消融（Leaf Ablation）与增量合入。
-
-【项目上下文】
-- project_path: {project_path}
-- slug: {slug}
-
-【输入数据】
-1. 现有悬空叶子池 (Existing Leaves):
-{existing_leaves_markdown}
-
-2. 本轮已完成闭环任务 (Completed Tasks):
-{completed_tasks_markdown}
-
-3. 本轮新增待探索分支 (New Leaves):
-{new_leaves_markdown}
-
-【消融推理与更新准则】
-1. 闭环消融：逐项对比 Existing Leaves 与 Completed Tasks。若 Existing Leaf 所探讨的设想、优化或方案已经在某项 Completed Task 中被落地、解决或验证，坚决从池中消融（剔除）。
-2. 路线废弃：若 Existing Leaf 因本轮完成的架构决策被明确否定、替代或废弃（例如重构全面脱钩旧组件），坚决从池中消融（剔除）。
-3. 历史未决保留：凡本轮未被解决、未被否定的既有叶子，必须严格原样保留，严禁丢失历史线索。
-4. 新增叶子合入：将 New Leaves 中尚未闭环的新技术分支合入池中，去除与既有条目语义重复的项。
-5. 严格格式红线：
-   - 每一条保留或新增的叶子必须为单行列表项；
-   - 必须保留原始锚点前缀格式：- [<short_id>#T<turn>](aiwc://session/<short_id>/turn/<turn>): <精炼描述>
-   - 严禁添加二级说明、解释性子列表（如 "  - 说明:"）或自由段落；
-   - 若池中最终没有任何待探索分支，输出 "- 暂无待探索分支"。
-
-【输出格式规范】
-严格输出更新后的 Markdown 内容，包含 YAML Frontmatter 与唯一的分支区块，严禁任何额外闲聊：
-
----
-project_path: {project_path}
-updated_at: {current_timestamp}
----
-
-# 项目记忆: {project_path}
-
-## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-- [<short_id>#T<turn>](aiwc://session/<short_id>/turn/<turn>): <精炼待探索分支>
-```
-
----
-
-## 7. 节点 2 Few-shot 语义消融对比案例库 (Node 2 Positive vs. Negative Ablation Examples)
-
-### 案例背景
-- **项目路径**：`/Users/util6/code-space/assetiweave`
-- **现有叶子池 (Existing Leaves)**：
-  ```markdown
-  - [s1#T1](aiwc://session/s1/turn/1): 探索在应用层引入 Redis 缓存加速资产元数据检索
-  - [s1#T2](aiwc://session/s1/turn/2): 评测 gRPC vs IPC 在跨进程通信中的性能损耗
-  - [s1#T3](aiwc://session/s1/turn/3): 探讨保留旧版 Go CLI 兼容层以支持历史脚本
-  ```
-- **本轮已完成闭环任务 (Completed Tasks)**：
-  ```markdown
-  - [s2#T1](aiwc://session/s2/turn/1): 落地 Redis 缓存层并完成基准测试验证 (#140)
-  - [s2#T2](aiwc://session/s2/turn/2): 决议全面脱钩旧版 Go CLI，迁移至 Rust 原生命令行并归档旧代码 (#141)
-  ```
-- **本轮新增待探索分支 (New Leaves)**：
-  ```markdown
-  - [s2#T3](aiwc://session/s2/turn/3): 评估 SQLite WAL 模式在高并发批量挂载下的性能表现
-  ```
-
-### 对比结果
-- ❌ **机械未消融（劣质反例）**：
-  ```markdown
-  ## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-  - [s1#T1](aiwc://session/s1/turn/1): 探索在应用层引入 Redis 缓存加速资产元数据检索
-  - [s1#T2](aiwc://session/s1/turn/2): 评测 gRPC vs IPC 在跨进程通信中的性能损耗
-  - [s1#T3](aiwc://session/s1/turn/3): 探讨保留旧版 Go CLI 兼容层以支持历史脚本
-  - [s2#T3](aiwc://session/s2/turn/3): 评估 SQLite WAL 模式在高并发批量挂载下的性能表现
-  ```
-  *(缺陷：机械追加，Redis 缓存明明已由 s2#T1 编码完成并落地验证，Go CLI 兼容明明已被 s2#T2 决议脱钩废弃，却依然死锁在待探索池中，导致叶子池无限膨胀、信噪比迅速崩溃)*
-
-- ✅ **语义消融标准产物（标准正例）**：
-  ```markdown
-  ---
-  project_path: /Users/util6/code-space/assetiweave
-  updated_at: 2026-10-27T07:20:00Z
-  ---
-
-  # 项目记忆: /Users/util6/code-space/assetiweave
-
-  ## 🍂 待探索的悬空叶子节点 (Unexplored Branches)
-  - [s1#T2](aiwc://session/s1/turn/2): 评测 gRPC vs IPC 在跨进程通信中的性能损耗
-  - [s2#T3](aiwc://session/s2/turn/3): 评估 SQLite WAL 模式在高并发批量挂载下的性能表现
-  ```
-  *(消融分析：*
-  *1. `s1#T1`（Redis 缓存探索）与 `s2#T1`（落地 Redis 缓存层）语义闭环，**成功消融剔除**；*
-  *2. `s1#T3`（保留 Go CLI 兼容）与 `s2#T2`（决议全面脱钩 Go CLI）路线冲突且废弃，**成功剔除**；*
-  *3. `s1#T2`（gRPC vs IPC）本轮未触及，**原样保留**；*
-  *4. `s2#T3`（SQLite WAL 评估）为新提出分支，**去重合入**。*
-  *叶子池维持极其精炼、高度可操作的健康水位。)*
-
----
-
-## 8. 节点 3 · Global MEMORY.md 长期记忆沉淀 SOP
-
-节点 3 作为全局长期认知的顶层过滤器，负责跨越单一项目的边界，沉淀普遍适用、长期稳定的通用架构法则与工程准则。
-
-### 步骤 8.1：长期记忆筛选铁律 (Global Memory Criteria)
-
-Global `MEMORY.md` 是所有 Agent 跨项目工作的最高共享认知，必须极其克制，防止沦为琐碎任务的垃圾桶。
-
-1. **必须准入准则 (Whitelisted)**：
-   - **跨项目通用的工程规范**：例如语言特定规范（如 Rust 业务代码行数硬限制、测试拆分同级镜像模式）。
-   - **系统运行时核心铁律**：例如执行脚本严禁内联 `python3 -c` 多行代码以防挂死、必须落地临时文件。
-   - **不可动摇的架构原则**：例如本地优先（Local-first）、单层直接软链接、数据变更必须依赖迁移脚本。
-   - **重大高频避坑经验**：经反复验证确认的深坑解决方案与安全隔离红线。
-2. **坚决禁止准入准则 (Strictly Prohibited)**：
-   - ❌ **单项目业务功能进展**：如“完成了 assetiweave 的技能扫描优化”。
-   - ❌ **局部缺陷排查流水**：如“修复了某函数的空指针异常”。
-   - ❌ **瞬态测试或部署数据**：如“本轮运行通过了 863 个单元测试”。
-   - ❌ **临时待办或特定 Issue 关联**：特定 Issue 的跟踪收敛于项目悬空叶子池，严禁污染 Global Memory。
-
-### 步骤 8.2：增量更新与去重写入
-1. 审视近期研发全景 `recent/latest.md` 以及各项目最新决策；
-2. 读取现有 `MEMORY.md`；
-3. 判定是否存在值得沉淀为全局工程准则的规则；
-4. 若存在，以增量方式精炼合并入 `MEMORY.md` 对应区块，并执行原子写盘。若无增量全局准则，保持不变。
-
----
-
-## 9. 节点 3 系统提示词模板 (Node 3 System Prompt Template)
-
-当调用外部 LLM 或子代理执行全局长期记忆提炼时，使用如下标准 System Prompt：
-
-```text
-你是一个最高层级的系统架构与工程规范委员会主席。你的唯一职责是从近期的技术研发事实中，提取出“跨项目通用、长久稳定、最高等级的工程准则与架构避坑铁律”，并沉淀到全局长期记忆 MEMORY.md。
-
-【输入数据】
-1. 现有的全局记忆 (Existing Global Memory):
-{existing_memory_markdown}
-
-2. 近期研发全景事实 (Recent R&D Facts):
-{recent_facts_markdown}
-
-【沉淀准则】
-1. 极致克制：只有具备“跨项目通用价值”、“长期稳定有效”且“违背将引发严重故障或风格失控”的技术铁律才能写入。
-2. 绝对禁止写入：
-   - 任何特定项目的业务功能描述（如“修复了某个 UI 按钮样式”）；
-   - 任何单次调试或临时异常日志；
-   - 任何瞬态指标（如版本号变更、测试用例统计）。
-3. 格式规范：
-   - 按主题分组（如：通用工程规范、架构红线、脚本与环境避坑铁律）；
-   - 每一条必须为陈述明确、可严格执行的单行准则，文字精炼（20~50 字）；
-   - 保留既有已沉淀的稳定规则，仅增量合并新发掘的通用铁律。
-
-【输出格式规范】
-严格输出更新后的 Markdown 内容，严禁任何额外闲聊：
-
-# 全局长期记忆与工程准则 (Global Memory)
-
-## 📐 通用工程规范与架构准则
-- <精炼准则 1>
-- <精炼准则 2>
-
-## ⚠️ 运行时安全与避坑铁律
-- <精炼铁律 1>
-- <精炼铁律 2>
-```
-
----
-
-## 10. 节点 3 判定案例与决策矩阵 (Global Memory Decision Cases)
-
-| 事实候选条目 | 判定结果 | 决策理由与归宿 |
+#### 字段说明与后端自动补齐规则：
+| 字段路径 | 必填 | 类型与取值说明 |
 | :--- | :--- | :--- |
-| **执行脚本时严禁内联 `python3 -c "..."` 多行代码，必须写入临时文件再执行以防进程卡死** | ✅ **准入 Global** | **跨语言、跨项目通用的硬性环境避坑铁律**，所有 Agent 均必须遵守。 |
-| **Rust 单业务文件严格控制在 500 行以内，测试拆分至同级独立的 `*_tests.rs` 镜像文件** | ✅ **准入 Global** | **长期稳定的全局代码组织与架构约束**，具备跨项目指导价值。 |
-| **本地优先与 Markdown 优先：所有业务记忆均落盘至本地文件，SQLite 仅作为轻量水位** | ✅ **准入 Global** | **系统级核心架构原则**，定义了全仓的设计基调。 |
-| **在 `memory_workflow_recent_project.rs` 中加固了 `parse_session_markdown` 列表解析** | ❌ **拦截** | **单项目、局部代码改动流水**。应保留在对应会话与项目闭环任务中，严禁污染 Global。 |
-| **全部 863 个单元测试通过，耗时 316 秒** | ❌ **拦截** | **瞬态指标与测试日志**，毫无长期规则沉淀价值。 |
-| **为特定客户修复了导出 PDF 时的中文乱码问题** | ❌ **拦截** | **业务特定需求缺陷**，属于项目历史记录，非全局架构规则。 |
+| `window` | 可选 | 本次刷新 `recent/latest.md` 的时间窗口（如 `"24h"`、`"48h"`、`"72h"`，默认 `"48h"`） |
+| `commits[].project` | **必填** | 直接填入 `conversation list` 返回的 `project_slug` 或 `project_path` |
+| `commits[].session_id` | **必填** | 支持直接填 8 位 `short_id`（如 `"dff13ef0"`）或完整 `session_id`，后端自动解析 |
+| `commits[].turn_index` | **必填** | 产生该结论的 **1-based** 轮次序号（对应 `outline` 的 `index` 列） |
+| `commits[].topic_id` | **必填** | 议题英文标识（如 `"memory-cli-convergence"`）；若接续既有 Topic 则填既有 `topic_id` |
+| `commits[].topic_name` | 推荐 | 议题人类可读中文名称（如 `"Memory CLI 契约收敛"`） |
+| `commits[].parent_node_id` | 可选 | 若接续/闭环/废弃既有节点，填既有节点 ID（如 `"21c6034c#T1"`）；新议题根节点填 `null` 或省略 |
+| `commits[].parent_new_status` | 可选 | 当指定 `parent_node_id` 时，父节点的新状态：`"continued"`（默认）、`"completed"` 或 `"dismissed"` |
+| `commits[].status` | **必填** | 当前新节点状态：`"completed"`（已闭环）、`"continued"`（推进中）或 `"unexplored"`（待探索悬空） |
+| `commits[].summary` | **必填** | 单行精炼技术结论（15~45 字，**严禁手写 `[short_id#Tn](aiwc://...)` 锚点前缀**，投影器会自动生成锚点与时间戳！） |
+| `commits[].unexplored_branches` | 可选 | 同轮次或同会话衍生出的待探索悬空分支数组，每项含 `turn_index`（可选，默认同主节点）与 `summary`（单行描述，同样**不要**手写锚点前缀） |
+| `advance_watermarks[]` | 可选 | 针对无信号会话或最后一轮高于 `commit.turn_index` 的会话，将其水位推进至最新 `turn_count`（含 `project`, `session_id`, `turn`） |
+
+> **后端自动完成的事项（Agent 严禁自行冗余处理）**：
+> - 无需手拼 `<short_id>#T<turn>` 或 `.1/.2` 子节点 ID，后端自动按规范生成；
+> - 无需手查或手填 `turn_started_at`、`created_at`、`updated_at`，后端自动从 SQLite 会话轮次表读取真实的 `turn_started_at` 注入节点；
+> - 无需手动渲染或写回 `projects/<slug>.md` 与 `recent/latest.md`，`memory commit` 执行完毕后已原子同步完成。
+
+### 2.5 `aiwc memory status` —— 单节点状态修正与废案清理
+当用户指出某条悬空叶子“其实已经做完（AI 误判）”或“是个废案、以后不再考虑”时，调用此命令直接翻转节点状态并重绘 Markdown：
+```bash
+# 将废案或无价值悬空分支标记为 dismissed（保留 JSON 墓碑防重入，并立即从 Markdown 悬空列表中隐藏）
+aiwc memory status <node_id> dismissed --format json
+
+# 将 AI 误判为悬空的已完成事项修正为 completed
+aiwc memory status <node_id> completed --format json
+```
+
+### 2.6 `aiwc memory recent get` / `aiwc memory project get` —— 读取生成的 Markdown 视图
+```bash
+aiwc memory recent get --format json
+aiwc memory project get --current-project --format json
+```
 
 ---
 
-## 11. 产物规范与磁盘原子写入协议
+## 3. 提炼正反例速查表 (Extraction Do's & Don'ts)
 
-提炼与演进完成后，所有层次的产物必须严格遵循存储路径与原子写入规范：
-
-1. **磁盘路径映射矩阵**：
-   - 多叉树状态真相源：`~/.assetiweave/memories/<tenant>/.state/projects/<slug>.json` 与 `.state/recent.json`
-   - 单向投影近期快照：`~/.assetiweave/memories/<tenant>/recent/latest.md`
-   - 单向投影项目记忆：`~/.assetiweave/memories/<tenant>/projects/<slug>.md`
-   - 全局长期记忆：`~/.assetiweave/memories/<tenant>/MEMORY.md`
-   - *（注：无中间单会话碎片文件，不再生成 `sessions/*.md`）*
-2. **原子写入协议 (Atomic Protocol)**：
-   - 强类型状态 JSON：在 `.state/` 或 `.state/projects/` 同目录下先创建临时文件 `.tmp_<uuid>.json`，写入脱敏 JSON 后调用 `fs::rename` 原地原子覆盖；
-   - 投影 Markdown：由状态 JSON 单向纯函数生成，在同级目录使用 `.tmp_<uuid>.md` 原子覆盖写入；
-   - 彻底避免在断电或并发读写时的文件截断与跨卷损坏。
-3. **敏感信息脱敏 (Redaction)**：
-   自动检测并脱敏 API Key、Bearer Token、私钥与密码凭据，统一替换为 `[REDACTED]`。
-4. **高信噪比与文件体积基线**：
-   - 多叉树状态 JSON：以 `<short_id>#T<turn>` 结构化节点存储，轻量清晰；
-   - 项目悬空叶子：通过多叉树状态转移（`unexplored` -> `continued` / `completed`）始终将未决分支收敛在 **20 项以内**，严禁无限蔓延；
-   - 全局长期记忆：精炼扼要，严格控制在 **100 行以内**。
-
+| 场景 | ❌ 错误做法（严禁） | ✅ 正确做法（标准） |
+| :--- | :--- | :--- |
+| **用户长指令输入** | `summary` 照抄用户命令：`"/implement-spec 落地 #174 及其所有测试"` | 提炼最终闭环成果：`"收敛 Memory CLI 纯读写命令面并支持批量大纲与四态窗口投影 (#174)"` |
+| **锚点前缀重复** | 在 `summary` 字段内手写 `"[dff13ef0#T3](aiwc://...): 确立 CLI..."`（会导致投影器双重嵌套锚点） | `summary` 只写纯文本结论 `"确立 CLI 零 AI 定位..."`，由后端投影器统一冠上锚点与 `turn_started_at` 时间戳 |
+| **单问题多备选方案** | 同一问题讨论了方案 A/B/C 未定，在 `unexplored_branches` 里拆成 3 条平级叶子 | 收敛为 **1 条**问题级悬空叶子：`"评估百万级数据存储伸缩方案（涵盖物理分表、行级打包与列瘦身）"` |
+| **单轮多独立问题部分闭环** | 把已修好的前端按钮违规和未修的 800 行超限问题混为一谈记为完成 | 已修好的记入主节点 `status: "completed"`，未修的文件超限问题放入 `unexplored_branches` |
+| **历史悬空叶子在新会话闭环** | 不查 `memory state get`，直接新建孤立节点，导致旧悬空叶子永远挂在池中 | 查出旧叶子 ID（如 `"73c20273#T1"`），填 `parent_node_id: "73c20273#T1"`, `parent_new_status: "completed"` |
