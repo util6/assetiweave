@@ -70,9 +70,10 @@ pub fn render_conversation_sessions(
     window_expr: Option<&str>,
 ) {
     let now = chrono::Utc::now();
+    let storage = asset_core::infrastructure::memory::MemoryStorage::new("default");
     let view_models: Vec<ConversationSessionViewModel> = sessions
         .iter()
-        .map(|s| ConversationSessionViewModel::from_item(s, now))
+        .map(|s| ConversationSessionViewModel::from_item_with_storage(s, now, &storage))
         .collect();
 
     match format {

@@ -152,7 +152,9 @@ impl SessionTurnRow {
         );
         let carries_answer = matches!(
             detail_level,
-            ConversationOutlineDetailLevel::Qa | ConversationOutlineDetailLevel::Full
+            ConversationOutlineDetailLevel::Qa
+                | ConversationOutlineDetailLevel::QaDigest
+                | ConversationOutlineDetailLevel::Full
         );
         let mut columns: Vec<String> = vec!["index".into(), "turn_id".into(), "question".into()];
         if carries_process {
@@ -195,15 +197,17 @@ impl SessionTurnRow {
                 agent_role,
                 parent_turn_id,
             },
-            ConversationOutlineDetailLevel::Qa => Self::Qa {
-                index,
-                turn_id,
-                question,
-                answer,
-                turn_kind,
-                agent_role,
-                parent_turn_id,
-            },
+            ConversationOutlineDetailLevel::Qa | ConversationOutlineDetailLevel::QaDigest => {
+                Self::Qa {
+                    index,
+                    turn_id,
+                    question,
+                    answer,
+                    turn_kind,
+                    agent_role,
+                    parent_turn_id,
+                }
+            }
             ConversationOutlineDetailLevel::Full => Self::Full {
                 index,
                 turn_id,

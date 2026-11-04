@@ -273,6 +273,7 @@ async fn test_conversation_outline_and_card_get_full_suite() {
             assert_eq!(t.turn_index, 1);
             assert_eq!(t.total_turns, 2);
             assert_eq!(t.user_question, "Please run diagnostics and show status");
+            assert_eq!(t.started_at, Some(timestamp.to_string()));
             assert_eq!(
                 t.cards.columns,
                 vec!["order", "card_id", "kind", "label", "status", "chars"]
@@ -477,6 +478,317 @@ async fn test_conversation_outline_and_card_get_full_suite() {
         })
         .await;
     assert!(matches!(not_found, Err(AppError::NotFound(_))));
+
+    drop(service);
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn test_truncate_qa_digest() {
+    // 1. Text <= 500 characters
+    let short_text = "Hello world";
+    assert_eq!(truncate_qa_digest(short_text), "Hello world");
+
+    let exact_500: String = (0..500).map(|_| 'a').collect();
+    assert_eq!(truncate_qa_digest(&exact_500), exact_500);
+
+    // 2. Text > 500 characters
+    let chars_520: String = (0..200)
+        .map(|_| 'a')
+        .chain((0..20).map(|_| 'b'))
+        .chain((0..300).map(|_| 'c'))
+        .collect();
+    assert_eq!(chars_520.chars().count(), 520);
+    let digested = truncate_qa_digest(&chars_520);
+    assert_eq!(
+        digested,
+        format!("{}... [省略 20 字] ...{}", "a".repeat(200), "c".repeat(300))
+    );
+
+    // 3. Multi-byte Unicode (Chinese chars)
+    let cn_600: String = (0..200)
+        .map(|_| '前')
+        .chain((0..100).map(|_| '中'))
+        .chain((0..300).map(|_| '后'))
+        .collect();
+    assert_eq!(cn_600.chars().count(), 600);
+    let cn_digested = truncate_qa_digest(&cn_600);
+    assert_eq!(
+        cn_digested,
+        format!(
+            "{}... [省略 100 字] ...{}",
+            "前".repeat(200),
+            "后".repeat(300)
+        )
+    );
+}
+
+fn make_text_part(text: &str) -> NormalizedConversationPart {
+    NormalizedConversationPart {
+        role: ConversationPartRole::Assistant,
+        kind: ConversationPartKind::Text,
+        text: Some(text.to_string()),
+        language: None,
+        command: None,
+        cwd: None,
+        status: None,
+        exit_code: None,
+        command_label: None,
+        source_execution_id: None,
+        content_card: None,
+        metadata_json: None,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_qa_digest_and_batch_outline_suite() {
+    let (service, root) = setup_fixture_service("batch-suite").await;
+    let pool = service.db.pool();
+    let tenant_id = "default";
+    let timestamp = "2026-11-04T12:00:00Z";
+
+    let adapter = ConversationAdapter {
+        id: "adapter-batch".to_string(),
+        name: "Batch Adapter".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "1.0.0".to_string(),
+        enabled: true,
+        manifest_path: None,
+        executable_path: None,
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(1),
+        capabilities: vec!["read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        projection_version: Some(1),
+        created_at: timestamp.to_string(),
+        updated_at: timestamp.to_string(),
+    };
+    let source = ConversationSource {
+        id: "source-batch".to_string(),
+        adapter_id: "adapter-batch".to_string(),
+        name: "Batch Source".to_string(),
+        kind: ConversationSourceKind::Directory,
+        location: "/fixture/batch".to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: timestamp.to_string(),
+        updated_at: timestamp.to_string(),
+    };
+
+    crate::backend::store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter)
+        .await
+        .expect("upsert adapter");
+    crate::backend::store::upsert_conversation_source_sqlx(pool, tenant_id, &source)
+        .await
+        .expect("upsert source");
+
+    // Session 1 has a long answer > 500 chars
+    let long_answer: String = (0..200)
+        .map(|_| 'A')
+        .chain((0..100).map(|_| 'X'))
+        .chain((0..300).map(|_| 'Z'))
+        .collect();
+
+    let session1 = NormalizedConversationSession {
+        external_id: "sess-batch-001".to_string(),
+        title: Some("Session Batch 1".to_string()),
+        project_path: None,
+        started_at: Some(timestamp.to_string()),
+        updated_at: Some(timestamp.to_string()),
+        source_locator: Some("fixture://sess-batch-001".to_string()),
+        source_fingerprint: Some("fp-1".to_string()),
+        turns: vec![NormalizedConversationTurn {
+            external_id: "turn-batch-1".to_string(),
+            turn_index: 0,
+            user_text: "Explain quantum computing".to_string(),
+            title: None,
+            started_at: Some(timestamp.to_string()),
+            ended_at: Some(timestamp.to_string()),
+            model: None,
+            parts: vec![make_text_part(&long_answer)],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    let session2 = NormalizedConversationSession {
+        external_id: "sess-batch-002".to_string(),
+        title: Some("Session Batch 2".to_string()),
+        project_path: None,
+        started_at: Some(timestamp.to_string()),
+        updated_at: Some(timestamp.to_string()),
+        source_locator: Some("fixture://sess-batch-002".to_string()),
+        source_fingerprint: Some("fp-2".to_string()),
+        turns: vec![NormalizedConversationTurn {
+            external_id: "turn-batch-2".to_string(),
+            turn_index: 0,
+            user_text: "What is 2+2?".to_string(),
+            title: None,
+            started_at: Some(timestamp.to_string()),
+            ended_at: Some(timestamp.to_string()),
+            model: None,
+            parts: vec![make_text_part("4")],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    crate::backend::store::import_conversation_sessions_sqlx(
+        pool,
+        tenant_id,
+        &source,
+        &[session1, session2],
+        false,
+    )
+    .await
+    .expect("import sessions");
+
+    let s1_id: String = sqlx::query_scalar(
+        "SELECT id FROM conversation_sessions WHERE tenant_id = ?1 AND external_id = 'sess-batch-001'",
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+    .expect("load session 1 id");
+
+    let s2_id: String = sqlx::query_scalar(
+        "SELECT id FROM conversation_sessions WHERE tenant_id = ?1 AND external_id = 'sess-batch-002'",
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+    .expect("load session 2 id");
+
+    // 1. Test QaDigest on single session: answer should be truncated
+    let digest_outline = service
+        .get_conversation_outline(ConversationOutlineParams {
+            id: s1_id.clone(),
+            detail_level: ConversationOutlineDetailLevel::QaDigest,
+        })
+        .await
+        .expect("get qa digest outline");
+
+    match digest_outline {
+        ConversationOutline::Session(s) => {
+            assert_eq!(s.turns.rows.len(), 1);
+            let ans = s.turns.rows[0].answer().expect("has answer");
+            assert!(ans.contains("... [省略 100 字] ..."));
+            assert!(ans.starts_with(&"A".repeat(200)));
+            assert!(ans.ends_with(&"Z".repeat(300)));
+            assert_eq!(s.turns.rows[0].question(), "Explain quantum computing");
+        }
+        _ => panic!("expected session outline"),
+    }
+
+    // 2. Test get_conversation_outlines with single ID: returns Session outline directly
+    let single_batch = service
+        .get_conversation_outlines(&[s1_id.clone()], ConversationOutlineDetailLevel::Questions)
+        .await
+        .expect("single id outline");
+    assert!(matches!(single_batch, ConversationOutline::Session(_)));
+
+    // 3. Test get_conversation_outlines with multiple IDs: returns Batch outline
+    let multi_batch = service
+        .get_conversation_outlines(
+            &[s1_id.clone(), s2_id.clone()],
+            ConversationOutlineDetailLevel::Questions,
+        )
+        .await
+        .expect("multi id outline");
+    match multi_batch {
+        ConversationOutline::Batch { items, truncated } => {
+            assert_eq!(items.len(), 2);
+            assert!(!truncated);
+        }
+        _ => panic!("expected batch outline"),
+    }
+
+    // 4. Test budget guardrail degradation:
+    // Create sessions with very large answers totaling > 64KB
+    let huge_answer = "H".repeat(40 * 1024); // 40KB
+    let session_huge_1 = NormalizedConversationSession {
+        external_id: "sess-huge-001".to_string(),
+        title: Some("Session Huge 1".to_string()),
+        source_locator: Some("fixture://sess-huge-001".to_string()),
+        turns: vec![NormalizedConversationTurn {
+            external_id: "turn-huge-1".to_string(),
+            turn_index: 0,
+            user_text: "Q1".to_string(),
+            parts: vec![make_text_part(&huge_answer)],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let session_huge_2 = NormalizedConversationSession {
+        external_id: "sess-huge-002".to_string(),
+        title: Some("Session Huge 2".to_string()),
+        source_locator: Some("fixture://sess-huge-002".to_string()),
+        turns: vec![NormalizedConversationTurn {
+            external_id: "turn-huge-2".to_string(),
+            turn_index: 0,
+            user_text: "Q2".to_string(),
+            parts: vec![make_text_part(&huge_answer)],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    crate::backend::store::import_conversation_sessions_sqlx(
+        pool,
+        tenant_id,
+        &source,
+        &[session_huge_1, session_huge_2],
+        false,
+    )
+    .await
+    .expect("import huge sessions");
+
+    let h1_id: String = sqlx::query_scalar(
+        "SELECT id FROM conversation_sessions WHERE tenant_id = ?1 AND external_id = 'sess-huge-001'",
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+    .expect("load huge session 1 id");
+
+    let h2_id: String = sqlx::query_scalar(
+        "SELECT id FROM conversation_sessions WHERE tenant_id = ?1 AND external_id = 'sess-huge-002'",
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+    .expect("load huge session 2 id");
+
+    // With --qa, total JSON size of two 40KB sessions will exceed 64KB
+    let huge_batch = service
+        .get_conversation_outlines(&[h1_id, h2_id], ConversationOutlineDetailLevel::Qa)
+        .await
+        .expect("huge qa batch outline");
+
+    match huge_batch {
+        ConversationOutline::Batch { items, truncated } => {
+            assert_eq!(items.len(), 2);
+            assert!(
+                truncated,
+                "expected output budget degradation to set truncated: true"
+            );
+            if let ConversationOutline::Session(s) = &items[0] {
+                let ans = s.turns.rows[0].answer().unwrap();
+                assert!(
+                    ans.contains("... [省略 "),
+                    "answer should be degraded to qa_digest"
+                );
+            } else {
+                panic!("expected session outline");
+            }
+        }
+        _ => panic!("expected batch outline"),
+    }
 
     drop(service);
     std::fs::remove_dir_all(root).ok();
