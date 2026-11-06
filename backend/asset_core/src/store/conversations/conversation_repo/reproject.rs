@@ -1,4 +1,7 @@
 use super::*;
+use crate::backend::store::conversations::snapshot::{
+    prepare_session_snapshot, replace_session_snapshot_sqlx_tx,
+};
 
 pub async fn reproject_conversation_session_sqlx(
     pool: &SqlitePool,
@@ -14,26 +17,26 @@ pub async fn reproject_conversation_session_sqlx(
     let mut tx = pool.begin().await.map_err(StoreError::external)?;
 
     let session = conversation_session_from_normalized(source, normalized, &now);
+    let prepared = prepare_session_snapshot(
+        ConversationRecordKind::Session,
+        &session.id,
+        &session.adapter_id,
+        session.started_at.as_deref(),
+        session.updated_at.as_deref(),
+        &normalized.turns,
+        &now,
+    );
 
     upsert_conversation_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
+    replace_session_snapshot_sqlx_tx(
+        &mut tx,
+        tenant_id,
+        ConversationRecordKind::Session,
+        &session,
+        &prepared,
+    )
+    .await?;
 
-    for turn in &normalized.turns {
-        if turn.user_text.trim().is_empty() {
-            continue;
-        }
-        let (stored_turn, triad_parts) = prepare_turn_for_import_sqlx_tx(
-            &mut tx,
-            tenant_id,
-            &session.id,
-            &session.adapter_id,
-            turn,
-            &now,
-        )
-        .await?;
-        upsert_conversation_turn_sqlx_tx(&mut tx, tenant_id, &stored_turn).await?;
-        replace_conversation_parts_sqlx_tx(&mut tx, tenant_id, &stored_turn.id, &triad_parts)
-            .await?;
-    }
     let last_cwd = derive_session_last_cwd(&normalized.turns);
     update_conversation_session_last_cwd_sqlx_tx(
         &mut tx,
@@ -42,8 +45,6 @@ pub async fn reproject_conversation_session_sqlx(
         last_cwd.as_deref(),
     )
     .await?;
-
-    prune_conversation_turns_sqlx_tx(&mut tx, tenant_id, &session.id, normalized).await?;
 
     upsert_single_session_observation_clean_sqlx_tx(
         &mut tx,

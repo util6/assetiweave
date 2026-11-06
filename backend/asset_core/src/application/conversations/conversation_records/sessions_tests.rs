@@ -72,7 +72,7 @@ async fn test_conversation_session_outline_folding_and_universal_resolver() {
         source_fingerprint: Some("fingerprint-1".to_string()),
         turns: vec![
             NormalizedConversationTurn {
-                external_id: "turn-ext-01".to_string(),
+                external_id: Some("turn-ext-01".to_string()),
                 turn_index: 0,
                 user_text: "Please run diagnostics and show status".to_string(),
                 title: None,
@@ -140,7 +140,7 @@ async fn test_conversation_session_outline_folding_and_universal_resolver() {
                 ..Default::default()
             },
             NormalizedConversationTurn {
-                external_id: "turn-ext-02".to_string(),
+                external_id: Some("turn-ext-02".to_string()),
                 turn_index: 1,
                 user_text: "Now clean up".to_string(),
                 title: None,
@@ -286,7 +286,7 @@ async fn test_conversation_session_get_roles_filter_and_short_id_block_get() {
         source_locator: Some("fixture://session-ext-002".to_string()),
         source_fingerprint: Some("fingerprint-2".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "turn-ext-01".to_string(),
+            external_id: Some("turn-ext-01".to_string()),
             turn_index: 0,
             user_text: "What is 2 + 2?".to_string(),
             title: None,
@@ -449,7 +449,7 @@ fn read_path_turn(
     user_text: &str,
 ) -> NormalizedConversationTurn {
     NormalizedConversationTurn {
-        external_id: external_id.to_string(),
+        external_id: Some(external_id.to_string()),
         turn_index,
         user_text: user_text.to_string(),
         title: None,

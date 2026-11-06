@@ -34,6 +34,25 @@ pub fn stable_id(prefix: &str, parts: &[&str]) -> String {
     format!("{prefix}-{hash}")
 }
 
+/// Derives a turn ID purely from its position inside the session snapshot.
+///
+/// Identity 只表达"某会话的第几轮"，发生时刻由 `started_at` 独立承载，
+/// 因此宿主回滚重聊导致轮次增删时主键不会漂移到别的语义上。
+pub fn derive_turn_id(prefix: &str, session_id: &str, turn_index: i64) -> String {
+    let index_str = turn_index.to_string();
+    stable_id(prefix, &[session_id, &index_str])
+}
+
+/// Derives the canonical conversation-turn ID from session_id and positional index.
+pub fn derive_conversation_turn_id(session_id: &str, turn_index: i64) -> String {
+    derive_turn_id("conversation-turn", session_id, turn_index)
+}
+
+/// Derives the canonical web-record-turn ID from session_id and positional index.
+pub fn derive_web_record_turn_id(session_id: &str, turn_index: i64) -> String {
+    derive_turn_id("web-record-turn", session_id, turn_index)
+}
+
 /// Derives the canonical conversation-part ID from turn_id and part_index.
 pub fn derive_conversation_part_id(turn_id: &str, part_index: i64) -> String {
     derive_part_id("conversation-part", turn_id, part_index)

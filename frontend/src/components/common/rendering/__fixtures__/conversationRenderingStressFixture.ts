@@ -167,12 +167,10 @@ function createTurn(index: number): ConversationTurn {
           ).join("\n\n");
 
   return {
-    external_id: `stress-external-turn-${String(number).padStart(2, "0")}`,
-    fingerprint: `stress-fingerprint-${String(number).padStart(2, "0")}`,
     id: `stress-turn-${String(number).padStart(2, "0")}`,
     imported_at: FIXTURE_TIMESTAMP,
-    missing: false,
     prompt: userText,
+    started_at: FIXTURE_TIMESTAMP,
     session_id: "rendering-stress-session",
     turn_index: index,
   };

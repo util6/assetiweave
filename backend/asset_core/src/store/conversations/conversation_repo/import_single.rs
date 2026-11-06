@@ -1,4 +1,7 @@
 use super::*;
+use crate::backend::store::conversations::snapshot::{
+    prepare_session_snapshot, replace_session_snapshot_sqlx_tx,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn import_single_session_sqlx_tx(
@@ -13,22 +16,15 @@ pub(super) async fn import_single_session_sqlx_tx(
     card_contract_version: Option<u32>,
     payload_policy_version: u32,
     projection_version: Option<u32>,
-    // 载荷解析策略版本发生上移时，源文件指纹不会变化，仅靠 unchanged 判定会永久跳过存量会话。
+    // 载荷解析策略版本发生上移时，源文件指纹不会变化，仅靠会话级 unchanged 判定会永久跳过存量会话。
     // 该标记只在本轮有效：源级版本尚未与当前策略版本对齐时为 true，强制重读一次。
     force_reparse: bool,
 ) -> StoreResult<Option<String>> {
     if is_droppable_internal_session(normalized, session) {
         return Ok(None);
     }
-    let change_kind =
-        if conversation_session_exists_sqlx_tx(&mut *tx, tenant_id, &session.id).await? {
-            "updated"
-        } else {
-            "new"
-        };
     if !force_reparse
-        && conversation_session_is_unchanged_sqlx_tx(&mut *tx, tenant_id, session, normalized)
-            .await?
+        && conversation_session_is_unchanged_sqlx_tx(&mut *tx, tenant_id, session).await?
     {
         upsert_single_session_observation_clean_sqlx_tx(
             &mut *tx,
@@ -46,24 +42,27 @@ pub(super) async fn import_single_session_sqlx_tx(
         .await?;
         return Ok(None);
     }
+
+    let prepared = prepare_session_snapshot(
+        ConversationRecordKind::Session,
+        &session.id,
+        &session.adapter_id,
+        session.started_at.as_deref(),
+        session.updated_at.as_deref(),
+        &normalized.turns,
+        now,
+    );
+
     upsert_conversation_session_sqlx_tx(&mut *tx, tenant_id, session).await?;
-    for turn in &normalized.turns {
-        if turn.user_text.trim().is_empty() {
-            continue;
-        }
-        let (stored_turn, triad_parts) = prepare_turn_for_import_sqlx_tx(
-            &mut *tx,
-            tenant_id,
-            &session.id,
-            &session.adapter_id,
-            turn,
-            now,
-        )
-        .await?;
-        upsert_conversation_turn_sqlx_tx(&mut *tx, tenant_id, &stored_turn).await?;
-        replace_conversation_parts_sqlx_tx(&mut *tx, tenant_id, &stored_turn.id, &triad_parts)
-            .await?;
-    }
+    replace_session_snapshot_sqlx_tx(
+        &mut *tx,
+        tenant_id,
+        ConversationRecordKind::Session,
+        session,
+        &prepared,
+    )
+    .await?;
+
     let last_cwd = derive_session_last_cwd(&normalized.turns);
     update_conversation_session_last_cwd_sqlx_tx(
         &mut *tx,
@@ -72,7 +71,6 @@ pub(super) async fn import_single_session_sqlx_tx(
         last_cwd.as_deref(),
     )
     .await?;
-    prune_conversation_turns_sqlx_tx(&mut *tx, tenant_id, &session.id, normalized).await?;
 
     upsert_single_session_observation_clean_sqlx_tx(
         &mut *tx,

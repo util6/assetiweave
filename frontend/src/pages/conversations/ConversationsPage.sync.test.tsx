@@ -712,7 +712,6 @@ describe("ConversationsPage sync scope", () => {
     const opencodeSession: ConversationSessionListItem = {
       ...conversationSession,
       adapter_id: "opencode",
-      external_id: "opencode-external-target",
       id: "opencode-session-target",
       project_path: "/Users/util6/code-space/other-project",
       source_id: "opencode-live",
@@ -1194,7 +1193,7 @@ const conversationAdapter: ConversationAdapter = {
 const conversationSession: ConversationSessionListItem = {
   adapter_id: "codex",
   created_at: "2026-06-15T00:00:00Z",
-  external_id: "external-export-target",
+  external_id: "session-export-target",
   id: "session-export-target",
   imported_at: "2026-06-15T00:00:00Z",
   missing: false,
@@ -1248,12 +1247,10 @@ const conversationSessionDetail: ConversationSessionDetail = {
       },
       turns: [
         {
-          external_id: "turn-export-target-external",
-          fingerprint: "turn-export-target",
           id: "turn-export-target",
           imported_at: "2026-06-15T00:00:00Z",
-          missing: false,
           session_id: "session-export-target",
+          started_at: "2026-06-15T00:00:00Z",
           turn_index: 0,
           prompt: "Can this be exported?",
         },
@@ -1327,8 +1324,6 @@ const secondConversationSessionDetail: ConversationSessionDetail = {
     },
     turns: question.turns.map((turn) => ({
       ...turn,
-      external_id: "turn-second-target-external",
-      fingerprint: "turn-second-target",
       id: "turn-second-target",
       session_id: "session-second-target",
       prompt: "What is the second session?",

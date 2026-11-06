@@ -357,7 +357,7 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
             source_locator: Some(format!("fixture://{external_id}")),
             source_fingerprint: Some(format!("fingerprint-{external_id}")),
             turns: vec![NormalizedConversationTurn {
-                external_id: format!("turn-{external_id}"),
+                external_id: Some(format!("turn-{external_id}")),
                 turn_index: 0,
                 user_text: title.to_string(),
                 title: None,
@@ -702,10 +702,9 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         sqlx::query(
             r#"
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, prompt,
-                fingerprint, missing, imported_at
-            ) VALUES ('default', 'maintenance-orphan-turn', 'maintenance-missing-session', 'ext-orphan', 0,
-                'orphan text', 'fp-orphan', 0, '2026-08-25T00:00:00Z')
+                tenant_id, id, session_id, turn_index, prompt, started_at, imported_at
+            ) VALUES ('default', 'maintenance-orphan-turn', 'maintenance-missing-session', 0,
+                'orphan text', '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z')
             "#,
         )
         .execute(&mut *connection)
@@ -1555,7 +1554,7 @@ async fn upsert_conversation_export_fixture(
         source_locator: None,
         source_fingerprint: None,
         turns: vec![NormalizedConversationTurn {
-            external_id: "turn-1".to_string(),
+            external_id: Some("turn-1".to_string()),
             turn_index: 0,
             user_text: "Export this".to_string(),
             title: None,
@@ -5818,7 +5817,7 @@ async fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_
             source_locator: None,
             source_fingerprint: Some(fingerprint.to_string()),
             turns: vec![NormalizedConversationTurn {
-                external_id: format!("{external_id}-turn"),
+                external_id: Some(format!("{external_id}-turn")),
                 turn_index: 0,
                 user_text: "How should we handle recall?".to_string(),
                 title: None,

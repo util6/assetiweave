@@ -116,45 +116,35 @@ pub async fn import_conversation_sessions_with_control_sqlx(
                 on_progress(completed_session_count, sessions.len());
                 continue;
             }
-            let change_kind =
-                if conversation_session_exists_sqlx_tx(&mut tx, tenant_id, &session.id).await? {
-                    "updated"
-                } else {
-                    "new"
-                };
-            if conversation_session_is_unchanged_sqlx_tx(&mut tx, tenant_id, &session, normalized)
-                .await?
-            {
+            if conversation_session_is_unchanged_sqlx_tx(&mut tx, tenant_id, &session).await? {
                 skipped_session_count += 1;
                 completed_session_count += 1;
                 on_progress(completed_session_count, sessions.len());
                 continue;
             }
+            warning_count += normalized
+                .turns
+                .iter()
+                .filter(|turn| turn.user_text.trim().is_empty())
+                .count();
+            let prepared = prepare_session_snapshot(
+                ConversationRecordKind::Session,
+                &session.id,
+                &session.adapter_id,
+                session.started_at.as_deref(),
+                session.updated_at.as_deref(),
+                &normalized.turns,
+                &now,
+            );
             upsert_conversation_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
-            for turn in &normalized.turns {
-                ensure_sync_import_active(cancellation)?;
-                if turn.user_text.trim().is_empty() {
-                    warning_count += 1;
-                    continue;
-                }
-                let (stored_turn, triad_parts) = prepare_turn_for_import_sqlx_tx(
-                    &mut tx,
-                    tenant_id,
-                    &session.id,
-                    &session.adapter_id,
-                    turn,
-                    &now,
-                )
-                .await?;
-                upsert_conversation_turn_sqlx_tx(&mut tx, tenant_id, &stored_turn).await?;
-                replace_conversation_parts_sqlx_tx(
-                    &mut tx,
-                    tenant_id,
-                    &stored_turn.id,
-                    &triad_parts,
-                )
-                .await?;
-            }
+            replace_session_snapshot_sqlx_tx(
+                &mut tx,
+                tenant_id,
+                ConversationRecordKind::Session,
+                &session,
+                &prepared,
+            )
+            .await?;
             let last_cwd = derive_session_last_cwd(&normalized.turns);
             update_conversation_session_last_cwd_sqlx_tx(
                 &mut tx,
@@ -163,7 +153,6 @@ pub async fn import_conversation_sessions_with_control_sqlx(
                 last_cwd.as_deref(),
             )
             .await?;
-            prune_conversation_turns_sqlx_tx(&mut tx, tenant_id, &session.id, normalized).await?;
 
             changed_session_count += 1;
             batch_changed_session_ids.push(session.id);
@@ -248,3 +237,7 @@ pub async fn import_conversation_sessions_with_control_sqlx(
 }
 
 pub use super::import_advanced::*;
+
+use crate::backend::store::conversations::snapshot::{
+    prepare_session_snapshot, replace_session_snapshot_sqlx_tx,
+};

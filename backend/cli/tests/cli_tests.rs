@@ -1292,7 +1292,7 @@ fn test_conversation_outline_exposes_subagent_semantics() {
             title: Some("子代理大纲".to_string()),
             turns: vec![
                 asset_core::domain::NormalizedConversationTurn {
-                    external_id: "turn-ext-main".to_string(),
+                    external_id: Some("turn-ext-main".to_string()),
                     turn_index: 0,
                     user_text: "Plan the refactor".to_string(),
                     turn_kind: Some("user".to_string()),
@@ -1313,7 +1313,7 @@ fn test_conversation_outline_exposes_subagent_semantics() {
                     ..Default::default()
                 },
                 asset_core::domain::NormalizedConversationTurn {
-                    external_id: "turn-ext-reviewer".to_string(),
+                    external_id: Some("turn-ext-reviewer".to_string()),
                     turn_index: 1,
                     user_text: "Review the diff".to_string(),
                     turn_kind: Some("subagent".to_string()),
@@ -1911,7 +1911,7 @@ fn test_conversation_search_command_keyword_vfox() {
             source_locator: None,
             source_fingerprint: None,
             turns: vec![asset_core::domain::NormalizedConversationTurn {
-                external_id: "turn-vfox".to_string(),
+                external_id: Some("turn-vfox".to_string()),
                 turn_index: 0,
                 user_text: "请帮我检查并准备 Node.js 运行环境".to_string(),
                 title: None,
@@ -2071,7 +2071,7 @@ fn test_conversation_list_unprocessed_flag_and_watermark_view_model() {
 
         let make_turn =
             |idx: i64, q: &str, a: &str| asset_core::domain::NormalizedConversationTurn {
-                external_id: format!("turn-{idx}"),
+                external_id: Some(format!("turn-{idx}")),
                 turn_index: idx,
                 user_text: q.to_string(),
                 parts: vec![asset_core::domain::NormalizedConversationPart {
@@ -2278,7 +2278,7 @@ fn test_conversation_batch_outline_and_qa_digest_cli() {
             external_id: "batch-s1-ext".to_string(),
             title: Some("Batch S1".to_string()),
             turns: vec![asset_core::domain::NormalizedConversationTurn {
-                external_id: "turn-s1-1".to_string(),
+                external_id: Some("turn-s1-1".to_string()),
                 turn_index: 0,
                 user_text: "What is machine learning?".to_string(),
                 parts: vec![asset_core::domain::NormalizedConversationPart {
@@ -2304,7 +2304,7 @@ fn test_conversation_batch_outline_and_qa_digest_cli() {
             external_id: "batch-s2-ext".to_string(),
             title: Some("Batch S2".to_string()),
             turns: vec![asset_core::domain::NormalizedConversationTurn {
-                external_id: "turn-s2-1".to_string(),
+                external_id: Some("turn-s2-1".to_string()),
                 turn_index: 0,
                 user_text: "Hello".to_string(),
                 parts: vec![asset_core::domain::NormalizedConversationPart {

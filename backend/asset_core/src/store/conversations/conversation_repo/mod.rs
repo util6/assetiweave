@@ -9,8 +9,8 @@ use crate::backend::domain::conversations::{
     ConversationSearchPage, ConversationSessionDetail, ConversationSessionListItem,
 };
 use crate::backend::domain::{
-    conversation_turn_fingerprint, ConversationAdapter, ConversationAdapterCatalogRelease,
-    ConversationAdapterKind, ConversationAdapterPackage, ConversationAdapterPackageOrigin,
+    ConversationAdapter, ConversationAdapterCatalogRelease, ConversationAdapterKind,
+    ConversationAdapterPackage, ConversationAdapterPackageOrigin,
     ConversationAdapterPackageVersion, ConversationAdapterRuntimeGateStatus,
     ConversationAdapterTrustState, ConversationCardKindDefinition, ConversationGroupingOrigin,
     ConversationPart, ConversationQuestion, ConversationQuestionTurn, ConversationSession,
@@ -33,7 +33,6 @@ pub mod common;
 pub mod content_details;
 pub mod import;
 pub mod import_advanced;
-pub mod import_parts;
 pub mod import_prune;
 pub mod import_records;
 pub mod import_single;
@@ -63,7 +62,6 @@ pub use common::*;
 pub use content_details::*;
 pub use import::*;
 pub use import_advanced::*;
-pub use import_parts::*;
 pub use import_prune::*;
 pub use import_records::*;
 pub use import_single::*;

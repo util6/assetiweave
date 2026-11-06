@@ -57,12 +57,16 @@ async fn load_session_adapter_card_kinds_sqlx_tx(
         "#,
         sessions = record_kind.tables().sessions,
     );
-    let row = sqlx::query(AssertSqlSafe(query))
+    let Some(row) = sqlx::query(AssertSqlSafe(query))
         .bind(tenant_id)
         .bind(session_id)
-        .fetch_one(&mut **tx)
+        .fetch_optional(&mut **tx)
         .await
-        .map_err(StoreError::external)?;
+        .map_err(StoreError::external)?
+    else {
+        // 会话行缺失的孤儿轮次没有适配器上下文可投影，按"无卡片契约"降级而不是让整轮重建中断。
+        return Ok((String::new(), Vec::new()));
+    };
     let adapter_id: String = row.try_get("adapter_id").map_err(StoreError::external)?;
     let card_kinds_json: String = row
         .try_get("card_kinds_json")

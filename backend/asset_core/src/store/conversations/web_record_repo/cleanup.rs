@@ -1,4 +1,7 @@
 use super::*;
+use crate::backend::store::conversations::conversation_repo::part_index::{
+    delete_session_part_index_sqlx_tx, delete_source_part_index_sqlx_tx,
+};
 
 pub async fn delete_web_record_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,

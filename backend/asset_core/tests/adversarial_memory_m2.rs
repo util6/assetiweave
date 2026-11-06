@@ -483,7 +483,7 @@ async fn test_adv_syntax_retry_exhaustion_in_step2_aborts_cleanly() {
 
 fn make_turn(idx: u32, q: &str, a: &str, ts: &str) -> NormalizedConversationTurn {
     NormalizedConversationTurn {
-        external_id: format!("turn-{idx}"),
+        external_id: Some(format!("turn-{idx}")),
         turn_index: idx as i64,
         user_text: q.to_string(),
         title: None,

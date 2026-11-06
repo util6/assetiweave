@@ -19,7 +19,7 @@ fn make_text_turn(ext_id: &str, user_text: &str, bot_text: &str) -> NormalizedCo
     let now = chrono::Utc::now();
     let ts = (now - chrono::Duration::hours(2)).to_rfc3339();
     NormalizedConversationTurn {
-        external_id: ext_id.to_string(),
+        external_id: Some(ext_id.to_string()),
         turn_index: 0,
         user_text: user_text.to_string(),
         title: None,

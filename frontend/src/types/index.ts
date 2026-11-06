@@ -415,20 +415,19 @@ export interface ConversationSessionListItem extends ConversationSession {
 export interface ConversationTurn {
   id: string;
   session_id: string;
-  external_id: string;
+  /** 会话内连续序号，轮次身份由 session_id + turn_index 唯一决定。 */
   turn_index: number;
   prompt: string;
   process?: string | null;
   response?: string | null;
   title?: string | null;
-  started_at?: string | null;
+  /** 该轮交互真实发生时刻，落库强制非空。 */
+  started_at: string;
   ended_at?: string | null;
   model?: string | null;
   turn_kind?: "user" | "subagent" | "continuation" | string | null;
   agent_role?: string | null;
   parent_turn_id?: string | null;
-  fingerprint: string;
-  missing: boolean;
   imported_at: string;
 }
 

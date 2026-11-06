@@ -276,7 +276,7 @@ fn build_session_outline(
                     turn_kind: turn.turn_kind.clone(),
                     agent_role: turn.agent_role.clone(),
                     parent_turn_id: short_parent_turn_id(turn.parent_turn_id.as_deref()),
-                    started_at: turn.started_at.clone(),
+                    started_at: Some(turn.started_at.clone()),
                 },
             ));
         }
@@ -360,7 +360,7 @@ fn build_turn_outline(
         turn_kind: turn.turn_kind.clone(),
         agent_role: turn.agent_role.clone(),
         parent_turn_id: short_parent_turn_id(turn.parent_turn_id.as_deref()),
-        started_at: turn.started_at.clone(),
+        started_at: Some(turn.started_at.clone()),
         cards: MatrixView {
             columns: vec![
                 "order".into(),

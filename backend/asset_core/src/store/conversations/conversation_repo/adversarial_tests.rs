@@ -120,7 +120,7 @@ async fn bug1_web_record_answer_loses_markdown_renderer() {
         external_id: "web-1".to_string(),
         title: Some("Web Markdown Test".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "t-1".to_string(),
+            external_id: Some("t-1".to_string()),
             turn_index: 0,
             user_text: "Show rust code".to_string(),
             title: None,
@@ -209,7 +209,7 @@ async fn bug2_prefix_resolution_cross_entity_contamination() {
         external_id: "s-1".to_string(),
         title: Some("Prefix Test".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "t-1".to_string(),
+            external_id: Some("t-1".to_string()),
             turn_index: 0,
             user_text: "hello".to_string(),
             title: None,
@@ -290,9 +290,8 @@ async fn bug3_id_fragment_search_off_by_one_upper_bound() {
     sqlx::query(
         r#"
         INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, prompt,
-            fingerprint, missing, imported_at
-        ) VALUES ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000001', 'conversation-session-0000000000000000000000000000000000000000000000000000000000000001', 't-1', 0, 'hi', 'fp', 0, '2026-10-24T00:00:00Z')
+            tenant_id, id, session_id, turn_index, prompt, started_at, imported_at
+        ) VALUES ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000001', 'conversation-session-0000000000000000000000000000000000000000000000000000000000000001', 0, 'hi', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')
         "#,
     )
     .execute(&pool)
@@ -351,7 +350,7 @@ async fn bug4_outline_fails_on_10_or_12_char_part_prefix() {
         external_id: "s-outline".to_string(),
         title: Some("Outline 12-hex".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "t-1".to_string(),
+            external_id: Some("t-1".to_string()),
             turn_index: 0,
             user_text: "question".to_string(),
             title: None,
@@ -416,7 +415,7 @@ async fn bug5_command_part_without_command_flips_text_to_command() {
         external_id: "s-cmd".to_string(),
         title: Some("Cmd Roundtrip".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "t-1".to_string(),
+            external_id: Some("t-1".to_string()),
             turn_index: 0,
             user_text: "run".to_string(),
             title: None,
@@ -471,7 +470,7 @@ async fn bug6_attrs_json_signal_tool_name_file_path_wiped_on_import() {
         external_id: "s-attrs".to_string(),
         title: Some("Attrs Test".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "t-1".to_string(),
+            external_id: Some("t-1".to_string()),
             turn_index: 0,
             user_text: "edit file".to_string(),
             title: None,
@@ -547,30 +546,52 @@ async fn bug7_ambiguous_short_id_swallowed_into_not_found_in_block_detail() {
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, prompt,
-            fingerprint, missing, imported_at
-        ) VALUES
-        ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000010', 'conversation-session-0000000000000000000000000000000000000000000000000000000000000002', 't-1', 0, 'q1', 'fp1', 0, '2026-10-24T00:00:00Z'),
-        ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000011', 'conversation-session-0000000000000000000000000000000000000000000000000000000000000002', 't-2', 1, 'q2', 'fp2', 0, '2026-10-24T00:00:00Z')
-        "#,
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content)
-        VALUES
-        ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000010', 0, x'deadbeef11111111', 'text', 'part A'),
-        ('default', 'conversation-turn-0000000000000000000000000000000000000000000000000000000000000011', 0, x'deadbeef22222222', 'text', 'part B')
-        "#,
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    // 轮次身份必须已经符合位置公式，否则启动期修复钩子会把它们重排成合法主键。
+    let session_id =
+        "conversation-session-0000000000000000000000000000000000000000000000000000000000000002";
+    let first_turn_id = crate::backend::domain::derive_conversation_turn_id(session_id, 0);
+    let second_turn_id = crate::backend::domain::derive_conversation_turn_id(session_id, 1);
+    for (turn_id, turn_index, prompt) in [(&first_turn_id, 0, "q1"), (&second_turn_id, 1, "q2")] {
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_turns (
+                tenant_id, id, session_id, turn_index, prompt, started_at, imported_at
+            ) VALUES ('default', ?1, ?2, ?3, ?4, '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')
+            "#,
+        )
+        .bind(turn_id)
+        .bind(session_id)
+        .bind(turn_index)
+        .bind(prompt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    for (turn_id, id_key, content) in [
+        (
+            &first_turn_id,
+            [0xde, 0xad, 0xbe, 0xef, 0x11, 0x11, 0x11, 0x11],
+            "part A",
+        ),
+        (
+            &second_turn_id,
+            [0xde, 0xad, 0xbe, 0xef, 0x22, 0x22, 0x22, 0x22],
+            "part B",
+        ),
+    ] {
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content)
+            VALUES ('default', ?1, 0, ?2, 'text', ?3)
+            "#,
+        )
+        .bind(turn_id)
+        .bind(id_key.as_slice())
+        .bind(content)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
 
     let store_res = load_conversation_block_detail_sqlx(
         &pool,
@@ -615,7 +636,7 @@ async fn r2_bug1_migration_0005_poisons_normal_command_parts() {
         external_id: "s-cmd-normal".to_string(),
         title: Some("Normal Command".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "t-1".to_string(),
+            external_id: Some("t-1".to_string()),
             turn_index: 0,
             user_text: "run test".to_string(),
             title: None,
@@ -678,7 +699,7 @@ async fn r2_bug2_cross_entity_contamination_still_in_any_id_and_outline_turn() {
         external_id: "s-cross".to_string(),
         title: Some("Cross Entity R2".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "t-1".to_string(),
+            external_id: Some("t-1".to_string()),
             turn_index: 0,
             user_text: "hello".to_string(),
             title: None,
@@ -753,7 +774,7 @@ async fn r2_bug3_web_part_40_char_prefix_short_circuits_unresolved() {
         external_id: "w-prefix".to_string(),
         title: Some("Web Prefix".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "t-1".to_string(),
+            external_id: Some("t-1".to_string()),
             turn_index: 0,
             user_text: "hi".to_string(),
             title: None,
@@ -811,7 +832,7 @@ async fn r2_bug4_session_detail_and_id_search_drop_last_cwd() {
         external_id: "s-cwd".to_string(),
         title: Some("Cwd Check".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "t-1".to_string(),
+            external_id: Some("t-1".to_string()),
             turn_index: 0,
             user_text: "pwd".to_string(),
             title: None,
@@ -917,7 +938,7 @@ async fn adversarial_stress_test_subagent_sqlite_roundtrip_persistence_and_indic
 
     // Turn 0: User turn 1
     turns.push(NormalizedConversationTurn {
-        external_id: "ext-t00".to_string(),
+        external_id: Some("ext-t00".to_string()),
         turn_index: 0,
         user_text: "Please analyze the concurrency bottlenecks in our database layer.".to_string(),
         title: Some("Concurrency Audit".to_string()),
@@ -965,7 +986,7 @@ async fn adversarial_stress_test_subagent_sqlite_roundtrip_persistence_and_indic
             format!("ext-t{:02}", turn_num - 1)
         };
         turns.push(NormalizedConversationTurn {
-            external_id: format!("ext-t{turn_num:02}"),
+            external_id: Some(format!("ext-t{turn_num:02}")),
             turn_index: turn_num as i64,
             user_text: prompt.to_string(),
             title: None,
@@ -1023,7 +1044,7 @@ async fn adversarial_stress_test_subagent_sqlite_roundtrip_persistence_and_indic
 
     // Turns 13 & 14: Main agent continuation turns
     turns.push(NormalizedConversationTurn {
-        external_id: "ext-t13".to_string(),
+        external_id: Some("ext-t13".to_string()),
         turn_index: 13,
         user_text: "Synthesizing specialist findings: Concurrency benchmarks look solid."
             .to_string(),
@@ -1050,7 +1071,7 @@ async fn adversarial_stress_test_subagent_sqlite_roundtrip_persistence_and_indic
     });
 
     turns.push(NormalizedConversationTurn {
-        external_id: "ext-t14".to_string(),
+        external_id: Some("ext-t14".to_string()),
         turn_index: 14,
         user_text: "Final wrap-up for question 1: Ready for caching implementation.".to_string(),
         title: None,
@@ -1077,7 +1098,7 @@ async fn adversarial_stress_test_subagent_sqlite_roundtrip_persistence_and_indic
 
     // Turn 15: Distinct user question 2
     turns.push(NormalizedConversationTurn {
-        external_id: "ext-t15".to_string(),
+        external_id: Some("ext-t15".to_string()),
         turn_index: 15,
         user_text: "Now implement the cache layer for query results.".to_string(),
         title: Some("Cache Layer Implementation".to_string()),
@@ -1105,7 +1126,7 @@ async fn adversarial_stress_test_subagent_sqlite_roundtrip_persistence_and_indic
     // Turns 16..=18: 3 subagents under Question 2
     for idx in 16..=18 {
         turns.push(NormalizedConversationTurn {
-            external_id: format!("ext-t{idx:02}"),
+            external_id: Some(format!("ext-t{idx:02}")),
             turn_index: idx as i64,
             user_text: format!("Cache subagent {idx}: Build cache layer partition {idx}."),
             title: None,
@@ -1133,7 +1154,7 @@ async fn adversarial_stress_test_subagent_sqlite_roundtrip_persistence_and_indic
 
     // Turn 19: Distinct user question 3
     turns.push(NormalizedConversationTurn {
-        external_id: "ext-t19".to_string(),
+        external_id: Some("ext-t19".to_string()),
         turn_index: 19,
         user_text: "Are all performance targets met?".to_string(),
         title: None,
@@ -1201,21 +1222,24 @@ async fn adversarial_stress_test_subagent_sqlite_roundtrip_persistence_and_indic
     );
 
     // Verify parent_turn_id resolution in SQLite
-    let subagent_rows: Vec<(String, Option<String>, Option<String>, Option<String>)> =
+    let subagent_rows: Vec<(i64, Option<String>, Option<String>, Option<String>)> =
         sqlx::query_as(
-            "SELECT external_id, json_extract(process, '$.turn_kind'), json_extract(process, '$.agent_role'), json_extract(process, '$.parent_turn_id') FROM conversation_turns WHERE json_extract(process, '$.turn_kind') = 'subagent' ORDER BY turn_index ASC",
+            "SELECT turn_index, json_extract(process, '$.turn_kind'), json_extract(process, '$.agent_role'), json_extract(process, '$.parent_turn_id') FROM conversation_turns WHERE json_extract(process, '$.turn_kind') = 'subagent' ORDER BY turn_index ASC",
         )
         .fetch_all(&pool)
         .await
         .unwrap();
 
     assert_eq!(subagent_rows.len(), 15);
-    for (ext_id, kind, role, parent_id) in &subagent_rows {
+    for (turn_index, kind, role, parent_id) in &subagent_rows {
         assert_eq!(kind.as_deref(), Some("subagent"));
-        assert!(role.is_some(), "agent_role must be persisted for {ext_id}");
+        assert!(
+            role.is_some(),
+            "agent_role must be persisted for turn {turn_index}"
+        );
         assert!(
             parent_id.is_some(),
-            "parent_turn_id must be resolved for {ext_id}"
+            "parent_turn_id must be resolved for turn {turn_index}"
         );
     }
 

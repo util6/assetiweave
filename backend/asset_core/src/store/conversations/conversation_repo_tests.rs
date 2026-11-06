@@ -1025,7 +1025,7 @@ async fn sqlx_import_skips_unchanged_fingerprinted_sessions() {
 }
 
 #[tokio::test]
-async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
+async fn sqlx_import_gates_snapshot_replacement_on_session_version() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-conversation-import-refresh-sqlx-{}.sqlite",
         Uuid::new_v4()
@@ -1044,7 +1044,16 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
     refreshed_session.source_fingerprint = Some("same-source".to_string());
     refreshed_session.turns[0].parts[0].text = Some("refreshed answer".to_string());
 
-    let (result, imported_at, refreshed_response, part_ids_before, part_ids_after) = async {
+    let (
+        skipped_result,
+        skipped_imported_at,
+        skipped_response,
+        refreshed_result,
+        refreshed_imported_at,
+        refreshed_response,
+        part_ids_before,
+        part_ids_after,
+    ) = async {
         upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
         upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
         import_conversation_sessions_sqlx(
@@ -1084,15 +1093,43 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
         .execute(database.pool())
         .await
         .map_err(StoreError::external)?;
-        let result = import_conversation_sessions_sqlx(
+
+        // 1. 会话级水位未动：即使内容变了也直接短路，不做逐轮对账。
+        let skipped_result = import_conversation_sessions_sqlx(
             database.pool(),
             TEST_TENANT_ID,
             &source,
-            &[refreshed_session],
+            &[refreshed_session.clone()],
             false,
         )
         .await?;
-        let imported_at = sqlx::query_scalar::<_, String>(
+        let skipped_imported_at = sqlx::query_scalar::<_, String>(
+            "SELECT imported_at FROM conversation_sessions WHERE source_id = ?1",
+        )
+        .bind(&source.id)
+        .fetch_one(database.pool())
+        .await
+        .map_err(StoreError::external)?;
+        let skipped_response = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT t.response FROM conversation_turns t JOIN conversation_sessions s ON s.id = t.session_id WHERE s.source_id = ?1 ORDER BY t.turn_index ASC LIMIT 1",
+        )
+        .bind(&source.id)
+        .fetch_one(database.pool())
+        .await
+        .map_err(StoreError::external)?;
+
+        // 2. 源指纹变化：整包替换，内容立即刷新且轮次身份保持不变。
+        let mut bumped = refreshed_session;
+        bumped.source_fingerprint = Some("changed-source".to_string());
+        let refreshed_result = import_conversation_sessions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source,
+            &[bumped],
+            false,
+        )
+        .await?;
+        let refreshed_imported_at = sqlx::query_scalar::<_, String>(
             "SELECT imported_at FROM conversation_sessions WHERE source_id = ?1",
         )
         .bind(&source.id)
@@ -1100,14 +1137,7 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
         .await
         .map_err(StoreError::external)?;
         let refreshed_response = sqlx::query_scalar::<_, Option<String>>(
-            r#"
-                    SELECT t.response
-                    FROM conversation_turns t
-                    JOIN conversation_sessions s ON s.id = t.session_id
-                    WHERE s.source_id = ?1
-                    ORDER BY t.turn_index ASC
-                    LIMIT 1
-                    "#,
+            "SELECT t.response FROM conversation_turns t JOIN conversation_sessions s ON s.id = t.session_id WHERE s.source_id = ?1 ORDER BY t.turn_index ASC LIMIT 1",
         )
         .bind(&source.id)
         .fetch_one(database.pool())
@@ -1136,18 +1166,24 @@ async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
         })
         .collect();
         Ok::<_, StoreError>((
-            result,
-            imported_at,
+            skipped_result,
+            skipped_imported_at,
+            skipped_response,
+            refreshed_result,
+            refreshed_imported_at,
             refreshed_response,
             part_ids_before,
             part_ids_after,
         ))
     }
     .await
-    .expect("refresh normalized parts through SQLx");
+    .expect("gated snapshot replacement through SQLx");
 
-    assert_eq!(result.skipped_session_count, 0);
-    assert_ne!(imported_at, "preserved");
+    assert_eq!(skipped_result.skipped_session_count, 1);
+    assert_eq!(skipped_imported_at, "preserved");
+    assert_eq!(skipped_response.as_deref(), Some("old answer"));
+    assert_eq!(refreshed_result.skipped_session_count, 0);
+    assert_ne!(refreshed_imported_at, "preserved");
     assert_eq!(part_ids_after, part_ids_before);
     assert_eq!(refreshed_response.as_deref(), Some("refreshed answer"));
 
@@ -1201,7 +1237,7 @@ async fn sqlx_import_prunes_turns_removed_by_external_adapter() {
                     FROM conversation_parts p
                     JOIN conversation_turns t ON t.id = p.turn_id
                     WHERE t.session_id = ?1
-                      AND t.external_id IN ('t2', 't3')
+                      AND t.turn_index >= 1
                     "#,
         )
         .bind(&session_id)
@@ -1211,11 +1247,11 @@ async fn sqlx_import_prunes_turns_removed_by_external_adapter() {
         Ok::<_, StoreError>((detail, stale_parts))
     }
     .await
-    .expect("prune stale turns through SQLx");
+    .expect("replace session snapshot through SQLx");
 
     assert_eq!(detail.questions.len(), 1);
     assert_eq!(detail.questions[0].turns.len(), 1);
-    assert_eq!(detail.questions[0].turns[0].external_id, "t1");
+    assert_eq!(detail.questions[0].turns[0].turn_index, 0);
     assert_eq!(detail.questions[0].parts.len(), 2);
     assert_eq!(stale_parts, 0);
 
@@ -2087,7 +2123,7 @@ async fn sqlx_conversation_records_are_isolated_by_tenant() {
 }
 
 #[tokio::test]
-async fn sqlx_round_trips_structured_cards_and_preserves_translation_on_reclassification() {
+async fn sqlx_round_trips_structured_cards_and_clears_translation_on_snapshot_replacement() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-conversation-card-persistence-{}.sqlite",
         Uuid::new_v4()
@@ -2175,7 +2211,8 @@ async fn sqlx_round_trips_structured_cards_and_preserves_translation_on_reclassi
 
     let part = &detail.questions[0].parts[0];
     assert_eq!(part.id, part_id);
-    assert_eq!(part.translated_text.as_deref(), Some("译文"));
+    // 整包替换不清洗历史局部翻译，旧译文随旧快照一起物理消失。
+    assert_eq!(part.translated_text, None);
     assert_eq!(part.command_label.as_deref(), Some("DEBUG"));
     assert_eq!(
         part.content_card.as_ref().map(|card| card.kind.as_str()),
@@ -2651,10 +2688,10 @@ async fn count_conversation_turns(pool: &sqlx::SqlitePool, session_external_id: 
 async fn conversation_turn_identities(
     pool: &sqlx::SqlitePool,
     session_external_id: &str,
-) -> Vec<(String, String)> {
+) -> Vec<(String, i64)> {
     sqlx::query_as(
         r#"
-        SELECT turns.id, turns.external_id
+        SELECT turns.id, turns.turn_index
         FROM conversation_turns turns
         JOIN conversation_sessions sessions
           ON sessions.tenant_id = turns.tenant_id AND sessions.id = turns.session_id
@@ -2896,7 +2933,7 @@ async fn sqlx_repeated_sync_keeps_turn_identity_without_duplicating_turns() {
     assert_eq!(
         conversation_turn_identities(pool, "session-1").await,
         identities_after_first,
-        "re-parsing must keep stable Turn ids and external ids for existing references"
+        "re-parsing must keep stable positional Turn ids for existing references"
     );
 
     drop(database);
@@ -3015,7 +3052,7 @@ fn fixture_session(version: &str) -> NormalizedConversationSession {
 
 fn fixture_turn(id: &str, index: i64, user_text: &str) -> NormalizedConversationTurn {
     NormalizedConversationTurn {
-        external_id: id.to_string(),
+        external_id: Some(id.to_string()),
         turn_index: index,
         user_text: user_text.to_string(),
         title: None,
@@ -3484,20 +3521,17 @@ async fn seed_grouped_turns_without_question_rows(pool: &SqlitePool, source_id: 
         sqlx::query(
             r#"
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, prompt,
-                started_at, ended_at, fingerprint, missing, imported_at
+                tenant_id, id, session_id, turn_index, prompt, started_at, ended_at, imported_at
             ) VALUES (
-                ?1, ?2, 'count-session', ?3, ?4, ?5, NULL, NULL, ?6, 0,
+                ?1, ?2, 'count-session', ?3, ?4, '2026-10-23T00:00:00Z', NULL,
                 '2026-10-23T00:00:00Z'
             )
             "#,
         )
         .bind(TEST_TENANT_ID)
         .bind(turn_id)
-        .bind(format!("ext-{turn_index}"))
         .bind(turn_index)
         .bind(format!("turn {turn_index}"))
-        .bind(format!("fingerprint-{turn_index}"))
         .execute(pool)
         .await
         .expect("insert grouped turn");
@@ -3581,8 +3615,8 @@ async fn import_read_path_fixture(
     .await
     .unwrap();
     let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
-    let first_turn_id = stable_id("conversation-turn", &[&session_id, "t1"]);
-    let third_turn_id = stable_id("conversation-turn", &[&session_id, "t3"]);
+    let first_turn_id = crate::backend::domain::derive_conversation_turn_id(&session_id, 0);
+    let third_turn_id = crate::backend::domain::derive_conversation_turn_id(&session_id, 2);
     (
         session_id.clone(),
         crate::backend::domain::conversations::derive_question_id_from_turn_id(
@@ -3611,8 +3645,8 @@ async fn sqlx_question_detail_reads_turn_columns_after_legacy_rows_are_dropped()
     let source = test_conversation_source(&adapter.id);
     let pool = database.pool();
     let (session_id, question_id, _) = import_read_path_fixture(pool, &adapter, &source).await;
-    let first_turn_id = stable_id("conversation-turn", &[&session_id, "t1"]);
-    let second_turn_id = stable_id("conversation-turn", &[&session_id, "t2"]);
+    let first_turn_id = crate::backend::domain::derive_conversation_turn_id(&session_id, 0);
+    let second_turn_id = crate::backend::domain::derive_conversation_turn_id(&session_id, 1);
 
     drop_legacy_grouping_rows(pool).await;
 
@@ -3671,7 +3705,7 @@ async fn sqlx_block_locators_and_block_detail_read_turn_columns_after_legacy_row
     let source = test_conversation_source(&adapter.id);
     let pool = database.pool();
     let (session_id, question_id, _) = import_read_path_fixture(pool, &adapter, &source).await;
-    let first_turn_id = stable_id("conversation-turn", &[&session_id, "t1"]);
+    let first_turn_id = crate::backend::domain::derive_conversation_turn_id(&session_id, 0);
 
     drop_legacy_grouping_rows(pool).await;
 
@@ -3804,7 +3838,7 @@ async fn sqlx_question_short_id_prefix_reports_ambiguity_instead_of_guessing() {
     let source = test_conversation_source(&adapter.id);
     let pool = database.pool();
     let (session_id, question_id, _) = import_read_path_fixture(pool, &adapter, &source).await;
-    let third_turn_id = stable_id("conversation-turn", &[&session_id, "t3"]);
+    let third_turn_id = crate::backend::domain::derive_conversation_turn_id(&session_id, 2);
     let fragment = crate::backend::domain::conversation_id_fragment(&question_id);
     let colliding_turn_id = format!("conversation-turn-{fragment}{}", "0".repeat(56));
 
@@ -3873,8 +3907,8 @@ async fn sqlx_question_short_id_prefix_rejects_turn_prefix_and_resolves_web_reco
     .expect("insert web session");
 
     sqlx::query(
-        "INSERT INTO web_record_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) \
-         VALUES (?1, ?2, ?3, 'ext-t', 0, 'web prompt', 'fp-t', 0, '2026-10-23T00:00:00Z')",
+        "INSERT INTO web_record_turns (tenant_id, id, session_id, turn_index, prompt, started_at, imported_at) \
+         VALUES (?1, ?2, ?3, 0, 'web prompt', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')",
     )
     .bind(TEST_TENANT_ID)
     .bind(turn_id)
@@ -4168,7 +4202,7 @@ async fn test_subagent_turns_save_and_load_persistence_intact() {
         .unwrap();
 
     let parent_turn = NormalizedConversationTurn {
-        external_id: "turn-user-parent".to_string(),
+        external_id: Some("turn-user-parent".to_string()),
         turn_index: 0,
         user_text: "Can you analyze the concurrency model of AssetIWeave?".to_string(),
         title: Some("Concurrency Analysis".to_string()),
@@ -4196,7 +4230,7 @@ async fn test_subagent_turns_save_and_load_persistence_intact() {
     };
 
     let subagent_turn = NormalizedConversationTurn {
-        external_id: "turn-subagent-worker".to_string(),
+        external_id: Some("turn-subagent-worker".to_string()),
         turn_index: 1,
         user_text: "Subagent prompt: Audit mutex lock acquisitions in TaskRuntime and pipeline coordinator.".to_string(),
         title: None,
@@ -4272,9 +4306,8 @@ async fn test_subagent_turns_save_and_load_persistence_intact() {
     // 1. Direct SQLite process JSON assertions
     let (turn_kind, agent_role, parent_turn_id): (Option<String>, Option<String>, Option<String>) =
         sqlx::query_as(
-            "SELECT json_extract(process, '$.turn_kind'), json_extract(process, '$.agent_role'), json_extract(process, '$.parent_turn_id') FROM conversation_turns WHERE external_id = ?1",
+            "SELECT json_extract(process, '$.turn_kind'), json_extract(process, '$.agent_role'), json_extract(process, '$.parent_turn_id') FROM conversation_turns WHERE turn_index = 1",
         )
-        .bind("turn-subagent-worker")
         .fetch_one(pool)
         .await
         .unwrap();
@@ -4316,8 +4349,8 @@ async fn test_subagent_turns_save_and_load_persistence_intact() {
     let parent_loaded = &q_detail.turns[0];
     let subagent_loaded = &q_detail.turns[1];
 
-    assert_eq!(parent_loaded.external_id, "turn-user-parent");
-    assert_eq!(subagent_loaded.external_id, "turn-subagent-worker");
+    assert_eq!(parent_loaded.turn_index, 0);
+    assert_eq!(subagent_loaded.turn_index, 1);
     assert_eq!(subagent_loaded.turn_kind.as_deref(), Some("subagent"));
     assert_eq!(
         subagent_loaded.agent_role.as_deref(),
@@ -4403,7 +4436,7 @@ async fn test_subagent_turn_response_survives_trailing_command() {
         title: Some("子代理汇报".to_string()),
         turns: vec![
             NormalizedConversationTurn {
-                external_id: "turn-main".to_string(),
+                external_id: Some("turn-main".to_string()),
                 turn_index: 0,
                 user_text: "审计 TaskRuntime 锁顺序".to_string(),
                 turn_kind: Some("user".to_string()),
@@ -4411,7 +4444,7 @@ async fn test_subagent_turn_response_survives_trailing_command() {
                 ..Default::default()
             },
             NormalizedConversationTurn {
-                external_id: "turn-subagent-trailing".to_string(),
+                external_id: Some("turn-subagent-trailing".to_string()),
                 turn_index: 1,
                 user_text: "审计 TaskRuntime 锁顺序".to_string(),
                 turn_kind: Some("subagent".to_string()),

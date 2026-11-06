@@ -50,7 +50,7 @@ pub async fn load_conversation_search_index_documents_sqlx(
             FROM {sessions} s
             JOIN {turns} t ON t.tenant_id = s.tenant_id AND t.session_id = s.id
             LEFT JOIN conversation_adapters a ON a.tenant_id = s.tenant_id AND a.id = s.adapter_id
-            WHERE s.tenant_id = ?1 AND s.missing = 0 AND t.missing = 0
+            WHERE s.tenant_id = ?1 AND s.missing = 0
             ORDER BY s.id ASC, t.turn_index ASC, t.id ASC
             "#,
             sessions = tables.sessions,
@@ -68,7 +68,7 @@ pub async fn load_conversation_search_index_documents_sqlx(
             FROM {parts} p
             JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
             JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
-            WHERE p.tenant_id = ?1 AND s.missing = 0 AND t.missing = 0
+            WHERE p.tenant_id = ?1 AND s.missing = 0
             ORDER BY p.turn_id, p.part_index
             "#,
             parts = tables.parts,

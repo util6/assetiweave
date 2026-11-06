@@ -1,7 +1,4 @@
 use chrono::{DateTime, Utc};
-use sha2::{Digest, Sha256};
-
-use super::NormalizedConversationTurn;
 
 pub fn parse_conversation_timestamp(value: &str) -> Option<DateTime<Utc>> {
     let value = value.trim();
@@ -49,56 +46,4 @@ fn regex_replace_user_path(text: &str, prefix: &str) -> String {
     }
     result.push_str(remaining);
     result
-}
-
-pub fn conversation_turn_fingerprint(turn: &NormalizedConversationTurn) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(turn.external_id.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(turn.user_text.as_bytes());
-    if let Some(value) = &turn.model {
-        hasher.update(b"\0");
-        hasher.update(value.as_bytes());
-    }
-    if let Some(value) = &turn.turn_kind {
-        hasher.update(b"\0");
-        hasher.update(value.as_bytes());
-    }
-    if let Some(value) = &turn.agent_role {
-        hasher.update(b"\0");
-        hasher.update(value.as_bytes());
-    }
-    if let Some(value) = &turn.parent_external_id {
-        hasher.update(b"\0");
-        hasher.update(value.as_bytes());
-    }
-    for part in &turn.parts {
-        hasher.update(b"\0");
-        hasher.update(format!("{:?}:{:?}", part.role, part.kind).as_bytes());
-        if let Some(value) = &part.text {
-            hasher.update(value.as_bytes());
-        }
-        if let Some(value) = &part.language {
-            hasher.update(value.as_bytes());
-        }
-        if let Some(value) = &part.command {
-            hasher.update(value.as_bytes());
-        }
-        if let Some(value) = &part.cwd {
-            hasher.update(value.as_bytes());
-        }
-        if let Some(value) = &part.status {
-            hasher.update(value.as_bytes());
-        }
-        if let Some(value) = part.exit_code {
-            hasher.update(value.to_string().as_bytes());
-        }
-        if let Some(value) = &part.source_execution_id {
-            hasher.update(value.as_bytes());
-        }
-        if let Some(value) = &part.metadata_json {
-            hasher.update(value.as_bytes());
-        }
-    }
-    format!("{:x}", hasher.finalize())
 }

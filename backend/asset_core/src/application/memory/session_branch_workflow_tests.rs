@@ -128,7 +128,7 @@ fn make_qa_turn(idx: u32, q: &str, a: &str) -> NormalizedConversationTurn {
     let now = chrono::Utc::now();
     let ts = (now - chrono::Duration::hours(2)).to_rfc3339();
     NormalizedConversationTurn {
-        external_id: format!("turn-{idx}"),
+        external_id: Some(format!("turn-{idx}")),
         turn_index: idx as i64,
         user_text: q.to_string(),
         title: None,

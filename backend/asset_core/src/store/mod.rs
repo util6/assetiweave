@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod codec;
+pub(crate) mod conversation_turn_identity;
 pub mod conversations;
 pub mod database;
 pub mod error;

@@ -502,7 +502,7 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
     old_session.source_fingerprint = Some("same-source".to_string());
     old_session.turns[0].parts[0].text = Some("initial body".to_string());
     let mut refreshed_session = fixture_session();
-    refreshed_session.source_fingerprint = Some("same-source".to_string());
+    refreshed_session.source_fingerprint = Some("changed-source".to_string());
     refreshed_session.turns[0].parts[0].text = Some("refreshed body".to_string());
 
     let (result, imported_at, refreshed_content, indexed_rows) = async {
@@ -634,7 +634,7 @@ async fn sqlx_web_record_reads_filter_detail() {
     second.external_id = "web-session-2".to_string();
     second.title = Some("SQLx migration notes".to_string());
     second.project_path = Some("/tmp/sqlx-project".to_string());
-    second.turns[0].external_id = "turn-2".to_string();
+    second.turns[0].external_id = Some("turn-2".to_string());
     second.turns[0].user_text = "How is the read path migrated?".to_string();
     second.turns[0].parts[0].text = Some("Loaded through SQLx answer".to_string());
 
@@ -782,7 +782,7 @@ async fn sqlx_web_record_aggregates_only_declared_content_cards() {
     session.turns[0].parts[0].text = Some("intermediate web search process".to_string());
     session.turns[0].parts[0].metadata_json = None;
     session.turns.push(NormalizedConversationTurn {
-        external_id: "turn-2".to_string(),
+        external_id: Some("turn-2".to_string()),
         turn_index: 1,
         user_text: "Second web question".to_string(),
         title: None,
@@ -994,7 +994,7 @@ async fn sqlx_web_records_are_isolated_by_tenant() {
 }
 
 #[tokio::test]
-async fn sqlx_web_records_round_trip_structured_cards_and_preserve_translation() {
+async fn sqlx_web_records_round_trip_structured_cards_and_clear_translation() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-web-record-card-persistence-{}.sqlite",
         Uuid::new_v4()
@@ -1046,7 +1046,8 @@ async fn sqlx_web_records_round_trip_structured_cards_and_preserve_translation()
 
     let part = &detail.questions[0].parts[0];
     assert_eq!(part.id, part_id);
-    assert_eq!(part.translated_text.as_deref(), Some("网页译文"));
+    // 整包替换不清洗历史局部翻译，旧译文随旧快照一起物理消失。
+    assert_eq!(part.translated_text, None);
     assert_eq!(
         part.content_card.as_ref().map(|card| card.kind.as_str()),
         Some("qwen-web.answer")
@@ -1090,9 +1091,10 @@ async fn sqlx_web_record_block_reads_use_turn_columns_after_legacy_rows_are_drop
 
     let session_id = stable_id("web-record-session", &[&source.id, "web-session-1"]);
     let turn_id: String = sqlx::query_scalar(
-        "SELECT id FROM web_record_turns WHERE tenant_id = ?1 AND external_id = 'turn-1'",
+        "SELECT id FROM web_record_turns WHERE tenant_id = ?1 AND session_id = ?2 AND turn_index = 0",
     )
     .bind(TEST_TENANT_ID)
+    .bind(&session_id)
     .fetch_one(pool)
     .await
     .expect("load web turn id");
@@ -1153,7 +1155,7 @@ fn web_turn(
     user_text: &str,
 ) -> NormalizedConversationTurn {
     NormalizedConversationTurn {
-        external_id: external_id.to_string(),
+        external_id: Some(external_id.to_string()),
         turn_index,
         user_text: user_text.to_string(),
         ..template.clone()
@@ -1199,7 +1201,7 @@ fn fixture_session() -> NormalizedConversationSession {
         source_locator: None,
         source_fingerprint: None,
         turns: vec![NormalizedConversationTurn {
-            external_id: "turn-1".to_string(),
+            external_id: Some("turn-1".to_string()),
             turn_index: 0,
             user_text: "Hello from the web".to_string(),
             title: None,

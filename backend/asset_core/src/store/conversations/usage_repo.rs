@@ -10,7 +10,7 @@ use crate::backend::{
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{AssertSqlSafe, Row as SqlxRow, SqlitePool};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub use super::usage_query::*;
 
@@ -40,6 +40,19 @@ pub struct RawUsageEventInput {
     #[serde(default, alias = "cost")]
     pub host_reported_cost: Option<f64>,
     pub currency: Option<String>,
+}
+
+/// 把适配器给出的轮次源键规范成会话内的轮次序号。
+///
+/// 只有宿主采用 `turn-<序号>` 约定时才能定位到具体轮次；其余形态（如 `msg-<uuid>`）
+/// 无法与位置身份对齐，按"未归因"处理，写入 `NULL`。
+pub fn usage_turn_index_from_key(turn_id: Option<&str>) -> Option<i64> {
+    let key = turn_id?.trim();
+    let ordinal = key.strip_prefix("turn-")?;
+    if ordinal.is_empty() || !ordinal.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    ordinal.parse::<i64>().ok()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -90,6 +103,8 @@ pub async fn upsert_usage_events_sqlx(
         usd_to_cny_rate,
         cached_models,
     );
+    let valid_turn_indices =
+        load_valid_turn_indices_sqlx(pool, tenant_id, source_id, events).await?;
     let mut inserted_count = 0usize;
     let now = Utc::now().to_rfc3339();
     let mut tx = pool.begin().await?;
@@ -160,15 +175,17 @@ pub async fn upsert_usage_events_sqlx(
             r#"
             INSERT INTO conversation_usage_events (
                 tenant_id, source_id, adapter_id, external_event_id, session_id, turn_id,
+                turn_index,
                 logical_request_id, attempt_index, timestamp, provider, model, status,
                 input_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
                 output_tokens, total_input_tokens, total_output_tokens, total_tokens,
                 host_reported_cost, catalog_estimated_cost, cost_basis, currency,
                 price_catalog_version, observation_run_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, source_id, external_event_id) DO UPDATE SET
                 session_id = excluded.session_id,
                 turn_id = excluded.turn_id,
+                turn_index = excluded.turn_index,
                 logical_request_id = excluded.logical_request_id,
                 attempt_index = excluded.attempt_index,
                 timestamp = excluded.timestamp,
@@ -198,6 +215,7 @@ pub async fn upsert_usage_events_sqlx(
         .bind(&ev.external_event_id)
         .bind(&ev.session_id)
         .bind(&ev.turn_id)
+        .bind(resolve_attributed_turn_index(ev, &valid_turn_indices))
         .bind(&ev.logical_request_id)
         .bind(attempt_index)
         .bind(&ev.timestamp)
@@ -418,3 +436,76 @@ pub async fn get_distinct_usage_provider_models_sqlx(
 #[cfg(test)]
 #[path = "usage_repo_tests.rs"]
 mod tests;
+
+/// 把适配器源键解析成真实存在的会话内轮次序号。
+///
+/// 解析不出序号、或该序号在本会话里根本没有对应轮次时一律返回 `None`：
+/// 归因宁可置空，也不要写一个指不到任何轮次的数字。
+fn resolve_attributed_turn_index(
+    event: &RawUsageEventInput,
+    valid_turn_indices: &HashMap<String, BTreeSet<i64>>,
+) -> Option<i64> {
+    let turn_index = usage_turn_index_from_key(event.turn_id.as_deref())?;
+    let session_id = event.session_id.as_deref()?;
+    valid_turn_indices
+        .get(session_id)
+        .filter(|indices| indices.contains(&turn_index))
+        .map(|_| turn_index)
+}
+
+/// 一次性取出本批涉及会话的真实轮次序号集合，避免逐条回查。
+async fn load_valid_turn_indices_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    source_id: &str,
+    events: &[RawUsageEventInput],
+) -> StoreResult<HashMap<String, BTreeSet<i64>>> {
+    let session_ids: Vec<&str> = events
+        .iter()
+        .filter(|event| usage_turn_index_from_key(event.turn_id.as_deref()).is_some())
+        .filter_map(|event| event.session_id.as_deref())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if session_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = (0..session_ids.len())
+        .map(|index| format!("?{}", index + 3))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let query = format!(
+        "SELECT s.external_id AS session_external_id, t.turn_index AS turn_index \
+         FROM conversation_turns t \
+         JOIN conversation_sessions s ON s.tenant_id = t.tenant_id AND s.id = t.session_id \
+         WHERE t.tenant_id = ?1 AND s.source_id = ?2 AND s.external_id IN ({placeholders}) \
+         UNION ALL \
+         SELECT s.external_id AS session_external_id, t.turn_index AS turn_index \
+         FROM web_record_turns t \
+         JOIN web_record_sessions s ON s.tenant_id = t.tenant_id AND s.id = t.session_id \
+         WHERE t.tenant_id = ?1 AND s.source_id = ?2 AND s.external_id IN ({placeholders})"
+    );
+
+    let mut statement = sqlx::query(AssertSqlSafe(query))
+        .bind(tenant_id)
+        .bind(source_id);
+    for session_id in &session_ids {
+        statement = statement.bind(*session_id);
+    }
+    for session_id in &session_ids {
+        statement = statement.bind(*session_id);
+    }
+    let rows = statement.fetch_all(pool).await?;
+
+    let mut valid = HashMap::<String, BTreeSet<i64>>::new();
+    for row in rows {
+        let session_external_id: String = row.try_get("session_external_id")?;
+        let turn_index: i64 = row.try_get("turn_index")?;
+        valid
+            .entry(session_external_id)
+            .or_default()
+            .insert(turn_index);
+    }
+    Ok(valid)
+}

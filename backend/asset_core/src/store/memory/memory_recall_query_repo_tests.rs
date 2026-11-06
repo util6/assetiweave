@@ -44,13 +44,10 @@ fn turn_fixture(
     started_at: Option<&str>,
     imported_at: &str,
 ) -> String {
-    let started_at = match started_at {
-        Some(value) => format!("'{value}'"),
-        None => "NULL".to_string(),
-    };
+    let started_at = format!("'{}'", started_at.unwrap_or(imported_at));
     format!(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, started_at, fingerprint, missing, imported_at) \
-         VALUES ('{TENANT}', '{turn_id}', '{session_id}', 'ext-{turn_id}', {turn_index}, 'prompt {turn_id}', {started_at}, 'fp-{turn_id}', 0, '{imported_at}')"
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, turn_index, prompt, started_at, imported_at) \
+         VALUES ('{TENANT}', '{turn_id}', '{session_id}', {turn_index}, 'prompt {turn_id}', {started_at}, '{imported_at}')"
     )
 }
 
@@ -62,13 +59,10 @@ fn web_turn_fixture(
     started_at: Option<&str>,
     imported_at: &str,
 ) -> String {
-    let started_at = match started_at {
-        Some(value) => format!("'{value}'"),
-        None => "NULL".to_string(),
-    };
+    let started_at = format!("'{}'", started_at.unwrap_or(imported_at));
     format!(
-        "INSERT INTO web_record_turns (tenant_id, id, session_id, external_id, turn_index, prompt, started_at, fingerprint, missing, imported_at) \
-         VALUES ('{TENANT}', '{turn_id}', '{session_id}', 'ext-{turn_id}', {turn_index}, 'prompt {turn_id}', {started_at}, 'fp-{turn_id}', 0, '{imported_at}')"
+        "INSERT INTO web_record_turns (tenant_id, id, session_id, turn_index, prompt, started_at, imported_at) \
+         VALUES ('{TENANT}', '{turn_id}', '{session_id}', {turn_index}, 'prompt {turn_id}', {started_at}, '{imported_at}')"
     )
 }
 
@@ -126,14 +120,21 @@ async fn recall_units_locate_by_first_turn_started_at_not_import_time() {
 }
 
 #[tokio::test]
-async fn recall_units_fall_back_to_import_time_and_count_each_group_once() {
+async fn recall_units_are_positioned_by_started_at_and_count_each_group_once() {
     let pool = create_test_pool().await;
     seed(
         &pool,
         &[
             &source_fixture(ADAPTER),
             &session_fixture("s-1", "2026-10-22T10:00:00Z"),
-            &turn_fixture("q-a", "s-1", 0, "q-a", None, "2026-10-22T10:00:00Z"),
+            &turn_fixture(
+                "q-a",
+                "s-1",
+                0,
+                "q-a",
+                Some("2026-10-22T10:00:00Z"),
+                "2026-10-22T10:00:00Z",
+            ),
             &turn_fixture(
                 "q-b",
                 "s-1",
@@ -142,8 +143,14 @@ async fn recall_units_fall_back_to_import_time_and_count_each_group_once() {
                 Some("2026-10-22T11:00:00Z"),
                 "2026-10-22T11:00:00Z",
             ),
-            // 空白开始时间与缺失同义，同样回退到导入时间。
-            &turn_fixture("q-c", "s-1", 2, "q-c", Some("   "), "2026-10-22T12:00:00Z"),
+            &turn_fixture(
+                "q-c",
+                "s-1",
+                2,
+                "q-c",
+                Some("2026-10-22T12:00:00Z"),
+                "2026-10-22T12:00:00Z",
+            ),
         ],
     )
     .await;
@@ -167,7 +174,7 @@ async fn recall_units_fall_back_to_import_time_and_count_each_group_once() {
     assert_eq!(refs[2].question_id, "q-a");
     assert_eq!(refs[2].question_index, 0);
 
-    // 落在导入时间之前一秒的窗口不应命中回退分组。
+    // 窗口上界早于首轮开始时间时不应命中任何分组。
     let (total, refs) = recall(&pool, &scope(), None, Some("2026-10-22T09:59:59Z"), 10, 0).await;
     assert_eq!(total, 0);
     assert!(refs.is_empty());

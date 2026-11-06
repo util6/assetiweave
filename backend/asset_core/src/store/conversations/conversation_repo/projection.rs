@@ -113,10 +113,7 @@ pub(crate) fn build_question_details_from_dynamic_groups(
 
 /// 问题的时间语义取自轮次真实发生时间，而不是导入时刻。
 fn turn_relation_time(turn: &ConversationTurn) -> String {
-    turn.started_at
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| turn.imported_at.clone())
+    turn.started_at.clone()
 }
 
 pub(super) async fn load_conversation_question_details_for_session_sqlx(
@@ -129,8 +126,8 @@ pub(super) async fn load_conversation_question_details_for_session_sqlx(
 
     let turn_rows = sqlx::query_as::<_, ConversationTurnRow>(
         r#"
-        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.prompt, t.process, t.response,
-               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at
+        SELECT t.id, t.session_id, t.turn_index, t.prompt, t.process, t.response,
+               t.started_at, t.ended_at, t.model, t.imported_at
         FROM conversation_turns t INDEXED BY idx_conversation_turns_tenant_session
         WHERE t.tenant_id = ?1 AND t.session_id = ?2
         ORDER BY t.turn_index ASC, t.id ASC

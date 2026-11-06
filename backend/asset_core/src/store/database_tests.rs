@@ -169,7 +169,6 @@ async fn conversation_question_contract_contains_only_stable_metadata() {
         "tenant_id",
         "id",
         "session_id",
-        "external_id",
         "turn_index",
         "prompt",
         "process",
@@ -177,8 +176,6 @@ async fn conversation_question_contract_contains_only_stable_metadata() {
         "started_at",
         "ended_at",
         "model",
-        "fingerprint",
-        "missing",
         "imported_at",
     ];
     for table in ["conversation_turns", "web_record_turns"] {
@@ -191,10 +188,10 @@ async fn conversation_question_contract_contains_only_stable_metadata() {
             .expect("query turn columns")
             .collect::<Result<Vec<_>, _>>()
             .expect("collect turn columns");
-        assert_eq!(columns.len(), 14, "{table} 必须严格为 14 列终态结构");
+        assert_eq!(columns.len(), 11, "{table} 必须严格为 11 列终态结构");
         assert_eq!(
             columns, expected_turn_cols,
-            "{table} 列名与顺序必须严格与 14 列终态一致"
+            "{table} 列名与顺序必须严格与 11 列终态一致"
         );
         assert!(!columns.contains(&"title".to_string()));
         assert!(!columns.contains(&"turn_kind".to_string()));
@@ -202,6 +199,9 @@ async fn conversation_question_contract_contains_only_stable_metadata() {
         assert!(!columns.contains(&"parent_turn_id".to_string()));
         assert!(!columns.contains(&"question_id".to_string()));
         assert!(!columns.contains(&"question_origin".to_string()));
+        assert!(!columns.contains(&"external_id".to_string()));
+        assert!(!columns.contains(&"fingerprint".to_string()));
+        assert!(!columns.contains(&"missing".to_string()));
     }
     let index_count: i64 = conn
         .query_row(
@@ -339,12 +339,12 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
                 '2026-08-25T00:00:00Z'
             );
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, prompt, user_text,
-                started_at, ended_at, fingerprint, missing, imported_at
+                tenant_id, id, session_id, turn_index, prompt, user_text,
+                started_at, ended_at, imported_at
             ) VALUES (
-                'default', 'legacy-turn', 'legacy-session', 'legacy-turn-external', 0,
-                'Legacy question snapshot', 'Legacy question snapshot', NULL, NULL, 'legacy-turn-fingerprint', 0,
-                '2026-08-25T00:00:00Z'
+                'default', 'legacy-turn', 'legacy-session', 0,
+                'Legacy question snapshot', 'Legacy question snapshot',
+                '2026-08-25T00:00:00Z', NULL, '2026-08-25T00:00:00Z'
             );
             INSERT INTO conversation_question_turns (
                 tenant_id, question_id, turn_id, turn_order, assignment_origin,
@@ -354,13 +354,12 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
                 '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
             );
             INSERT INTO web_record_turns (
-                tenant_id, id, session_id, external_id, turn_index, prompt, user_text,
-                started_at, ended_at, fingerprint, missing, imported_at
+                tenant_id, id, session_id, turn_index, prompt, user_text,
+                started_at, ended_at, imported_at
             ) VALUES (
-                'default', 'legacy-web-turn', 'legacy-web-session',
-                'legacy-web-turn-external', 0, 'Legacy web question snapshot', 'Legacy web question snapshot',
-                NULL, NULL, 'legacy-web-turn-fingerprint', 0,
-                '2026-08-25T00:00:00Z'
+                'default', 'legacy-web-turn', 'legacy-web-session', 0,
+                'Legacy web question snapshot', 'Legacy web question snapshot',
+                '2026-08-25T00:00:00Z', NULL, '2026-08-25T00:00:00Z'
             );
             INSERT INTO web_record_question_turns (
                 tenant_id, question_id, turn_id, turn_order, assignment_origin,
@@ -1435,11 +1434,11 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO conversation_turns (
-                tenant_id, id, session_id, external_id, turn_index, prompt,
-                started_at, ended_at, fingerprint, missing, imported_at
+                tenant_id, id, session_id, turn_index, prompt,
+                started_at, ended_at, imported_at
             ) VALUES (
-                'default', 'part-index-turn', 'part-index-session', 'part-index-turn-external',
-                0, 'Part index question', NULL, NULL, 'part-index-fingerprint', 0,
+                'default', 'part-index-turn', 'part-index-session',
+                0, 'Part index question', '2026-10-23T00:00:00Z', NULL,
                 '2026-10-23T00:00:00Z'
             );
             CREATE TABLE conversation_parts_old (
@@ -1511,12 +1510,12 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO web_record_turns (
-                tenant_id, id, session_id, external_id, turn_index, prompt,
-                started_at, ended_at, fingerprint, missing, imported_at
+                tenant_id, id, session_id, turn_index, prompt,
+                started_at, ended_at, imported_at
             ) VALUES (
                 'default', 'part-index-web-turn', 'part-index-web-session',
-                'part-index-web-turn-external', 0, 'Part index web question', NULL, NULL,
-                'part-index-web-fingerprint', 0, '2026-10-23T00:00:00Z'
+                0, 'Part index web question', '2026-10-23T00:00:00Z', NULL,
+                '2026-10-23T00:00:00Z'
             );
             INSERT INTO web_record_parts (
                 tenant_id, id, turn_id, part_index, role, kind, text
@@ -1896,8 +1895,8 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
             .expect("collect columns");
         assert_eq!(
             columns.len(),
-            14,
-            "{table} 必须为 14 列终态 (稀疏字段内聚至 process JSON)"
+            11,
+            "{table} 必须为 11 列终态 (轮次位置身份，稀疏字段内聚至 process JSON)"
         );
         assert!(!columns.contains(&"title".to_string()));
         assert!(!columns.contains(&"turn_kind".to_string()));
@@ -2063,8 +2062,8 @@ async fn acceptance_spec_104_search_recalls_extended_part_categories() {
     ).expect("insert session");
 
     conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) 
-         VALUES (?1, ?2, ?3, 'ext-t-1', 0, 'first prompt', 'fp-1', 0, '2026-10-24T00:00:00Z')",
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, turn_index, prompt, started_at, imported_at) 
+         VALUES (?1, ?2, ?3, 0, 'first prompt', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
         [tenant_id, turn_id, session_id],
     ).expect("insert turn");
 
@@ -2178,9 +2177,9 @@ async fn acceptance_spec_104_sync_and_detail_latency_benchmark() {
             let turn_id = format!("bench-turn-{s:03}-{t:02}");
             let q_id = format!("bench-q-{s:03}-{}", t / 2);
             conn.execute(
-                "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at) 
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'user prompt', 'fp', 0, '2026-10-24T00:00:00Z')",
-                rusqlite::params![tenant_id, &turn_id, &session_id, &turn_id, t as i64],
+                "INSERT INTO conversation_turns (tenant_id, id, session_id, turn_index, prompt, started_at, imported_at) 
+                 VALUES (?1, ?2, ?3, ?4, 'user prompt', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
+                rusqlite::params![tenant_id, &turn_id, &session_id, t as i64],
             ).expect("insert turn");
 
             for p in 0..parts_per_turn {
@@ -2276,14 +2275,14 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
     ).expect("insert util6 session");
 
     conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at)
-         VALUES ('default', 'turn-default-1', 'sess-default-1', 'ext-t1', 0, 'prompt', 'fp', 0, '2026-10-24T00:00:00Z')",
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, turn_index, prompt, started_at, imported_at)
+         VALUES ('default', 'turn-default-1', 'sess-default-1', 0, 'prompt', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
         [],
     ).expect("insert default turn");
 
     conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, imported_at)
-         VALUES ('util6', 'turn-util6-1', 'sess-util6-1', 'ext-t2', 0, 'prompt', 'fp', 0, '2026-10-24T00:00:00Z')",
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, turn_index, prompt, started_at, imported_at)
+         VALUES ('util6', 'turn-util6-1', 'sess-util6-1', 0, 'prompt', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
         [],
     ).expect("insert util6 turn");
 
@@ -2480,9 +2479,25 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         .expect("check id column dropped");
     assert_eq!(id_column_exists, 0, "conversation_parts 必须无 id 列");
 
-    // D. 全文索引 part_id 同步对齐
-    let expected_new_id =
-        crate::backend::domain::derive_standard_part_id("conversation-part", "turn-default-1", 0);
+    // D. 轮次主键已重算为位置身份，全文索引 part_id 同步对齐
+    let repositioned_turn_id =
+        crate::backend::domain::derive_conversation_turn_id("sess-default-1", 0);
+    let stored_turn_id: String = conn
+        .query_row(
+            "SELECT id FROM conversation_turns WHERE tenant_id = 'default'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query repositioned turn id");
+    assert_eq!(
+        stored_turn_id, repositioned_turn_id,
+        "轮次主键必须重算为 sha256(session_id, turn_index)"
+    );
+    let expected_new_id = crate::backend::domain::derive_standard_part_id(
+        "conversation-part",
+        &repositioned_turn_id,
+        0,
+    );
     let fts_part_id: String = conn
         .query_row(
             "SELECT part_id FROM conversation_part_fts WHERE tenant_id = 'default'",
@@ -2570,8 +2585,8 @@ async fn acceptance_spec_119_last_cwd_materialization_and_redundant_index_remova
 
     // 早期轮次：cwd 为 /path/old
     conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, started_at, ended_at, imported_at)
-         VALUES ('default', 'turn-119-1', 'sess-119', 'ext-t1', 0, 'first question', 'fp1', 0, '2026-10-24T00:00:00Z', '2026-10-24T00:01:00Z', '2026-10-24T00:00:00Z')",
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, turn_index, prompt, started_at, ended_at, imported_at)
+         VALUES ('default', 'turn-119-1', 'sess-119', 0, 'first question', '2026-10-24T00:00:00Z', '2026-10-24T00:01:00Z', '2026-10-24T00:00:00Z')",
         [],
     ).expect("insert turn 1");
 
@@ -2583,8 +2598,8 @@ async fn acceptance_spec_119_last_cwd_materialization_and_redundant_index_remova
 
     // 最新轮次：包含两个零件，最后一个有效 cwd 为 /path/latest
     conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, prompt, fingerprint, missing, started_at, ended_at, imported_at)
-         VALUES ('default', 'turn-119-2', 'sess-119', 'ext-t2', 1, 'second question', 'fp2', 0, '2026-10-24T00:02:00Z', '2026-10-24T00:03:00Z', '2026-10-24T00:02:00Z')",
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, turn_index, prompt, started_at, ended_at, imported_at)
+         VALUES ('default', 'turn-119-2', 'sess-119', 1, 'second question', '2026-10-24T00:02:00Z', '2026-10-24T00:03:00Z', '2026-10-24T00:02:00Z')",
         [],
     ).expect("insert turn 2");
 
@@ -2682,8 +2697,8 @@ async fn acceptance_spec_126_turn_triad_schema_and_parts_slimming() {
     };
     assert_eq!(
         turn_cols.len(),
-        14,
-        "conversation_turns 必须严格为 14 列终态结构"
+        11,
+        "conversation_turns 必须严格为 11 列终态结构"
     );
     assert!(turn_cols.contains(&"prompt".to_string()));
     assert!(turn_cols.contains(&"process".to_string()));
@@ -2977,7 +2992,7 @@ async fn acceptance_spec_157_turn_sparse_columns_convergence_and_14_col_slimming
 
     let conn = Connection::open(&db_path).expect("open database");
 
-    // 1. 验证 PRAGMA table_info 为 14 列纯净终态
+    // 1. 验证 PRAGMA table_info 为 11 列纯净终态
     let turn_cols: Vec<String> = {
         let mut stmt = conn
             .prepare("PRAGMA table_info(conversation_turns)")
@@ -2991,8 +3006,8 @@ async fn acceptance_spec_157_turn_sparse_columns_convergence_and_14_col_slimming
     };
     assert_eq!(
         turn_cols.len(),
-        14,
-        "conversation_turns 必须严格为 14 列终态结构"
+        11,
+        "conversation_turns 必须严格为 11 列终态结构"
     );
     assert!(!turn_cols.contains(&"title".to_string()));
     assert!(!turn_cols.contains(&"turn_kind".to_string()));
@@ -3846,6 +3861,289 @@ async fn adversarial_challenge_4_migration_ledger_self_healing_and_checksum_cons
             .await
             .expect("idempotent migration invocation on self-healed database");
     }
+
+    cleanup_database(&db_path);
+}
+
+/// ADR-0021：轮次表收缩为 11 列位置身份，并原地对齐存量 Parts / FTS / 父引用。
+#[tokio::test]
+async fn acceptance_spec_175_positional_turn_identity_migration_preserves_offline_sessions() {
+    let db_path = temp_database_path("spec-175-positional-turn-identity");
+    migrate_database(&db_path).await.expect("initial migration");
+
+    let conn = Connection::open(&db_path).expect("open database");
+    conn.execute_batch(
+        r#"
+        INSERT OR IGNORE INTO conversation_adapters (
+            tenant_id, id, name, kind, version, enabled, trust_state, capabilities,
+            input_kinds, created_at, updated_at
+        ) VALUES ('default', 'legacy-adapter', 'Legacy', 'external', '1.0.0', 1, 'trusted',
+                  '[]', '[]', '2026-11-06T00:00:00Z', '2026-11-06T00:00:00Z');
+        INSERT OR IGNORE INTO conversation_sources (
+            tenant_id, id, adapter_id, name, kind, location, enabled, created_at, updated_at
+        ) VALUES ('default', 'legacy-source', 'legacy-adapter', 'Legacy source', 'directory',
+                  '/tmp/legacy', 1, '2026-11-06T00:00:00Z', '2026-11-06T00:00:00Z');
+        INSERT INTO conversation_sessions (
+            tenant_id, id, source_id, adapter_id, external_id, title, missing,
+            created_at, imported_at
+        ) VALUES
+        ('default', 'legacy-session', 'legacy-source', 'legacy-adapter', 'ext-1', 'Legacy', 0,
+         '2026-11-06T00:00:00Z', '2026-11-06T00:00:00Z'),
+        ('default', 'legacy-offline-session', 'legacy-source', 'legacy-adapter', 'ext-2',
+         'Offline', 1, '2026-11-06T00:00:00Z', '2026-11-06T00:00:00Z');
+
+        DROP TABLE conversation_turns;
+        CREATE TABLE conversation_turns (
+            tenant_id   TEXT NOT NULL DEFAULT 'default',
+            id          TEXT NOT NULL,
+            session_id  TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            turn_index  INTEGER NOT NULL,
+            prompt      TEXT NOT NULL DEFAULT '',
+            process     TEXT,
+            response    TEXT,
+            started_at  TEXT,
+            ended_at    TEXT,
+            model       TEXT,
+            fingerprint TEXT NOT NULL,
+            missing     INTEGER NOT NULL DEFAULT 0,
+            imported_at TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, id),
+            UNIQUE (tenant_id, session_id, external_id)
+        );
+        INSERT INTO conversation_turns (
+            tenant_id, id, session_id, external_id, turn_index, prompt, process, response,
+            started_at, ended_at, model, fingerprint, missing, imported_at
+        ) VALUES
+        ('default', 'legacy-turn-parent', 'legacy-session', 'turn-0', 0, 'parent question',
+         NULL, NULL, NULL, NULL, 'gpt', 'fp-parent', 0, '2026-11-06T00:00:00Z'),
+        ('default', 'legacy-turn-sub', 'legacy-session', 'turn-1', 0, 'subagent question',
+         '{"turn_kind":"subagent","parent_turn_id":"legacy-turn-parent"}',
+         NULL, '2026-11-06T01:00:00Z', NULL, 'gpt', 'fp-sub', 0, '2026-11-06T00:00:00Z'),
+        ('default', 'legacy-turn-offline', 'legacy-offline-session', 'msg-9f2ab1', 5,
+         'offline question', NULL, NULL, NULL, NULL, 'gpt', 'fp-offline', 0,
+         '2026-11-06T00:00:00Z'),
+        ('default', 'legacy-turn-orphan', 'legacy-missing-session', 'turn-orphan', 2,
+         'orphan question', NULL, NULL, NULL, NULL, 'gpt', 'fp-orphan', 0,
+         '2026-11-06T00:00:00Z');
+
+        DROP TABLE web_record_turns;
+        CREATE TABLE web_record_turns (
+            tenant_id   TEXT NOT NULL DEFAULT 'default',
+            id          TEXT NOT NULL,
+            session_id  TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            turn_index  INTEGER NOT NULL,
+            prompt      TEXT NOT NULL DEFAULT '',
+            process     TEXT,
+            response    TEXT,
+            started_at  TEXT,
+            ended_at    TEXT,
+            model       TEXT,
+            fingerprint TEXT NOT NULL,
+            missing     INTEGER NOT NULL DEFAULT 0,
+            imported_at TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, id),
+            UNIQUE (tenant_id, session_id, external_id)
+        );
+        INSERT INTO web_record_sessions (
+            tenant_id, id, source_id, adapter_id, external_id, title, missing,
+            created_at, imported_at
+        ) VALUES ('default', 'legacy-web-session', 'legacy-source', 'legacy-adapter',
+                  'ext-web', 'Legacy web', 0, '2026-11-06T00:00:00Z', '2026-11-06T00:00:00Z');
+        INSERT INTO web_record_turns (
+            tenant_id, id, session_id, external_id, turn_index, prompt, process, response,
+            started_at, ended_at, model, fingerprint, missing, imported_at
+        ) VALUES ('default', 'legacy-web-turn', 'legacy-web-session', 'turn-3', 7,
+                  'web question', NULL, NULL, NULL, NULL, 'gpt', 'fp-web', 0,
+                  '2026-11-06T00:00:00Z');
+
+        INSERT INTO conversation_parts (
+            tenant_id, turn_id, part_index, id_key, kind, content, attrs_json, translated_text
+        ) VALUES
+        ('default', 'legacy-turn-parent', 0, x'0000000000000001', 'answer',
+         'parent answer body', NULL, NULL),
+        ('default', 'legacy-turn-offline', 0, x'0000000000000002', 'answer',
+         'offline answer body', NULL, NULL);
+
+        INSERT INTO conversation_part_fts (tenant_id, part_id, session_id, turn_id, text) VALUES
+        ('default', 'legacy-part-1', 'legacy-session', 'legacy-turn-parent', 'parent answer body'),
+        ('default', 'legacy-part-2', 'legacy-offline-session', 'legacy-turn-offline',
+         'offline answer body');
+
+        INSERT INTO conversation_usage_events (
+            tenant_id, source_id, adapter_id, external_event_id, session_id, turn_id,
+            timestamp, provider, model, cost_basis, created_at, updated_at
+        ) VALUES
+        ('default', 'legacy-source', 'legacy-adapter', 'event-exact', 'ext-1', 'turn-1',
+         '2026-11-06T01:00:00Z', 'openai', 'gpt', 'none', '2026-11-06T00:00:00Z',
+         '2026-11-06T00:00:00Z'),
+        ('default', 'legacy-source', 'legacy-adapter', 'event-unmapped', 'ext-1', 'msg-9f2ab1',
+         '2026-11-06T01:00:00Z', 'openai', 'gpt', 'none', '2026-11-06T00:00:00Z',
+         '2026-11-06T00:00:00Z');
+
+        -- 迁移已跑过一次，回滚夹具时先撤掉它新增的列与索引，模拟升级前的真实形态。
+        DROP INDEX IF EXISTS idx_conversation_usage_events_tenant_session_turn;
+        ALTER TABLE conversation_usage_events DROP COLUMN turn_index;
+        DELETE FROM _sqlx_migrations WHERE version = 20261106000001;
+        "#,
+    )
+    .expect("seed legacy 14-column turns");
+    drop(conn);
+
+    migrate_database(&db_path)
+        .await
+        .expect("apply positional turn identity migration");
+
+    let conn = Connection::open(&db_path).expect("open migrated database");
+
+    // A. 11 列终态结构
+    for table in ["conversation_turns", "web_record_turns"] {
+        let columns: Vec<String> = conn
+            .prepare(&format!(
+                "SELECT name FROM pragma_table_info('{table}') ORDER BY cid"
+            ))
+            .expect("prepare turn columns")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query turn columns")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect turn columns");
+        assert_eq!(
+            columns,
+            vec![
+                "tenant_id",
+                "id",
+                "session_id",
+                "turn_index",
+                "prompt",
+                "process",
+                "response",
+                "started_at",
+                "ended_at",
+                "model",
+                "imported_at",
+            ],
+            "{table} 必须收缩为 11 列位置身份结构"
+        );
+    }
+
+    // B. 序号归一化 + 主键重算 + 父引用换轨
+    let parent_turn_id = crate::backend::domain::derive_conversation_turn_id("legacy-session", 0);
+    let sub_turn_id = crate::backend::domain::derive_conversation_turn_id("legacy-session", 1);
+    let offline_turn_id =
+        crate::backend::domain::derive_conversation_turn_id("legacy-offline-session", 0);
+    let orphan_turn_id =
+        crate::backend::domain::derive_conversation_turn_id("legacy-missing-session", 0);
+
+    let rows: Vec<(String, i64, String)> = conn
+        .prepare("SELECT id, turn_index, started_at FROM conversation_turns ORDER BY session_id, turn_index")
+        .expect("prepare turn rows")
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .expect("query turn rows")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect turn rows");
+    assert_eq!(
+        rows.iter()
+            .map(|(id, index, _)| (id.clone(), *index))
+            .collect::<Vec<_>>(),
+        vec![
+            (orphan_turn_id.clone(), 0),
+            (offline_turn_id.clone(), 0),
+            (parent_turn_id.clone(), 0),
+            (sub_turn_id.clone(), 1),
+        ],
+        "存量轮次必须按会话重排为连续 0..N 并重算位置主键，且孤儿轮次不得丢失"
+    );
+    assert!(
+        rows.iter()
+            .all(|(_, _, started_at)| !started_at.trim().is_empty()),
+        "started_at 必须收紧为非空"
+    );
+
+    let parent_ref: Option<String> = conn
+        .query_row(
+            "SELECT json_extract(process, '$.parent_turn_id') FROM conversation_turns WHERE id = ?1",
+            [&sub_turn_id],
+            |row| row.get(0),
+        )
+        .expect("query parent reference");
+    assert_eq!(
+        parent_ref.as_deref(),
+        Some(parent_turn_id.as_str()),
+        "子代理父引用必须级联到新的父轮次主键"
+    );
+
+    // C. 离线会话与内容事实零丢失，FTS 仍可命中
+    let offline_parts: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_parts WHERE turn_id = ?1",
+            [&offline_turn_id],
+            |row| row.get(0),
+        )
+        .expect("count offline parts");
+    assert_eq!(offline_parts, 1, "源文件已移除的离线会话必须完整保留");
+
+    let fts_hits: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversation_part_fts WHERE conversation_part_fts MATCH 'offline'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query offline fts hit");
+    assert_eq!(fts_hits, 1, "存量全文索引必须随轮次主键重算后继续命中");
+
+    // D. 用量事件按 turn_index 归因
+    let attributed: Option<i64> = conn
+        .query_row(
+            "SELECT turn_index FROM conversation_usage_events WHERE external_event_id = 'event-exact'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query attributed usage event");
+    assert_eq!(
+        attributed,
+        Some(1),
+        "旧 (session, external_id) 必须回填到轮次序号"
+    );
+    let unmapped: Option<i64> = conn
+        .query_row(
+            "SELECT turn_index FROM conversation_usage_events WHERE external_event_id = 'event-unmapped'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query unmapped usage event");
+    assert_eq!(unmapped, None, "无法定位的源键必须置空");
+
+    let web_turn_id = crate::backend::domain::derive_web_record_turn_id("legacy-web-session", 0);
+    let web_row: (String, i64) = conn
+        .query_row("SELECT id, turn_index FROM web_record_turns", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .expect("query web turn");
+    assert_eq!(
+        web_row,
+        (web_turn_id, 0),
+        "web 记录族必须与客户端会话族保持同一套位置身份"
+    );
+
+    // E. 幂等：再次迁移零写入
+    drop(conn);
+    migrate_database(&db_path)
+        .await
+        .expect("idempotent migration");
+    let conn = Connection::open(&db_path).expect("reopen database");
+    let ids_after: Vec<String> = conn
+        .prepare("SELECT id FROM conversation_turns ORDER BY id")
+        .expect("prepare idempotent ids")
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("query idempotent ids")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect idempotent ids");
+    let mut expected = vec![parent_turn_id, sub_turn_id, offline_turn_id, orphan_turn_id];
+    expected.sort();
+    assert_eq!(ids_after, expected, "二次迁移必须完全幂等");
 
     cleanup_database(&db_path);
 }

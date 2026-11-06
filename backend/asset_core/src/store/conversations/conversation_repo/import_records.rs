@@ -162,7 +162,6 @@ pub(super) async fn conversation_session_is_unchanged_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session: &ConversationSession,
-    normalized: &NormalizedConversationSession,
 ) -> StoreResult<bool> {
     let Some(source_fingerprint) = session.source_fingerprint.as_deref() else {
         return Ok(false);
@@ -202,65 +201,7 @@ pub(super) async fn conversation_session_is_unchanged_sqlx_tx(
         && row.updated_at == session.updated_at
         && row.source_locator == session.source_locator
         && row.source_fingerprint.as_deref() == Some(source_fingerprint)
-        && row.missing == 0
-        && conversation_session_turns_are_unchanged_sqlx_tx(tx, tenant_id, &session.id, normalized)
-            .await?)
-}
-
-pub(super) async fn conversation_session_exists_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-) -> StoreResult<bool> {
-    let exists = sqlx::query_scalar::<_, i64>(
-        "SELECT EXISTS(SELECT 1 FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2)",
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    Ok(exists != 0)
-}
-
-pub(super) async fn conversation_session_turns_are_unchanged_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-    normalized: &NormalizedConversationSession,
-) -> StoreResult<bool> {
-    #[derive(Debug, FromRow)]
-    struct ConversationTurnUnchangedCheckRow {
-        external_id: String,
-        fingerprint: String,
-        missing: i64,
-    }
-
-    let rows = sqlx::query_as::<_, ConversationTurnUnchangedCheckRow>(
-        r#"
-        SELECT external_id, fingerprint, missing
-        FROM conversation_turns
-        WHERE tenant_id = ?1 AND session_id = ?2
-        ORDER BY turn_index ASC, external_id ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    if rows.len() != normalized.turns.len() {
-        return Ok(false);
-    }
-    for (row, turn) in rows.iter().zip(&normalized.turns) {
-        if row.external_id != turn.external_id
-            || row.fingerprint != conversation_turn_fingerprint(turn)
-            || row.missing != 0
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+        && row.missing == 0)
 }
 
 pub(super) async fn upsert_conversation_session_sqlx_tx(
@@ -313,50 +254,3 @@ pub(super) async fn upsert_conversation_session_sqlx_tx(
     .map_err(StoreError::external)?;
     Ok(())
 }
-
-pub(super) async fn upsert_conversation_turn_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    turn: &ConversationTurn,
-) -> StoreResult<()> {
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_turns (
-            tenant_id, id, session_id, external_id, turn_index, prompt, process, response,
-            started_at, ended_at, fingerprint, missing, imported_at, model
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-        ON CONFLICT(tenant_id, session_id, external_id) DO UPDATE SET
-            turn_index = excluded.turn_index,
-            prompt = excluded.prompt,
-            process = excluded.process,
-            response = excluded.response,
-            started_at = excluded.started_at,
-            ended_at = excluded.ended_at,
-            fingerprint = excluded.fingerprint,
-            missing = 0,
-            imported_at = excluded.imported_at,
-            model = excluded.model
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(&turn.id)
-    .bind(&turn.session_id)
-    .bind(&turn.external_id)
-    .bind(turn.turn_index)
-    .bind(&turn.prompt)
-    .bind(&turn.process)
-    .bind(&turn.response)
-    .bind(&turn.started_at)
-    .bind(&turn.ended_at)
-    .bind(&turn.fingerprint)
-    .bind(if turn.missing { 1_i64 } else { 0_i64 })
-    .bind(&turn.imported_at)
-    .bind(&turn.model)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    Ok(())
-}
-
-pub(super) use super::import_parts::replace_conversation_parts_sqlx_tx;

@@ -1,7 +1,7 @@
 # 0006: 会话三层架构归一化与问题语义聚合建模（Question-Turn-Part-Card）
 
 > **重要等级**：核心级（P1）  
-> **状态**：已接受  
+> **状态**：已接受（其中持久化 Question 表与 Turn 级对账列已被迁移 `20261026000001` 及 [ADR-0021](./0021-session-snapshot-replacement-and-positional-turn-identity.md) 部分取代）  
 > **决策日期**：2026-06-04  
 > **决策证据**：`019e92fa`  
 > **记录日期**：2026-08-25  

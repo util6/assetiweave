@@ -140,8 +140,8 @@ pub(super) async fn load_search_question_groups_sqlx(
 )> {
     let query = format!(
         r#"
-        SELECT t.id, t.session_id, t.external_id, t.turn_index, t.prompt, t.process, t.response,
-               t.started_at, t.ended_at, t.model, t.fingerprint, t.missing, t.imported_at
+        SELECT t.id, t.session_id, t.turn_index, t.prompt, t.process, t.response,
+               t.started_at, t.ended_at, t.model, t.imported_at
         FROM {turns} t
         JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
         WHERE t.tenant_id = ?1
@@ -181,13 +181,7 @@ pub(super) async fn load_search_question_groups_sqlx(
     let mut questions_by_session = BTreeMap::<String, Vec<ConversationQuestion>>::new();
     let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
 
-    let turn_time = |turn: &ConversationTurn| -> String {
-        turn.started_at
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or(&turn.imported_at)
-            .to_string()
-    };
+    let turn_time = |turn: &ConversationTurn| -> String { turn.started_at.clone() };
 
     for (session_id, session_turns) in turns_by_session {
         let groups = crate::backend::domain::conversations::group_turns_by_dynamic_projection(

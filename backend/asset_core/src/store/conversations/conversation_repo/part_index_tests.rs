@@ -68,10 +68,9 @@ async fn seed_turn(
     let turn_sql = format!(
         r#"
         INSERT INTO {turns} (
-            tenant_id, id, session_id, external_id, turn_index, prompt,
-            started_at, ended_at, fingerprint, missing, imported_at
-        ) VALUES (?1, ?2, ?3, ?2, ?4, 'how does indexing work', NULL, NULL,
-                  'fixture-fingerprint', 0, '2026-10-23T00:00:00Z')
+            tenant_id, id, session_id, turn_index, prompt, started_at, ended_at, imported_at
+        ) VALUES (?1, ?2, ?3, ?4, 'how does indexing work', '2026-10-23T00:00:00Z', NULL,
+                  '2026-10-23T00:00:00Z')
         "#
     );
     sqlx::query(AssertSqlSafe(turn_sql))

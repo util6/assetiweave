@@ -326,7 +326,7 @@ async fn test_has_pending_memory_work_respects_window_and_internal_filter() {
         source_locator: None,
         source_fingerprint: None,
         turns: vec![crate::backend::domain::NormalizedConversationTurn {
-            external_id: "t1".to_string(),
+            external_id: Some("t1".to_string()),
             turn_index: 0,
             user_text: "old work".to_string(),
             title: None,
@@ -355,7 +355,7 @@ async fn test_has_pending_memory_work_respects_window_and_internal_filter() {
         source_locator: None,
         source_fingerprint: None,
         turns: vec![crate::backend::domain::NormalizedConversationTurn {
-            external_id: "t2".to_string(),
+            external_id: Some("t2".to_string()),
             turn_index: 0,
             user_text: "internal run".to_string(),
             title: None,
@@ -397,7 +397,7 @@ async fn test_has_pending_memory_work_respects_window_and_internal_filter() {
         source_locator: None,
         source_fingerprint: None,
         turns: vec![crate::backend::domain::NormalizedConversationTurn {
-            external_id: "t3".to_string(),
+            external_id: Some("t3".to_string()),
             turn_index: 0,
             user_text: "active recent work".to_string(),
             title: None,

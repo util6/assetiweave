@@ -74,7 +74,7 @@ async fn test_conversation_outline_and_card_get_full_suite() {
         source_fingerprint: Some("fingerprint-outline-1".to_string()),
         turns: vec![
             NormalizedConversationTurn {
-                external_id: "turn-ext-outline-01".to_string(),
+                external_id: Some("turn-ext-outline-01".to_string()),
                 turn_index: 0,
                 user_text: "Please run diagnostics and show status".to_string(),
                 title: None,
@@ -142,7 +142,7 @@ async fn test_conversation_outline_and_card_get_full_suite() {
                 ..Default::default()
             },
             NormalizedConversationTurn {
-                external_id: "turn-ext-outline-02".to_string(),
+                external_id: Some("turn-ext-outline-02".to_string()),
                 turn_index: 1,
                 user_text: "Now clean up".to_string(),
                 title: None,
@@ -253,7 +253,7 @@ async fn test_conversation_outline_and_card_get_full_suite() {
 
     // Load full turn 1 ID from database
     let full_turn_id: String = sqlx::query_scalar(
-        "SELECT id FROM conversation_turns WHERE tenant_id = ?1 AND external_id = 'turn-ext-outline-01'",
+        "SELECT id FROM conversation_turns WHERE tenant_id = ?1 AND turn_index = 0",
     )
     .bind(tenant_id)
     .fetch_one(pool)
@@ -609,7 +609,7 @@ async fn test_qa_digest_and_batch_outline_suite() {
         source_locator: Some("fixture://sess-batch-001".to_string()),
         source_fingerprint: Some("fp-1".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "turn-batch-1".to_string(),
+            external_id: Some("turn-batch-1".to_string()),
             turn_index: 0,
             user_text: "Explain quantum computing".to_string(),
             title: None,
@@ -631,7 +631,7 @@ async fn test_qa_digest_and_batch_outline_suite() {
         source_locator: Some("fixture://sess-batch-002".to_string()),
         source_fingerprint: Some("fp-2".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "turn-batch-2".to_string(),
+            external_id: Some("turn-batch-2".to_string()),
             turn_index: 0,
             user_text: "What is 2+2?".to_string(),
             title: None,
@@ -722,7 +722,7 @@ async fn test_qa_digest_and_batch_outline_suite() {
         title: Some("Session Huge 1".to_string()),
         source_locator: Some("fixture://sess-huge-001".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "turn-huge-1".to_string(),
+            external_id: Some("turn-huge-1".to_string()),
             turn_index: 0,
             user_text: "Q1".to_string(),
             parts: vec![make_text_part(&huge_answer)],
@@ -735,7 +735,7 @@ async fn test_qa_digest_and_batch_outline_suite() {
         title: Some("Session Huge 2".to_string()),
         source_locator: Some("fixture://sess-huge-002".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "turn-huge-2".to_string(),
+            external_id: Some("turn-huge-2".to_string()),
             turn_index: 0,
             user_text: "Q2".to_string(),
             parts: vec![make_text_part(&huge_answer)],

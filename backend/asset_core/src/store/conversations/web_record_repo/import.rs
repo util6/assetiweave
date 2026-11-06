@@ -44,49 +44,33 @@ pub async fn import_web_record_sessions_sqlx(
         let mut tx = crate::backend::store::begin_immediate(pool).await?;
         for normalized in batch {
             let session = web_record_session_from_normalized(source, normalized, &now);
-            let change_kind =
-                if web_record_session_exists_sqlx_tx(&mut tx, tenant_id, &session.id).await? {
-                    "updated"
-                } else {
-                    "new"
-                };
-            if web_record_session_is_unchanged_sqlx_tx(&mut tx, tenant_id, &session, normalized)
-                .await?
-            {
+            if web_record_session_is_unchanged_sqlx_tx(&mut tx, tenant_id, &session).await? {
                 skipped_session_count += 1;
                 continue;
             }
-            let translation_state =
-                load_web_record_part_translation_state_sqlx_tx(&mut tx, tenant_id, &session.id)
-                    .await
-                    .map_err(StoreError::external)?;
-            delete_web_record_session_sqlx_tx(&mut tx, tenant_id, &session.id).await?;
-            insert_web_record_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
-
-            for turn in &normalized.turns {
-                if turn.user_text.trim().is_empty() {
-                    warning_count += 1;
-                    continue;
-                }
-                let (stored_turn, triad_parts) = prepare_web_record_turn_for_import_sqlx_tx(
-                    &mut tx,
-                    tenant_id,
-                    &session.id,
-                    turn,
-                    &now,
-                    &translation_state,
-                )
-                .await?;
-                insert_web_record_turn_sqlx_tx(&mut tx, tenant_id, &stored_turn).await?;
-                insert_web_record_parts_sqlx_tx(
-                    &mut tx,
-                    tenant_id,
-                    &stored_turn.id,
-                    &triad_parts,
-                    &translation_state,
-                )
-                .await?;
-            }
+            warning_count += normalized
+                .turns
+                .iter()
+                .filter(|turn| turn.user_text.trim().is_empty())
+                .count();
+            let prepared = prepare_session_snapshot(
+                ConversationRecordKind::Web,
+                &session.id,
+                &session.adapter_id,
+                session.started_at.as_deref(),
+                session.updated_at.as_deref(),
+                &normalized.turns,
+                &now,
+            );
+            upsert_web_record_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
+            replace_session_snapshot_sqlx_tx(
+                &mut tx,
+                tenant_id,
+                ConversationRecordKind::Web,
+                &session,
+                &prepared,
+            )
+            .await?;
             changed_session_count += 1;
         }
         tx.commit().await.map_err(StoreError::external)?;
@@ -131,7 +115,6 @@ pub async fn web_record_session_is_unchanged_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session: &ConversationSession,
-    normalized: &NormalizedConversationSession,
 ) -> StoreResult<bool> {
     let Some(source_fingerprint) = session.source_fingerprint.as_deref() else {
         return Ok(false);
@@ -157,60 +140,10 @@ pub async fn web_record_session_is_unchanged_sqlx_tx(
         && row.updated_at == session.updated_at
         && row.source_locator == session.source_locator
         && row.source_fingerprint.as_deref() == Some(source_fingerprint)
-        && row.missing == 0
-        && session_turns_match_normalized_sqlx_tx(tx, tenant_id, &session.id, normalized).await?)
+        && row.missing == 0)
 }
 
-pub async fn web_record_session_exists_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-) -> StoreResult<bool> {
-    let exists = sqlx::query_scalar::<_, i64>(
-        "SELECT EXISTS(SELECT 1 FROM web_record_sessions WHERE tenant_id = ?1 AND id = ?2)",
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    Ok(exists != 0)
-}
-
-pub async fn session_turns_match_normalized_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-    normalized: &NormalizedConversationSession,
-) -> StoreResult<bool> {
-    let rows = sqlx::query_as::<_, ExistingWebRecordTurnRow>(
-        r#"
-        SELECT external_id, fingerprint, missing
-        FROM web_record_turns
-        WHERE tenant_id = ?1 AND session_id = ?2
-        ORDER BY turn_index ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    if rows.len() != normalized.turns.len() {
-        return Ok(false);
-    }
-    for (row, turn) in rows.iter().zip(&normalized.turns) {
-        if row.external_id != turn.external_id
-            || row.fingerprint != conversation_turn_fingerprint(turn)
-            || row.missing != 0
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-pub async fn insert_web_record_session_sqlx_tx(
+pub async fn upsert_web_record_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session: &ConversationSession,
@@ -218,10 +151,19 @@ pub async fn insert_web_record_session_sqlx_tx(
     sqlx::query(
         r#"
         INSERT INTO web_record_sessions (
-            tenant_id, id, source_id, adapter_id, external_id, title, started_at, updated_at,
-            source_locator, source_fingerprint, missing, created_at, imported_at
+            tenant_id, id, source_id, adapter_id, external_id, title, started_at,
+            updated_at, source_locator, source_fingerprint, missing, created_at, imported_at
         )
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        ON CONFLICT(tenant_id, source_id, external_id) DO UPDATE SET
+            adapter_id = excluded.adapter_id,
+            title = excluded.title,
+            started_at = excluded.started_at,
+            updated_at = excluded.updated_at,
+            source_locator = excluded.source_locator,
+            source_fingerprint = excluded.source_fingerprint,
+            missing = 0,
+            imported_at = excluded.imported_at
         "#,
     )
     .bind(tenant_id)
@@ -237,40 +179,6 @@ pub async fn insert_web_record_session_sqlx_tx(
     .bind(if session.missing { 1_i64 } else { 0_i64 })
     .bind(&session.created_at)
     .bind(&session.imported_at)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    Ok(())
-}
-
-pub async fn insert_web_record_turn_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    turn: &ConversationTurn,
-) -> StoreResult<()> {
-    sqlx::query(
-        r#"
-        INSERT INTO web_record_turns (
-            tenant_id, id, session_id, external_id, turn_index, prompt, process, response,
-            started_at, ended_at, fingerprint, missing, imported_at, model
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(&turn.id)
-    .bind(&turn.session_id)
-    .bind(&turn.external_id)
-    .bind(turn.turn_index)
-    .bind(&turn.prompt)
-    .bind(&turn.process)
-    .bind(&turn.response)
-    .bind(&turn.started_at)
-    .bind(&turn.ended_at)
-    .bind(&turn.fingerprint)
-    .bind(if turn.missing { 1_i64 } else { 0_i64 })
-    .bind(&turn.imported_at)
-    .bind(&turn.model)
     .execute(&mut **tx)
     .await
     .map_err(StoreError::external)?;

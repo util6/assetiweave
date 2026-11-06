@@ -168,8 +168,8 @@ async fn test_auto_fill_turn_started_at_from_sqlite() {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, external_id, turn_index, started_at, fingerprint, missing, imported_at) \
-         VALUES (?1, 'turn-autofill-1', 'sess-autofill-1', 'turn-ext-1', 1, '2026-10-24T10:05:00Z', '', 0, '2026-10-24T10:05:00Z')",
+        "INSERT INTO conversation_turns (tenant_id, id, session_id, turn_index, started_at, imported_at) \
+         VALUES (?1, 'turn-autofill-1', 'sess-autofill-1', 1, '2026-10-24T10:05:00Z', '2026-10-24T10:05:00Z')",
     )
     .bind(tenant_id)
     .execute(service.db.pool())

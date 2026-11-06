@@ -120,7 +120,7 @@ async fn test_reproject_conversation_session_materializes_parts_and_derives_exec
         execution_origin: Some("user".to_string()),
         execution_purpose: None,
         turns: vec![NormalizedConversationTurn {
-            external_id: "turn-1".to_string(),
+            external_id: Some("turn-1".to_string()),
             turn_index: 0,
             user_text: "check git status and review".to_string(),
             title: None,

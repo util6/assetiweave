@@ -340,11 +340,6 @@ pub fn validate_normalized_session(
     }
     let mut legacy_cards_upgraded = 0usize;
     for turn in &mut session.turns {
-        if turn.external_id.trim().is_empty() {
-            return Err(InfraError::external(
-                "normalized turn external_id is required".to_string(),
-            ));
-        }
         if turn.user_text.trim().is_empty() {
             return Err(InfraError::external(
                 "normalized turn user_text is required".to_string(),

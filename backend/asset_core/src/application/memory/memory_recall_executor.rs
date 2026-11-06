@@ -427,7 +427,7 @@ impl AppService {
                     });
                 }
                 crate::backend::domain::NormalizedConversationTurn {
-                    external_id: turn.id.clone(),
+                    external_id: Some(turn.id.clone()),
                     turn_index: turn.sequence,
                     user_text: turn.user_text.clone(),
                     title: None,

@@ -132,6 +132,9 @@ pub async fn open_migrated_pool(db_path: &Path) -> StoreResult<SqlitePool> {
     repair_known_modified_cleanup_util6_orphans_migration(&pool).await?;
     normalize_legacy_part_ids(&pool).await?;
     MIGRATOR.run(&pool).await.map_err(StoreError::external)?;
+    // 迁移脚本算不出 SHA-256，轮次位置主键必须由 Rust 在迁移后就地重算并级联 Parts / FTS / 父引用。
+    crate::backend::store::conversation_turn_identity::repair_positional_turn_identities(&pool)
+        .await?;
     converge_asset_stored_paths(&pool).await?;
     Ok(pool)
 }
@@ -188,7 +191,7 @@ async fn is_untracked_legacy_database(pool: &SqlitePool) -> StoreResult<bool> {
     Ok(table_exists(pool, "sources").await? && !table_exists(pool, "_sqlx_migrations").await?)
 }
 
-async fn table_exists(pool: &SqlitePool, table: &str) -> StoreResult<bool> {
+pub(crate) async fn table_exists(pool: &SqlitePool, table: &str) -> StoreResult<bool> {
     let count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
             .bind(table)
@@ -318,7 +321,11 @@ async fn repair_known_modified_cleanup_util6_orphans_migration(
     Ok(())
 }
 
-async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> StoreResult<bool> {
+pub(crate) async fn column_exists(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+) -> StoreResult<bool> {
     let statement = format!("PRAGMA table_info({table})");
     let rows = sqlx::query(AssertSqlSafe(statement))
         .fetch_all(pool)

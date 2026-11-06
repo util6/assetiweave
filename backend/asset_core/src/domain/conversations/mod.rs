@@ -378,15 +378,16 @@ fn default_user_visible() -> bool {
 pub struct ConversationTurn {
     pub id: String,
     pub session_id: String,
-    pub external_id: String,
     pub turn_index: i64,
     #[serde(alias = "user_text")]
     pub prompt: String,
     pub title: Option<String>,
-    pub started_at: Option<String>,
+    /// 该轮交互真实发生的时刻。
+    ///
+    /// 落库强制非空：回滚重聊后总轮数可能不增反减，消费方只能靠时间戳
+    /// 分辨哪些轮次是回滚后新产生的。
+    pub started_at: String,
     pub ended_at: Option<String>,
-    pub fingerprint: String,
-    pub missing: bool,
     pub imported_at: String,
     #[serde(default)]
     pub model: Option<String>,

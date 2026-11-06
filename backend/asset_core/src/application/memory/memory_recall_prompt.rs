@@ -156,8 +156,9 @@ pub fn recall_conversation_session_id(session_id: &str) -> String {
     stable_recall_id("conversation-session", &[RECALL_SOURCE_ID, session_id])
 }
 
-pub fn recall_conversation_turn_id(session_id: &str, turn_id: &str) -> String {
-    stable_recall_id("conversation-turn", &[session_id, turn_id])
+/// Recall 轮次在会话内的位置身份：与核心轮次主键同一公式。
+pub fn recall_conversation_turn_id(session_id: &str, turn_index: i64) -> String {
+    crate::backend::domain::derive_conversation_turn_id(session_id, turn_index)
 }
 
 pub fn stable_recall_id(prefix: &str, parts: &[&str]) -> String {
@@ -172,7 +173,7 @@ pub fn stable_recall_id(prefix: &str, parts: &[&str]) -> String {
 pub fn fingerprint_turns(turns: &[crate::backend::domain::NormalizedConversationTurn]) -> String {
     let mut hasher = Sha256::new();
     for turn in turns {
-        hasher.update(turn.external_id.as_bytes());
+        hasher.update(turn.external_id.as_deref().unwrap_or_default().as_bytes());
         hasher.update(b"\0");
         hasher.update(turn.user_text.as_bytes());
         for part in &turn.parts {

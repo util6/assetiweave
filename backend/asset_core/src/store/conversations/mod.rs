@@ -4,6 +4,7 @@ pub mod conversation_repo;
 pub mod pricing_repo;
 pub mod search_index_documents;
 pub mod search_index_repo;
+pub mod snapshot;
 pub mod usage_query;
 pub mod usage_repo;
 pub mod web_record_repo;

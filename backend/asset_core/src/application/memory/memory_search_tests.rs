@@ -74,7 +74,7 @@ async fn insert_test_source_and_session(
         source_locator: Some(format!("fixture://{session_external_id}")),
         source_fingerprint: Some("fingerprint-1".to_string()),
         turns: vec![NormalizedConversationTurn {
-            external_id: "turn-1".to_string(),
+            external_id: Some("turn-1".to_string()),
             turn_index: 0,
             user_text: user_query.to_string(),
             title: None,
