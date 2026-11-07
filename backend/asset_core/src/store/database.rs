@@ -130,6 +130,7 @@ pub async fn open_migrated_pool(db_path: &Path) -> StoreResult<SqlitePool> {
     repair_legacy_migration_ledger_versions(&pool).await?;
     repair_known_modified_conversation_question_contract_migration(&pool).await?;
     repair_known_modified_cleanup_util6_orphans_migration(&pool).await?;
+    repair_superseded_session_snapshot_migration(&pool).await?;
     normalize_legacy_part_ids(&pool).await?;
     MIGRATOR.run(&pool).await.map_err(StoreError::external)?;
     // 迁移脚本算不出 SHA-256，轮次位置主键必须由 Rust 在迁移后就地重算并级联 Parts / FTS / 父引用。
@@ -275,6 +276,61 @@ async fn repair_known_modified_conversation_question_contract_migration(
 const KNOWN_MODIFIED_QUESTION_CONTRACT_CHECKSUM: &str = "E9A07424F1C86E99CED78966A8CB750B73D6C00E089576DD5C077B357B259BE2C34C14F0BEC320A2FB991B98B6BB9D38";
 
 const KNOWN_MODIFIED_CLEANUP_UTIL6_ORPHANS_CHECKSUM: &str = "B45D2395822AF941B7760B9F39EC3E2ED35B8101540955EE01D219895637506A553E8620D57E48BD30BB66B5943FD928";
+
+/// `20261106000001` 首版把「轮次位置映射」写成了内连接，会话行缺失的孤儿轮次会在
+/// 重建时被静默丢弃；修正版改成左连接。已经应用过首版的库表结构完全正确、无需重跑，
+/// 只是账本里的校验和还是旧文件的，需要在 `MIGRATOR.run` 之前先对齐，否则启动直接 panic。
+const SUPERSEDED_SESSION_SNAPSHOT_CHECKSUM: &str = "0873471DAC6AB5BF57D94A48B78688DF7F91D6CF14A615E63664D3A79476319D7FC7C5B0F9AF64C3F68F0738BE572177";
+
+const SESSION_SNAPSHOT_MIGRATION_VERSION: i64 = 20261106000001;
+
+/// 把被修正过的 `20261106000001` 账本校验和对齐到当前文件。
+///
+/// 只认那一份确切的旧校验和，并且先确认库确实已经是 11 列位置身份结构：
+/// 结构对不上就报错退出，绝不用校验和改写去掩盖一个真正不同的迁移文件。
+async fn repair_superseded_session_snapshot_migration(pool: &SqlitePool) -> StoreResult<()> {
+    if !table_exists(pool, "_sqlx_migrations").await? {
+        return Ok(());
+    }
+    let checksum: Option<String> =
+        sqlx::query_scalar("SELECT upper(hex(checksum)) FROM _sqlx_migrations WHERE version = ?1")
+            .bind(SESSION_SNAPSHOT_MIGRATION_VERSION)
+            .fetch_optional(pool)
+            .await
+            .map_err(StoreError::external)?;
+    if checksum.as_deref() != Some(SUPERSEDED_SESSION_SNAPSHOT_CHECKSUM) {
+        return Ok(());
+    }
+
+    for table in ["conversation_turns", "web_record_turns"] {
+        if column_exists(pool, table, "external_id").await?
+            || !column_exists(pool, table, "turn_index").await?
+        {
+            return Err(StoreError::Validation(format!(
+                "cannot repair migration {SESSION_SNAPSHOT_MIGRATION_VERSION} checksum: {table} is not in the 11-column positional shape"
+            )));
+        }
+    }
+    if !column_exists(pool, "conversation_usage_events", "turn_index").await? {
+        return Err(StoreError::Validation(format!(
+            "cannot repair migration {SESSION_SNAPSHOT_MIGRATION_VERSION} checksum: conversation_usage_events.turn_index is missing"
+        )));
+    }
+
+    let Some(current) = MIGRATOR
+        .iter()
+        .find(|migration| migration.version == SESSION_SNAPSHOT_MIGRATION_VERSION)
+    else {
+        return Ok(());
+    };
+    sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = ?2")
+        .bind(current.checksum.to_vec())
+        .bind(SESSION_SNAPSHOT_MIGRATION_VERSION)
+        .execute(pool)
+        .await
+        .map_err(StoreError::external)?;
+    Ok(())
+}
 
 async fn repair_known_modified_cleanup_util6_orphans_migration(
     pool: &SqlitePool,

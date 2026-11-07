@@ -15,4 +15,5 @@
 ## 后果
 
 - **收益**：轮次表从 14 列收缩为 11 列纯业务事实表；彻底解除适配器提供稳定轮次外部 ID 的负担（`external_id` 降级为导入期内存可选临时键，仅用于解析子代理 `parent_external_id`）；用量事件通过 `turn_index` 归因；FTS5 索引由逐轮回读全表扫改为会话级单次清理与内存直写。
-- **约束**：存量数据库需在迁移后由 Rust 修复钩子按会话重排 `turn_index` 并原地重算 `turn.id`（级联更新 Parts、FTS 与 `process.parent_turn_id`），以保护源文件已删除的离线会话不丢失；Memory 等消费方判断回滚后的增量轮次时，应结合 `started_at` 时间戳而非仅看轮次总数。
+- **约束**：存量数据库需在迁移后由 Rust 修复钩子按会话重排 `turn_index` 并原地重算 `turn.id`（级联更新 Parts 的 `turn_id`/`id_key` 与 `process.parent_turn_id`），以保护源文件已删除的离线会话不丢失；Memory 等消费方判断回滚后的增量轮次时，应结合 `started_at` 时间戳而非仅看轮次总数。
+- **索引修复的边界**：`conversation_part_fts` 是会话级文本语料，检索只按 `session_id` 定位、按 `text` 匹配，`turn_id`/`part_id` 是无消费方的 UNINDEXED 派生列。按它们过滤在 FTS5 上必然全表线性扫描（26 万行实测单次 3.4 秒），逐轮重建会让升级在启动阶段卡住数十分钟，因此修复钩子不改写索引行：轮次主键变化不影响任何一行的文本归属，该会话下次整包替换时会整体重写。

@@ -31,6 +31,17 @@ fn released_session_memory_durable_jobs_migration_remains_immutable() {
     );
 }
 
+#[test]
+fn session_snapshot_positional_turn_identity_migration_remains_immutable() {
+    let migration = include_str!(
+        "../../migrations/20261106000001_session_snapshot_positional_turn_identity.sql"
+    );
+    assert_eq!(
+        format!("{:x}", Sha384::digest(migration.as_bytes())),
+        "3687dfbe3a28a580281f87cc5728a634fa5cf18ae9e31d8b9ecd0f5f376ecb31b66c4544d8a783fe43d6d1bea0b49371"
+    );
+}
+
 #[tokio::test]
 async fn migrations_retain_recall_indexes_after_question_contract_rebuild() {
     let db_path = temp_database_path("memory-recall-index-upgrade");
@@ -2479,7 +2490,7 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         .expect("check id column dropped");
     assert_eq!(id_column_exists, 0, "conversation_parts 必须无 id 列");
 
-    // D. 轮次主键已重算为位置身份，全文索引 part_id 同步对齐
+    // D. 轮次主键已重算为位置身份；索引行保留，正文归属与命中不变
     let repositioned_turn_id =
         crate::backend::domain::derive_conversation_turn_id("sess-default-1", 0);
     let stored_turn_id: String = conn
@@ -2493,21 +2504,18 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         stored_turn_id, repositioned_turn_id,
         "轮次主键必须重算为 sha256(session_id, turn_index)"
     );
-    let expected_new_id = crate::backend::domain::derive_standard_part_id(
-        "conversation-part",
-        &repositioned_turn_id,
-        0,
-    );
-    let fts_part_id: String = conn
+    // 索引表按会话聚合正文，`turn_id` / `part_id` 是 UNINDEXED 且无消费方的派生列，
+    // 按它们过滤必然全表扫描，因此启动期修复不动索引行——检索能力不因此受损。
+    let indexed_session: String = conn
         .query_row(
-            "SELECT part_id FROM conversation_part_fts WHERE tenant_id = 'default'",
+            "SELECT session_id FROM conversation_part_fts WHERE tenant_id = 'default'",
             [],
             |r| r.get(0),
         )
-        .expect("query fts part id");
+        .expect("query fts session id");
     assert_eq!(
-        fts_part_id, expected_new_id,
-        "conversation_part_fts.part_id 必须同步对齐"
+        indexed_session, "sess-default-1",
+        "索引行必须仍挂在原会话下，正文匹配不受轮次主键变化影响"
     );
 
     // E. 幂等性断言：再次运行 migrate_database 零副作用
@@ -4145,5 +4153,48 @@ async fn acceptance_spec_175_positional_turn_identity_migration_preserves_offlin
     expected.sort();
     assert_eq!(ids_after, expected, "二次迁移必须完全幂等");
 
+    cleanup_database(&db_path);
+}
+
+/// `20261106000001` 首版（内连接版）已经应用过的库只需对齐账本校验和，不必重跑迁移。
+#[tokio::test]
+async fn migrations_realign_the_superseded_session_snapshot_checksum() {
+    let db_path = temp_database_path("superseded-session-snapshot-checksum");
+    migrate_database(&db_path)
+        .await
+        .expect("create current database");
+
+    let conn = Connection::open(&db_path).expect("open database");
+    conn.execute(
+        "UPDATE _sqlx_migrations SET checksum = X'0873471DAC6AB5BF57D94A48B78688DF7F91D6CF14A615E63664D3A79476319D7FC7C5B0F9AF64C3F68F0738BE572177' WHERE version = 20261106000001",
+        [],
+    )
+    .expect("rewind ledger checksum to the superseded release");
+    drop(conn);
+
+    // 未修复前这一步会以 "previously applied but has been modified" 失败。
+    migrate_database(&db_path)
+        .await
+        .expect("self-heal superseded checksum");
+
+    let conn = Connection::open(&db_path).expect("reopen database");
+    let checksum: String = conn
+        .query_row(
+            "SELECT upper(hex(checksum)) FROM _sqlx_migrations WHERE version = 20261106000001",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read realigned checksum");
+    assert_eq!(
+        checksum,
+        "3687DFBE3A28A580281F87CC5728A634FA5CF18AE9E31D8B9ECD0F5F376ECB31B66C4544D8A783FE43D6D1BEA0B49371",
+        "账本校验和必须对齐到当前迁移文件"
+    );
+
+    // 幂等：再跑一次不会再改任何东西。
+    drop(conn);
+    migrate_database(&db_path)
+        .await
+        .expect("idempotent after realignment");
     cleanup_database(&db_path);
 }

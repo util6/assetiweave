@@ -5,6 +5,13 @@
 //! 因此源目录已被移除的离线会话同样能完整迁移。
 //!
 //! 幂等：已符合 `sha256(session_id, turn_index)` 的轮次零写入跳过。
+//!
+//! 索引表刻意不动：`conversation_part_fts` 是 FTS5 虚拟表，`turn_id` / `part_id`
+//! 都是 UNINDEXED 列，任何按它们过滤的语句都要全表线性扫描（实测 26 万行上单次
+//! DELETE 3.4 秒），逐轮重建会让一次升级在启动阶段卡上几十分钟。而这两列在生产
+//! 读路径上没有任何消费方——检索只按 `session_id` 做存在性判断、按 `text` 匹配正文
+//! （`conversation_repo/sessions.rs`、`web_record_repo/list.rs`）。轮次主键变化不改变
+//! 任何一行的文本归属，索引行原样保留仍然正确；该会话下次整包替换时会整体重写。
 
 use std::collections::HashMap;
 
@@ -14,7 +21,6 @@ use crate::backend::domain::conversations::triad::TurnProcess;
 use crate::backend::domain::{
     derive_part_id, derive_part_id_key, derive_turn_id, ConversationRecordKind,
 };
-use crate::backend::store::conversations::conversation_repo::part_index::replace_turn_part_index_sqlx_tx;
 use crate::backend::store::conversations::snapshot::RecordTables;
 use crate::backend::store::{
     database::column_exists, database::table_exists, StoreError, StoreResult,
@@ -111,34 +117,6 @@ async fn repair_family(pool: &SqlitePool, kind: ConversationRecordKind) -> Store
         }
         for turn in chunk {
             commit_turn_rename_sqlx_tx(&mut tx, tables, turn).await?;
-        }
-        if parts_in_current_shape {
-            for turn in chunk {
-                // 索引行里的 part_id 也由轮次主键派生，重建该轮次的索引是最稳的对齐方式。
-                sqlx::query(
-                    "DELETE FROM conversation_part_fts WHERE tenant_id = ?1 AND turn_id = ?2",
-                )
-                .bind(&turn.tenant_id)
-                .bind(&turn.old_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(StoreError::external)?;
-                replace_turn_part_index_sqlx_tx(&mut tx, &turn.tenant_id, &turn.new_id, kind)
-                    .await?;
-            }
-        } else {
-            for turn in chunk {
-                sqlx::query(
-                    "UPDATE conversation_part_fts SET turn_id = ?1 \
-                     WHERE tenant_id = ?2 AND turn_id = ?3",
-                )
-                .bind(&turn.new_id)
-                .bind(&turn.tenant_id)
-                .bind(&turn.old_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(StoreError::external)?;
-            }
         }
         tx.commit().await.map_err(StoreError::external)?;
     }
