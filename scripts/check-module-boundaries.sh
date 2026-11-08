@@ -377,7 +377,7 @@ if [ -n "$NON_ENTRY_BRIDGE_HITS" ]; then
   fail=1
 fi
 
-# Backend line limit check: enforce max 500 lines for production files
+# Backend line limit check: warn above 500 lines, fail above 1000 lines for production files
 if [ -d "$BACKEND_ROOT" ]; then
   if ! node "$SCRIPT_DIR/check-backend-line-limits.mjs" "$ROOT"; then
     fail=1

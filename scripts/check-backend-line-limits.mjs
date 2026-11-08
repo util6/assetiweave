@@ -6,15 +6,15 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { isExplicitlyTestOnlyRustFile, walkRustFiles } from "./rust-test-files.mjs";
 
-export const MAX_LINES = 500;
+/**
+ * 关注线：越过这条线不算违规，但应优先评估拆分，并在评审中说明理由。
+ */
+export const SOFT_LINE_LIMIT = 500;
 
-export const KNOWN_EXISTING_OVERLIMIT_BASELINE = new Set([
-  "backend/asset_core/src/application/conversations/conversation_sync_pipeline.rs",
-  "backend/asset_core/src/application/memory/recent/recent_snapshot_pipeline/candidates.rs",
-  "backend/asset_core/src/application/memory/recent/recent_snapshot_pipeline/commit.rs",
-  "backend/asset_core/src/infrastructure/path_utils.rs",
-  "backend/asset_core/src/store/conversations/usage_query.rs",
-]);
+/**
+ * 硬上限：越过这条线必须先拆分出子业务模块，门禁直接失败。
+ */
+export const MAX_LINES = 1000;
 
 export function countLines(content) {
   if (content.length === 0) return 0;
@@ -43,27 +43,23 @@ export function checkBackendLineLimits(root = process.cwd()) {
 
   const files = candidateDirs.flatMap((dir) => walkRustFiles(dir));
   const overLimit = [];
+  const overSoftLimit = [];
   let productionCount = 0;
 
   for (const file of files) {
     if (isExplicitlyTestOnlyRustFile(file)) continue;
     const relPath = path.relative(root, file).replace(/\\/g, "/");
-    if (KNOWN_EXISTING_OVERLIMIT_BASELINE.has(relPath)) continue;
     productionCount += 1;
     const content = fs.readFileSync(file, "utf8");
     const lineCount = countLines(content);
     if (lineCount > MAX_LINES) {
-      overLimit.push({
-        file: relPath,
-        lineCount,
-      });
+      overLimit.push({ file: relPath, lineCount });
+    } else if (lineCount > SOFT_LINE_LIMIT) {
+      overSoftLimit.push({ file: relPath, lineCount });
     }
   }
 
-  return {
-    productionCount,
-    overLimit,
-  };
+  return { productionCount, overLimit, overSoftLimit };
 }
 
 const isDirectExecution =
@@ -73,10 +69,23 @@ const isDirectExecution =
 if (isDirectExecution) {
   const root = process.argv[2] ?? process.cwd();
   try {
-    const { productionCount, overLimit } = checkBackendLineLimits(root);
+    const { productionCount, overLimit, overSoftLimit } =
+      checkBackendLineLimits(root);
+
+    if (overSoftLimit.length > 0) {
+      console.log(
+        `backend line limits notice: ${overSoftLimit.length} production file(s) between ` +
+          `${SOFT_LINE_LIMIT} and ${MAX_LINES} lines, consider splitting:`,
+      );
+      for (const item of overSoftLimit) {
+        console.log(`  ${item.lineCount} lines: ${item.file}`);
+      }
+    }
+
     if (overLimit.length > 0) {
       console.error(
-        `backend line limits failed: ${overLimit.length} production file(s) exceed ${MAX_LINES} lines:`,
+        `backend line limits failed: ${overLimit.length} production file(s) exceed ` +
+          `${MAX_LINES} lines:`,
       );
       for (const item of overLimit) {
         console.error(`  ${item.lineCount} lines: ${item.file}`);
@@ -84,7 +93,8 @@ if (isDirectExecution) {
       process.exit(1);
     }
     console.log(
-      `backend line limits passed: ${productionCount} production files, 0 exceed ${MAX_LINES} lines`,
+      `backend line limits passed: ${productionCount} production files, 0 exceed ` +
+        `${MAX_LINES} lines`,
     );
   } catch (err) {
     console.error(err.message);

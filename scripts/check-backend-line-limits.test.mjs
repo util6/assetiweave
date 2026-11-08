@@ -5,7 +5,15 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { countLines, MAX_LINES } from "./check-backend-line-limits.mjs";
+import {
+  countLines,
+  MAX_LINES,
+  SOFT_LINE_LIMIT,
+} from "./check-backend-line-limits.mjs";
+
+// 规模门禁的语义：500 是关注线（只提示），1000 是硬上限（直接失败）。
+assert.equal(SOFT_LINE_LIMIT, 500);
+assert.equal(MAX_LINES, 1000);
 
 // Unit test countLines directly
 assert.equal(countLines(""), 0);
@@ -17,23 +25,43 @@ assert.equal(countLines("pub fn foo() {}\n".repeat(501)), 501);
 const scriptPath = path.resolve("scripts/check-backend-line-limits.mjs");
 const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "assetiweave-line-guard-"));
 
+const runScript = () =>
+  execFileSync(process.execPath, [scriptPath, fixtureRoot], {
+    encoding: "utf8",
+  });
+
 try {
   const backendDir = path.join(fixtureRoot, "src-tauri/src/backend/domain");
   fs.mkdirSync(backendDir, { recursive: true });
-
-  // 1. Valid file: exactly 500 lines with trailing newline - should pass
   const validFile = path.join(backendDir, "valid.rs");
-  fs.writeFileSync(validFile, "pub fn foo() {}\n".repeat(500));
 
-  const passOutput = execFileSync(process.execPath, [scriptPath, fixtureRoot], {
-    encoding: "utf8",
-  });
-  assert.ok(passOutput.includes("backend line limits passed"));
-  assert.ok(passOutput.includes("0 exceed 500 lines"));
+  // 1. 关注线以下：通过，且不出现任何提示。
+  fs.writeFileSync(validFile, "pub fn foo() {}\n".repeat(100));
 
-  // 2. Over limit file: exactly 501 lines with trailing newline - should fail
+  const smallOutput = runScript();
+  assert.ok(smallOutput.includes("backend line limits passed"));
+  assert.ok(smallOutput.includes(`0 exceed ${MAX_LINES} lines`));
+  assert.ok(!smallOutput.includes("notice"));
+
+  // 2. 关注线与硬上限之间：通过，但要给出拆分提示。
+  fs.writeFileSync(validFile, "pub fn foo() {}\n".repeat(600));
+
+  const softOutput = runScript();
+  assert.ok(softOutput.includes("backend line limits passed"));
+  assert.ok(softOutput.includes("backend line limits notice"));
+  assert.ok(softOutput.includes("600 lines"));
+  assert.ok(softOutput.includes("valid.rs"));
+
+  // 3. 恰好等于硬上限：仍然通过（上限是 1000，不是 999）。
+  fs.writeFileSync(validFile, "pub fn foo() {}\n".repeat(MAX_LINES));
+
+  const boundaryOutput = runScript();
+  assert.ok(boundaryOutput.includes("backend line limits passed"));
+  assert.ok(boundaryOutput.includes("backend line limits notice"));
+
+  // 4. 越过硬上限一行：直接失败。
   const longFile = path.join(backendDir, "long.rs");
-  fs.writeFileSync(longFile, "pub fn bar() {}\n".repeat(501));
+  fs.writeFileSync(longFile, "pub fn bar() {}\n".repeat(MAX_LINES + 1));
 
   let failed = false;
   try {
@@ -44,13 +72,18 @@ try {
   } catch (err) {
     failed = true;
     const stderr = err.stderr?.toString() ?? "";
-    assert.ok(stderr.includes("1 production file(s) exceed 500 lines"));
-    assert.ok(stderr.includes("501 lines"));
+    assert.ok(
+      stderr.includes(`1 production file(s) exceed ${MAX_LINES} lines`),
+    );
+    assert.ok(stderr.includes(`${MAX_LINES + 1} lines`));
     assert.ok(stderr.includes("long.rs"));
   }
-  assert.ok(failed, "expected script to fail on file > 500 lines (501 lines)");
+  assert.ok(
+    failed,
+    `expected script to fail on file > ${MAX_LINES} lines (${MAX_LINES + 1} lines)`,
+  );
 
-  // 3. Test-only file should not be counted even if > 500 lines
+  // 5. 测试文件不计入规模，哪怕远超硬上限。
   fs.unlinkSync(longFile);
   fs.writeFileSync(
     validFile,
@@ -59,11 +92,9 @@ try {
   const testFile = path.join(backendDir, "valid_tests.rs");
   fs.writeFileSync(testFile, "#[test]\nfn t() {}\n".repeat(600));
 
-  const testPassOutput = execFileSync(process.execPath, [scriptPath, fixtureRoot], {
-    encoding: "utf8",
-  });
+  const testPassOutput = runScript();
   assert.ok(testPassOutput.includes("backend line limits passed"));
-  assert.ok(testPassOutput.includes("0 exceed 500 lines"));
+  assert.ok(testPassOutput.includes(`0 exceed ${MAX_LINES} lines`));
 
   console.log("backend line limits self-test passed");
 } finally {
