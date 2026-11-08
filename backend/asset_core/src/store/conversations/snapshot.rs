@@ -141,6 +141,11 @@ pub(crate) fn prepare_session_snapshot(
             }
         }
 
+        // 落库前把 cwd 折成便携锚点。放在这里而不是 `split` 内部，是因为 `split` 里有
+        // 「多个命令的 cwd 相同才提升到顶层」的字符串比较，折叠若提前介入会改变该判断。
+        if let Some(process) = triad.process.as_mut() {
+            fold_turn_process_paths(process);
+        }
         let process_json = triad
             .process
             .as_ref()
@@ -170,7 +175,7 @@ pub(crate) fn prepare_session_snapshot(
                 agent_role,
                 parent_turn_id,
             },
-            parts: triad.parts,
+            parts: fold_part_attrs_paths(triad.parts),
         });
     }
     prepared
@@ -400,6 +405,72 @@ async fn insert_part_index_row_sqlx_tx(
     .await
     .map_err(StoreError::external)?;
     Ok(())
+}
+
+/// 把 `TurnProcess` 及其 `items` 上的 `cwd` 折叠为便携锚点。
+///
+/// 契约见 ADR-0020。`process` 是 `conversation_turns` / `web_record_turns` 里唯一
+/// 承载结构化路径的 JSON 列，折叠只在写库前这一步发生，读取侧按原样投影给前端，
+/// 由展示层还原 `~`。命令输出（`items[].content`）里的路径属于记录原貌，不在此处理。
+fn fold_turn_process_paths(process: &mut TurnProcess) {
+    process.cwd = fold_cwd(process.cwd.as_deref());
+    for item in &mut process.items {
+        item.cwd = fold_cwd(item.cwd.as_deref());
+    }
+}
+
+fn fold_cwd(raw: Option<&str>) -> Option<String> {
+    let trimmed = raw?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(
+        crate::backend::store::path_codec::normalize_path_for_storage(trimmed)
+            .unwrap_or_else(|_| trimmed.to_string()),
+    )
+}
+
+/// 把中间零件属性里的 `file_path` 折叠为便携锚点。
+///
+/// `attrs_json` 由 adapter 原样透传，其中 `file_path` 表示工具调用涉及的文件。
+/// 前端只用它做展示与复制、不做文件 I/O，因此存储侧折叠即可，无需读取侧展开。
+fn fold_part_attrs_paths(parts: Vec<TriadPart>) -> Vec<TriadPart> {
+    parts
+        .into_iter()
+        .map(|mut part| {
+            part.attrs_json = fold_part_attrs(part.attrs_json);
+            part
+        })
+        .collect()
+}
+
+fn fold_part_attrs(raw: Option<String>) -> Option<String> {
+    let source = raw?;
+    // 快速短路：只有带 `file_path` 的零件才需要解析。不能按 `/Users/` 之类的主机前缀判断，
+    // 否则 Linux 的 `/home/...` 会被漏掉。
+    if !source.contains("\"file_path\"") {
+        return Some(source);
+    }
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&source) else {
+        return Some(source);
+    };
+    let Some(map) = value.as_object_mut() else {
+        return Some(source);
+    };
+    let Some(path) = map
+        .get("file_path")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+    else {
+        return Some(source);
+    };
+    let folded = crate::backend::store::path_codec::normalize_path_for_storage(&path)
+        .unwrap_or_else(|_| path.clone());
+    if folded == path {
+        return Some(source);
+    }
+    map.insert("file_path".to_string(), serde_json::Value::String(folded));
+    Some(serde_json::to_string(&value).unwrap_or(source))
 }
 
 #[cfg(test)]

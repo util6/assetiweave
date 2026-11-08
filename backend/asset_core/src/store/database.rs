@@ -51,58 +51,6 @@ pub async fn begin_immediate(
     .map_err(StoreError::external)
 }
 
-pub async fn latest_scan_status(pool: &SqlitePool, tenant_id: &str) -> StoreResult<String> {
-    let status: Option<String> = sqlx::query_scalar(
-        "SELECT last_scan_status FROM sources WHERE tenant_id = ?1 ORDER BY last_scanned_at DESC NULLS LAST LIMIT 1",
-    )
-    .bind(tenant_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(StoreError::external)?
-    .flatten();
-    Ok(status.unwrap_or_else(|| "等待首次扫描".to_string()))
-}
-
-pub async fn count_rows(pool: &SqlitePool, tenant_id: &str, table: &str) -> StoreResult<usize> {
-    let count: i64 = match table {
-        "sources" => sqlx::query_scalar("SELECT COUNT(*) FROM sources WHERE tenant_id = ?1")
-            .bind(tenant_id)
-            .fetch_one(pool)
-            .await
-            .map_err(StoreError::external)?,
-        "assets" => sqlx::query_scalar("SELECT COUNT(*) FROM assets WHERE tenant_id = ?1")
-            .bind(tenant_id)
-            .fetch_one(pool)
-            .await
-            .map_err(StoreError::external)?,
-        "profiles" => sqlx::query_scalar("SELECT COUNT(*) FROM profiles WHERE tenant_id = ?1")
-            .bind(tenant_id)
-            .fetch_one(pool)
-            .await
-            .map_err(StoreError::external)?,
-        "navigation_state" => {
-            sqlx::query_scalar("SELECT COUNT(*) FROM navigation_state WHERE tenant_id = ?1")
-                .bind(tenant_id)
-                .fetch_one(pool)
-                .await
-                .map_err(StoreError::external)?
-        }
-        "app_shortcut_items" => {
-            sqlx::query_scalar("SELECT COUNT(*) FROM app_shortcut_items WHERE tenant_id = ?1")
-                .bind(tenant_id)
-                .fetch_one(pool)
-                .await
-                .map_err(StoreError::external)?
-        }
-        other => {
-            return Err(StoreError::Validation(format!(
-                "unsupported count table: {other}"
-            )));
-        }
-    };
-    Ok(count as usize)
-}
-
 #[cfg(test)]
 pub async fn migrate_database(db_path: &Path) -> StoreResult<()> {
     let pool = open_migrated_pool(db_path).await?;
@@ -136,56 +84,8 @@ pub async fn open_migrated_pool(db_path: &Path) -> StoreResult<SqlitePool> {
     // 迁移脚本算不出 SHA-256，轮次位置主键必须由 Rust 在迁移后就地重算并级联 Parts / FTS / 父引用。
     crate::backend::store::conversation_turn_identity::repair_positional_turn_identities(&pool)
         .await?;
-    converge_asset_stored_paths(&pool).await?;
+    super::path_convergence::converge_portable_paths(&pool).await?;
     Ok(pool)
-}
-
-/// 把历史遗留的主机绝对路径回填为便携锚点。
-///
-/// 迁移脚本是纯 SQL，拿不到当前主机的 home / 系统数据目录，因此锚点回填放在启动阶段完成。
-/// 幂等：锚点形式的路径经 `normalize_path_for_storage` 归一后与原值相同，不会产生任何写入；
-/// 无法折叠（不在用户目录与系统数据目录之下）的路径保持原样，跨平台时由调用方降级提示。
-async fn converge_asset_stored_paths(pool: &SqlitePool) -> StoreResult<()> {
-    if !table_exists(pool, "assets").await? {
-        return Ok(());
-    }
-
-    let rows = sqlx::query("SELECT tenant_id, id, stored_path FROM assets")
-        .fetch_all(pool)
-        .await
-        .map_err(StoreError::external)?;
-
-    let mut pending = Vec::new();
-    for row in &rows {
-        let tenant_id: String = row.try_get(0).map_err(StoreError::external)?;
-        let asset_id: String = row.try_get(1).map_err(StoreError::external)?;
-        let stored_path: String = row.try_get(2).map_err(StoreError::external)?;
-        let Ok(portable) =
-            crate::backend::store::path_codec::normalize_path_for_storage(&stored_path)
-        else {
-            continue;
-        };
-        if portable != stored_path {
-            pending.push((tenant_id, asset_id, portable));
-        }
-    }
-
-    if pending.is_empty() {
-        return Ok(());
-    }
-
-    let mut tx = pool.begin().await.map_err(StoreError::external)?;
-    for (tenant_id, asset_id, portable) in pending {
-        sqlx::query("UPDATE assets SET stored_path = ?1 WHERE tenant_id = ?2 AND id = ?3")
-            .bind(&portable)
-            .bind(&tenant_id)
-            .bind(&asset_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(StoreError::external)?;
-    }
-    tx.commit().await.map_err(StoreError::external)?;
-    Ok(())
 }
 
 async fn is_untracked_legacy_database(pool: &SqlitePool) -> StoreResult<bool> {

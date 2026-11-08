@@ -94,6 +94,32 @@ pub(super) fn is_internal_execution_workspace_path(project_path: Option<&str>) -
         .any(|segment| padded.contains(segment))
 }
 
+/// 把单个路径折叠为便携锚点（`/Users/me/x` → `~/x`）。
+///
+/// `project_path` / `source_locator` / `last_cwd` 都由外部 adapter 的原生输出带进来，
+/// 天生是主机绝对路径。直接落库有三个后果：
+/// 1. 同一项目在不同批次、不同机器的字符串不同，前端按 `project_path` 分组的键会裂成多组；
+/// 2. `is_session_unchanged` 的字符串比较会在「锚点 vs 绝对路径」之间反复判定为已变更而回写，
+///    折叠永远稳不住；
+/// 3. 数据库无法跨机器迁移。
+///
+/// 契约见 ADR-0020：写入一律折叠，展示层由前端 `abbreviateHomePath` 还原，
+/// 需要真实文件路径时再走 `expand_path`。无法折叠的路径（`/tmp`、外接卷）原样保留。
+pub(super) fn fold_path_for_storage(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    crate::backend::store::path_codec::normalize_path_for_storage(trimmed)
+        .unwrap_or_else(|_| trimmed.to_string())
+}
+
+/// `Option` 形态的 `fold_path_for_storage`：空值与全空白折叠为 `None`。
+pub(super) fn fold_optional_path(raw: Option<&str>) -> Option<String> {
+    raw.map(fold_path_for_storage)
+        .filter(|value| !value.is_empty())
+}
+
 pub(super) fn is_droppable_internal_session(
     normalized: &NormalizedConversationSession,
     session: &ConversationSession,
@@ -136,10 +162,10 @@ pub(super) fn conversation_session_from_normalized(
             .filter(|value| !value.is_empty())
             .unwrap_or("Untitled session")
             .to_string(),
-        project_path: normalized.project_path.clone(),
+        project_path: fold_optional_path(normalized.project_path.as_deref()),
         started_at: normalized.started_at.clone(),
         updated_at: normalized.updated_at.clone(),
-        source_locator: normalized.source_locator.clone(),
+        source_locator: fold_optional_path(normalized.source_locator.as_deref()),
         source_fingerprint: normalized.source_fingerprint.clone(),
         missing: false,
         created_at: now.to_string(),
@@ -199,13 +225,6 @@ pub(super) fn normalize_query(query: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_lowercase)
-}
-
-pub(super) fn normalize_project_path(project_path: Option<&str>) -> Option<String> {
-    project_path
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
 }
 
 pub(super) fn first_line(text: &str) -> String {
@@ -312,7 +331,11 @@ pub(super) fn derive_session_last_cwd(
             .then_with(|| b.1.cmp(&a.1))
             .then_with(|| b.2.cmp(&a.2))
     });
-    candidates.into_iter().next().map(|(_, _, _, cwd)| cwd)
+    candidates
+        .into_iter()
+        .next()
+        .map(|(_, _, _, cwd)| fold_path_for_storage(&cwd))
+        .filter(|cwd| !cwd.is_empty())
 }
 
 pub(super) async fn update_conversation_session_last_cwd_sqlx_tx(

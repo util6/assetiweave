@@ -2,6 +2,7 @@ use chrono::Utc;
 use sqlx::{Row, SqlitePool};
 
 use crate::backend::domain::agents::PersistentExecutionBinding;
+use crate::backend::store::path_codec::{expand_path, normalize_path_for_storage};
 use crate::backend::store::{StoreError, StoreResult};
 
 #[derive(Clone)]
@@ -39,9 +40,15 @@ impl PersistentBindingStore {
                     .try_get("installation_id")
                     .map_err(StoreError::external)?,
                 model: row.try_get("model").map_err(StoreError::external)?,
-                workspace_path: row
-                    .try_get("workspace_path")
-                    .map_err(StoreError::external)?,
+                // 库里是便携锚点（`~/...`），调用方拿它当进程工作目录，必须还原成真实路径。
+                workspace_path: {
+                    let stored: String = row
+                        .try_get("workspace_path")
+                        .map_err(StoreError::external)?;
+                    expand_path(&stored)
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .unwrap_or(stored)
+                },
                 binding_version: row
                     .try_get("binding_version")
                     .map_err(StoreError::external)?,
@@ -64,6 +71,9 @@ impl PersistentBindingStore {
             ));
         }
         let now = Utc::now().to_rfc3339();
+        // 入库折叠为便携锚点：执行工作区落在 `~/.assetiweave/agent-executions/...`，
+        // 只存绝对路径会让绑定无法跨机器复用。
+        let portable_workspace = normalize_path_for_storage(&binding.workspace_path)?;
         sqlx::query("INSERT INTO agent_execution_bindings (tenant_id, execution_context_key, provider_session_id, agent_id, installation_id, model, workspace_path, binding_version, provider_metadata_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10) ON CONFLICT (tenant_id, execution_context_key) DO UPDATE SET provider_session_id = excluded.provider_session_id, agent_id = excluded.agent_id, installation_id = excluded.installation_id, model = excluded.model, workspace_path = excluded.workspace_path, binding_version = excluded.binding_version, provider_metadata_json = excluded.provider_metadata_json, updated_at = excluded.updated_at")
             .bind(&binding.tenant_id)
             .bind(&binding.execution_context_key)
@@ -71,7 +81,7 @@ impl PersistentBindingStore {
             .bind(&binding.agent_id)
             .bind(&binding.installation_id)
             .bind(&binding.model)
-            .bind(&binding.workspace_path)
+            .bind(&portable_workspace)
             .bind(binding.binding_version)
             .bind(&binding.provider_metadata_json)
             .bind(now)

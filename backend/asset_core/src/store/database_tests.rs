@@ -4198,3 +4198,144 @@ async fn migrations_realign_the_superseded_session_snapshot_checksum() {
         .expect("idempotent after realignment");
     cleanup_database(&db_path);
 }
+
+/// 便携路径锚点契约：启动期收敛必须覆盖全部路径列，且幂等。
+///
+/// 这里刻意直接用 SQL 写入绝对路径来模拟「升级前的存量数据」——走正常的导入路径
+/// 在写入侧修好之后不会再产生脏数据，反而测不到收敛逻辑。
+#[tokio::test]
+async fn startup_converges_legacy_absolute_paths_across_all_columns() {
+    let db_path = temp_database_path("path-anchor-converge");
+
+    let home = dirs::home_dir()
+        .expect("home directory")
+        .to_string_lossy()
+        .into_owned();
+    let project_abs = format!("{home}/code-space/legacy");
+    let locator_abs = format!("{home}/.claude/projects/legacy/session.jsonl");
+    let workspace_abs = format!("{home}/.assetiweave/agent-executions/execution-legacy");
+
+    {
+        let database = Database::open_async(&db_path).await.expect("open database");
+        let pool = database.pool();
+
+        sqlx::query(
+            "INSERT INTO conversation_sessions (\
+                tenant_id, id, source_id, adapter_id, external_id, title, project_path, \
+                source_locator, last_cwd, missing, created_at, imported_at, execution_origin, \
+                user_visible\
+             ) VALUES ('default', 'sess-legacy', 'src-legacy', 'adapter-legacy', 'ext-legacy', \
+                'Legacy', ?1, ?2, ?1, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', \
+                'user', 1)",
+        )
+        .bind(&project_abs)
+        .bind(&locator_abs)
+        .execute(pool)
+        .await
+        .expect("insert legacy session");
+
+        // 不可折叠的路径（/tmp）必须原样保留——这是 ADR-0020 允许的降级，不是遗漏。
+        sqlx::query(
+            "INSERT INTO conversation_sessions (\
+                tenant_id, id, source_id, adapter_id, external_id, title, project_path, \
+                missing, created_at, imported_at, execution_origin, user_visible\
+             ) VALUES ('default', 'sess-tmp', 'src-tmp', 'adapter-tmp', 'ext-tmp', 'Tmp', \
+                '/tmp/keep-as-is', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'user', 1)",
+        )
+        .execute(pool)
+        .await
+        .expect("insert tmp session");
+
+        sqlx::query(
+            "INSERT INTO agent_execution_bindings (\
+                tenant_id, execution_context_key, provider_session_id, agent_id, workspace_path, \
+                binding_version, provider_metadata_json, created_at, updated_at\
+             ) VALUES ('default', 'ctx-legacy', 'prov-legacy', 'agent-legacy', ?1, 1, '{}', \
+                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(&workspace_abs)
+        .execute(pool)
+        .await
+        .expect("insert legacy binding");
+
+        pool.close().await;
+    }
+
+    {
+        let database = Database::open_async(&db_path)
+            .await
+            .expect("reopen database");
+        let pool = database.pool();
+
+        let row: (Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT project_path, source_locator, last_cwd FROM conversation_sessions \
+             WHERE tenant_id = 'default' AND id = 'sess-legacy'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("legacy session row");
+        assert_eq!(
+            row.0.as_deref(),
+            Some("~/code-space/legacy"),
+            "project_path 必须在启动期收敛为锚点"
+        );
+        assert_eq!(
+            row.1.as_deref(),
+            Some("~/.claude/projects/legacy/session.jsonl"),
+            "source_locator 必须在启动期收敛为锚点"
+        );
+        assert_eq!(
+            row.2.as_deref(),
+            Some("~/code-space/legacy"),
+            "last_cwd 必须在启动期收敛为锚点"
+        );
+
+        let kept: Option<String> = sqlx::query_scalar(
+            "SELECT project_path FROM conversation_sessions \
+             WHERE tenant_id = 'default' AND id = 'sess-tmp'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("tmp session row");
+        assert_eq!(
+            kept.as_deref(),
+            Some("/tmp/keep-as-is"),
+            "不可折叠的路径必须原样保留，不能被改写成假锚点"
+        );
+
+        let workspace: String = sqlx::query_scalar(
+            "SELECT workspace_path FROM agent_execution_bindings \
+             WHERE tenant_id = 'default' AND execution_context_key = 'ctx-legacy'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("legacy binding row");
+        assert_eq!(
+            workspace, "~/.assetiweave/agent-executions/execution-legacy",
+            "workspace_path 必须在启动期收敛为锚点"
+        );
+
+        pool.close().await;
+    }
+
+    {
+        let database = Database::open_async(&db_path)
+            .await
+            .expect("reopen database again");
+        let project_path: Option<String> = sqlx::query_scalar(
+            "SELECT project_path FROM conversation_sessions \
+             WHERE tenant_id = 'default' AND id = 'sess-legacy'",
+        )
+        .fetch_one(database.pool())
+        .await
+        .expect("project_path after second startup");
+        assert_eq!(
+            project_path.as_deref(),
+            Some("~/code-space/legacy"),
+            "二次启动不应改动已折叠的值（收敛必须幂等）"
+        );
+        database.pool().close().await;
+    }
+
+    cleanup_database(&db_path);
+}

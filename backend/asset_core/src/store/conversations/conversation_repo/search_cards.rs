@@ -24,7 +24,7 @@ pub async fn search_conversation_cards_sqlx(
         .ok_or_else(|| StoreError::external("conversation search query is required".to_string()))?;
     let id_fragment = crate::backend::domain::conversation_id_search_term(query)
         .map(|value| crate::backend::domain::conversation_id_fragment(&value));
-    let project_path = normalize_project_path(project_path);
+    let project_path = fold_optional_path(project_path);
     let since = parse_search_time_bound(since, SearchTimeBound::Since)?;
     let until = parse_search_time_bound(until, SearchTimeBound::Until)?;
     let allowed_types = content_types.iter().cloned().collect::<BTreeSet<_>>();
@@ -104,7 +104,7 @@ pub async fn search_conversation_cards_sqlx(
     for session_item in sessions {
         let session = &session_item.session;
         if let Some(project_path) = project_path.as_deref() {
-            let session_project = normalize_project_path(session.project_path.as_deref());
+            let session_project = fold_optional_path(session.project_path.as_deref());
             if session_project.as_deref() != Some(project_path) {
                 continue;
             }

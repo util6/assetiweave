@@ -4581,3 +4581,250 @@ fn internal_execution_detection_ignores_user_sessions_inside_app_data_dir() {
     )));
     assert!(!is_internal_execution_workspace_path(None));
 }
+
+/// 便携路径锚点契约：会话导入时，结构化路径字段一律折叠为锚点。
+///
+/// 覆盖 `project_path` / `source_locator` / `last_cwd` / `process.cwd` 四处。
+/// 同时断言命令输出里的绝对路径保持原样——那是对话记录的内容，不是路径字段。
+#[tokio::test]
+async fn imported_session_paths_are_folded_to_portable_anchors() {
+    let pool = crate::backend::store::test_support::create_test_pool().await;
+    let adapter = test_conversation_adapter(
+        "anchor-fold",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    upsert_conversation_adapter_sqlx(&pool, TEST_TENANT_ID, &adapter)
+        .await
+        .unwrap();
+    upsert_conversation_source_sqlx(&pool, TEST_TENANT_ID, &source)
+        .await
+        .unwrap();
+
+    let home = dirs::home_dir()
+        .expect("home directory")
+        .to_string_lossy()
+        .into_owned();
+    let project_abs = format!("{home}/code-space/assetiweave");
+    let locator_abs = format!("{home}/.claude/projects/demo/session.jsonl");
+    let command_output = format!("Output: {project_abs}");
+
+    let mut turn = fixture_turn("t1", 0, "run pwd");
+    turn.parts.push(NormalizedConversationPart {
+        role: ConversationPartRole::Tool,
+        kind: ConversationPartKind::Command,
+        text: Some(command_output.clone()),
+        language: None,
+        command: Some("pwd".to_string()),
+        cwd: Some(project_abs.clone()),
+        status: None,
+        exit_code: Some(0),
+        command_label: None,
+        source_execution_id: None,
+        content_card: None,
+        metadata_json: None,
+    });
+
+    let mut session = fixture_session("v1");
+    session.project_path = Some(project_abs.clone());
+    session.source_locator = Some(locator_abs);
+    session.turns = vec![turn];
+
+    import_conversation_sessions_sqlx(&pool, TEST_TENANT_ID, &source, &[session], false)
+        .await
+        .unwrap();
+
+    let session_id: String = sqlx::query_scalar(
+        "SELECT id FROM conversation_sessions WHERE tenant_id = ?1 AND external_id = 'session-1'",
+    )
+    .bind(TEST_TENANT_ID)
+    .fetch_one(&pool)
+    .await
+    .expect("session row");
+
+    let project_path: Option<String> = sqlx::query_scalar(
+        "SELECT project_path FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(TEST_TENANT_ID)
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("project_path");
+    assert_eq!(
+        project_path.as_deref(),
+        Some("~/code-space/assetiweave"),
+        "project_path 必须折叠为便携锚点"
+    );
+
+    let source_locator: Option<String> = sqlx::query_scalar(
+        "SELECT source_locator FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(TEST_TENANT_ID)
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("source_locator");
+    assert_eq!(
+        source_locator.as_deref(),
+        Some("~/.claude/projects/demo/session.jsonl"),
+        "source_locator 必须折叠为便携锚点"
+    );
+
+    let last_cwd: Option<String> = sqlx::query_scalar(
+        "SELECT last_cwd FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(TEST_TENANT_ID)
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("last_cwd");
+    assert_eq!(
+        last_cwd.as_deref(),
+        Some("~/code-space/assetiweave"),
+        "last_cwd 必须折叠为便携锚点"
+    );
+
+    let process: String = sqlx::query_scalar(
+        "SELECT process FROM conversation_turns \
+         WHERE tenant_id = ?1 AND session_id = ?2 AND turn_index = 0",
+    )
+    .bind(TEST_TENANT_ID)
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("turn process");
+
+    let process_value: serde_json::Value =
+        serde_json::from_str(&process).expect("process is valid json");
+    assert_eq!(
+        process_value.get("cwd").and_then(|value| value.as_str()),
+        Some("~/code-space/assetiweave"),
+        "process.cwd 必须折叠为便携锚点，实际 process = {process}"
+    );
+    assert!(
+        process.contains(&command_output),
+        "命令输出中的绝对路径属于内容原貌，必须原样保留，实际 process = {process}"
+    );
+}
+
+/// `process.items[].cwd` 也必须折叠。
+///
+/// 与上一个用例互补：当多个命令的 cwd 不一致时，它们不会被提升到 `process.cwd`，
+/// 而是各自留在 `items` 里，走的是完全不同的折叠分支。
+#[tokio::test]
+async fn process_item_cwds_are_folded_independently() {
+    let pool = crate::backend::store::test_support::create_test_pool().await;
+    let adapter = test_conversation_adapter(
+        "anchor-items",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    let source = test_conversation_source(&adapter.id);
+    upsert_conversation_adapter_sqlx(&pool, TEST_TENANT_ID, &adapter)
+        .await
+        .unwrap();
+    upsert_conversation_source_sqlx(&pool, TEST_TENANT_ID, &source)
+        .await
+        .unwrap();
+
+    let home = dirs::home_dir()
+        .expect("home directory")
+        .to_string_lossy()
+        .into_owned();
+    let first_cwd = format!("{home}/code-space/alpha");
+    let second_cwd = format!("{home}/code-space/beta");
+
+    let mut turn = fixture_turn("t1", 0, "run two commands");
+    for (label, cwd) in [("first", &first_cwd), ("second", &second_cwd)] {
+        turn.parts.push(NormalizedConversationPart {
+            role: ConversationPartRole::Tool,
+            kind: ConversationPartKind::Command,
+            text: Some(format!("output of {label}")),
+            language: None,
+            command: Some(format!("run {label}")),
+            cwd: Some(cwd.clone()),
+            status: None,
+            exit_code: Some(0),
+            command_label: None,
+            source_execution_id: None,
+            content_card: None,
+            metadata_json: None,
+        });
+    }
+
+    let mut session = fixture_session("v1");
+    session.turns = vec![turn];
+    import_conversation_sessions_sqlx(&pool, TEST_TENANT_ID, &source, &[session], false)
+        .await
+        .unwrap();
+
+    let session_id: String = sqlx::query_scalar(
+        "SELECT id FROM conversation_sessions WHERE tenant_id = ?1 AND external_id = 'session-1'",
+    )
+    .bind(TEST_TENANT_ID)
+    .fetch_one(&pool)
+    .await
+    .expect("session row");
+
+    let process: String = sqlx::query_scalar(
+        "SELECT process FROM conversation_turns \
+         WHERE tenant_id = ?1 AND session_id = ?2 AND turn_index = 0",
+    )
+    .bind(TEST_TENANT_ID)
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("turn process");
+
+    let value: serde_json::Value = serde_json::from_str(&process).expect("valid json");
+    assert!(
+        value.get("cwd").is_none(),
+        "cwd 不一致时不应提升到顶层，实际 process = {process}"
+    );
+    let items = value
+        .get("items")
+        .and_then(|value| value.as_array())
+        .expect("items array");
+    let cwds: Vec<&str> = items
+        .iter()
+        .filter_map(|item| item.get("cwd").and_then(|value| value.as_str()))
+        .collect();
+    assert_eq!(
+        cwds,
+        vec!["~/code-space/alpha", "~/code-space/beta"],
+        "items[].cwd 必须逐个折叠，实际 process = {process}"
+    );
+}
+
+/// `fold_optional_path` 的边界语义：空值归 `None`、锚点幂等、不可折叠原样保留。
+///
+/// 「已是锚点原样返回」是启动期收敛能保持幂等的前提；「`/tmp` 原样保留」是 ADR-0020
+/// 允许的降级，两者都不能被当成遗漏去"修"。
+#[test]
+fn fold_optional_path_handles_blank_anchor_and_unfoldable_values() {
+    use super::common::fold_optional_path;
+
+    assert_eq!(fold_optional_path(None), None);
+    assert_eq!(fold_optional_path(Some("")), None);
+    assert_eq!(fold_optional_path(Some("   ")), None);
+
+    let home = dirs::home_dir()
+        .expect("home directory")
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        fold_optional_path(Some(&format!("{home}/code-space/demo"))),
+        Some("~/code-space/demo".to_string())
+    );
+    assert_eq!(
+        fold_optional_path(Some("~/code-space/demo")),
+        Some("~/code-space/demo".to_string()),
+        "已是锚点时必须原样返回，否则启动期收敛无法幂等"
+    );
+    assert_eq!(
+        fold_optional_path(Some("/tmp/keep-as-is")),
+        Some("/tmp/keep-as-is".to_string()),
+        "不可折叠的路径必须原样保留"
+    );
+}

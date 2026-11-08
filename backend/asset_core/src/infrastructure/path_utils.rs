@@ -119,6 +119,13 @@ pub fn normalize_conversation_adapter_package_paths(
     package.install_dir = normalize_path_for_storage(&package.install_dir)?;
     package.manifest_path = normalize_path_for_storage(&package.manifest_path)?;
     package.adapter_manifest_path = normalize_path_for_storage(&package.adapter_manifest_path)?;
+    // `source_url` 既可能是本地目录（local_directory / 工作区提升），也可能是 https 或 git 地址。
+    // 折叠对 URL 是无操作（不匹配锚点前缀、不含反斜杠），因此统一走归一化。
+    package.source_url = package
+        .source_url
+        .as_deref()
+        .map(normalize_path_for_storage)
+        .transpose()?;
     Ok(())
 }
 
