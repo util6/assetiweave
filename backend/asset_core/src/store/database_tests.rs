@@ -3925,8 +3925,10 @@ async fn acceptance_spec_175_positional_turn_identity_migration_preserves_offlin
         ) VALUES
         ('default', 'legacy-turn-parent', 'legacy-session', 'turn-0', 0, 'parent question',
          NULL, NULL, NULL, NULL, 'gpt', 'fp-parent', 0, '2026-11-06T00:00:00Z'),
-        ('default', 'legacy-turn-sub', 'legacy-session', 'turn-1', 0, 'subagent question',
-         '{"turn_kind":"subagent","parent_turn_id":"legacy-turn-parent"}',
+        -- ADR-0022 已废除 subagent 伪轮次；这里只保留普通的父轮次引用，
+        -- 专测位置身份重算与 parent_turn_id 级联换轨，不掺入伪轮次折算。
+        ('default', 'legacy-turn-sub', 'legacy-session', 'turn-1', 0, 'follow-up question',
+         '{"parent_turn_id":"legacy-turn-parent"}',
          NULL, '2026-11-06T01:00:00Z', NULL, 'gpt', 'fp-sub', 0, '2026-11-06T00:00:00Z'),
         ('default', 'legacy-turn-offline', 'legacy-offline-session', 'msg-9f2ab1', 5,
          'offline question', NULL, NULL, NULL, NULL, 'gpt', 'fp-offline', 0,
@@ -4037,7 +4039,7 @@ async fn acceptance_spec_175_positional_turn_identity_migration_preserves_offlin
 
     // B. 序号归一化 + 主键重算 + 父引用换轨
     let parent_turn_id = crate::backend::domain::derive_conversation_turn_id("legacy-session", 0);
-    let sub_turn_id = crate::backend::domain::derive_conversation_turn_id("legacy-session", 1);
+    let child_turn_id = crate::backend::domain::derive_conversation_turn_id("legacy-session", 1);
     let offline_turn_id =
         crate::backend::domain::derive_conversation_turn_id("legacy-offline-session", 0);
     let orphan_turn_id =
@@ -4060,7 +4062,7 @@ async fn acceptance_spec_175_positional_turn_identity_migration_preserves_offlin
             (orphan_turn_id.clone(), 0),
             (offline_turn_id.clone(), 0),
             (parent_turn_id.clone(), 0),
-            (sub_turn_id.clone(), 1),
+            (child_turn_id.clone(), 1),
         ],
         "存量轮次必须按会话重排为连续 0..N 并重算位置主键，且孤儿轮次不得丢失"
     );
@@ -4073,14 +4075,14 @@ async fn acceptance_spec_175_positional_turn_identity_migration_preserves_offlin
     let parent_ref: Option<String> = conn
         .query_row(
             "SELECT json_extract(process, '$.parent_turn_id') FROM conversation_turns WHERE id = ?1",
-            [&sub_turn_id],
+            [&child_turn_id],
             |row| row.get(0),
         )
         .expect("query parent reference");
     assert_eq!(
         parent_ref.as_deref(),
         Some(parent_turn_id.as_str()),
-        "子代理父引用必须级联到新的父轮次主键"
+        "父轮次引用必须级联到新的父轮次主键"
     );
 
     // C. 离线会话与内容事实零丢失，FTS 仍可命中
@@ -4149,7 +4151,12 @@ async fn acceptance_spec_175_positional_turn_identity_migration_preserves_offlin
         .expect("query idempotent ids")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect idempotent ids");
-    let mut expected = vec![parent_turn_id, sub_turn_id, offline_turn_id, orphan_turn_id];
+    let mut expected = vec![
+        parent_turn_id,
+        child_turn_id,
+        offline_turn_id,
+        orphan_turn_id,
+    ];
     expected.sort();
     assert_eq!(ids_after, expected, "二次迁移必须完全幂等");
 

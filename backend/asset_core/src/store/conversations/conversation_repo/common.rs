@@ -338,7 +338,7 @@ pub(super) fn derive_session_last_cwd(
         .filter(|cwd| !cwd.is_empty())
 }
 
-pub(super) async fn update_conversation_session_last_cwd_sqlx_tx(
+pub(crate) async fn update_conversation_session_last_cwd_sqlx_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     tenant_id: &str,
     session_id: &str,

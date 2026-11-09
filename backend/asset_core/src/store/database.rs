@@ -84,6 +84,9 @@ pub async fn open_migrated_pool(db_path: &Path) -> StoreResult<SqlitePool> {
     // 迁移脚本算不出 SHA-256，轮次位置主键必须由 Rust 在迁移后就地重算并级联 Parts / FTS / 父引用。
     crate::backend::store::conversation_turn_identity::repair_positional_turn_identities(&pool)
         .await?;
+    // ADR-0022：把存量 subagent / continuation 伪轮次原地折算成"完整父轮次 + 独立子代理会话"。
+    crate::backend::store::conversation_subagent_fold::fold_legacy_subagent_pseudo_turns(&pool)
+        .await?;
     super::path_convergence::converge_portable_paths(&pool).await?;
     Ok(pool)
 }

@@ -204,7 +204,7 @@ pub(super) async fn conversation_session_is_unchanged_sqlx_tx(
         && row.missing == 0)
 }
 
-pub(super) async fn upsert_conversation_session_sqlx_tx(
+pub(crate) async fn upsert_conversation_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session: &ConversationSession,
