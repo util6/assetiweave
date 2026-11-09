@@ -23,6 +23,10 @@ use crate::backend::domain::{
 use crate::backend::store::{StoreError, StoreResult};
 
 use super::conversation_repo::part_index::part_index_text;
+use super::subagent::{
+    annotate_subagent_anchors, collect_referenced_child_session_ids,
+    reconcile_orphan_subagent_sessions_sqlx_tx, SUBAGENT_EXECUTION_ORIGIN,
+};
 
 /// 两族记录在物理表名、零件列结构与主键前缀上的唯一映射。
 ///
@@ -67,11 +71,14 @@ pub(crate) struct PreparedTurn {
 /// 把一次会话快照准备成可直接落库的轮次序列。
 ///
 /// 纯内存同步计算：过滤空白轮次、按数组顺序重排 `turn_index = 0..N`、算出位置主键，
-/// 再第二遍拆解三元组与内容事实并把子代理的临时父键解析成父轮次主键。
+/// 再第二遍拆解三元组与内容事实；父轮次里的子代理锚点在此补算确定性 `child_session_id`。
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare_session_snapshot(
     kind: ConversationRecordKind,
+    source_id: &str,
     session_id: &str,
     adapter_id: &str,
+    execution_origin: Option<&str>,
     session_started_at: Option<&str>,
     session_updated_at: Option<&str>,
     turns: &[NormalizedConversationTurn],
@@ -99,15 +106,23 @@ pub(crate) fn prepare_session_snapshot(
         ConversationRecordKind::Session => adapter_id,
         ConversationRecordKind::Web => "web",
     };
+    // 子代理会话自身也是"1 问 = 1 轮"，但它的首轮把逐轮工具链与最终汇报压进了同一轮，
+    // 汇报之后可能还跟着一次工具执行，和三段式"取最后一条助手输出"的规则不一致。
+    let is_subagent_session =
+        matches!(execution_origin, Some(origin) if origin == SUBAGENT_EXECUTION_ORIGIN);
+    let detect_anchors = matches!(kind, ConversationRecordKind::Session);
 
     let mut prepared = Vec::with_capacity(valid_turns.len());
     for (index, turn) in valid_turns.into_iter().enumerate() {
         let turn_id = turn_ids[index].clone();
         let turn_index = index as i64;
         let mut triad = split_normalized_turn(split_adapter_id, &turn.user_text, &turn.parts);
-        if turn.is_subagent() && matches!(kind, ConversationRecordKind::Session) {
-            // 子代理轮次合并了逐轮内容，最终汇报可能落在尾随的工具执行之前；
-            // 与主轮次同源，仍按 Triad 约定把最后一段助手输出写进 response。
+        if detect_anchors {
+            annotate_subagent_anchors(source_id, &turn.parts, &mut triad);
+        }
+        if (is_subagent_session || turn.is_subagent())
+            && matches!(kind, ConversationRecordKind::Session)
+        {
             triad.promote_trailing_assistant_output(&turn.parts);
         }
 
@@ -184,7 +199,8 @@ pub(crate) fn prepare_session_snapshot(
 /// 在单事务内完成一个会话的整包替换。
 ///
 /// 顺序固定为：清该会话全文索引 → 清内容事实 → 清交互轮次 → 批量写新快照 →
-/// 直接复用内存中的轮次与内容事实投影索引行。调用方负责先 `UPSERT` 会话主表行。
+/// 直接复用内存中的轮次与内容事实投影索引行 → 对账本次快照不再引用的孤儿子代理会话。
+/// 调用方负责先 `UPSERT` 会话主表行。
 pub(crate) async fn replace_session_snapshot_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
@@ -241,6 +257,20 @@ pub(crate) async fn replace_session_snapshot_sqlx_tx(
             &entry.turn,
             &entry.parts,
             &card_kinds,
+        )
+        .await?;
+    }
+
+    if matches!(kind, ConversationRecordKind::Session) {
+        // 父会话在宿主侧回滚后，被抹掉的派发不会再有文件来源；这里按"本快照引用集合"
+        // 对账，避免回滚分支留下点进去 404 的幽灵子会话。
+        let referenced = collect_referenced_child_session_ids(prepared);
+        reconcile_orphan_subagent_sessions_sqlx_tx(
+            tx,
+            tenant_id,
+            &session.source_id,
+            &session.id,
+            &referenced,
         )
         .await?;
     }

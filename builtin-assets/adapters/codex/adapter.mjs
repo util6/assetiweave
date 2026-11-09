@@ -947,10 +947,95 @@ function subagentNicknameFromSpawn(spawn) {
   return nickname || null;
 }
 
+/** 子代理汇报摘要上限：完整内容保留在子会话里，锚点只带结论提要 */
+const SUBAGENT_REPORT_SUMMARY_MAX = 240;
+
+function collapseWhitespace(text) {
+  return String(text ?? "").replace(/\s+/g, " ").trim();
+}
+
+function summarizeReport(text, max = SUBAGENT_REPORT_SUMMARY_MAX) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max).trim()}...`;
+}
+
+function anchorText(title, summary) {
+  const head = collapseWhitespace(title) || "子代理任务";
+  return summary ? `[委派任务] ${head}\n[汇报结论] ${summary}` : `[委派任务] ${head}`;
+}
+
+function parseMetadataObject(part) {
+  try {
+    const parsed = JSON.parse(part?.metadata_json ?? "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * 构造父轮次里的轻量委派锚点 Part（ADR-0022）。
+ *
+ * 不复制子代理执行过程，也不设置 `content_card`：子代理深度内容全部留在
+ * 独立子会话里，锚点只保存确定性 `child_external_id` 与结论摘要。
+ */
+function subagentAnchorPart({ childExternalId, spawnAnchor, agentRole, title, reportSummary, model, stepCount }) {
+  const normalizedTitle = collapseWhitespace(title) || null;
+  const summary = summarizeReport(reportSummary);
+  return {
+    role: "assistant",
+    kind: "subagent",
+    text: anchorText(normalizedTitle, summary),
+    language: null,
+    command: null,
+    cwd: null,
+    status: "completed",
+    exit_code: null,
+    source_execution_id: spawnAnchor ?? null,
+    metadata_json: JSON.stringify({
+      child_external_id: childExternalId,
+      agent_role: agentRole ?? null,
+      title: normalizedTitle,
+      status: "completed",
+      model: model ?? null,
+      step_count: stepCount ?? 0,
+      report_summary: summary,
+      spawn_anchor: spawnAnchor ?? null,
+    }),
+  };
+}
+
+/**
+ * 汇总子会话的执行事实：工具步骤数、最终汇报与模型。
+ * 汇报只取子代理自己的最后一条 assistant 正文，绝不拿父侧工具回执顶替。
+ * @param {object[]} turns - 子会话轮次
+ * @returns {{ stepCount: number, reportSummary: string|null, model: string|null }}
+ */
+function summarizeChildSession(turns) {
+  let stepCount = 0;
+  let reportSummary = null;
+  let model = null;
+  for (const turn of Array.isArray(turns) ? turns : []) {
+    if (!model && turn?.model) model = turn.model;
+    for (const part of Array.isArray(turn?.parts) ? turn.parts : []) {
+      if (part?.kind === "command" || part?.kind === "tool" || part?.kind === "file_change") stepCount += 1;
+      if (part?.role === "assistant" && (part.kind === "text" || part.kind === "code") && part.text?.trim()) {
+        reportSummary = part.text.trim();
+      }
+    }
+  }
+  return { stepCount, reportSummary: summarizeReport(reportSummary), model };
+}
+
 function displayTurns(turns) {
-  const parentTurnIds = new Set(turns.map((turn) => turn.parent_turn_id).filter(Boolean));
+  // 宿主注入的上下文行（如 "Repository context only"）没有内容事实，若后面还有
+  // 真实提问轮次就不能占一个物理轮次号；但最后一轮即使是尚未回答的提问也要保留，
+  // 否则 "1 次人类提问 = 1 个 Turn" 和占位子会话都会丢。
+  const lastIndex = turns.length - 1;
   return turns
-    .filter((turn) => (Array.isArray(turn.parts) && turn.parts.length > 0) || turn.turn_kind === "subagent" || parentTurnIds.has(turn.external_id))
+    .filter((turn, index) => (Array.isArray(turn.parts) && turn.parts.length > 0) || index === lastIndex)
     .map((turn, index) => ({
       ...turn,
       turn_index: index,
@@ -1986,7 +2071,7 @@ function normalizeTurns(text) {
  * 查询 Codex 的 SQLite 数据库 (`state_5.sqlite`) 表中的 `threads` 基础会话元数据列表
  * @returns {Array<object>} 查到的 Session 数据库元数据行对象列表
  */
-function sessionRows({ sessionId = null, includeTitle = true } = {}) {
+function sessionRows({ sessionId = null, includeTitle = true, includeSubagents = false } = {}) {
   let location = expandPath(input.source?.location);
   if (!location) return [];
   let dbPath = location;
@@ -2012,6 +2097,7 @@ function sessionRows({ sessionId = null, includeTitle = true } = {}) {
   const threadSourceCol = pick(columns, ["thread_source"]);
   const sourceCol = pick(columns, ["source"]);
   const cwdCol = pick(columns, ["cwd", "working_directory", "workdir", "directory"]);
+  const modelCol = pick(columns, ["model", "model_name"]);
   const titleProjection = includeTitle && titleCol ? quoteIdent(titleCol) : "NULL";
 
   const isSubagentExpr = threadSourceCol && sourceCol
@@ -2023,7 +2109,7 @@ function sessionRows({ sessionId = null, includeTitle = true } = {}) {
         : "0";
 
   const filters = [];
-  if (threadSourceCol || sourceCol) {
+  if (!includeSubagents && (threadSourceCol || sourceCol)) {
     filters.push(`NOT (${isSubagentExpr})`);
   }
   if (cwdCol) {
@@ -2035,7 +2121,7 @@ function sessionRows({ sessionId = null, includeTitle = true } = {}) {
 
   const whereClause = filters.length > 0 ? ` WHERE ${filters.join(" AND ")}` : "";
   const orderClause = sessionId == null ? " ORDER BY rowid DESC" : "";
-  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleProjection} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at, ${cwdCol ? quoteIdent(cwdCol) : "NULL"} AS cwd, ${isSubagentExpr} AS is_subagent FROM threads${whereClause}${orderClause}`;
+  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleProjection} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at, ${cwdCol ? quoteIdent(cwdCol) : "NULL"} AS cwd, ${modelCol ? quoteIdent(modelCol) : "NULL"} AS model, ${sourceCol ? quoteIdent(sourceCol) : "NULL"} AS source, ${threadSourceCol ? quoteIdent(threadSourceCol) : "NULL"} AS thread_source, ${isSubagentExpr} AS is_subagent FROM threads${whereClause}${orderClause}`;
   emitProgress({
     stage: "scan",
     operation: "query_sqlite_threads",
@@ -2062,15 +2148,36 @@ function isInternalExecutionPath(cwd) {
  * @returns {Array<object>} 包含 external_id, updated_at, source_locator, version_token 的描述符列表
  */
 function listSessions() {
-  return sessionRows({ includeTitle: false }).flatMap((row) => {
+  // 子代理线程也必须出现在描述符里：增量同步靠这份集合给缺失会话打 missing，
+  // 漏掉隐藏子会话会让它们每轮都被误判为“源已消失”而删除。
+  return sessionRows({ includeTitle: false, includeSubagents: true }).flatMap((row) => {
     if (isInternalExecutionPath(row.cwd)) return [];
+    const externalId = String(row.id);
+    const updatedAt = row.updated_at == null ? null : String(row.updated_at);
     const resolvedPath = resolveRolloutPath(row.rollout_path);
-    if (!resolvedPath || !existsSync(resolvedPath)) return [];
-    const files = rolloutFilesForSession(resolvedPath, String(row.id));
-    if (!files.length) return [];
+    if (!resolvedPath || !existsSync(resolvedPath)) {
+      // 壳子会话：rollout 已被宿主清理，但仍保留线程描述符，避免被 missing 对账误杀。
+      if (!rowIsSubagent(row)) return [];
+      return [{
+        external_id: externalId,
+        updated_at: updatedAt,
+        source_locator: null,
+        version_token: updatedAt,
+      }];
+    }
+    const files = rolloutFilesForSession(resolvedPath, externalId);
+    if (!files.length) {
+      if (!rowIsSubagent(row)) return [];
+      return [{
+        external_id: externalId,
+        updated_at: updatedAt,
+        source_locator: null,
+        version_token: updatedAt,
+      }];
+    }
     return [{
-      external_id: String(row.id),
-      updated_at: row.updated_at == null ? null : String(row.updated_at),
+      external_id: externalId,
+      updated_at: updatedAt,
       source_locator: files.length > 1 ? files[files.length - 1] : resolvedPath,
       version_token: filesVersionToken(files, row.updated_at),
     }];
@@ -2086,116 +2193,392 @@ function listSessions() {
  *
  * @returns {Array<object>} 解析并完成卡片映射与配额限制后的 Session 对象数组
  */
-function findChildThreadsForParent(dbPath, parentId) {
-  if (!dbPath || !existsSync(dbPath)) return [];
-  const columns = sqliteJson(dbPath, "PRAGMA table_info(threads)").map((row) => row.name);
-  const idCol = pick(columns, ["id", "thread_id", "session_id"]);
-  const rolloutCol = pick(columns, ["rollout_path", "path", "file_path", "jsonl_path"]);
-  const sourceCol = pick(columns, ["source"]);
-  const threadSourceCol = pick(columns, ["thread_source"]);
-  const updatedCol = pick(columns, ["updated_at", "last_updated_at", "mtime", "created_at"]);
-  if (!idCol || !rolloutCol) return [];
-
-  const isSubagentExpr = threadSourceCol && sourceCol
-    ? `((${quoteIdent(threadSourceCol)} = 'subagent') OR (${quoteIdent(sourceCol)} LIKE '%"subagent"%'))`
-    : threadSourceCol
-      ? `(${quoteIdent(threadSourceCol)} = 'subagent')`
-      : sourceCol
-        ? `(${quoteIdent(sourceCol)} LIKE '%"subagent"%')`
-        : "0";
-
-  const parentRefExpr = sourceCol
-    ? `(${quoteIdent(sourceCol)} LIKE ${quoteSqlString(`%"parent_thread_id":"${parentId}"%`)} OR ${quoteIdent(sourceCol)} LIKE ${quoteSqlString(`%"parent_id":"${parentId}"%`)} OR ${quoteIdent(sourceCol)} LIKE ${quoteSqlString(`%"${parentId}"%`)})`
-    : "0";
-
-  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${sourceCol ? quoteIdent(sourceCol) : "NULL"} AS source, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at FROM threads WHERE (${isSubagentExpr}) AND (${parentRefExpr}) ORDER BY rowid ASC`;
-  return sqliteJson(dbPath, sql).map((row) => ({ ...row, rollout_path: expandPath(row.rollout_path) }));
+function rowIsSubagent(row) {
+  if (row?.is_subagent === 1 || row?.is_subagent === true || row?.is_subagent === "1") return true;
+  if (String(row?.thread_source ?? "").trim().toLowerCase() === "subagent") return true;
+  if (typeof row?.source === "string" && /"subagent"/i.test(row.source)) return true;
+  return Boolean(parseSubagentSpawn(row?.source));
 }
 
-/** 子代理线程树的最大展开层数，超过后降级为叶子 Turn */
+function tableExists(dbPath, table) {
+  try {
+    return sqliteJson(
+      dbPath,
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ${quoteSqlString(table)}`,
+    ).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 读取 Codex 的确定性父子边表 `thread_spawn_edges(parent_thread_id, child_thread_id)`。
+ * 该表可能不存在或被宿主升级移除，此时返回空 Map 并回退到 `source` JSON。
+ * @param {string} dbPath - state_5.sqlite 路径
+ * @returns {Map<string, string>} child_thread_id -> parent_thread_id
+ */
+function loadThreadSpawnEdges(dbPath) {
+  if (!dbPath || !existsSync(dbPath) || !tableExists(dbPath, "thread_spawn_edges")) return new Map();
+  const columns = sqliteJson(dbPath, "PRAGMA table_info(thread_spawn_edges)").map((row) => row.name);
+  const parentCol = pick(columns, ["parent_thread_id", "parent_id", "parent"]);
+  const childCol = pick(columns, ["child_thread_id", "child_id", "child"]);
+  if (!parentCol || !childCol) return new Map();
+  try {
+    const rows = sqliteJson(
+      dbPath,
+      `SELECT ${quoteIdent(parentCol)} AS parent_id, ${quoteIdent(childCol)} AS child_id FROM thread_spawn_edges`,
+    );
+    return new Map(
+      rows
+        .filter((row) => row.parent_id != null && row.child_id != null)
+        .map((row) => [String(row.child_id), String(row.parent_id)]),
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * 建立线程父子关系：优先 `thread_spawn_edges`，缺失时回退到 `source` JSON 的
+ * `thread_spawn.parent_thread_id` / `parent_id`。
+ * @param {object[]} rows - threads 行（含子代理）
+ * @param {string} dbPath - state_5.sqlite 路径
+ * @returns {{ rowById: Map<string, object>, parentByChild: Map<string, string>, childrenByParent: Map<string, object[]> }}
+ */
+function buildThreadHierarchy(rows, dbPath) {
+  const rowById = new Map(rows.map((row) => [String(row.id), row]));
+  const parentByChild = new Map(loadThreadSpawnEdges(dbPath));
+  for (const row of rows) {
+    const childId = String(row.id);
+    if (parentByChild.has(childId)) continue;
+    const spawn = parseSubagentSpawn(row.source);
+    const parentId = spawn?.parent_thread_id ?? spawn?.parent_id;
+    if (parentId != null && String(parentId).trim()) parentByChild.set(childId, String(parentId));
+  }
+  const childrenByParent = new Map();
+  for (const [childId, parentId] of parentByChild) {
+    if (!rowById.has(parentId)) continue;
+    const list = childrenByParent.get(parentId) ?? [];
+    list.push(rowById.get(childId));
+    childrenByParent.set(parentId, list);
+  }
+  return { rowById, parentByChild, childrenByParent };
+}
+
+/** 子代理线程树的最大展开层数，超过后壳化为叶子会话 */
 const MAX_SUBAGENT_DEPTH = 4;
 
 /**
- * 递归内联子代理线程树：一个子线程严格合并为一个 subagent Turn。
- * 沿 thread_spawn 的 parent 关系向下展开，已访问 thread id 集合做环检测，
- * 超出深度上限或再次遇到已展开线程时保留该 Turn 作为叶子并发出告警。
- * @param {object} options
- * @param {string} options.dbPath - state_5.sqlite 路径
- * @param {string} options.parentThreadId - 当前展开层的父线程 ID
- * @param {(startedAt: string|null) => string} options.parentTurnIdFor - 解析父 Turn 的外部 ID
- * @param {number} options.depth - 当前层深，主会话为 0
- * @param {Set<string>} options.visited - 已展开的 thread id
- * @param {Array<object>} options.out - 收集到的 subagent Turn 列表
+ * 解析某个 thread 行的 rollout 文件。
+ * @param {object} row - threads 行
+ * @returns {{ rolloutPath: string, files: string[], versionToken: string, parsed: object }|null}
  */
-function collectSubagentTurns({ dbPath, parentThreadId, parentTurnIdFor, depth, visited, out }) {
-  for (const childRow of findChildThreadsForParent(dbPath, parentThreadId)) {
-    const childThreadId = String(childRow.id);
-    const childRollout = resolveRolloutPath(childRow.rollout_path);
-    if (!childRollout || !existsSync(childRollout)) continue;
-    const childFiles = rolloutFilesForSession(childRollout, childThreadId);
-    if (!childFiles.length) continue;
-    const { text: childText } = readStableRollout(childFiles, childRow.updated_at);
-    const parsedChild = normalizeTurns(childText);
-    if (!parsedChild.turns.length) continue;
-    const childTurns = displayTurns(parsedChild.turns);
+function parseRowRollout(row) {
+  const rolloutPath = resolveRolloutPath(row.rollout_path);
+  if (!rolloutPath || !existsSync(rolloutPath)) return null;
+  const files = rolloutFilesForSession(rolloutPath, String(row.id));
+  if (!files.length) return null;
+  const { text, versionToken } = readStableRollout(files, row.updated_at);
+  return { rolloutPath, files, versionToken, parsed: normalizeTurns(text) };
+}
 
-    const childStart = childTurns[0]?.started_at
-      ?? parsedChild.turns[0]?.started_at
-      ?? childRow.updated_at
-      ?? null;
-    const parentTurnId = parentTurnIdFor(childStart);
-    const subagentTurnId = `${parentTurnId}-subagent-${childThreadId}`;
-    const spawn = parseSubagentSpawn(childRow.source);
-    const taskPrompt = subagentTaskPrompt(parsedChild.turns);
-    if (!taskPrompt) {
-      emit("warning", {
-        message: `subagent ${childThreadId} has no readable task prompt in its rollout; placeholder text used`,
-      });
-    }
-    const lastChildTurn = childTurns.at(-1) ?? parsedChild.turns.at(-1) ?? null;
-    out.push({
-      external_id: subagentTurnId,
-      turn_index: 0,
-      user_text: taskPrompt ?? SUBAGENT_PLACEHOLDER_PROMPT,
-      title: subagentNicknameFromSpawn(spawn),
-      started_at: childStart,
-      ended_at: lastChildTurn?.ended_at ?? lastChildTurn?.started_at ?? childStart,
-      model: childTurns.map((turn) => turn.model).find(Boolean) ?? null,
-      parts: childTurns.flatMap((turn) => (Array.isArray(turn.parts) ? turn.parts : [])),
-      turn_kind: "subagent",
-      agent_role: subagentRoleFromSpawn(spawn),
-      parent_turn_id: parentTurnId,
+function rowTitleOf(row, spawn) {
+  const nickname = subagentNicknameFromSpawn(spawn);
+  const title = row?.title == null ? "" : String(row.title).trim();
+  return nickname || title || null;
+}
+
+function subagentPurpose({ parentExternalId, parentTurnIndex, agentRole, spawnAnchor }) {
+  return JSON.stringify(compactObject({
+    parent_external_id: parentExternalId ?? null,
+    parent_turn_index: parentTurnIndex ?? null,
+    agent_role: agentRole ?? null,
+    spawn_anchor: spawnAnchor ?? null,
+  }));
+}
+
+/**
+ * 构造壳子会话：子代理 rollout 已被宿主清理时，仍用 threads 元数据产出一个
+ * 单轮摘要，保证父锚点点击不会 404。
+ */
+function buildShellChildSession(row, spawn, parentExternalId) {
+  const externalId = String(row.id);
+  const updatedAt = row.updated_at == null ? null : String(row.updated_at);
+  const title = rowTitleOf(row, spawn);
+  const agentRole = subagentRoleFromSpawn(spawn);
+  const model = row.model == null ? null : String(row.model);
+  const summaryText = [
+    title ? `子代理「${title}」的会话源文件已清理，仅保留元数据摘要。` : "子代理会话源文件已清理，仅保留元数据摘要。",
+    agentRole ? `角色：${agentRole}。` : null,
+    model ? `模型：${model}。` : null,
+  ].filter(Boolean).join(" ");
+  const turn = {
+    external_id: `${externalId}-summary`,
+    turn_index: 0,
+    user_text: title || SUBAGENT_PLACEHOLDER_PROMPT,
+    title: null,
+    started_at: updatedAt,
+    ended_at: updatedAt,
+    model,
+    parts: [textPart("assistant", summaryText)].filter(Boolean),
+  };
+  return {
+    external_id: externalId,
+    title,
+    project_path: row.cwd == null ? null : String(row.cwd),
+    started_at: updatedAt,
+    updated_at: updatedAt,
+    source_locator: null,
+    // rollout 不存在时以 threads.updated_at 作为稳定指纹，重同步不会抖动。
+    source_fingerprint: updatedAt,
+    user_visible: false,
+    execution_origin: "subagent",
+    execution_purpose: subagentPurpose({
+      parentExternalId,
+      parentTurnIndex: null,
+      agentRole,
+      spawnAnchor: externalId,
+    }),
+    turns: [turn],
+  };
+}
+
+/**
+ * 把子线程 rollout 组装为独立子会话：`#T1` 承载全量委派 Prompt、工具链与最终汇报，
+ * 不再向父会话混入任何 turn_kind 伪轮次。
+ */
+function buildChildSessionFromRollout(row, parsed, turns, rollout, spawn, parentExternalId) {
+  const externalId = String(row.id);
+  const taskPrompt = subagentTaskPrompt(parsed.turns);
+  if (!taskPrompt) {
+    emit("warning", {
+      message: `subagent ${externalId} has no readable task prompt in its rollout; placeholder text used`,
     });
+  }
+  const sourceTurns = turns.length > 0 ? turns : parsed.turns;
+  const first = sourceTurns[0] ?? null;
+  const last = sourceTurns.at(-1) ?? null;
+  const model = sourceTurns.map((turn) => turn.model).find(Boolean)
+    ?? (row.model == null ? null : String(row.model));
+  const childTurn = {
+    external_id: `${externalId}-turn-1`,
+    turn_index: 0,
+    user_text: taskPrompt ?? SUBAGENT_PLACEHOLDER_PROMPT,
+    title: subagentNicknameFromSpawn(spawn),
+    started_at: first?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),
+    ended_at: last?.ended_at ?? last?.started_at ?? first?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),
+    model,
+    parts: sourceTurns.flatMap((turn) => (Array.isArray(turn.parts) ? turn.parts : [])),
+  };
+  const title = rowTitleOf(row, spawn)
+    ?? sanitizeSessionShortTitle(taskPrompt)
+    ?? null;
+  return {
+    external_id: externalId,
+    title,
+    project_path: parsed.projectPath ?? inferProjectPath(sourceTurns) ?? (row.cwd == null ? null : String(row.cwd)),
+    started_at: childTurn.started_at,
+    updated_at: childTurn.ended_at,
+    source_locator: rollout.files.length > 1 ? rollout.files[rollout.files.length - 1] : rollout.rolloutPath,
+    source_fingerprint: rollout.versionToken,
+    user_visible: false,
+    execution_origin: "subagent",
+    execution_purpose: subagentPurpose({
+      parentExternalId,
+      parentTurnIndex: null,
+      agentRole: subagentRoleFromSpawn(spawn),
+      spawnAnchor: externalId,
+    }),
+    turns: [childTurn],
+  };
+}
 
-    const childDepth = depth + 1;
-    if (childDepth > MAX_SUBAGENT_DEPTH) {
-      emit("warning", {
-        message: `subagent ${childThreadId} exceeds the depth limit of ${MAX_SUBAGENT_DEPTH}; kept as a leaf turn`,
-      });
-      continue;
-    }
-    if (visited.has(childThreadId)) {
-      emit("warning", {
-        message: `subagent ${childThreadId} is already expanded (cycle); kept as a leaf turn`,
-      });
-      continue;
-    }
-    visited.add(childThreadId);
-    collectSubagentTurns({
-      dbPath,
-      parentThreadId: childThreadId,
-      parentTurnIdFor: () => subagentTurnId,
-      depth: childDepth,
-      visited,
-      out,
+function placeholderChildSession(row, spawn, parentExternalId) {
+  const externalId = String(row.id);
+  const updatedAt = row.updated_at == null ? null : String(row.updated_at);
+  return {
+    external_id: externalId,
+    title: rowTitleOf(row, spawn),
+    project_path: row.cwd == null ? null : String(row.cwd),
+    started_at: updatedAt,
+    updated_at: updatedAt,
+    source_locator: null,
+    source_fingerprint: updatedAt,
+    user_visible: false,
+    execution_origin: "subagent",
+    execution_purpose: subagentPurpose({
+      parentExternalId,
+      parentTurnIndex: null,
+      agentRole: subagentRoleFromSpawn(spawn),
+      spawnAnchor: externalId,
+    }),
+    turns: [],
+  };
+}
+
+/**
+ * 按 `parent_turn_id` 精确锚定；缺失时按子线程启动时间选择父轮次。
+ */
+function anchorHostTurn(turns, startedAt, parentTurnId) {
+  if (!turns.length) return null;
+  if (parentTurnId != null) {
+    const explicit = turns.find((turn) => String(turn.external_id) === String(parentTurnId));
+    if (explicit) return explicit;
+  }
+  const target = startedAt ? new Date(startedAt).getTime() : Number.NaN;
+  if (Number.isNaN(target)) return turns[0];
+  let host = null;
+  for (const turn of turns) {
+    const time = turn.started_at ? new Date(turn.started_at).getTime() : Number.NaN;
+    if (!Number.isNaN(time) && time <= target) host = turn;
+  }
+  return host ?? turns[0];
+}
+
+/**
+ * 在父轮次 parts 中追加轻量委派锚点，并把父轮次序号回写到子会话的
+ * `execution_purpose.parent_turn_index`。
+ */
+function linkChildAnchor(parentTurns, { row, spawn, session, parentExternalId }) {
+  const host = anchorHostTurn(
+    parentTurns,
+    session?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),
+    spawn?.parent_turn_id,
+  );
+  if (!host) return;
+  const summary = summarizeChildSession(session?.turns ?? []);
+  const externalId = String(row.id);
+  const anchor = subagentAnchorPart({
+    childExternalId: externalId,
+    spawnAnchor: externalId,
+    agentRole: subagentRoleFromSpawn(spawn),
+    title: rowTitleOf(row, spawn),
+    reportSummary: summary.reportSummary,
+    model: summary.model ?? (row.model == null ? null : String(row.model)),
+    stepCount: summary.stepCount,
+  });
+  host.parts.push(anchor);
+  if (session) {
+    session.execution_purpose = subagentPurpose({
+      parentExternalId,
+      parentTurnIndex: host.turn_index,
+      agentRole: subagentRoleFromSpawn(spawn),
+      spawnAnchor: externalId,
     });
   }
 }
 
+/**
+ * 从一批根线程出发，递归建立“父会话 + 子代理会话”森林。
+ *
+ * 子代理不再作为 Turn 混入父数组：父轮次只追加 anchor Part，子线程本身是
+ * 独立 Session；递归时锚点写在其直接父会话的轮次里。
+ * @returns {Map<string, object>} external_id -> Session
+ */
+function buildSessionForest({ roots, hierarchy, dbPath }) {
+  const sessionsById = new Map();
+  const building = new Set();
+
+  const build = (rowId, depth, ancestry) => {
+    if (sessionsById.has(rowId)) return sessionsById.get(rowId);
+    if (building.has(rowId)) return null;
+    const row = hierarchy.rowById.get(rowId);
+    if (!row) return null;
+    building.add(rowId);
+
+    const isSubagent = rowIsSubagent(row);
+    const spawn = parseSubagentSpawn(row.source);
+    const parentExternalId = hierarchy.parentByChild.get(rowId)
+      ?? (spawn?.parent_thread_id != null ? String(spawn.parent_thread_id) : null)
+      ?? (spawn?.parent_id != null ? String(spawn.parent_id) : null);
+
+    const rollout = parseRowRollout(row);
+    let session = null;
+    if (!rollout) {
+      if (!isSubagent) {
+        building.delete(rowId);
+        return null;
+      }
+      session = buildShellChildSession(row, spawn, parentExternalId);
+    } else {
+      const turns = displayTurns(rollout.parsed.turns);
+      if (!turns.length) {
+        if (!isSubagent) {
+          building.delete(rowId);
+          return null;
+        }
+        session = buildShellChildSession(row, spawn, parentExternalId);
+        session.source_locator = rollout.files.length > 1
+          ? rollout.files[rollout.files.length - 1]
+          : rollout.rolloutPath;
+        session.source_fingerprint = rollout.versionToken;
+      } else if (isSubagent) {
+        session = buildChildSessionFromRollout(row, rollout.parsed, turns, rollout, spawn, parentExternalId);
+      } else {
+        const projectPath = rollout.parsed.projectPath ?? inferProjectPath(turns);
+        if (isInternalExecutionPath(projectPath)) {
+          building.delete(rowId);
+          return null;
+        }
+        session = {
+          external_id: String(row.id),
+          title: (row.title == null || !String(row.title).trim())
+            ? (sanitizeSessionShortTitle(turns[0]?.user_text) || null)
+            : String(row.title).trim(),
+          project_path: projectPath,
+          started_at: turns[0]?.started_at ?? null,
+          updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),
+          source_locator: rollout.files.length > 1 ? rollout.files[rollout.files.length - 1] : rollout.rolloutPath,
+          source_fingerprint: rollout.versionToken,
+          user_visible: true,
+          execution_origin: "user",
+          execution_purpose: null,
+          turns,
+        };
+      }
+    }
+
+    // 递归：仅在未超过深度上限时继续展开；超限层保留为叶子会话并告警。
+    if (depth <= MAX_SUBAGENT_DEPTH) {
+      for (const childRow of hierarchy.childrenByParent.get(rowId) ?? []) {
+        const childId = String(childRow.id);
+        const childDepth = depth + 1;
+        let childSession = null;
+        if (ancestry.has(childId) || building.has(childId)) {
+          emit("warning", {
+            message: `subagent ${childId} is already expanded (cycle); kept as a leaf session`,
+          });
+        } else {
+          childSession = build(childId, childDepth, new Set(ancestry).add(rowId));
+        }
+        if (childDepth > MAX_SUBAGENT_DEPTH) {
+          emit("warning", {
+            message: `subagent ${childId} exceeds the depth limit of ${MAX_SUBAGENT_DEPTH}; kept as a leaf session`,
+          });
+        }
+        if (!childSession) {
+          childSession = placeholderChildSession(childRow, parseSubagentSpawn(childRow.source), rowId);
+        }
+        linkChildAnchor(session.turns, {
+          row: childRow,
+          spawn: parseSubagentSpawn(childRow.source),
+          session: childSession,
+          parentExternalId: rowId,
+        });
+      }
+    }
+
+    building.delete(rowId);
+    sessionsById.set(rowId, session);
+    return session;
+  };
+
+  for (const root of roots) build(String(root.id), 0, new Set());
+  return sessionsById;
+}
+
 function readSession() {
-  // 1. 获取 Rust 入参中指定的 session_id (若为 null，则代表需要读取全量会话)
   const requestedSessionId = input.params?.session_id ?? null;
-  const requestedLocator = expandPath(input.params?.source_locator);
   const location = expandPath(input.source?.location);
   let dbPath = location;
   try {
@@ -2206,114 +2589,105 @@ function readSession() {
     dbPath = null;
   }
   if (dbPath && !existsSync(dbPath)) dbPath = null;
+  if (!dbPath) return [];
 
-  // 2. 查询 SQLite 获取数据库会话行，按请求 ID 过滤后，对每个 Session 执行格式化流水线
-  const rows = sessionRows({ sessionId: requestedSessionId });
-  const total = rows.length;
-  let current = 0;
+  const rows = sessionRows({ includeTitle: true, includeSubagents: true });
+  if (!rows.length) return [];
+  const hierarchy = buildThreadHierarchy(rows, dbPath);
+  const rootRows = rows.filter((row) => !rowIsSubagent(row));
+  const orphanSubagents = rows.filter((row) => rowIsSubagent(row));
 
-  return rows.flatMap((row) => {
-    if (isInternalExecutionPath(row.cwd)) return [];
-    current += 1;
-    // 3. 展开并校验 `.jsonl` / `.jsonl.zst` 会话日志文件的绝对路径，不存在则忽略
-    let rolloutPath = resolveRolloutPath(row.rollout_path);
-    if ((!rolloutPath || !existsSync(rolloutPath)) && requestedLocator) {
-      rolloutPath = resolveRolloutPath(requestedLocator);
-    }
-    if (!rolloutPath || !existsSync(rolloutPath)) return [];
+  const sessionsById = buildSessionForest({
+    roots: requestedSessionId == null ? rootRows : [],
+    hierarchy,
+    dbPath,
+  });
 
-    const files = rolloutFilesForSession(rolloutPath, String(row.id));
-    if (!files.length) return [];
+  const finish = (session) => {
+    if (!session) return null;
+    const carded = finalizeStructuredContentCards(session);
+    return applyTextBudgets(carded);
+  };
 
-    emitProgress({
-      stage: "parse",
-      operation: "parsing_session_file",
-      path: `${path.basename(rolloutPath)} (Session ${row.id})`,
-      current,
-      total,
-    });
-
-    // 4. 【步骤一：原子稳定读取】同步读取 JSONL 日志文本（合并多卷日志），生成防止并发追加写入的校验 Version Token
-    const { text, versionToken } = readStableRollout(files, row.updated_at);
-
-    // 5. 【步骤二：核心解析引擎】将 JSONL 逐行拆解为 User 提问、Assistant Markdown、Tool 命令与 Skill 依赖
-    const parsed = normalizeTurns(text);
-
-    // 6. 过滤空 Turn 节点并自动重新建立 0-based 连续索引下标
-    let turns = displayTurns(parsed.turns);
-    if (!turns.length) return [];
-    const parentAnchorTurnId = turns[0].external_id;
-
-    // 7. 组装 Session 基础元数据结构对象
-    const isSubagent = Boolean(row.is_subagent === 1 || row.is_subagent === true || row.is_subagent === "1");
-
-    // Inline child threads if parent session: 一个子代理线程严格合并为一个 subagent Turn，
-    // 并沿 thread_spawn 的 parent 关系递归展开（深度上限 + 环检测）。
-    if (dbPath && !isSubagent) {
-      const subagentTurns = [];
-      const anchorTurnFor = (startedAt) => {
-        const targetTime = startedAt ? new Date(startedAt).getTime() : 0;
-        let anchor = turns[0];
-        for (const candidate of turns) {
-          if (candidate.started_at && new Date(candidate.started_at).getTime() <= targetTime) {
-            anchor = candidate;
-          }
-        }
-        return anchor ?? null;
-      };
-      collectSubagentTurns({
-        dbPath,
-        parentThreadId: String(row.id),
-        parentTurnIdFor: (startedAt) => anchorTurnFor(startedAt)?.external_id ?? parentAnchorTurnId,
-        depth: 0,
-        visited: new Set([String(row.id)]),
-        out: subagentTurns,
-      });
-
-      if (subagentTurns.length > 0) {
-        const allTurns = [...turns, ...subagentTurns];
-        allTurns.sort((a, b) => {
-          const timeA = a.started_at ? new Date(a.started_at).getTime() : 0;
-          const timeB = b.started_at ? new Date(b.started_at).getTime() : 0;
-          if (timeA !== timeB) return timeA - timeB;
-          if (a.turn_kind !== "subagent" && b.turn_kind === "subagent") return -1;
-          if (a.turn_kind === "subagent" && b.turn_kind !== "subagent") return 1;
-          return 0;
-        });
-        for (let i = 0; i < allTurns.length; i++) {
-          allTurns[i].turn_index = i;
-        }
-        turns = allTurns;
+  if (requestedSessionId == null) {
+    // 全量读取：所有根会话（含递归子会话）+ 无父行可挂的孤儿子会话。
+    const ordered = [];
+    const seen = new Set();
+    const pushSession = (session) => {
+      if (!session || seen.has(session.external_id)) return;
+      seen.add(session.external_id);
+      ordered.push(session);
+    };
+    for (const root of rootRows) {
+      const session = sessionsById.get(String(root.id));
+      if (!session) continue;
+      pushSession(finish(session));
+      for (const descendant of collectDescendantSessions(String(root.id), hierarchy, sessionsById)) {
+        pushSession(finish(descendant));
       }
     }
-    const projectPath = parsed.projectPath ?? inferProjectPath(turns);
-    if (isInternalExecutionPath(projectPath)) return [];
+    for (const orphan of orphanSubagents) {
+      if (sessionsById.has(String(orphan.id))) continue;
+      const standalone = buildSessionForest({ roots: [orphan], hierarchy, dbPath }).get(String(orphan.id));
+      if (standalone) pushSession(finish(standalone));
+    }
+    return ordered;
+  }
 
-    const rawSession = {
-      external_id: String(row.id),
-      title: (row.title == null || !String(row.title).trim())
-        ? (sanitizeSessionShortTitle(turns[0]?.user_text) || null)
-        : String(row.title).trim(),
-      project_path: projectPath,
-      started_at: turns[0]?.started_at ?? null,
-      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),
-      source_locator: files.length > 1 ? files[files.length - 1] : rolloutPath,
-      source_fingerprint: versionToken,
-      user_visible: !isSubagent,
-      execution_origin: isSubagent ? "agent" : "user",
-      execution_purpose: isSubagent ? "subagent" : null,
-      turns,
-    };
+  const requestedRow = hierarchy.rowById.get(String(requestedSessionId));
+  if (!requestedRow) return [];
 
-    // 8. 【步骤三：卡片终结映射】为 Parts 节点映射结构化 Content Card (如 renderer="code" / "command" / "path")
-    const cardSession = finalizeStructuredContentCards(rawSession);
+  // 直接读取子代理会话：连同父会话一起解析，确保 parent_turn_index / 锚点一致。
+  let effectiveSessions = sessionsById;
+  let targetSession = sessionsById.get(String(requestedRow.id));
+  if (!targetSession) {
+    const topId = topAncestorId(String(requestedRow.id), hierarchy);
+    const topRow = hierarchy.rowById.get(topId);
+    effectiveSessions = buildSessionForest({
+      roots: topRow ? [topRow] : [requestedRow],
+      hierarchy,
+      dbPath,
+    });
+    targetSession = effectiveSessions.get(String(requestedRow.id));
+  }
+  if (!targetSession) return [];
 
-    // 9. 【步骤四：文本压缩与配额】执行低信号终端日志压缩算法，并应用 384KB Session 字符总上限
-    const finalizedSession = applyTextBudgets(cardSession);
+  if (rowIsSubagent(requestedRow)) {
+    return [finish(targetSession)];
+  }
+  return [
+    finish(targetSession),
+    ...collectDescendantSessions(String(requestedRow.id), hierarchy, effectiveSessions)
+      .map((session) => finish(session)),
+  ].filter(Boolean);
+}
 
-    // 10. 返回最终处理完成的 Session 数组元素
-    return [finalizedSession];
-  });
+function topAncestorId(rowId, hierarchy) {
+  let current = String(rowId);
+  const seen = new Set();
+  while (hierarchy.parentByChild.has(current) && !seen.has(current)) {
+    seen.add(current);
+    current = String(hierarchy.parentByChild.get(current));
+    if (!hierarchy.rowById.has(current)) break;
+  }
+  return current;
+}
+
+function collectDescendantSessions(rowId, hierarchy, sessionsById) {
+  const out = [];
+  const seen = new Set([String(rowId)]);
+  const walk = (currentId) => {
+    for (const childRow of hierarchy.childrenByParent.get(currentId) ?? []) {
+      const childId = String(childRow.id);
+      if (seen.has(childId)) continue;
+      seen.add(childId);
+      const session = sessionsById.get(childId);
+      if (session) out.push(session);
+      walk(childId);
+    }
+  };
+  walk(String(rowId));
+  return out;
 }
 
 /**

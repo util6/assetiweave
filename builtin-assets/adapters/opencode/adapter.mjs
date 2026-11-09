@@ -258,6 +258,47 @@ function normalizePart(row, role) {
   if (!text && (!data || Object.keys(data).length === 0)) return null;
   if (["reasoning", "step-start", "step-finish", "step_finish", "compaction", "retry", "snapshot"].includes(kind)) return null;
   const lowerRole = String(role || "").toLowerCase();
+  const toolName = String(valueText(data, ["tool", "tool_name"]) ?? "").trim().toLowerCase();
+  const declaredType = String(valueText(data, ["type", "kind"]) ?? kind).trim().toLowerCase();
+  // OpenCode 的 `task` 工具调用就是子代理派发步：这一步原位产出轻量锚点，
+  // 不落普通 tool Part，也不带 content_card（后端映射成 opencode.subagent）。
+  if (kind !== "text" && (toolName === "task" || ["subtask", "agent"].includes(declaredType))) {
+    const prompt = row.subagent_prompt?.trim()
+      || valueText(data, ["prompt"])?.trim()
+      || null;
+    const title = row.description?.trim()
+      || row.title?.trim()
+      || valueText(data, ["description", "title"])?.trim()
+      || sanitizeSessionShortTitle(prompt)
+      || null;
+    const agentRole = row.subagent_type?.trim()
+      || valueText(data, ["subagent_type", "subagentType", "agentType", "role"])?.trim()
+      || null;
+    const childExternalId = row.child_session_id?.trim()
+      || valueText(data, ["sessionId", "session_id", "sessionID", "childSessionId", "child_session_id"])?.trim()
+      || null;
+    const rawStatus = String(
+      valueText(data, ["status"]) ?? nestedText(data, [["state", "status"]]) ?? "",
+    ).trim().toLowerCase();
+    const status = /^(error|failed|failure|cancelled|canceled|interrupted)$/.test(rawStatus)
+      ? "failed"
+      : rawStatus === "running" || rawStatus === "pending"
+        ? rawStatus
+        : "completed";
+    const spawnAnchor = typeof row.source_execution_id === "string" && row.source_execution_id.trim()
+      ? row.source_execution_id.trim()
+      : typeof row.id === "string" && row.id.trim()
+        ? row.id.trim()
+        : null;
+    return [subagentAnchorPart({
+      childExternalId,
+      spawnAnchor,
+      agentRole,
+      title,
+      status,
+      summary: summarizeReport(text),
+    })];
+  }
   const normalizedKind = kind === "tool"
     ? "tool"
     : kind === "command"
@@ -366,6 +407,92 @@ function resolvePrompt(...candidates) {
 }
 
 const SUBAGENT_TITLE_SUFFIX = /\(@([^\s()]+)\s+subagent\)\s*$/i;
+/** 汇报摘要上限：只用于父轮次锚点，完整汇报留在子会话里 */
+const SUBAGENT_REPORT_SUMMARY_MAX = 240;
+
+function collapseWhitespace(text) {
+  return String(text ?? "").replace(/\s+/g, " ").trim();
+}
+
+function summarizeReport(text, max = SUBAGENT_REPORT_SUMMARY_MAX) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max).trim()}...`;
+}
+
+function anchorText(title, summary) {
+  const head = collapseWhitespace(title) || "子代理任务";
+  return summary ? `[委派任务] ${head}\n[汇报结论] ${summary}` : `[委派任务] ${head}`;
+}
+
+/** 锚点 metadata 的稳定字段顺序，便于跨宿主对账与快照 diff。 */
+function orderedAnchorMetadata(metadata) {
+  const ordered = {};
+  if (metadata?.child_external_id) ordered.child_external_id = metadata.child_external_id;
+  if (metadata?.agent_role) ordered.agent_role = metadata.agent_role;
+  if (metadata?.title) ordered.title = metadata.title;
+  ordered.status = metadata?.status ?? "completed";
+  if (metadata?.model) ordered.model = metadata.model;
+  if (Number.isInteger(metadata?.step_count)) ordered.step_count = metadata.step_count;
+  if (metadata?.report_summary) ordered.report_summary = metadata.report_summary;
+  if (metadata?.spawn_anchor) ordered.spawn_anchor = metadata.spawn_anchor;
+  return ordered;
+}
+
+/**
+ * 构造父轮次里的轻量委派锚点 Part（ADR-0022）。
+ *
+ * 锚点不复制子代理执行过程，只保留任务标题与结论摘要；子会话的确定性
+ * `external_id` 写进 metadata，后端据此折算子会话主键。锚点不带 content_card，
+ * 后端会把 `kind = "subagent"` 自动映射成 `opencode.subagent` 卡片。
+ */
+function subagentAnchorPart({ childExternalId, spawnAnchor, agentRole, title, status, summary }) {
+  const normalizedTitle = collapseWhitespace(title) || null;
+  const metadata = orderedAnchorMetadata({
+    child_external_id: childExternalId ?? null,
+    agent_role: agentRole ?? null,
+    title: normalizedTitle,
+    status: status ?? "completed",
+    report_summary: summary ?? null,
+    spawn_anchor: spawnAnchor ?? null,
+  });
+  return {
+    role: "assistant",
+    kind: "subagent",
+    text: anchorText(normalizedTitle, metadata.report_summary),
+    language: null,
+    command: null,
+    cwd: null,
+    status: metadata.status,
+    exit_code: null,
+    source_execution_id: spawnAnchor ?? null,
+    metadata_json: JSON.stringify(metadata),
+  };
+}
+
+function parseMetadataObject(part) {
+  try {
+    const parsed = JSON.parse(part?.metadata_json ?? "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** 就地更新锚点：补角色、标题、步骤数、模型与汇报摘要，并同步刷新正文。 */
+function updateSubagentAnchor(part, patch) {
+  if (!part) return;
+  const merged = { ...parseMetadataObject(part), ...patch };
+  for (const key of Object.keys(merged)) {
+    if (merged[key] === null || merged[key] === undefined) delete merged[key];
+  }
+  const metadata = orderedAnchorMetadata(merged);
+  part.metadata_json = JSON.stringify(metadata);
+  part.text = anchorText(metadata.title, metadata.report_summary);
+  part.status = metadata.status;
+  if (metadata.spawn_anchor) part.source_execution_id = metadata.spawn_anchor;
+}
 
 // OpenCode titles child sessions as "<task description> (@<type> subagent)".
 // The type is the only stable role name; the description belongs to the turn title.
@@ -380,10 +507,15 @@ function parseSubagentTitle(title) {
   };
 }
 
+// ADR-0022：父会话里 1 次人类提问 = 1 个真实轮次，子代理只留锚点 Part，
+// 因此这里不再按 turn_kind / parent_turn_id 保留伪轮次。
 function displayTurns(turns) {
-  const parentTurnIds = new Set(turns.map((turn) => turn.parent_turn_id).filter(Boolean));
+  // 宿主注入的上下文行（如 "Repository context only"）没有内容事实，若后面还有
+  // 真实提问轮次就不能占一个物理轮次号；但最后一轮即使是尚未回答的提问也要保留，
+  // 否则 "1 次人类提问 = 1 个 Turn" 和占位子会话都会丢。
+  const lastIndex = turns.length - 1;
   return turns
-    .filter((turn) => (Array.isArray(turn.parts) && turn.parts.length > 0) || turn.turn_kind === "subagent" || parentTurnIds.has(turn.external_id))
+    .filter((turn, index) => (Array.isArray(turn.parts) && turn.parts.length > 0) || index === lastIndex)
     .map((turn, index) => ({
       ...turn,
       turn_index: index,
@@ -550,6 +682,32 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
   const partToolExpr = partData ? sqlCoalesce([jsonExtract(partData, "$.tool"), jsonExtract(partData, "$.tool_name")]) : "NULL";
   const partTitleExpr = partData ? sqlCoalesce([jsonExtract(partData, "$.title"), jsonExtract(partData, "$.state.title")]) : "NULL";
   const partDescriptionExpr = partData ? sqlCoalesce([jsonExtract(partData, "$.description"), jsonExtract(partData, "$.state.input.description")]) : "NULL";
+  // 子代理派发步的稳定标识：child session id / 角色 / 委派 Prompt。
+  const partChildSessionExpr = partData
+    ? sqlCoalesce([
+      jsonExtract(partData, "$.state.metadata.sessionId"),
+      jsonExtract(partData, "$.state.metadata.sessionID"),
+      jsonExtract(partData, "$.metadata.sessionId"),
+      jsonExtract(partData, "$.sessionId"),
+      jsonExtract(partData, "$.session_id"),
+      jsonExtract(partData, "$.childSessionId"),
+    ])
+    : "NULL";
+  const partSubagentTypeExpr = partData
+    ? sqlCoalesce([
+      jsonExtract(partData, "$.state.input.subagent_type"),
+      jsonExtract(partData, "$.input.subagent_type"),
+      jsonExtract(partData, "$.subagent_type"),
+      jsonExtract(partData, "$.subagentType"),
+    ])
+    : "NULL";
+  const partSubagentPromptExpr = partData
+    ? sqlCoalesce([
+      jsonExtract(partData, "$.state.input.prompt"),
+      jsonExtract(partData, "$.input.prompt"),
+      jsonExtract(partData, "$.prompt"),
+    ])
+    : "NULL";
   const sourceExecutionExpressions = partData
     ? [
       jsonExtract(partData, "$.callID"),
@@ -564,7 +722,7 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
     ? sqlCoalesce(sourceExecutionExpressions)
     : "NULL";
   const partSql = partMessage
-    ? `SELECT ${partSession ? quoteIdent(partSession) : "NULL"} AS session_id, ${quoteIdent(partMessage)} AS message_id, ${partKindExpr} AS kind, ${partTextExpr} AS text, NULL AS data, ${partCommandExpr} AS command, ${partCwdExpr} AS cwd, ${partStatusExpr} AS status, ${partExitExpr} AS exit_code, ${partToolExpr} AS tool, ${partTitleExpr} AS title, ${partDescriptionExpr} AS description, ${sourceExecutionExpr} AS source_execution_id FROM part ${partWhere} ORDER BY rowid ASC`
+    ? `SELECT ${partSession ? quoteIdent(partSession) : "NULL"} AS session_id, ${quoteIdent(partMessage)} AS message_id, ${partKindExpr} AS kind, ${partTextExpr} AS text, NULL AS data, ${partCommandExpr} AS command, ${partCwdExpr} AS cwd, ${partStatusExpr} AS status, ${partExitExpr} AS exit_code, ${partToolExpr} AS tool, ${partTitleExpr} AS title, ${partDescriptionExpr} AS description, ${partChildSessionExpr} AS child_session_id, ${partSubagentTypeExpr} AS subagent_type, ${partSubagentPromptExpr} AS subagent_prompt, ${sourceExecutionExpr} AS source_execution_id FROM part ${partWhere} ORDER BY rowid ASC`
     : "";
   const partsByMessage = new Map();
   if (partSql) {
@@ -665,178 +823,336 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
   return turnsBySession;
 }
 
-function readSessions(includeTurns) {
-  const requestedSessionId = input.params?.session_id ?? null;
-  const dbPath = expandPath(input.source?.location);
-  if (!dbPath || !existsSync(dbPath)) return [];
+function sessionQueryContext(dbPath) {
   const sessionColumns = sqliteJson(dbPath, "PRAGMA table_info(session)").map((row) => row.name);
   const messageColumns = sqliteJson(dbPath, "PRAGMA table_info(message)").map((row) => row.name);
   const partColumns = sqliteJson(dbPath, "PRAGMA table_info(part)").map((row) => row.name);
   const idCol = pick(sessionColumns, ["id", "session_id"]);
-  if (!idCol || !messageColumns.length || !partColumns.length) return [];
-  const titleCol = pick(sessionColumns, ["title", "name"]);
-  const projectCol = pick(sessionColumns, ["project", "project_path", "cwd", "directory", "path"]);
-  const updatedCol = pick(sessionColumns, ["updated_at", "time_updated", "timeUpdated", "created_at"]);
-  const parentCol = pick(sessionColumns, ["parent_id", "parentID", "parent_session_id", "parent"]);
   const messageSessionCol = pick(messageColumns, ["session_id", "sessionID", "session"]);
+  if (!idCol || !messageColumns.length || !partColumns.length || !messageSessionCol) return null;
   const messageIdCol = pick(messageColumns, ["id", "message_id"]);
   const partSessionCol = pick(partColumns, ["session_id", "sessionID", "session"]);
   const partMessageCol = pick(partColumns, ["message_id", "messageID", "message"]);
-  if (!messageSessionCol) return [];
-  const filters = [];
-  if (requestedSessionId) {
-    filters.push(`s.${quoteIdent(idCol)} = ${sqlString(requestedSessionId)}`);
-  } else if (parentCol) {
-    filters.push(`(s.${quoteIdent(parentCol)} IS NULL OR s.${quoteIdent(parentCol)} = '')`);
-  }
-  if (projectCol) {
-    filters.push(`NOT (s.${quoteIdent(projectCol)} LIKE '%agent-executions%' OR s.${quoteIdent(projectCol)} LIKE '%agent-runs%' OR s.${quoteIdent(projectCol)} LIKE '%.assetiweave%')`);
-  }
-  const sessionWhere = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
-  const messageVersionExpr = `(SELECT COALESCE(MAX(m.rowid), 0) FROM message m WHERE m.${quoteIdent(messageSessionCol)} = s.${quoteIdent(idCol)})`;
-  const partVersionExpr = partSessionCol
-    ? `(SELECT COALESCE(MAX(p.rowid), 0) FROM part p WHERE p.${quoteIdent(partSessionCol)} = s.${quoteIdent(idCol)})`
-    : messageIdCol && partMessageCol
-      ? `(SELECT COALESCE(MAX(p.rowid), 0) FROM part p JOIN message m ON p.${quoteIdent(partMessageCol)} = m.${quoteIdent(messageIdCol)} WHERE m.${quoteIdent(messageSessionCol)} = s.${quoteIdent(idCol)})`
-      : "0";
+  return {
+    messageColumns,
+    partColumns,
+    idCol,
+    titleCol: pick(sessionColumns, ["title", "name"]),
+    projectCol: pick(sessionColumns, ["project", "project_path", "cwd", "directory", "path"]),
+    updatedCol: pick(sessionColumns, ["updated_at", "time_updated", "timeUpdated", "created_at"]),
+    parentCol: pick(sessionColumns, ["parent_id", "parentID", "parent_session_id", "parent"]),
+    messageVersionExpr: `(SELECT COALESCE(MAX(m.rowid), 0) FROM message m WHERE m.${quoteIdent(messageSessionCol)} = s.${quoteIdent(idCol)})`,
+    partVersionExpr: partSessionCol
+      ? `(SELECT COALESCE(MAX(p.rowid), 0) FROM part p WHERE p.${quoteIdent(partSessionCol)} = s.${quoteIdent(idCol)})`
+      : messageIdCol && partMessageCol
+        ? `(SELECT COALESCE(MAX(p.rowid), 0) FROM part p JOIN message m ON p.${quoteIdent(partMessageCol)} = m.${quoteIdent(messageIdCol)} WHERE m.${quoteIdent(messageSessionCol)} = s.${quoteIdent(idCol)})`
+        : "0",
+  };
+}
+
+function sessionSelectSql(context) {
+  const { idCol, titleCol, projectCol, updatedCol, parentCol, messageVersionExpr, partVersionExpr } = context;
   const parentExpr = parentCol ? `s.${quoteIdent(parentCol)}` : "NULL";
-  const sessionSql = `SELECT s.${quoteIdent(idCol)} AS id, ${titleCol ? `s.${quoteIdent(titleCol)}` : "NULL"} AS title, ${projectCol ? `s.${quoteIdent(projectCol)}` : "NULL"} AS project_path, ${updatedCol ? `s.${quoteIdent(updatedCol)}` : "NULL"} AS updated_at, ${parentExpr} AS parent_id, ${messageVersionExpr} AS message_version, ${partVersionExpr} AS part_version FROM session s ${sessionWhere} ORDER BY s.rowid DESC`;
-  const rows = sqliteJson(dbPath, sessionSql);
+  return `SELECT s.${quoteIdent(idCol)} AS id, ${titleCol ? `s.${quoteIdent(titleCol)}` : "NULL"} AS title, ${projectCol ? `s.${quoteIdent(projectCol)}` : "NULL"} AS project_path, ${updatedCol ? `s.${quoteIdent(updatedCol)}` : "NULL"} AS updated_at, ${parentExpr} AS parent_id, ${messageVersionExpr} AS message_version, ${partVersionExpr} AS part_version FROM session s`;
+}
 
-  const parentIds = rows.map((r) => String(r.id));
-  let childRows = [];
-  if (includeTurns && parentCol && parentIds.length > 0) {
-    const childSql = `SELECT s.${quoteIdent(idCol)} AS id, ${titleCol ? `s.${quoteIdent(titleCol)}` : "NULL"} AS title, ${projectCol ? `s.${quoteIdent(projectCol)}` : "NULL"} AS project_path, ${updatedCol ? `s.${quoteIdent(updatedCol)}` : "NULL"} AS updated_at, s.${quoteIdent(parentCol)} AS parent_id FROM session s WHERE s.${quoteIdent(parentCol)} IN (${parentIds.map(sqlString).join(", ")}) ORDER BY s.rowid ASC`;
-    try {
-      childRows = sqliteJson(dbPath, childSql);
-    } catch {}
+function allSessionRows(context, dbPath) {
+  return sqliteJson(dbPath, `${sessionSelectSql(context)} ORDER BY s.rowid DESC`);
+}
+
+function sessionRowsById(context, dbPath, sessionId) {
+  const sql = `${sessionSelectSql(context)} WHERE s.${quoteIdent(context.idCol)} = ${sqlString(sessionId)} ORDER BY s.rowid DESC`;
+  return sqliteJson(dbPath, sql);
+}
+
+function topLevelSessionRows(context, dbPath) {
+  const where = context.parentCol
+    ? ` WHERE (s.${quoteIdent(context.parentCol)} IS NULL OR s.${quoteIdent(context.parentCol)} = '')`
+    : "";
+  return sqliteJson(dbPath, `${sessionSelectSql(context)}${where} ORDER BY s.rowid DESC`);
+}
+
+function childRowsForParents(context, dbPath, parentIds) {
+  if (!context.parentCol || parentIds.length === 0) return [];
+  const ids = parentIds.map(sqlString).join(", ");
+  const sql = `${sessionSelectSql(context)} WHERE s.${quoteIdent(context.parentCol)} IN (${ids}) ORDER BY s.rowid ASC`;
+  try {
+    return sqliteJson(dbPath, sql);
+  } catch {
+    return [];
   }
+}
 
-  const childSessionsByParent = new Map();
-  for (const childRow of childRows) {
-    const pId = String(childRow.parent_id);
-    const list = childSessionsByParent.get(pId) || [];
-    list.push(childRow);
-    childSessionsByParent.set(pId, list);
-  }
-
-  const allSessionIdsToQuery = [...parentIds, ...childRows.map((r) => String(r.id))];
-  const turnsBySession = includeTurns
-    ? readTurnsBySession(
-      dbPath,
-      messageColumns,
-      partColumns,
-      allSessionIdsToQuery,
-    )
-    : new Map();
-
-  return rows.flatMap((row) => {
-    if (isInternalExecutionPath(row.project_path)) return [];
-    const sessionId = String(row.id);
-    const isSubagent = Boolean(row.parent_id);
-    const children = childSessionsByParent.get(sessionId) || [];
-    const rawTurns = turnsBySession.get(sessionId) ?? [];
-    let turns = [];
-
-    if (children.length > 0 && rawTurns.length > 0) {
-      const anchorTurn = { ...rawTurns[0] };
-      const anchorTurnId = anchorTurn.external_id;
-      const combinedTurns = [];
-
-      const earlyParts = [];
-      const lateParts = [];
-      for (const p of (anchorTurn.parts || [])) {
-        if (p.role === "assistant" && p.kind === "text") {
-          lateParts.push(p);
-        } else {
-          earlyParts.push(p);
-        }
+function summarizeChildTurns(turns) {
+  let stepCount = 0;
+  let reportSummary = null;
+  for (const turn of turns) {
+    for (const part of Array.isArray(turn?.parts) ? turn.parts : []) {
+      if (part.kind === "command" || part.kind === "tool" || part.kind === "file_change") stepCount += 1;
+      if (part.role === "assistant" && (part.kind === "text" || part.kind === "code") && part.text?.trim()) {
+        reportSummary = part.text.trim();
       }
-
-      anchorTurn.parts = earlyParts;
-      combinedTurns.push(anchorTurn);
-
-      for (const childRow of children) {
-        const childTurns = turnsBySession.get(String(childRow.id)) ?? [];
-        const childTitle = parseSubagentTitle(childRow.title);
-        if (!childTurns.length) continue;
-        // 一个子会话严格合并为一个 subagent Turn：逐轮内容按原顺序串成该 Turn 的 parts
-        const firstChildTurn = childTurns[0];
-        const lastChildTurn = childTurns.at(-1);
-        combinedTurns.push({
-          external_id: String(childRow.id),
-          turn_index: 0,
-          turn_kind: "subagent",
-          agent_role: childTitle.agentRole ?? undefined,
-          title: childTitle.description ?? lastChildTurn?.title ?? null,
-          parent_turn_id: anchorTurnId,
-          started_at: firstChildTurn.started_at ?? null,
-          ended_at: lastChildTurn?.ended_at ?? lastChildTurn?.started_at ?? null,
-          model: childTurns.map((turn) => turn.model).find(Boolean) ?? null,
-          user_text: resolvePrompt(
-            childTurns
-              .map((turn) => (turn.user_text === "User message" ? null : turn.user_text))
-              .find(Boolean),
-            childTitle.description,
-            "Subagent execution",
-          ),
-          parts: childTurns.flatMap((turn) => (Array.isArray(turn.parts) ? turn.parts : [])),
-        });
-      }
-
-      if (lateParts.length > 0) {
-        combinedTurns.push({
-          external_id: `${anchorTurnId}-cont`,
-          turn_kind: "continuation",
-          parent_turn_id: anchorTurnId,
-          user_text: "Continue following subagent execution",
-          title: null,
-          started_at: anchorTurn.ended_at || anchorTurn.started_at,
-          ended_at: anchorTurn.ended_at,
-          model: anchorTurn.model,
-          parts: lateParts,
-        });
-      }
-
-      for (const restTurn of rawTurns.slice(1)) {
-        combinedTurns.push(restTurn);
-      }
-
-      turns = displayTurns(combinedTurns);
-    } else {
-      turns = displayTurns(rawTurns);
     }
-    if (includeTurns && !turns.length && !isSubagent) return [];
+  }
+  return {
+    stepCount,
+    reportSummary: summarizeReport(reportSummary),
+    model: turns.map((turn) => turn.model).find(Boolean) ?? null,
+  };
+}
 
-    const sessionPayload = {
-      external_id: String(row.id),
+/**
+ * 把一个子会话行组装成独立的 `Subagent Session`（ADR-0022）。
+ *
+ * `external_id` 直接用 OpenCode 原生 session id；父子溯源写进
+ * `execution_purpose.parent_external_id`，后端入库时再折算成父会话主键。
+ */
+function childSessionEntry(childRow, childTurns, dbPath, parentExternalId) {
+  const parsed = parseSubagentTitle(childRow.title);
+  const rawTitle = childRow.title == null ? null : String(childRow.title).trim();
+  const title = parsed.description
+    || sanitizeSessionShortTitle(childTurns[0]?.user_text)
+    || rawTitle
+    || null;
+  return {
+    parsed,
+    summary: summarizeChildTurns(childTurns),
+    agentRole: parsed.agentRole ?? null,
+    spawnAnchor: null,
+    parentTurnIndex: null,
+    parentExternalId,
+    session: {
+      external_id: String(childRow.id),
+      title,
+      project_path: childRow.project_path == null ? null : String(childRow.project_path),
+      started_at: childTurns[0]?.started_at ?? null,
+      updated_at: childTurns.at(-1)?.ended_at ?? childTurns.at(-1)?.started_at ?? (childRow.updated_at == null ? null : String(childRow.updated_at)),
+      source_locator: dbPath,
+      source_fingerprint: sessionVersionToken(childRow),
+      user_visible: false,
+      execution_origin: "subagent",
+      execution_purpose: null,
+      turns: childTurns,
+    },
+  };
+}
+
+/** 把子会话的权威信息回填进父轮次锚点，并交换双方的互相引用。 */
+function applyAnchorLink(anchor, entry) {
+  const meta = anchor.metadata ?? {};
+  const spawnAnchor = typeof meta.spawn_anchor === "string" && meta.spawn_anchor.trim()
+    ? meta.spawn_anchor.trim()
+    : null;
+  const agentRole = entry.agentRole ?? meta.agent_role ?? null;
+  const title = meta.title ?? entry.session.title ?? null;
+  const reportSummary = entry.summary.reportSummary ?? meta.report_summary ?? null;
+  const patch = {
+    child_external_id: entry.session.external_id,
+    agent_role: agentRole,
+    title,
+    status: "completed",
+    step_count: entry.summary.stepCount,
+    report_summary: reportSummary,
+  };
+  if (entry.summary.model) patch.model = entry.summary.model;
+  if (spawnAnchor) patch.spawn_anchor = spawnAnchor;
+  updateSubagentAnchor(anchor.part, patch);
+  entry.agentRole = agentRole ?? entry.agentRole;
+  entry.spawnAnchor = spawnAnchor;
+  entry.parentTurnIndex = anchor.turn.turn_index;
+  anchor.metadata = parseMetadataObject(anchor.part);
+}
+
+function anchorHostTurn(parentTurns, entry) {
+  const startedAt = entry.session.started_at;
+  if (!startedAt) return parentTurns.at(-1) ?? null;
+  let host = null;
+  for (const turn of parentTurns) {
+    if (turn.started_at && turn.started_at <= startedAt) host = turn;
+  }
+  return host ?? parentTurns[0] ?? null;
+}
+
+/**
+ * 父轮次锚点与子会话的配对：先按 `child_external_id` 精确匹配（宿主写入
+ * `state.metadata.sessionId` 的情形），再按派发顺序兜底（历史数据缺 sessionId）。
+ */
+function linkChildrenToAnchors(parentTurns, childEntries) {
+  if (childEntries.length === 0) return;
+  const anchors = [];
+  for (const turn of parentTurns) {
+    for (const part of Array.isArray(turn.parts) ? turn.parts : []) {
+      if (part?.kind !== "subagent") continue;
+      anchors.push({ turn, part, metadata: parseMetadataObject(part), used: false });
+    }
+  }
+
+  const unmatched = [];
+  for (const entry of childEntries) {
+    const childId = entry.session.external_id;
+    const match = anchors.find((anchor) => !anchor.used
+      && anchor.metadata.child_external_id
+      && String(anchor.metadata.child_external_id) === childId);
+    if (match) {
+      match.used = true;
+      applyAnchorLink(match, entry);
+    } else {
+      unmatched.push(entry);
+    }
+  }
+
+  const freeAnchors = anchors.filter((anchor) => !anchor.used);
+  while (unmatched.length > 0 && freeAnchors.length > 0) {
+    const anchor = freeAnchors.shift();
+    const entry = unmatched.shift();
+    anchor.used = true;
+    applyAnchorLink(anchor, entry);
+  }
+
+  // 宿主没有留下 task 工具调用步（旧库/异常中断）时，仍在包含该子会话的
+  // 父轮次末尾补一个锚点，保证“派发必有锚点”的契约成立。
+  for (const entry of unmatched) {
+    const host = anchorHostTurn(parentTurns, entry);
+    if (!host) continue;
+    const anchorPart = subagentAnchorPart({
+      childExternalId: entry.session.external_id,
+      spawnAnchor: entry.session.external_id,
+      agentRole: entry.agentRole,
+      title: entry.session.title,
+      status: "completed",
+      summary: entry.summary.reportSummary,
+    });
+    host.parts.push(anchorPart);
+    applyAnchorLink({ turn: host, part: anchorPart, metadata: parseMetadataObject(anchorPart) }, entry);
+  }
+
+  for (const entry of childEntries) {
+    entry.session.execution_purpose = JSON.stringify(compactObject({
+      parent_external_id: entry.parentExternalId,
+      parent_turn_index: entry.parentTurnIndex,
+      agent_role: entry.agentRole,
+      spawn_anchor: entry.spawnAnchor,
+    }));
+  }
+}
+
+/**
+ * 解析一批顶层会话：每个父会话产出 `[父会话, ...直接子会话]`。
+ *
+ * 父会话的轮次只按真实人类提问切分；子代理派发步在 parts 序列的原位置
+ * 保留一个 `kind = "subagent"` 锚点，不再产生 subagent / continuation 伪轮次。
+ */
+function buildSessionBundles(rootRows, context, dbPath) {
+  const roots = rootRows.filter((row) => !isInternalExecutionPath(row.project_path));
+  if (roots.length === 0) return [];
+  const rootIds = roots.map((row) => String(row.id));
+  const childRows = childRowsForParents(context, dbPath, rootIds)
+    .filter((row) => !isInternalExecutionPath(row.project_path));
+  const childrenByParent = new Map();
+  for (const childRow of childRows) {
+    const parentId = String(childRow.parent_id);
+    const list = childrenByParent.get(parentId) ?? [];
+    list.push(childRow);
+    childrenByParent.set(parentId, list);
+  }
+  const turnsBySession = readTurnsBySession(
+    dbPath,
+    context.messageColumns,
+    context.partColumns,
+    [...rootIds, ...childRows.map((row) => String(row.id))],
+  );
+
+  const bundles = [];
+  for (const row of roots) {
+    const sessionId = String(row.id);
+    const parentTurns = displayTurns(turnsBySession.get(sessionId) ?? []);
+    if (parentTurns.length === 0) continue;
+    const childEntries = (childrenByParent.get(sessionId) ?? []).map((childRow) => childSessionEntry(
+      childRow,
+      displayTurns(turnsBySession.get(String(childRow.id)) ?? []),
+      dbPath,
+      sessionId,
+    ));
+    linkChildrenToAnchors(parentTurns, childEntries);
+    const parentSession = {
+      external_id: sessionId,
       title: (row.title == null || !String(row.title).trim())
-        ? (sanitizeSessionShortTitle(turns[0]?.user_text) || null)
+        ? (sanitizeSessionShortTitle(parentTurns[0]?.user_text) || null)
         : String(row.title).trim(),
       project_path: row.project_path == null ? null : String(row.project_path),
-      started_at: turns[0]?.started_at ?? null,
-      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),
+      started_at: parentTurns[0]?.started_at ?? null,
+      updated_at: parentTurns.at(-1)?.ended_at ?? parentTurns.at(-1)?.started_at ?? (row.updated_at == null ? null : String(row.updated_at)),
       source_locator: dbPath,
       source_fingerprint: sessionVersionToken(row),
-      execution_origin: isSubagent ? "subagent" : "opencode",
-      user_visible: !isSubagent,
-      turns,
+      user_visible: true,
+      execution_origin: "opencode",
+      execution_purpose: null,
+      turns: parentTurns,
     };
-    return [sessionPayload];
-  });
+    bundles.push([parentSession, ...childEntries.map((entry) => entry.session)]);
+  }
+  return bundles;
+}
+
+function buildOrphanChildSession(childRow, childTurns, dbPath, parentExternalId) {
+  const entry = childSessionEntry(childRow, childTurns, dbPath, parentExternalId);
+  entry.session.execution_purpose = JSON.stringify(compactObject({
+    parent_external_id: parentExternalId,
+    agent_role: entry.agentRole,
+  }));
+  return entry.session;
 }
 
 function readSession() {
-  return readSessions(true);
+  const requestedSessionId = input.params?.session_id ?? null;
+  const dbPath = expandPath(input.source?.location);
+  if (!dbPath || !existsSync(dbPath)) return [];
+  const context = sessionQueryContext(dbPath);
+  if (!context) return [];
+
+  if (!requestedSessionId) {
+    return buildSessionBundles(topLevelSessionRows(context, dbPath), context, dbPath).flat();
+  }
+
+  const targetRows = sessionRowsById(context, dbPath, String(requestedSessionId));
+  if (targetRows.length === 0) return [];
+  const target = targetRows[0];
+  if (!context.parentCol || !target.parent_id) {
+    return buildSessionBundles(targetRows, context, dbPath).flat();
+  }
+
+  // 直接读取子会话：连同父会话一起解析，才能得到与父会话打包时一致的
+  // parent_turn_index / spawn_anchor；返回时只保留该子会话本身。
+  const parentId = String(target.parent_id);
+  const parentRows = sessionRowsById(context, dbPath, parentId);
+  if (parentRows.length > 0) {
+    for (const bundle of buildSessionBundles(parentRows, context, dbPath)) {
+      const child = bundle.find((session) => session.external_id === String(target.id));
+      if (child) return [child];
+    }
+  }
+  const childTurns = displayTurns(
+    readTurnsBySession(dbPath, context.messageColumns, context.partColumns, [String(target.id)])
+      .get(String(target.id)) ?? [],
+  );
+  return [buildOrphanChildSession(target, childTurns, dbPath, parentId)];
 }
 
 function listSessions() {
-  return readSessions(false).map((session) => ({
-    external_id: session.external_id,
-    updated_at: session.updated_at,
-    source_locator: session.source_locator,
-    version_token: session.source_fingerprint,
-  }));
+  const dbPath = expandPath(input.source?.location);
+  if (!dbPath || !existsSync(dbPath)) return [];
+  const context = sessionQueryContext(dbPath);
+  if (!context) return [];
+  // 子代理会话也必须出现在描述符里：增量同步靠这份集合给缺失会话打 missing，
+  // 顶层列表由后端 user_visible = 0 过滤，不能在这里隐藏。
+  return allSessionRows(context, dbPath)
+    .filter((row) => !isInternalExecutionPath(row.project_path))
+    .map((row) => ({
+      external_id: String(row.id),
+      updated_at: row.updated_at == null ? null : String(row.updated_at),
+      source_locator: dbPath,
+      version_token: sessionVersionToken(row),
+    }));
 }
 
 function isInternalExecutionPath(cwd) {

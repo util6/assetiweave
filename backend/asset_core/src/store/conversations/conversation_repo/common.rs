@@ -142,10 +142,11 @@ pub(super) fn conversation_session_from_normalized(
             "user".to_string()
         }
     });
-    let execution_purpose = normalized.execution_purpose.clone();
+    let execution_purpose = normalize_execution_purpose(source, &execution_origin, normalized);
+    let is_subagent = execution_origin == super::super::subagent::SUBAGENT_EXECUTION_ORIGIN;
     let user_visible = normalized
         .user_visible
-        .unwrap_or_else(|| !execution_origin.starts_with("internal_"));
+        .unwrap_or(!is_subagent && !execution_origin.starts_with("internal_"));
 
     ConversationSession {
         id: stable_id(
@@ -175,6 +176,73 @@ pub(super) fn conversation_session_from_normalized(
         user_visible,
         last_cwd: derive_session_last_cwd(&normalized.turns),
     }
+}
+
+/// 子代理会话的 `execution_purpose` 归一。
+///
+/// 适配器只知道父会话的 `external_id`（宿主视角的标识），父会话主键要到入库侧
+/// 才能由 `stable_id("conversation-session", [source_id, parent_external_id])` 算出。
+/// 这里把两者都落进 `execution_purpose`：`parent_external_id` 供溯源展示，
+/// `parent_session_id` 供父快照整包替换时做孤儿子会话对账。
+fn normalize_execution_purpose(
+    source: &ConversationSource,
+    execution_origin: &str,
+    normalized: &NormalizedConversationSession,
+) -> Option<String> {
+    if execution_origin != super::super::subagent::SUBAGENT_EXECUTION_ORIGIN {
+        return normalized.execution_purpose.clone();
+    }
+    let mut map = normalized
+        .execution_purpose
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+
+    let parent_external_id = ["parent_external_id", "parent_session_external_id"]
+        .iter()
+        .find_map(|key| {
+            map.get(*key)
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        });
+    let parent_session_id = ["parent_session_id", "parent_id"]
+        .iter()
+        .find_map(|key| {
+            map.get(*key)
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            parent_external_id.as_deref().map(|external_id| {
+                super::super::subagent::derive_child_session_id(&source.id, external_id)
+            })
+        });
+
+    if let Some(external_id) = parent_external_id {
+        map.insert(
+            "parent_external_id".to_string(),
+            serde_json::Value::String(external_id),
+        );
+    }
+    match parent_session_id {
+        Some(parent_session_id) => {
+            map.insert(
+                "parent_session_id".to_string(),
+                serde_json::Value::String(parent_session_id),
+            );
+        }
+        None => {
+            // 拿不到父会话标识时宁可留空，也不要伪造一个永远对不上的主键。
+            map.remove("parent_session_id");
+            map.remove("parent_id");
+        }
+    }
+    Some(serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default())
 }
 
 #[derive(Debug, Clone, Copy)]

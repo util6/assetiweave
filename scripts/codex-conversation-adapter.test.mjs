@@ -1224,7 +1224,7 @@ test("Codex adapter emits progress messages during list_sessions and read_sessio
   }
 });
 
-test("Codex adapter filters out subagent threads from list_sessions and read_session", () => {
+test("Codex adapter exposes subagent descriptors and anchors the dispatching parent turn", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-subagent-"));
   try {
     const userRollout = path.join(fixtureRoot, "rollout-user.jsonl");
@@ -1253,7 +1253,8 @@ test("Codex adapter filters out subagent threads from list_sessions and read_ses
       ].join("\n")
     );
 
-    // 1. list_sessions should only return user-session-1
+    // 1. list_sessions must keep child descriptors: incremental sync uses this set
+    //    for missing reconciliation; top-level hiding is the backend's job.
     const listResult = spawnSync(process.execPath, [adapterPath], {
       encoding: "utf8",
       input: JSON.stringify({
@@ -1268,34 +1269,48 @@ test("Codex adapter filters out subagent threads from list_sessions and read_ses
       .split("\n")
       .map((l) => JSON.parse(l))
       .filter((m) => m.type === "item")
-      .map((m) => m.item.external_id);
-    assert.deepEqual(listItems, ["user-session-1"]);
+      .map((m) => m.item.external_id)
+      .sort();
+    assert.deepEqual(listItems, ["subagent-session-1", "user-session-1"]);
 
-    // 2. read_session for user session should succeed
-    const readUserResult = spawnSync(process.execPath, [adapterPath], {
-      encoding: "utf8",
-      input: JSON.stringify({
-        method: "read_session",
-        source: { location: fixtureRoot },
-        params: { session_id: "user-session-1" },
-      }),
-    });
-    assert.equal(readUserResult.status, 0, readUserResult.stderr);
-    const userSession = readUserResult.stdout
-      .trim()
-      .split("\n")
-      .map((l) => JSON.parse(l))
-      .find((m) => m.type === "item")?.item?.session;
+    // 2. read parent: one real question = one Turn; child dispatch is an anchor Part.
+    const messages = readSessionMessages(fixtureRoot, "user-session-1");
+    const sessions = messages
+      .filter((m) => m.type === "item")
+      .map((m) => m.item.session);
+    const userSession = sessions.find((session) => session.external_id === "user-session-1");
+    const childSession = sessions.find((session) => session.external_id === "subagent-session-1");
     assert.ok(userSession);
-    assert.equal(userSession.external_id, "user-session-1");
-    assert.equal(userSession.turns.length, 2);
-    assert.equal(userSession.turns[0].user_text, "User question");
-    assert.equal(userSession.turns[1].turn_kind, "subagent");
-    assert.equal(userSession.turns[1].agent_role, null, "缺少子代理元数据时不得伪造角色");
-    assert.equal(userSession.turns[1].parent_turn_id, userSession.turns[0].external_id);
-    assert.equal(userSession.turns[1].user_text, "User question fork");
+    assert.ok(childSession);
 
-    // 3. read_session for subagent should return empty
+    assert.equal(userSession.turns.length, 1, "父会话一个真实提问只能有一个 Turn");
+    assert.equal(userSession.turns[0].user_text, "User question");
+    assert.ok(!userSession.turns.some((turn) => turn.turn_kind));
+
+    const anchors = userSession.turns
+      .flatMap((turn) => turn.parts)
+      .filter((part) => part.kind === "subagent");
+    assert.equal(anchors.length, 1);
+    const anchorMeta = JSON.parse(anchors[0].metadata_json);
+    assert.equal(anchorMeta.child_external_id, "subagent-session-1");
+    assert.equal(anchorMeta.spawn_anchor, "subagent-session-1");
+    assert.equal(anchorMeta.agent_role, null, "缺少子代理元数据时不得伪造角色");
+    assert.equal(anchorMeta.status, "completed");
+    assert.equal(anchorMeta.report_summary, "Subagent answer");
+    assert.equal(anchors[0].source_execution_id, "subagent-session-1");
+    assert.ok(!("content_card" in anchors[0]), "锚点不得挂 content_card");
+
+    assert.equal(childSession.user_visible, false);
+    assert.equal(childSession.execution_origin, "subagent");
+    const purpose = JSON.parse(childSession.execution_purpose);
+    assert.equal(purpose.parent_external_id, "user-session-1");
+    assert.equal(purpose.parent_turn_index, 0);
+    assert.equal(purpose.spawn_anchor, "subagent-session-1");
+    assert.equal(childSession.turns.length, 1);
+    assert.equal(childSession.turns[0].user_text, "User question fork");
+    assert.equal(childSession.turns[0].turn_kind, undefined);
+
+    // 3. reading the child directly returns the child session (anchor click must not 404)
     const readSubResult = spawnSync(process.execPath, [adapterPath], {
       encoding: "utf8",
       input: JSON.stringify({
@@ -1310,13 +1325,15 @@ test("Codex adapter filters out subagent threads from list_sessions and read_ses
       .split("\n")
       .map((l) => JSON.parse(l))
       .filter((m) => m.type === "item");
-    assert.equal(subItems.length, 0);
+    assert.equal(subItems.length, 1);
+    assert.equal(subItems[0].item.session.external_id, "subagent-session-1");
+    assert.equal(subItems[0].item.session.user_visible, false);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Codex adapter multi-turn session keeps subsequent question as standard user turn", () => {
+test("Codex adapter keeps each real question as its own Turn while subagents live in sessions", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-multiturn-"));
   try {
     const userRollout = path.join(fixtureRoot, "rollout-user.jsonl");
@@ -1347,43 +1364,41 @@ test("Codex adapter multi-turn session keeps subsequent question as standard use
       ].join("\n")
     );
 
-    const readUserResult = spawnSync(process.execPath, [adapterPath], {
-      encoding: "utf8",
-      input: JSON.stringify({
-        method: "read_session",
-        source: { location: fixtureRoot },
-        params: { session_id: "user-session-multi" },
-      }),
-    });
-    assert.equal(readUserResult.status, 0, readUserResult.stderr);
-    const userSession = readUserResult.stdout
-      .trim()
-      .split("\n")
-      .map((l) => JSON.parse(l))
-      .find((m) => m.type === "item")?.item?.session;
+    const sessions = readSessionMessages(fixtureRoot, "user-session-multi")
+      .filter((m) => m.type === "item")
+      .map((m) => m.item.session);
+    const userSession = sessions.find((session) => session.external_id === "user-session-multi");
+    const childSession = sessions.find((session) => session.external_id === "subagent-session-multi");
     assert.ok(userSession);
-    assert.equal(userSession.turns.length, 3);
+    assert.ok(childSession);
 
-    // Turn 0: Question 1
+    // 父会话严格只有两个真实提问对应的 Turn，派发子代理不再切轮。
+    assert.equal(userSession.turns.length, 2);
     assert.equal(userSession.turns[0].user_text, "Question 1: Fix bug");
     assert.equal(userSession.turns[0].turn_kind, undefined);
+    assert.ok(
+      userSession.turns[0].parts.some((part) => part.kind === "subagent"),
+      "子代理锚点必须留在第 1 个父 Turn 内",
+    );
 
-    // Turn 1: Subagent
-    assert.equal(userSession.turns[1].turn_kind, "subagent");
-    assert.equal(userSession.turns[1].agent_role, null, "缺少子代理元数据时不得伪造角色");
-    assert.equal(userSession.turns[1].parent_turn_id, userSession.turns[0].external_id);
-    assert.equal(userSession.turns[1].user_text, "Subagent task: analyze crash dump");
+    assert.equal(userSession.turns[1].user_text, "Question 2: What is the weather today in Tokyo?");
+    assert.equal(userSession.turns[1].turn_kind, undefined, "Question 2 must remain a standard user turn");
+    assert.ok(!userSession.turns[1].parts.some((part) => part.kind === "subagent"));
 
-    // Turn 2: Question 2 (MUST remain standard user turn, NOT continuation!)
-    assert.equal(userSession.turns[2].user_text, "Question 2: What is the weather today in Tokyo?");
-    assert.equal(userSession.turns[2].turn_kind, undefined, "Question 2 turn_kind must be undefined");
-    assert.equal(userSession.turns[2].parent_turn_id, undefined, "Question 2 parent_turn_id must be undefined");
+    assert.equal(childSession.user_visible, false);
+    assert.equal(childSession.execution_origin, "subagent");
+    assert.equal(childSession.turns.length, 1);
+    assert.equal(childSession.turns[0].user_text, "Subagent task: analyze crash dump");
+    assert.equal(childSession.turns[0].turn_kind, undefined);
+    const purpose = JSON.parse(childSession.execution_purpose);
+    assert.equal(purpose.parent_external_id, "user-session-multi");
+    assert.equal(purpose.parent_turn_index, 0);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Codex adapter falls back to valid string when subagent prompt is whitespace-only", () => {
+test("Codex adapter falls back to a valid prompt when subagent text is whitespace-only", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-ws-"));
   try {
     const userRollout = path.join(fixtureRoot, "rollout-user.jsonl");
@@ -1412,31 +1427,23 @@ test("Codex adapter falls back to valid string when subagent prompt is whitespac
       ].join("\n")
     );
 
-    const readUserResult = spawnSync(process.execPath, [adapterPath], {
-      encoding: "utf8",
-      input: JSON.stringify({
-        method: "read_session",
-        source: { location: fixtureRoot },
-        params: { session_id: "user-session-ws" },
-      }),
-    });
-    assert.equal(readUserResult.status, 0, readUserResult.stderr);
-    const userSession = readUserResult.stdout
-      .trim()
-      .split("\n")
-      .map((l) => JSON.parse(l))
-      .find((m) => m.type === "item")?.item?.session;
+    const messages = readSessionMessages(fixtureRoot, "user-session-ws");
+    const sessions = messages.filter((m) => m.type === "item").map((m) => m.item.session);
+    const userSession = sessions.find((session) => session.external_id === "user-session-ws");
+    const childSession = sessions.find((session) => session.external_id === "subagent-session-ws");
     assert.ok(userSession);
-    const fallbackTurn = userSession.turns[1];
-    assert.equal(fallbackTurn.turn_kind, "subagent");
-    assert.equal(fallbackTurn.user_text, "Subagent execution");
-    assert.ok(fallbackTurn.user_text.trim().length > 0);
+    assert.ok(childSession);
+
+    assert.equal(userSession.turns.length, 1, "父会话不得因空提示词增加伪轮次");
+    const anchor = userSession.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor);
+    assert.equal(JSON.parse(anchor.metadata_json).child_external_id, "subagent-session-ws");
+
+    assert.equal(childSession.turns.length, 1);
+    assert.equal(childSession.turns[0].user_text, "Subagent execution");
+    assert.ok(childSession.turns[0].user_text.trim().length > 0);
     assert.ok(
-      readUserResult.stdout
-        .trim()
-        .split("\n")
-        .map((l) => JSON.parse(l))
-        .some((message) => message.type === "warning" && /placeholder/.test(message.message ?? "")),
+      messages.some((message) => message.type === "warning" && /placeholder/.test(message.message ?? "")),
       "缺少可读派发提示词时必须发出告警事件"
     );
   } finally {
@@ -1519,58 +1526,99 @@ test("Codex adapter folds each subagent thread into one Turn with real role and 
     );
 
     const firstRead = readSessionMessages(fixtureRoot, "main-merge");
-    const session = firstRead.find((m) => m.type === "item")?.item?.session;
+    const sessions = firstRead.filter((m) => m.type === "item").map((m) => m.item.session);
+    const session = sessions.find((entry) => entry.external_id === "main-merge");
     assert.ok(session);
 
-    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
-    assert.equal(subagentTurns.length, 3, "每个子代理线程只应产出一个 Turn");
-    assert.equal(session.turns.length, 4);
+    // 父会话严格只有一个真实提问 Turn，三个子代理只落三个锚点 Part。
+    assert.equal(session.turns.length, 1);
+    assert.ok(!session.turns.some((turn) => turn.turn_kind));
+    const anchors = session.turns[0].parts.filter((part) => part.kind === "subagent");
+    assert.equal(anchors.length, 3, "每个子代理线程只产出一个锚点 Part");
+    assert.ok(anchors.every((part) => !("content_card" in part)), "锚点不得挂 content_card");
 
-    const [auditTurn, concurrencyTurn, injectedTurn] = subagentTurns;
+    const anchorByChild = new Map(
+      anchors.map((part) => [JSON.parse(part.metadata_json).child_external_id, part]),
+    );
+    const auditAnchor = anchorByChild.get("child-audit");
+    const concurrencyAnchor = anchorByChild.get("child-concurrency");
+    const injectedAnchor = anchorByChild.get("child-injected");
+    assert.ok(auditAnchor);
+    assert.ok(concurrencyAnchor);
+    assert.ok(injectedAnchor);
+
+    const auditMeta = JSON.parse(auditAnchor.metadata_json);
+    const concurrencyMeta = JSON.parse(concurrencyAnchor.metadata_json);
+    const injectedMeta = JSON.parse(injectedAnchor.metadata_json);
 
     // 角色来自 thread_spawn.agent_path 末段，昵称进 title
-    assert.equal(auditTurn.agent_role, "guard_audit");
-    assert.equal(auditTurn.title, "Lagrange");
-    assert.equal(concurrencyTurn.agent_role, "concurrency_audit");
-    assert.equal(concurrencyTurn.title, "Noether");
+    assert.equal(auditMeta.agent_role, "guard_audit");
+    assert.equal(auditMeta.title, "Lagrange");
+    assert.equal(concurrencyMeta.agent_role, "concurrency_audit");
+    assert.equal(concurrencyMeta.title, "Noether");
+    assert.equal(auditMeta.spawn_anchor, "child-audit");
+    assert.equal(auditMeta.status, "completed");
 
-    // 派发提示词跳过系统注入块，取真实任务文本
-    assert.equal(auditTurn.user_text, "审查 SQLite 迁移脚本是否存在冗余索引");
-    assert.ok(!auditTurn.user_text.includes("recommended_plugins"));
-    assert.ok(!auditTurn.user_text.includes("environment_context"));
-    assert.equal(concurrencyTurn.user_text, "检查并发锁的获取顺序");
-    assert.ok(!concurrencyTurn.user_text.includes("user_instructions"));
+    // 锚点汇报取子线程最终 assistant 正文，而不是父侧任何工具回执。
+    assert.equal(auditMeta.report_summary, "审查完成：发现 2 个冗余索引。");
+    assert.equal(concurrencyMeta.report_summary, "并发审计完成：未发现锁顺序反转。");
+    assert.match(auditAnchor.text, /审查完成：发现 2 个冗余索引/);
 
-    // 两个不同子代理不应产生相同的提示词
-    assert.notEqual(auditTurn.user_text, concurrencyTurn.user_text);
+    // 子会话 #T1 承载完整委派 Prompt + 工具链 + 最终汇报，绝不带 turn_kind。
+    const auditChild = sessions.find((entry) => entry.external_id === "child-audit");
+    const concurrencyChild = sessions.find((entry) => entry.external_id === "child-concurrency");
+    const injectedChild = sessions.find((entry) => entry.external_id === "child-injected");
+    assert.ok(auditChild);
+    assert.ok(concurrencyChild);
+    assert.ok(injectedChild);
+    for (const child of [auditChild, concurrencyChild, injectedChild]) {
+      assert.equal(child.user_visible, false);
+      assert.equal(child.execution_origin, "subagent");
+      assert.equal(child.turns.length, 1, "子会话 #T1 合并全部执行过程");
+      assert.equal(child.turns[0].turn_kind, undefined);
+      assert.equal(JSON.parse(child.execution_purpose).parent_external_id, "main-merge");
+      assert.equal(JSON.parse(child.execution_purpose).parent_turn_index, 0);
+    }
 
-    // 子代理内部逐轮执行内容合并为该 Turn 的内容事实，最终汇报在末尾
+    assert.equal(auditChild.turns[0].user_text, "审查 SQLite 迁移脚本是否存在冗余索引");
+    assert.ok(!auditChild.turns[0].user_text.includes("recommended_plugins"));
+    assert.ok(!auditChild.turns[0].user_text.includes("environment_context"));
+    assert.equal(concurrencyChild.turns[0].user_text, "检查并发锁的获取顺序");
+    assert.ok(!concurrencyChild.turns[0].user_text.includes("user_instructions"));
+    assert.notEqual(auditChild.turns[0].user_text, concurrencyChild.turns[0].user_text);
+
     assert.deepEqual(
-      auditTurn.parts.map((part) => part.text),
+      auditChild.turns[0].parts.map((part) => part.text),
       ["开始审查迁移脚本。", "审查完成：发现 2 个冗余索引。"]
     );
     assert.deepEqual(
-      concurrencyTurn.parts.map((part) => part.text),
+      concurrencyChild.turns[0].parts.map((part) => part.text),
       ["并发审计完成：未发现锁顺序反转。"]
     );
-    assert.ok(auditTurn.parts.length > 0);
-    assert.equal(auditTurn.parent_turn_id, session.turns[0].external_id);
 
-    // 元数据缺失时角色留空且不伪造
-    assert.ok(!injectedTurn.agent_role, "缺少 thread_spawn 角色时必须留空");
-    assert.equal(injectedTurn.title ?? null, null);
-    assert.equal(injectedTurn.user_text, "Subagent execution");
+    // 元数据缺失时角色留空、标题留空，但子会话仍以占位提示词成立。
+    assert.equal(injectedMeta.agent_role, null, "缺少 thread_spawn 角色时必须留空");
+    assert.equal(injectedMeta.title, null);
+    assert.equal(injectedChild.turns[0].user_text, "Subagent execution");
+    assert.equal(injectedMeta.report_summary, "注入块会话完成。");
     assert.ok(
       firstRead.some((message) => message.type === "warning" && /placeholder/.test(message.message ?? "")),
       "无可用任务文本时必须发出告警事件"
     );
 
-    // 重复同步幂等：external_id 稳定
+    // 重复同步幂等：父锚点与子会话 external_id / 汇报都稳定。
     const secondRead = readSessionMessages(fixtureRoot, "main-merge");
-    const secondSession = secondRead.find((m) => m.type === "item")?.item?.session;
+    const secondSessions = secondRead.filter((m) => m.type === "item").map((m) => m.item.session);
     assert.deepEqual(
-      secondSession.turns.map((turn) => turn.external_id),
-      session.turns.map((turn) => turn.external_id)
+      secondSessions.map((entry) => entry.external_id).sort(),
+      sessions.map((entry) => entry.external_id).sort()
+    );
+    const secondParent = secondSessions.find((entry) => entry.external_id === "main-merge");
+    assert.deepEqual(
+      secondParent.turns[0].parts
+        .filter((part) => part.kind === "subagent")
+        .map((part) => JSON.parse(part.metadata_json).child_external_id),
+      anchors.map((part) => JSON.parse(part.metadata_json).child_external_id),
     );
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
@@ -1769,30 +1817,42 @@ test("Codex adapter inlines nested subagent threads recursively under their disp
     );
 
     const read = readSessionMessages(fixtureRoot, "main-nested");
-    const session = read.find((m) => m.type === "item")?.item?.session;
-    assert.ok(session);
-    assert.equal(session.turns.length, 3, "主 Turn + 两层子代理 Turn");
+    const sessions = read.filter((m) => m.type === "item").map((m) => m.item.session);
+    assert.equal(sessions.length, 3, "主会话 + 两层子会话");
 
-    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
-    assert.equal(subagentTurns.length, 2, "每个子线程只产出一个 Turn");
-
-    const mid = subagentTurns.find((turn) => turn.agent_role === "orchestrator");
-    const deep = subagentTurns.find((turn) => turn.agent_role === "reviewer");
+    const main = sessions.find((entry) => entry.external_id === "main-nested");
+    const mid = sessions.find((entry) => entry.external_id === "child-mid");
+    const deep = sessions.find((entry) => entry.external_id === "child-deep");
+    assert.ok(main);
     assert.ok(mid, "第一层子代理必须存在");
     assert.ok(deep, "第二层子代理必须存在");
-    assert.equal(mid.parent_turn_id, session.turns[0].external_id);
-    assert.equal(deep.parent_turn_id, mid.external_id, "第二层必须挂在其派发 Turn 之下");
+    assert.ok(!sessions.some((entry) => entry.turns.some((turn) => turn.turn_kind)));
+
+    assert.equal(main.turns.length, 1);
+    assert.equal(mid.turns.length, 1);
+    assert.equal(deep.turns.length, 1);
+
+    const mainAnchor = main.turns[0].parts.find((part) => part.kind === "subagent");
+    const midAnchor = mid.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(mainAnchor);
+    assert.ok(midAnchor);
+    assert.equal(JSON.parse(mainAnchor.metadata_json).child_external_id, "child-mid");
+    assert.equal(JSON.parse(mainAnchor.metadata_json).agent_role, "orchestrator");
+    assert.equal(JSON.parse(midAnchor.metadata_json).child_external_id, "child-deep");
+    assert.equal(JSON.parse(midAnchor.metadata_json).agent_role, "reviewer");
+    assert.ok(!deep.turns[0].parts.some((part) => part.kind === "subagent"));
+
+    const midPurpose = JSON.parse(mid.execution_purpose);
+    const deepPurpose = JSON.parse(deep.execution_purpose);
+    assert.equal(midPurpose.parent_external_id, "main-nested");
+    assert.equal(midPurpose.spawn_anchor, "child-mid");
+    assert.equal(deepPurpose.parent_external_id, "child-mid");
+    assert.equal(deepPurpose.spawn_anchor, "child-deep");
+    assert.equal(midPurpose.parent_turn_index, 0);
+    assert.equal(deepPurpose.parent_turn_index, 0);
     assert.ok(
-      deep.parts.some((part) => /底层审查完成/.test(part.text ?? "")),
+      deep.turns[0].parts.some((part) => /底层审查完成/.test(part.text ?? "")),
       "第二层必须带自己的执行内容"
-    );
-    assert.ok(
-      mid.external_id.startsWith(`${session.turns[0].external_id}-subagent-`),
-      "子代理 Turn ID 必须由父 Turn 派生"
-    );
-    assert.ok(
-      deep.external_id.startsWith(`${mid.external_id}-subagent-`),
-      "嵌套 Turn ID 沿父链稳定派生"
     );
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
@@ -1833,19 +1893,19 @@ test("Codex adapter stops expanding subagent threads beyond the depth limit", ()
     runSqlite(fixtureRoot, sql.join("\n"));
 
     const read = readSessionMessages(fixtureRoot, "main-depth");
-    const session = read.find((m) => m.type === "item")?.item?.session;
+    const sessions = read.filter((m) => m.type === "item").map((m) => m.item.session);
+    const session = sessions.find((entry) => entry.external_id === "main-depth");
     assert.ok(session);
 
-    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
-    assert.equal(
-      subagentTurns.length,
-      5,
-      "深度上限 4 时只能展开 5 层子代理 Turn（超限层降级为叶子）"
-    );
-    assert.ok(
-      !subagentTurns.some((turn) => /第 6 层/.test(turn.user_text ?? "")),
-      "超限的更深层不得继续展开"
-    );
+    // 主会话 + 5 层子会话；第 6 层不再展开。
+    assert.equal(sessions.length, 6, "深度上限 4 时只能展开到第 5 层子会话");
+    assert.ok(!sessions.some((entry) => entry.external_id === "child-depth-6"));
+
+    const anchorChildIds = sessions.flatMap((entry) => entry.turns.flatMap((turn) => turn.parts))
+      .filter((part) => part.kind === "subagent")
+      .map((part) => JSON.parse(part.metadata_json).child_external_id);
+    assert.equal(anchorChildIds.length, 5);
+    assert.ok(!anchorChildIds.includes("child-depth-6"), "超限的更深层不得继续展开");
     assert.ok(
       read.some(
         (message) =>
@@ -1859,7 +1919,7 @@ test("Codex adapter stops expanding subagent threads beyond the depth limit", ()
   }
 });
 
-test("Codex adapter degrades cyclic subagent thread references to leaf turns", () => {
+test("Codex adapter keeps nested subagent sessions under their dispatching parent", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-subagent-cycle-"));
   try {
     const mainRollout = path.join(fixtureRoot, "rollout-main.jsonl");
@@ -1900,16 +1960,58 @@ test("Codex adapter degrades cyclic subagent thread references to leaf turns", (
     );
 
     const read = readSessionMessages(fixtureRoot, "main-cycle");
-    const session = read.find((m) => m.type === "item")?.item?.session;
-    assert.ok(session);
+    const sessions = read.filter((m) => m.type === "item").map((m) => m.item.session);
+    assert.equal(sessions.length, 3, "环只能产生主会话 + 两个子会话，不得无限展开");
 
-    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
-    assert.equal(subagentTurns.length, 3, "环上的重复引用只降级为叶子 Turn，不得无限展开");
-    assert.equal(
-      new Set(subagentTurns.map((turn) => turn.parent_turn_id)).size,
-      3,
-      "每个叶子挂在各自的派发 Turn 之下"
+    const anchors = sessions.flatMap((entry) => entry.turns.flatMap((turn) => turn.parts))
+      .filter((part) => part.kind === "subagent")
+      .map((part) => JSON.parse(part.metadata_json));
+    assert.equal(anchors.length, 2, "两条真实派发边各只保留一个锚点");
+    assert.ok(
+      anchors.some((meta) => meta.child_external_id === "child-cycle-a"),
+      "第一层子代理锚点挂在父会话轮次里"
     );
+    assert.ok(
+      anchors.some((meta) => meta.child_external_id === "child-cycle-b"),
+      "第二层子代理锚点挂在它自己的父会话轮次里"
+    );
+
+    const cycleA = sessions.find((entry) => entry.external_id === "child-cycle-a");
+    const cycleB = sessions.find((entry) => entry.external_id === "child-cycle-b");
+    assert.ok(cycleA);
+    assert.ok(cycleB);
+    assert.equal(JSON.parse(cycleA.execution_purpose).parent_external_id, "main-cycle");
+    assert.equal(JSON.parse(cycleB.execution_purpose).parent_external_id, "child-cycle-a");
+    assert.equal(cycleA.turns[0].parts.filter((part) => part.kind === "subagent").length, 1);
+    assert.ok(!cycleB.turns[0].parts.some((part) => part.kind === "subagent"));
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter stops cycling when orphan subagent rows reference each other", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-subagent-cycle-guard-"));
+  try {
+    const a = path.join(fixtureRoot, "rollout-a.jsonl");
+    const b = path.join(fixtureRoot, "rollout-b.jsonl");
+    writeFileSync(a, [
+      event("2026-09-12T00:00:10Z", "user", "A 层任务"),
+      event("2026-09-12T00:00:11Z", "assistant", "A 层汇报"),
+    ].join("\n"));
+    writeFileSync(b, [
+      event("2026-09-12T00:00:20Z", "user", "B 层任务"),
+      event("2026-09-12T00:00:21Z", "assistant", "B 层汇报"),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT, thread_source TEXT, source TEXT);",
+      `INSERT INTO threads VALUES ('orphan-a', '${sqlString(a)}', '', '2026-09-12T00:00:11Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"orphan-b"}}}');`,
+      `INSERT INTO threads VALUES ('orphan-b', '${sqlString(b)}', '', '2026-09-12T00:00:21Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"orphan-a"}}}');`,
+    ].join("\n"));
+
+    const read = readSessionMessages(fixtureRoot);
+    const sessions = read.filter((m) => m.type === "item").map((m) => m.item.session);
+    assert.equal(sessions.length, 2, "互相引用的两个子线程必须各自只产出一次，不得无限展开");
     assert.ok(
       read.some(
         (message) =>
@@ -1917,10 +2019,136 @@ test("Codex adapter degrades cyclic subagent thread references to leaf turns", (
       ),
       "成环必须发出告警"
     );
-    assert.ok(
-      subagentTurns.some((turn) => turn.parent_turn_id?.includes("child-cycle-b")),
-      "环上的重复节点必须以叶子形式挂在再次引用它的 Turn 之下"
+    assert.ok(sessions.every((session) => session.user_visible === false));
+    assert.ok(sessions.every((session) => session.execution_origin === "subagent"));
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter prefers thread_spawn_edges for parent linkage", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-subagent-edges-"));
+  try {
+    const mainRollout = path.join(fixtureRoot, "rollout-main.jsonl");
+    const childRollout = path.join(fixtureRoot, "rollout-child.jsonl");
+    writeFileSync(
+      mainRollout,
+      [
+        event("2026-09-13T00:00:00Z", "user", "Main question"),
+        event("2026-09-13T00:00:01Z", "assistant", "Main answer"),
+      ].join("\n")
     );
+    writeFileSync(
+      childRollout,
+      [
+        event("2026-09-13T00:00:02Z", "user", "Edge child task"),
+        event("2026-09-13T00:00:03Z", "assistant", "Edge child report"),
+      ].join("\n")
+    );
+
+    runSqlite(
+      fixtureRoot,
+      [
+        "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT, thread_source TEXT, source TEXT);",
+        "CREATE TABLE thread_spawn_edges (parent_thread_id TEXT, child_thread_id TEXT);",
+        `INSERT INTO threads VALUES ('main-edge', '${sqlString(mainRollout)}', 'Main', '2026-09-13T00:00:01Z', 'user', 'vscode');`,
+        // source 里故意留一个错误的 parent，验证 edge 表优先。
+        `INSERT INTO threads VALUES ('child-edge', '${sqlString(childRollout)}', '', '2026-09-13T00:00:03Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"stale-parent","agent_path":"/root/edge_agent","agent_nickname":"Edge"}}}');`,
+        "INSERT INTO thread_spawn_edges VALUES ('main-edge', 'child-edge');",
+      ].join("\n")
+    );
+
+    const sessions = readSessionMessages(fixtureRoot, "main-edge")
+      .filter((m) => m.type === "item")
+      .map((m) => m.item.session);
+    const main = sessions.find((entry) => entry.external_id === "main-edge");
+    const child = sessions.find((entry) => entry.external_id === "child-edge");
+    assert.ok(main);
+    assert.ok(child);
+    const anchor = main.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor);
+    const meta = JSON.parse(anchor.metadata_json);
+    assert.equal(meta.child_external_id, "child-edge");
+    assert.equal(meta.title, "Edge");
+    assert.equal(meta.agent_role, "edge_agent");
+    assert.equal(JSON.parse(child.execution_purpose).parent_external_id, "main-edge");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter emits a shell subagent session when its rollout was cleaned up", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-subagent-shell-"));
+  try {
+    const mainRollout = path.join(fixtureRoot, "rollout-main.jsonl");
+    const missingChildRollout = path.join(fixtureRoot, "rollout-child-gone.jsonl");
+    writeFileSync(
+      mainRollout,
+      [
+        event("2026-09-14T00:00:00Z", "user", "Main question"),
+        event("2026-09-14T00:00:01Z", "assistant", "Main answer"),
+      ].join("\n")
+    );
+
+    runSqlite(
+      fixtureRoot,
+      [
+        "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT, thread_source TEXT, source TEXT, model TEXT);",
+        `INSERT INTO threads VALUES ('main-shell', '${sqlString(mainRollout)}', 'Main', '2026-09-14T00:00:01Z', 'user', 'vscode', NULL);`,
+        `INSERT INTO threads VALUES ('child-shell', '${sqlString(missingChildRollout)}', 'Shell Thread', '2026-09-14T00:00:09Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"main-shell","agent_path":"/root/ghost","agent_nickname":"Ghost"}}}', 'gpt-5.4');`,
+      ].join("\n")
+    );
+
+    const messages = readSessionMessages(fixtureRoot, "main-shell");
+    const sessions = messages.filter((m) => m.type === "item").map((m) => m.item.session);
+    const main = sessions.find((entry) => entry.external_id === "main-shell");
+    const child = sessions.find((entry) => entry.external_id === "child-shell");
+    assert.ok(main);
+    assert.ok(child);
+
+    const anchor = main.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor);
+    const meta = JSON.parse(anchor.metadata_json);
+    assert.equal(meta.child_external_id, "child-shell");
+    assert.equal(meta.spawn_anchor, "child-shell");
+    assert.equal(meta.title, "Ghost", "昵称优先于 threads.title");
+    assert.match(meta.report_summary, /已清理/);
+
+    assert.equal(child.user_visible, false);
+    assert.equal(child.execution_origin, "subagent");
+    assert.equal(child.source_locator, null);
+    assert.equal(child.source_fingerprint, "2026-09-14T00:00:09Z", "壳会话指纹使用 updated_at");
+    assert.equal(child.turns.length, 1, "壳会话只保留单轮摘要");
+    assert.match(child.turns[0].parts[0].text, /已清理/);
+    assert.equal(JSON.parse(child.execution_purpose).parent_external_id, "main-shell");
+
+    // 点击父锚点直接读取壳子会话不得 404。
+    const direct = readSessionMessages(fixtureRoot, "child-shell")
+      .filter((m) => m.type === "item")
+      .map((m) => m.item.session);
+    assert.equal(direct.length, 1);
+    assert.equal(direct[0].external_id, "child-shell");
+
+    // 增量同步描述符必须保留壳子会话，避免被 missing 对账误删。
+    const listResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "list_sessions",
+        source: { location: fixtureRoot },
+        params: {},
+      }),
+    });
+    assert.equal(listResult.status, 0, listResult.stderr);
+    const descriptors = listResult.stdout
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((m) => m.type === "item")
+      .map((m) => m.item);
+    const shellDescriptor = descriptors.find((descriptor) => descriptor.external_id === "child-shell");
+    assert.ok(shellDescriptor);
+    assert.equal(shellDescriptor.source_locator, null);
+    assert.equal(shellDescriptor.updated_at, "2026-09-14T00:00:09Z");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

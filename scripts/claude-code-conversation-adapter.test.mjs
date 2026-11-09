@@ -186,7 +186,7 @@ test("Claude Code extracts model identifier onto the turn object", () => {
   }
 });
 
-test("Claude Code inlines sidechain events into specialized subagent turn and emits continuation turn", () => {
+test("Claude Code turns inline sidechain events into a hidden child session without splitting the parent turn", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-sidechain-"));
   try {
     writeFileSync(path.join(fixtureRoot, "session.jsonl"), [
@@ -203,6 +203,7 @@ test("Claude Code inlines sidechain events into specialized subagent turn and em
       JSON.stringify({
         timestamp: "2026-08-06T00:00:02Z",
         isSidechain: true,
+        agentId: "agent-side-1",
         type: "user",
         message: {
           role: "user",
@@ -213,6 +214,7 @@ test("Claude Code inlines sidechain events into specialized subagent turn and em
       JSON.stringify({
         timestamp: "2026-08-06T00:00:03Z",
         isSidechain: true,
+        agentId: "agent-side-1",
         type: "assistant",
         message: {
           role: "assistant",
@@ -228,6 +230,7 @@ test("Claude Code inlines sidechain events into specialized subagent turn and em
       JSON.stringify({
         timestamp: "2026-08-06T00:00:04Z",
         isSidechain: true,
+        agentId: "agent-side-1",
         type: "user",
         message: {
           role: "user",
@@ -242,13 +245,14 @@ test("Claude Code inlines sidechain events into specialized subagent turn and em
       JSON.stringify({
         timestamp: "2026-08-06T00:00:05Z",
         isSidechain: true,
+        agentId: "agent-side-1",
         type: "assistant",
         message: {
           role: "assistant",
           content: [{ type: "text", text: "Found 1 missing index on email column." }],
         },
       }),
-      // Main agent continuation
+      // Main agent continues inside the same turn
       JSON.stringify({
         timestamp: "2026-08-06T00:00:06Z",
         type: "assistant",
@@ -260,42 +264,31 @@ test("Claude Code inlines sidechain events into specialized subagent turn and em
     ].join("\n"));
 
     const session = readFixtureSession(fixtureRoot);
-    assert.equal(session.turns.length, 3);
+    assert.equal(session.turns.length, 1, "一次人类提问必须严格保持为 1 个 Turn");
+    assert.equal(session.user_visible, true);
+    assert.equal(session.execution_origin, "user");
 
-    // Turn 0: Main Anchor turn
-    const turn0 = session.turns[0];
-    assert.equal(turn0.turn_index, 0);
-    assert.equal(turn0.user_text, "Refactor database queries");
-    assert.equal(turn0.external_id, "turn-0");
+    const turn = session.turns[0];
+    assert.equal(turn.turn_index, 0);
+    assert.equal(turn.user_text, "Refactor database queries");
+    assert.equal(turn.turn_kind, undefined);
+    assert.ok(
+      turn.parts.some((part) => part.text && part.text.includes("Schema review complete")),
+      "子代理返回后的主代理输出必须留在同一个父轮次里",
+    );
 
-    // Turn 1: Specialized subagent turn
-    const turn1 = session.turns[1];
-    assert.equal(turn1.turn_index, 1);
-    assert.equal(turn1.turn_kind, "subagent");
-    assert.equal(turn1.agent_role, "Sidechain Subagent");
-    assert.equal(turn1.parent_turn_id, "turn-0");
-    assert.equal(turn1.user_text, "Review schema migration files for index usage");
-    assert.ok(turn1.parts.length >= 2);
-    const hasCmd = turn1.parts.some((p) => p.kind === "command" && p.command.includes("cat migrations"));
-    assert.ok(hasCmd, "Sidechain turn should contain command part");
-    const lastAnswer = turn1.parts[turn1.parts.length - 1];
-    assert.equal(lastAnswer.role, "assistant");
-    assert.match(lastAnswer.text, /Found 1 missing index/);
-
-    // Turn 2: Continuation turn
-    const turn2 = session.turns[2];
-    assert.equal(turn2.turn_index, 2);
-    assert.equal(turn2.turn_kind, "continuation");
-    assert.equal(turn2.parent_turn_id, "turn-0");
-    assert.equal(turn2.user_text, "Continue following subagent execution");
-    assert.ok(turn2.parts.length > 0);
-    assert.match(turn2.parts[0].text, /Schema review complete/);
+    const anchor = turn.parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor, "父轮次必须包含子代理委派锚点");
+    const anchorMeta = JSON.parse(anchor.metadata_json);
+    assert.equal(anchorMeta.child_external_id, "session:subagent:agent-side-1");
+    assert.match(anchor.text, /^\[委派任务\] /);
+    assert.match(anchor.text, /\[汇报结论\] Found 1 missing index/);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Claude Code inlines Agent tool call into subagent turn", () => {
+test("Claude Code emits a dispatch anchor for Agent tool calls and keeps the parent turn intact", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-agenttool-"));
   try {
     writeFileSync(path.join(fixtureRoot, "session.jsonl"), [
@@ -342,65 +335,180 @@ test("Claude Code inlines Agent tool call into subagent turn", () => {
     ].join("\n"));
 
     const session = readFixtureSession(fixtureRoot);
-    assert.equal(session.turns.length, 3);
+    assert.equal(session.turns.length, 1, "派发子代理不得切分父轮次");
 
-    // Turn 1 should be subagent turn
-    const turn1 = session.turns[1];
-    assert.equal(turn1.turn_kind, "subagent");
-    assert.equal(turn1.agent_role, "Explore");
-    assert.equal(turn1.parent_turn_id, "turn-0");
-    assert.equal(turn1.user_text, "Locate authentication middleware implementations");
-    assert.ok(turn1.parts.length > 0);
-    assert.match(turn1.parts[turn1.parts.length - 1].text, /Auth middleware found/);
+    const turn = session.turns[0];
+    const kinds = turn.parts.map((part) => part.kind);
+    assert.deepEqual(kinds, ["text", "subagent", "text"]);
+    assert.equal(turn.parts[0].text, "Invoking explorer subagent.");
 
-    // Turn 2 should be continuation turn
-    const turn2 = session.turns[2];
-    assert.equal(turn2.turn_kind, "continuation");
-    assert.equal(turn2.parent_turn_id, "turn-0");
-    assert.match(turn2.parts[0].text, /Found the auth middleware/);
+    const anchor = turn.parts[1];
+    assert.equal(anchor.role, "assistant");
+    assert.equal(anchor.source_execution_id, "toolu_agent_1");
+    assert.match(anchor.text, /\[委派任务\] Locate authentication middleware implementations|\[委派任务\] Explore/);
+    assert.match(anchor.text, /\[汇报结论\] Auth middleware found/);
+    const anchorMeta = JSON.parse(anchor.metadata_json);
+    assert.equal(anchorMeta.agent_role, "Explore");
+    assert.equal(anchorMeta.spawn_anchor, "toolu_agent_1");
+    assert.equal(anchorMeta.child_external_id, "session:subagent:toolu_agent_1");
+
+    // 派发结果不再作为独立 result 零件重复出现
+    assert.ok(
+      !turn.parts.some((part) => part.source_execution_id === "toolu_agent_1" && part.kind !== "subagent"),
+      "子代理派发的结果已被锚点吸收，不得再落一份重复零件",
+    );
+    assert.match(turn.parts[2].text, /Found the auth middleware/);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Claude Code filters subagent sessions from list_sessions and sets user_visible false on standalone read", () => {
-  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-filter-"));
+test("Claude Code materializes subagents/agent-*.jsonl as deterministic hidden child sessions", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-subagentfile-"));
   try {
-    const mainFile = path.join(fixtureRoot, "main-session.jsonl");
-    const subagentsDir = path.join(fixtureRoot, "subagents");
+    const parentSessionId = "parent-session";
+    const mainFile = path.join(fixtureRoot, `${parentSessionId}.jsonl`);
+    const subagentsDir = path.join(fixtureRoot, parentSessionId, "subagents");
     mkdirSync(subagentsDir, { recursive: true });
-    const subFile = path.join(subagentsDir, "subagent-1.jsonl");
+    const agentFile = path.join(subagentsDir, "agent-a434.jsonl");
 
     writeFileSync(mainFile, [
-      message("2026-08-08T00:00:00Z", "user", [{ type: "text", text: "Main session task" }]),
-      message("2026-08-08T00:00:01Z", "assistant", [{ type: "text", text: "Main session answer" }]),
+      JSON.stringify({
+        timestamp: "2026-08-08T00:00:00Z",
+        sessionId: parentSessionId,
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text: "Main session task" }] },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-08T00:00:01Z",
+        sessionId: parentSessionId,
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{
+            type: "tool_use",
+            id: "toolu_file_1",
+            name: "Agent",
+            input: { subagent_type: "Explore", description: "审计路径处理", prompt: "Audit path handling" },
+          }],
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-08T00:00:02Z",
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "toolu_file_1", content: "Async agent launched successfully." }],
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-08T00:00:03Z",
+        sessionId: parentSessionId,
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "Main session answer" }] },
+      }),
     ].join("\n"));
 
-    writeFileSync(subFile, [
-      message("2026-08-08T00:00:00Z", "user", [{ type: "text", text: "Subagent internal task" }]),
-      message("2026-08-08T00:00:01Z", "assistant", [{ type: "text", text: "Subagent answer" }]),
+    writeFileSync(agentFile, [
+      JSON.stringify({
+        timestamp: "2026-08-08T00:00:00Z",
+        sessionId: parentSessionId,
+        agentId: "a434",
+        isSidechain: true,
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text: "Audit path handling" }] },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-08T00:00:01Z",
+        sessionId: parentSessionId,
+        agentId: "a434",
+        isSidechain: true,
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "发现 3 处硬编码路径分隔符。" }],
+        },
+      }),
     ].join("\n"));
+    writeFileSync(
+      path.join(subagentsDir, "agent-a434.meta.json"),
+      JSON.stringify({
+        agentType: "Explore",
+        description: "审计路径处理",
+        toolUseId: "toolu_file_1",
+        spawnDepth: 1,
+      }),
+    );
 
-    // 1. list_sessions should exclude subagents/
+    // 1. 父会话读取必须同时产出父子两个会话
+    const result = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({ method: "read_session", source: { location: fixtureRoot }, params: {} }),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const sessions = result.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((entry) => entry.type === "item")
+      .map((entry) => entry.item.session);
+    assert.equal(sessions.length, 2, "一个父会话 + 一个子代理会话");
+
+    const parent = sessions.find((entry) => entry.external_id === parentSessionId);
+    const child = sessions.find((entry) => entry.external_id === `${parentSessionId}:subagent:a434`);
+    assert.ok(parent, "父会话必须存在");
+    assert.ok(child, "子会话 external_id 必须是 <parent>:subagent:<agentId>");
+
+    assert.equal(parent.turns.length, 1);
+    const anchor = parent.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor);
+    const anchorMeta = JSON.parse(anchor.metadata_json);
+    assert.equal(anchorMeta.child_external_id, `${parentSessionId}:subagent:a434`);
+    assert.equal(anchorMeta.agent_role, "Explore");
+    assert.equal(anchorMeta.title, "审计路径处理");
+    assert.equal(anchorMeta.spawn_anchor, "toolu_file_1");
+    assert.equal(anchorMeta.step_count, 0);
+    assert.match(anchor.text, /\[汇报结论\] 发现 3 处硬编码路径分隔符/);
+
+    assert.equal(child.user_visible, false);
+    assert.equal(child.execution_origin, "subagent");
+    const purpose = JSON.parse(child.execution_purpose);
+    assert.equal(purpose.parent_external_id, parentSessionId);
+    assert.equal(purpose.parent_turn_index, 0);
+    assert.equal(purpose.agent_role, "Explore");
+    assert.equal(purpose.spawn_anchor, "toolu_file_1");
+    assert.equal(child.turns.length, 1);
+    assert.equal(child.turns[0].user_text, "Audit path handling");
+
+    // 2. 单独读取子代理文件同样产出隐藏子会话
+    const childReadResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({ method: "read_session", source: { location: agentFile }, params: {} }),
+    });
+    assert.equal(childReadResult.status, 0, childReadResult.stderr);
+    const standalone = childReadResult.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.type === "item")?.item?.session;
+    assert.equal(standalone.external_id, `${parentSessionId}:subagent:a434`);
+    assert.equal(standalone.user_visible, false);
+    assert.equal(standalone.execution_origin, "subagent");
+
+    // 3. list_sessions 必须包含子代理描述符，否则增量同步会把它误判为源已消失
     const listResult = spawnSync(process.execPath, [adapterPath], {
       encoding: "utf8",
       input: JSON.stringify({ method: "list_sessions", source: { location: fixtureRoot }, params: {} }),
     });
     assert.equal(listResult.status, 0);
-    const items = listResult.stdout.trim().split("\n").map((l) => JSON.parse(l)).filter((m) => m.type === "item");
-    assert.equal(items.length, 1);
-    assert.equal(items[0].item.external_id, "main-session");
-
-    // 2. standalone read of subFile should set user_visible: false
-    const readSubResult = spawnSync(process.execPath, [adapterPath], {
-      encoding: "utf8",
-      input: JSON.stringify({ method: "read_session", source: { location: subFile }, params: {} }),
-    });
-    assert.equal(readSubResult.status, 0);
-    const subSession = readSubResult.stdout.trim().split("\n").map((l) => JSON.parse(l)).find((m) => m.type === "item")?.item?.session;
-    assert.ok(subSession);
-    assert.equal(subSession.user_visible, false);
-    assert.equal(subSession.execution_origin, "subagent");
+    const descriptors = listResult.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((entry) => entry.type === "item")
+      .map((entry) => entry.item);
+    const ids = descriptors.map((entry) => entry.external_id).sort();
+    assert.deepEqual(ids, [parentSessionId, `${parentSessionId}:subagent:a434`].sort());
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -437,68 +545,24 @@ test("Claude Code preserves anchor user turn when assistant dispatches Agent wit
     ].join("\n"));
 
     const session = readFixtureSession(sessionFile);
-    assert.ok(session.turns.length >= 2, `Expected >= 2 turns, got ${session.turns.length}`);
-    // Anchor turn must be preserved as turn 0
+    assert.equal(session.turns.length, 1, "派发子代理不得产生额外轮次");
     assert.equal(session.turns[0].turn_index, 0);
     assert.equal(session.turns[0].user_text, "Fix database pool leak");
     assert.equal(session.turns[0].turn_kind, undefined);
-
-    // Subagent turn
-    assert.equal(session.turns[1].turn_index, 1);
-    assert.equal(session.turns[1].turn_kind, "subagent");
-    assert.equal(session.turns[1].parent_turn_id, session.turns[0].external_id);
-    assert.equal(session.turns[1].user_text, "Trace connection pool leak");
+    const anchor = session.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor, "零前置文本也必须留下委派锚点");
+    assert.match(anchor.text, /\[汇报结论\] Leak traced to unclosed connection/);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Claude Code falls back to valid string when subagent prompt is whitespace-only", () => {
-  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-ws-"));
-  try {
-    const sessionFile = path.join(fixtureRoot, "session.jsonl");
-    writeFileSync(sessionFile, [
-      message("2026-08-08T00:00:00Z", "user", [{ type: "text", text: "Run delegator" }], { id: "msg-user-1" }),
-      message("2026-08-08T00:00:01Z", "assistant", [
-        {
-          type: "tool_use",
-          id: "toolu_agent_ws",
-          name: "Agent",
-          input: { subagent_type: "Explore", prompt: "   \t\n  " },
-        },
-      ]),
-      JSON.stringify({
-        timestamp: "2026-08-08T00:00:02Z",
-        type: "user",
-        message: {
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: "toolu_agent_ws",
-              content: "Done",
-            },
-          ],
-        },
-      }),
-    ].join("\n"));
-
-    const session = readFixtureSession(sessionFile);
-    assert.equal(session.turns[1].turn_kind, "subagent");
-    assert.equal(session.turns[1].user_text, "Subagent execution");
-    assert.ok(session.turns[1].user_text.trim().length > 0);
-  } finally {
-    rmSync(fixtureRoot, { force: true, recursive: true });
-  }
-});
-
-test("Claude Code does not emit empty ghost continuation turns on sequential subagent calls", () => {
+test("Claude Code keeps subagent anchors distinct for sequential dispatches without ghost turns", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-sequential-"));
   try {
     const sessionFile = path.join(fixtureRoot, "session.jsonl");
     writeFileSync(sessionFile, [
       message("2026-08-08T00:00:00Z", "user", [{ type: "text", text: "Execute two tasks in sequence" }], { id: "msg-user-1" }),
-      // Subagent 1 dispatch
       message("2026-08-08T00:00:01Z", "assistant", [
         {
           type: "tool_use",
@@ -507,7 +571,6 @@ test("Claude Code does not emit empty ghost continuation turns on sequential sub
           input: { subagent_type: "Explore", prompt: "Task 1 prompt" },
         },
       ]),
-      // Subagent 1 result
       JSON.stringify({
         timestamp: "2026-08-08T00:00:02Z",
         type: "user",
@@ -516,7 +579,6 @@ test("Claude Code does not emit empty ghost continuation turns on sequential sub
           content: [{ type: "tool_result", tool_use_id: "toolu_agent_seq_1", content: "Result 1" }],
         },
       }),
-      // Immediate Subagent 2 dispatch with zero pre-text
       message("2026-08-08T00:00:03Z", "assistant", [
         {
           type: "tool_use",
@@ -525,7 +587,6 @@ test("Claude Code does not emit empty ghost continuation turns on sequential sub
           input: { subagent_type: "Plan", prompt: "Task 2 prompt" },
         },
       ]),
-      // Subagent 2 result
       JSON.stringify({
         timestamp: "2026-08-08T00:00:04Z",
         type: "user",
@@ -537,21 +598,24 @@ test("Claude Code does not emit empty ghost continuation turns on sequential sub
     ].join("\n"));
 
     const session = readFixtureSession(sessionFile);
-    // Must NOT contain any continuation turn with parts: []
-    const emptyContTurns = session.turns.filter((t) => t.turn_kind === "continuation" && (!t.parts || t.parts.length === 0));
-    assert.equal(emptyContTurns.length, 0, "No empty ghost continuation turns should be present");
+    assert.equal(session.turns.length, 1, "连续两次派发仍然只有 1 个父轮次");
+    assert.equal(session.turns.filter((turn) => turn.turn_kind).length, 0, "不得再产出伪轮次");
 
-    // Both subagents should be parented to msg-user-1
-    const subagents = session.turns.filter((t) => t.turn_kind === "subagent");
-    assert.equal(subagents.length, 2);
-    assert.equal(subagents[0].parent_turn_id, "msg-user-1");
-    assert.equal(subagents[1].parent_turn_id, "msg-user-1");
+    const anchors = session.turns[0].parts.filter((part) => part.kind === "subagent");
+    assert.equal(anchors.length, 2);
+    const childIds = anchors.map((part) => JSON.parse(part.metadata_json).child_external_id);
+    assert.deepEqual(childIds, [
+      "session:subagent:toolu_agent_seq_1",
+      "session:subagent:toolu_agent_seq_2",
+    ]);
+    assert.match(anchors[0].text, /\[汇报结论\] Result 1/);
+    assert.match(anchors[1].text, /\[汇报结论\] Result 2/);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Claude Code preserves subagent before user interruption in chronological order", () => {
+test("Claude Code keeps an interrupted dispatch anchor inside its own parent turn", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-interrupt-"));
   try {
     const sessionFile = path.join(fixtureRoot, "session.jsonl");
@@ -565,25 +629,27 @@ test("Claude Code preserves subagent before user interruption in chronological o
           input: { subagent_type: "Explore", prompt: "Long running search" },
         },
       ]),
-      // User interrupts with a new message before tool result
+      // 用户在工具结果返回前打断
       message("2026-08-08T00:00:05Z", "user", [{ type: "text", text: "Stop, do this instead" }], { id: "msg-user-2" }),
       message("2026-08-08T00:00:06Z", "assistant", [{ type: "text", text: "Understood, stopped." }]),
     ].join("\n"));
 
     const session = readFixtureSession(sessionFile);
-    // Subagent should be emitted BEFORE msg-user-2 turn
-    const subagentIdx = session.turns.findIndex((t) => t.turn_kind === "subagent");
-    const user2Idx = session.turns.findIndex((t) => t.user_text === "Stop, do this instead");
-    assert.ok(subagentIdx !== -1, "Subagent turn must be preserved");
-    assert.ok(user2Idx !== -1, "User interruption turn must be preserved");
-    assert.ok(subagentIdx < user2Idx, `Subagent index (${subagentIdx}) must precede interrupted user turn (${user2Idx})`);
-    assert.equal(session.turns[user2Idx].turn_kind, undefined, "Interruption user turn must NOT be continuation");
+    assert.equal(session.turns.length, 2);
+    assert.equal(session.turns[0].user_text, "Start long subagent");
+    assert.equal(session.turns[1].user_text, "Stop, do this instead");
+    assert.equal(session.turns[1].turn_kind, undefined, "打断后的新提问是正常轮次，不是续接伪轮次");
+    assert.equal(session.turns[1].parent_turn_id, undefined);
+
+    const anchor = session.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor, "被打断的派发仍要留下锚点");
+    assert.equal(JSON.parse(anchor.metadata_json).child_external_id, "session:subagent:toolu_agent_interrupted");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Claude Code multi-turn session keeps subsequent question as standard user turn", () => {
+test("Claude Code multi-turn session keeps the second question at turn index 1", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-multiturn-"));
   try {
     const sessionFile = path.join(fixtureRoot, "session.jsonl");
@@ -611,10 +677,12 @@ test("Claude Code multi-turn session keeps subsequent question as standard user 
     ].join("\n"));
 
     const session = readFixtureSession(sessionFile);
-    const q2Turn = session.turns.find((t) => t.user_text && t.user_text.includes("Question 2: What is the weather in Tokyo?"));
-    assert.ok(q2Turn, "Question 2 turn must exist");
-    assert.equal(q2Turn.turn_kind, undefined, "Question 2 must NOT be marked as continuation");
-    assert.equal(q2Turn.parent_turn_id, undefined, "Question 2 must NOT have parent_turn_id");
+    assert.equal(session.turns.length, 2, "两次真实提问必须是两个物理轮次");
+    const q2Turn = session.turns[1];
+    assert.equal(q2Turn.turn_index, 1, "子代理派发不得让后续人类提问的轮次号偏移");
+    assert.equal(q2Turn.user_text, "Question 2: What is the weather in Tokyo?");
+    assert.equal(q2Turn.turn_kind, undefined);
+    assert.equal(q2Turn.parent_turn_id, undefined);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

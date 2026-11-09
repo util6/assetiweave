@@ -628,17 +628,139 @@ function toolPart(value) {
   }];
 }
 
-function parseJsonl(text) {
+// ---------------------------------------------------------------------------
+// 子代理：独立子会话 + 父轮次委派锚点（ADR-0022）
+// ---------------------------------------------------------------------------
+
+/** 子代理会话 `external_id` 的确定性分隔符：`<parentExternalId>:subagent:<agentId>` */
+const SUBAGENT_EXTERNAL_ID_SEPARATOR = ":subagent:";
+/** 内联子代理（无独立磁盘文件）的虚拟定位器标记 */
+const SUBAGENT_INLINE_LOCATOR_MARKER = "#subagent:";
+/** 汇报摘要上限：仅用于父轮次锚点，完整汇报留在子会话里 */
+const SUBAGENT_REPORT_SUMMARY_MAX = 240;
+
+/**
+ * 合成子代理会话的确定性 `external_id`。
+ * @param {string} parentExternalId - 父会话 external_id
+ * @param {string} agentId - 子代理标识（子文件名去掉 `agent-` 前缀或行内 agentId）
+ * @returns {string}
+ */
+function subagentExternalId(parentExternalId, agentId) {
+  return `${parentExternalId}${SUBAGENT_EXTERNAL_ID_SEPARATOR}${agentId}`;
+}
+
+/**
+ * 逆解析子代理会话 external_id。
+ * @param {string} externalId
+ * @returns {{parentExternalId: string, agentId: string}|null}
+ */
+function parseSubagentExternalId(externalId) {
+  const text = String(externalId ?? "");
+  const index = text.indexOf(SUBAGENT_EXTERNAL_ID_SEPARATOR);
+  if (index <= 0) return null;
+  const agentId = text.slice(index + SUBAGENT_EXTERNAL_ID_SEPARATOR.length);
+  if (!agentId) return null;
+  return { parentExternalId: text.slice(0, index), agentId };
+}
+
+function collapseWhitespace(text) {
+  return String(text ?? "").replace(/\s+/g, " ").trim();
+}
+
+function summarizeReport(text, max = SUBAGENT_REPORT_SUMMARY_MAX) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max).trim()}...`;
+}
+
+function anchorText(title, summary) {
+  const head = collapseWhitespace(title) || "子代理任务";
+  return summary ? `[委派任务] ${head}\n[汇报结论] ${summary}` : `[委派任务] ${head}`;
+}
+
+/**
+ * 构造父轮次里的轻量委派锚点 Part。
+ *
+ * 锚点不复制子代理的执行过程，只留任务标题与结论摘要，并把子会话的确定性
+ * `external_id` 写进 metadata，后端的 `stable_id` 会在入库时算出子会话主键。
+ * @param {object} options
+ * @returns {object} NormalizedConversationPart
+ */
+function subagentAnchorPart({ childExternalId, spawnAnchor, agentRole, title, status }) {
+  const normalizedTitle = collapseWhitespace(title) || null;
+  return {
+    role: "assistant",
+    kind: "subagent",
+    text: anchorText(normalizedTitle, null),
+    language: null,
+    command: null,
+    cwd: null,
+    status: status ?? "running",
+    exit_code: null,
+    source_execution_id: spawnAnchor ?? null,
+    metadata_json: JSON.stringify(compactObject({
+      child_external_id: childExternalId,
+      agent_role: agentRole ?? null,
+      title: normalizedTitle,
+      status: status ?? "running",
+      spawn_anchor: spawnAnchor ?? null,
+    })),
+  };
+}
+
+function parseMetadataObject(part) {
+  try {
+    const parsed = JSON.parse(part?.metadata_json ?? "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * 就地更新锚点：补汇报摘要、状态与步骤数，并同步刷新正文。
+ * @param {object} part - 锚点 Part
+ * @param {object} patch - 待合并的字段
+ */
+function updateSubagentAnchor(part, patch) {
+  if (!part) return;
+  const metadata = { ...parseMetadataObject(part), ...patch };
+  for (const key of Object.keys(metadata)) {
+    if (metadata[key] === null || metadata[key] === undefined) delete metadata[key];
+  }
+  part.metadata_json = JSON.stringify(metadata);
+  part.text = anchorText(metadata.title, metadata.report_summary);
+  if (metadata.status) part.status = metadata.status;
+}
+
+/**
+ * 解析一段会话事件流为交互轮次。
+ *
+ * 与 ADR-0022 之前的实现相比：派发子代理不再切分轮次，也不再生成
+ * `continuation` 续接伪轮次；Agent/Task 工具调用处只落一个锚点 Part，
+ * 主代理在子代理返回后的所有动作都留在同一个父轮次里。
+ * @param {string} text - 事件流行文本
+ * @param {object} [options]
+ * @param {string|null} [options.parentExternalId] - 父会话 external_id（用于锚点 id）
+ * @param {Map<string, object>} [options.subagentMetaByToolUseId] - toolUseId → 子代理元数据
+ * @param {string[]} [options.inlineAgentIds] - 内联子代理流标识（按出现顺序）
+ * @returns {{turns: object[], projectPath: string|null}}
+ */
+function parseJsonl(text, options = {}) {
+  const parentExternalId = options.parentExternalId ?? null;
+  const subagentMetaByToolUseId = options.subagentMetaByToolUseId ?? new Map();
+  const collectSidechain = options.collectSidechain === true;
+  const ignoreSidechain = options.ignoreSidechain === true;
   const turns = [];
   let current = null;
-  let activeSubagent = null;
-  let anchorTurnId = null;
-  let subagentCount = 0;
-  let continuationCount = 0;
   let projectPath = null;
   let pendingSubagentCallId = null;
+  let pendingInlineAnchor = null;
+  const pendingAnchors = new Map();
+  const sidechain = new Map();
 
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of String(text ?? "").split(/\r?\n/)) {
     if (!line.trim()) continue;
     let value;
     try {
@@ -653,82 +775,33 @@ function parseJsonl(text) {
     const recordType = stringField(payload, ["type"]) ?? stringField(value, ["type"]) ?? "";
     const userText = realUserText(value, payload, role, recordType);
 
-    // 1. Sidechain event handling
-    if (value.isSidechain === true) {
-      if (!activeSubagent) {
-        if (current && (current.parts.length > 0 || (current.turn_kind !== "continuation" && Boolean(current.user_text?.trim())))) {
-          current.ended_at = timestamp;
-          turns.push(current);
-          if (current.turn_kind !== "continuation") {
-            anchorTurnId = current.external_id;
-          }
-        }
-        current = null;
-        const parentAnchorTurnId = anchorTurnId || (turns[0]?.external_id ?? "turn-0");
-        const sideText = resolvePrompt(userText, extractText(payload), stringField(value, ["task", "prompt"]), "Subagent execution");
-        activeSubagent = {
-          external_id: `${parentAnchorTurnId}-subagent-${++subagentCount}`,
-          turn_index: turns.length,
-          user_text: sideText,
-          turn_kind: "subagent",
-          agent_role: "Sidechain Subagent",
-          parent_turn_id: parentAnchorTurnId,
-          title: null,
-          started_at: timestamp,
-          ended_at: null,
-          model: null,
-          parts: [],
-        };
+    // 0. 内联子代理流：缓存到独立桶，稍后产出隐藏子会话
+    if (value?.isSidechain === true && collectSidechain && !ignoreSidechain) {
+      const agentId = stringField(value, ["agentId", "agent_id"]) ?? "inline";
+      let bucket = sidechain.get(agentId);
+      if (!bucket) {
+        bucket = { rows: [], anchor: null, turn: current, insertAt: current?.parts.length ?? 0 };
+        sidechain.set(agentId, bucket);
       }
-
-      if (userText?.trim() && (!activeSubagent.user_text || activeSubagent.user_text === "Subagent execution")) {
-        activeSubagent.user_text = resolvePrompt(userText, activeSubagent.user_text);
+      if (!bucket.anchor && pendingInlineAnchor) {
+        bucket.anchor = pendingInlineAnchor;
+        pendingInlineAnchor = null;
+        updateSubagentAnchor(bucket.anchor, {
+          child_external_id: parentExternalId
+            ? subagentExternalId(parentExternalId, agentId)
+            : agentId,
+        });
       }
-      if (isUserToolResultMessage(payload)) {
-        const resultParts = contentItemsOfType(payload, "tool_result").flatMap((item) => toolResultPart(item, value));
-        activeSubagent.parts.push(...resultParts);
-        activeSubagent.ended_at = timestamp;
-      } else if (role === "assistant") {
-        activeSubagent.parts.push(...assistantMessageParts(payload, value));
-        activeSubagent.ended_at = timestamp;
-        if (!activeSubagent.model) {
-          activeSubagent.model = stringField(payload?.message, ["model"]) ?? stringField(payload, ["model"]) ?? stringField(value?.message, ["model"]) ?? stringField(value, ["model"]) ?? null;
-        }
-      } else if (recordType.includes("tool") || recordType.includes("shell") || recordType === "patch") {
-        activeSubagent.parts.push(...toolPart(payload));
-        activeSubagent.ended_at = timestamp;
-      } else if (activeSubagent.parts.length === 0 && extractText(payload).trim()) {
-        const txt = extractText(payload).trim();
-        if (txt !== activeSubagent.user_text) {
-          const part = textPart("assistant", txt);
-          if (part) activeSubagent.parts.push(part);
-        }
-      }
+      bucket.rows.push(line);
       continue;
     }
+    if (value?.isSidechain === true && !ignoreSidechain) continue;
 
-    // If an active sidechain subagent was open, non-sidechain event signals its end
-    if (activeSubagent && !pendingSubagentCallId) {
-      turns.push(activeSubagent);
-      activeSubagent = null;
-    }
-
-    // 2. Real user turn boundary
+    // 1. 真实人类提问 = 轮次边界
     if (userText) {
-      if (activeSubagent) {
-        turns.push(activeSubagent);
-        activeSubagent = null;
-        pendingSubagentCallId = null;
-      }
-      if (current && (current.parts.length > 0 || current.turn_kind === "subagent")) {
-        turns.push(current);
-      }
-      current = null;
-      anchorTurnId = stringField(payload, ["id", "uuid"]) ?? stringField(value, ["id", "uuid"]) ?? `turn-${turns.length}`;
-      subagentCount = 0;
-      continuationCount = 0;
+      if (current && current.parts.length > 0) turns.push(current);
       current = {
-        external_id: anchorTurnId,
+        external_id: stringField(payload, ["id", "uuid"]) ?? stringField(value, ["id", "uuid"]) ?? `turn-${turns.length}`,
         turn_index: turns.length,
         user_text: userText,
         title: null,
@@ -737,40 +810,31 @@ function parseJsonl(text) {
         model: null,
         parts: [],
       };
+      pendingSubagentCallId = null;
+      pendingInlineAnchor = null;
       continue;
     }
 
-    // 3. Tool results matching an Agent/Task tool call
+    // 2. 派发子代理的工具结果：回填锚点，不再额外落一份结果零件
     if (pendingSubagentCallId && isUserToolResultMessage(payload)) {
       const toolResults = contentItemsOfType(payload, "tool_result");
-      const matched = toolResults.find((item) => item.tool_use_id === pendingSubagentCallId || item.id === pendingSubagentCallId);
-      if (matched && activeSubagent) {
-        const outputText = toolText(matched) || (typeof matched?.content === "string" ? matched.content : "") || extractText(matched) || "Subagent execution completed.";
-        const part = textPart("assistant", outputText);
-        if (part) activeSubagent.parts.push(part);
-        activeSubagent.ended_at = timestamp;
-        turns.push(activeSubagent);
-        activeSubagent = null;
+      const matched = toolResults.find(
+        (item) => item.tool_use_id === pendingSubagentCallId || item.id === pendingSubagentCallId,
+      );
+      if (matched) {
+        const outputText = toolText(matched)
+          || (typeof matched?.content === "string" ? matched.content : "")
+          || extractText(matched)
+          || "";
+        updateSubagentAnchor(pendingAnchors.get(pendingSubagentCallId), {
+          status: "completed",
+          report_summary: summarizeReport(outputText),
+        });
+        pendingAnchors.delete(pendingSubagentCallId);
         pendingSubagentCallId = null;
+        if (current) current.ended_at = timestamp;
         continue;
       }
-    }
-
-    // 4. Main agent continuation turn
-    if (!current && turns.length > 0) {
-      const parentAnchorTurnId = anchorTurnId || (turns[0]?.external_id ?? "turn-0");
-      current = {
-        external_id: `${parentAnchorTurnId}-cont-${++continuationCount}`,
-        turn_index: turns.length,
-        user_text: "Continue following subagent execution",
-        turn_kind: "continuation",
-        parent_turn_id: parentAnchorTurnId,
-        title: null,
-        started_at: timestamp,
-        ended_at: null,
-        model: null,
-        parts: [],
-      };
     }
 
     if (!current) continue;
@@ -783,43 +847,42 @@ function parseJsonl(text) {
     }
 
     if (role === "assistant") {
-      // Check for Agent / Task tool calls
       const agentTool = Array.isArray(payload?.content)
         ? payload.content.find((item) => item?.type === "tool_use" && (item.name === "Agent" || item.name === "Task"))
         : null;
 
       if (agentTool) {
         const preItems = payload.content.filter((item) => item !== agentTool);
-        if (preItems.length > 0 && current) {
+        if (preItems.length > 0) {
           current.parts.push(...assistantMessageParts({ ...payload, content: preItems }, value));
         }
-        if (current && (current.parts.length > 0 || (current.turn_kind !== "continuation" && Boolean(current.user_text?.trim())))) {
-          current.ended_at = timestamp;
-          turns.push(current);
-          if (current.turn_kind !== "continuation") {
-            anchorTurnId = current.external_id;
-          }
-        }
-        current = null;
-
-        const parentAnchorTurnId = anchorTurnId || (turns[0]?.external_id ?? "turn-0");
+        const spawnAnchor = agentTool.id ?? null;
         const inputObj = agentTool.input || {};
-        const taskPrompt = resolvePrompt(inputObj.prompt, inputObj.description, inputObj.task, "Subagent execution");
-        const agentRole = inputObj.subagent_type || inputObj.role || agentTool.name;
-        activeSubagent = {
-          external_id: `${parentAnchorTurnId}-subagent-${++subagentCount}`,
-          turn_index: turns.length,
-          user_text: taskPrompt,
-          turn_kind: "subagent",
-          agent_role: agentRole,
-          parent_turn_id: parentAnchorTurnId,
-          title: null,
-          started_at: timestamp,
-          ended_at: null,
-          model: null,
-          parts: [],
-        };
-        pendingSubagentCallId = agentTool.id || `subagent-call-${subagentCount}`;
+        const meta = spawnAnchor ? subagentMetaByToolUseId.get(spawnAnchor) : null;
+        const agentId = meta?.agentId ?? spawnAnchor ?? `subagent-${current.parts.length}`;
+        const childExternalId = parentExternalId
+          ? subagentExternalId(parentExternalId, agentId)
+          : String(agentId);
+        const title = meta?.description
+          ?? inputObj.description
+          ?? inputObj.subagent_type
+          ?? inputObj.role
+          ?? agentTool.name;
+        const anchor = subagentAnchorPart({
+          childExternalId,
+          spawnAnchor,
+          agentRole: meta?.agentType ?? inputObj.subagent_type ?? inputObj.role ?? agentTool.name,
+          title,
+          status: "running",
+        });
+        current.parts.push(anchor);
+        if (spawnAnchor) {
+          pendingAnchors.set(spawnAnchor, anchor);
+          pendingSubagentCallId = spawnAnchor;
+        }
+        // 没有 meta.json 时子代理身份只能从随后的内联流里得知
+        if (!meta) pendingInlineAnchor = anchor;
+        current.ended_at = timestamp;
         continue;
       }
 
@@ -836,14 +899,286 @@ function parseJsonl(text) {
       current.ended_at = timestamp;
     }
   }
-  if (activeSubagent) turns.push(activeSubagent);
-  if (current && (current.parts.length > 0 || current.turn_kind === "subagent")) {
-    turns.push(current);
+  if (current && current.parts.length > 0) turns.push(current);
+
+  // 没有对应 Agent 工具调用的内联子代理：在它出现的位置补一个锚点，
+  // 保证"派发必有锚点"这一契约在纯内联宿主数据上也成立。
+  for (const [agentId, bucket] of sidechain) {
+    if (bucket.anchor || !bucket.turn) continue;
+    const promptText = bucket.rows
+      .map((raw) => {
+        try {
+          const parsed = JSON.parse(raw);
+          return realUserText(parsed, eventPayload(parsed), roleOf(eventPayload(parsed)) ?? roleOf(parsed), "user");
+        } catch {
+          return null;
+        }
+      })
+      .find(Boolean);
+    const anchor = subagentAnchorPart({
+      childExternalId: parentExternalId ? subagentExternalId(parentExternalId, agentId) : agentId,
+      spawnAnchor: null,
+      agentRole: "Sidechain Subagent",
+      title: promptText ? sanitizeSessionShortTitle(promptText) : "Sidechain Subagent",
+      status: "completed",
+    });
+    bucket.turn.parts.splice(Math.min(bucket.insertAt, bucket.turn.parts.length), 0, anchor);
+    bucket.anchor = anchor;
   }
+
   for (let i = 0; i < turns.length; i++) {
     turns[i].turn_index = i;
   }
-  return { turns, projectPath };
+  return { turns, projectPath, sidechain };
+}
+
+// ---------------------------------------------------------------------------
+// 子代理文件发现与子会话组装
+// ---------------------------------------------------------------------------
+
+/**
+ * 列出某个父会话文件对应的子代理文件。
+ *
+ * 兼容两种宿主布局：`<sessionId>/subagents/agent-*.jsonl`（现行）与
+ * `<同目录>/subagents/*.jsonl`（早期版本与测试夹具）。
+ * @param {string} parentFilePath
+ * @returns {string[]}
+ */
+function discoverSubagentFiles(parentFilePath) {
+  if (!parentFilePath) return [];
+  const sessionId = path.basename(parentFilePath, ".jsonl");
+  const dir = path.dirname(parentFilePath);
+  const candidates = [
+    path.join(dir, sessionId, "subagents"),
+    path.join(dir, "subagents"),
+  ];
+  const files = new Set();
+  for (const subagentsDir of candidates) {
+    if (!existsSync(subagentsDir)) continue;
+    try {
+      for (const entry of readdirSync(subagentsDir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+        files.add(path.join(subagentsDir, entry.name));
+      }
+    } catch {}
+  }
+  return [...files];
+}
+
+function agentIdFromFilePath(agentFile) {
+  const stem = path.basename(agentFile, ".jsonl");
+  return stem.startsWith("agent-") ? stem.slice("agent-".length) : stem;
+}
+
+function readSubagentMeta(agentFile) {
+  const metaPath = agentFile.replace(/\.jsonl$/, ".meta.json");
+  if (!existsSync(metaPath)) return null;
+  try {
+    return JSON.parse(readFileSync(metaPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function subagentMetaIndex(agentFiles) {
+  const map = new Map();
+  for (const file of agentFiles) {
+    const meta = readSubagentMeta(file);
+    if (meta?.toolUseId) map.set(meta.toolUseId, { ...meta, agentId: agentIdFromFilePath(file) });
+  }
+  return map;
+}
+
+/**
+ * 解析子代理文件所属的父会话 external_id。
+ *
+ * 子代理文件内部每一行的 `sessionId` 与父会话相同（这是宿主既有事实），
+ * 因此优先取行内 `sessionId`；取不到时退回目录名推断。
+ * @param {string} agentFile
+ * @returns {string}
+ */
+function resolveParentExternalIdForSubagent(agentFile) {
+  try {
+    const { text } = readStableFile(agentFile);
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      let value;
+      try {
+        value = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const sessionId = stringField(value, ["sessionId", "session_id"]);
+      if (sessionId) return sessionId;
+    }
+  } catch {}
+  const subagentsDir = path.dirname(agentFile);
+  if (path.basename(subagentsDir) === "subagents") {
+    const parentDir = path.dirname(subagentsDir);
+    const candidate = path.basename(parentDir);
+    if (candidate && existsSync(path.join(path.dirname(parentDir), `${candidate}.jsonl`))) {
+      return candidate;
+    }
+  }
+  return path.basename(agentFile, ".jsonl");
+}
+
+function summarizeChildSession(turns) {
+  let stepCount = 0;
+  let reportSummary = null;
+  for (const turn of turns) {
+    for (const part of turn.parts ?? []) {
+      if (part.kind === "command" || part.kind === "tool" || part.kind === "file_change") stepCount += 1;
+      if (part.role === "assistant" && (part.kind === "text" || part.kind === "code") && part.text?.trim()) {
+        reportSummary = part.text.trim();
+      }
+    }
+  }
+  return { stepCount, reportSummary: summarizeReport(reportSummary) };
+}
+
+/**
+ * 把一个子代理文件产出为独立的 `Subagent Session`。
+ * @param {string} agentFile
+ * @param {string} parentExternalId
+ * @returns {object|null}
+ */
+function buildSubagentSession(agentFile, parentExternalId) {
+  const agentId = agentIdFromFilePath(agentFile);
+  const meta = readSubagentMeta(agentFile);
+  const { text, versionToken } = readStableFile(agentFile);
+  const parsed = parseJsonl(text, { parentExternalId, ignoreSidechain: true });
+  const turns = displayTurns(parsed.turns);
+  if (!turns.length) return null;
+  const projectPath = parsed.projectPath ?? inferProjectPathFromTurns(turns);
+  const title = collapseWhitespace(meta?.description)
+    || resolveSessionTitle(parsed, turns, agentFile);
+  return {
+    external_id: subagentExternalId(parentExternalId, agentId),
+    title,
+    project_path: projectPath,
+    started_at: turns[0]?.started_at ?? null,
+    updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
+    source_locator: agentFile,
+    source_fingerprint: versionToken,
+    user_visible: false,
+    execution_origin: "subagent",
+    execution_purpose: JSON.stringify(compactObject({
+      parent_external_id: parentExternalId,
+      agent_role: meta?.agentType ?? null,
+      spawn_anchor: meta?.toolUseId ?? null,
+    })),
+    turns,
+  };
+}
+
+/**
+ * 把内联 `isSidechain` 事件流产出为独立的 `Subagent Session`。
+ * @param {string} agentId
+ * @param {string[]} rawRows
+ * @param {string} parentExternalId
+ * @param {string} parentFilePath
+ * @returns {object|null}
+ */
+function buildInlineSubagentSession(agentId, rawRows, parentExternalId, parentFilePath) {
+  const parsed = parseJsonl(rawRows.join("\n"), { parentExternalId, ignoreSidechain: true });
+  const turns = displayTurns(parsed.turns);
+  if (!turns.length) return null;
+  return {
+    external_id: subagentExternalId(parentExternalId, agentId),
+    title: resolveSessionTitle(parsed, turns, parentFilePath),
+    project_path: parsed.projectPath ?? inferProjectPathFromTurns(turns),
+    started_at: turns[0]?.started_at ?? null,
+    updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
+    source_locator: `${parentFilePath}${SUBAGENT_INLINE_LOCATOR_MARKER}${agentId}`,
+    source_fingerprint: null,
+    user_visible: false,
+    execution_origin: "subagent",
+    execution_purpose: JSON.stringify(compactObject({
+      parent_external_id: parentExternalId,
+      agent_role: "Sidechain Subagent",
+      spawn_anchor: null,
+    })),
+    turns,
+  };
+}
+
+/**
+ * 用子会话内容回填父轮次锚点：补角色、标题、步骤数与汇报摘要，
+ * 并把父轮次序号写回子会话的 `execution_purpose`。
+ * @param {object[]} turns - 父会话轮次
+ * @param {object[]} children - 子会话列表
+ */
+function linkChildrenToAnchors(turns, children) {
+  if (!children.length) return;
+  const byExternalId = new Map(children.map((child) => [child.external_id, child]));
+  for (const turn of turns) {
+    for (const part of turn.parts ?? []) {
+      if (part.kind !== "subagent") continue;
+      const metadata = parseMetadataObject(part);
+      const child = byExternalId.get(metadata.child_external_id);
+      if (!child) continue;
+      const { stepCount, reportSummary } = summarizeChildSession(child.turns);
+      // 子代理自己的最终汇报才是权威来源；父文件里那条 tool_result 往往只是
+      // "Async agent launched successfully" 之类的启动回执，不能拿去当结论摘要。
+      updateSubagentAnchor(part, {
+        agent_role: metadata.agent_role ?? null,
+        title: metadata.title ?? child.title ?? null,
+        status: metadata.status ?? "completed",
+        model: child.turns.map((entry) => entry.model).find(Boolean) ?? null,
+        step_count: stepCount,
+        report_summary: reportSummary ?? metadata.report_summary ?? null,
+      });
+      if (metadata.spawn_anchor) {
+        const purpose = JSON.parse(child.execution_purpose ?? "{}");
+        purpose.parent_turn_index = turn.turn_index;
+        child.execution_purpose = JSON.stringify(purpose);
+      }
+    }
+  }
+}
+
+/**
+ * 解析一个父会话文件：产出父会话本身 + 它名下全部子代理会话。
+ * @param {string} filePath
+ * @returns {object[]}
+ */
+function buildParentSessionWithChildren(filePath) {
+  const parentExternalId = path.basename(filePath, ".jsonl") || "claude-session";
+  const agentFiles = discoverSubagentFiles(filePath);
+  const { text, versionToken } = readStableFile(filePath);
+  const parsed = parseJsonl(text, {
+    parentExternalId,
+    subagentMetaByToolUseId: subagentMetaIndex(agentFiles),
+    collectSidechain: true,
+  });
+  const turns = displayTurns(parsed.turns);
+  if (!turns.length) return [];
+  const projectPath = parsed.projectPath ?? inferProjectPathFromTurns(turns);
+  if (isInternalExecutionPath(projectPath)) return [];
+
+  const children = agentFiles
+    .map((agentFile) => buildSubagentSession(agentFile, parentExternalId))
+    .filter(Boolean);
+  for (const [agentId, bucket] of parsed.sidechain) {
+    const inline = buildInlineSubagentSession(agentId, bucket.rows, parentExternalId, filePath);
+    if (inline) children.push(inline);
+  }
+  linkChildrenToAnchors(turns, children);
+
+  return [{
+    external_id: parentExternalId,
+    title: resolveSessionTitle(parsed, turns, filePath),
+    project_path: projectPath,
+    started_at: turns[0]?.started_at ?? null,
+    updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
+    source_locator: filePath,
+    source_fingerprint: versionToken,
+    user_visible: true,
+    execution_origin: "user",
+    execution_purpose: null,
+    turns,
+  }, ...children];
 }
 
 function resolvePrompt(...candidates) {
@@ -854,9 +1189,12 @@ function resolvePrompt(...candidates) {
 }
 
 function displayTurns(turns) {
-  const parentTurnIds = new Set(turns.map((turn) => turn.parent_turn_id).filter(Boolean));
+  // 宿主注入的上下文行（如 "Repository context only"）没有内容事实，若后面还有
+  // 真实提问轮次就不能占一个物理轮次号；但最后一轮即使是尚未回答的提问也要保留，
+  // 否则 "1 次人类提问 = 1 个 Turn" 和占位子会话都会丢。
+  const lastIndex = turns.length - 1;
   return turns
-    .filter((turn) => (Array.isArray(turn.parts) && turn.parts.length > 0) || turn.turn_kind === "subagent" || parentTurnIds.has(turn.external_id))
+    .filter((turn, index) => (Array.isArray(turn.parts) && turn.parts.length > 0) || index === lastIndex)
     .map((turn, index) => ({
       ...turn,
       turn_index: index,
@@ -906,74 +1244,41 @@ function readSession() {
   const requestedSessionId = input.params?.session_id ?? null;
   const requestedLocator = input.params?.source_locator ? expandPath(input.params.source_locator) : null;
 
+  // 子代理文件只产出它自己那个隐藏子会话，父会话由父文件负责产出。
   if (requestedLocator && existsSync(requestedLocator)) {
-    const { text, versionToken } = readStableFile(requestedLocator);
-    const parsed = parseJsonl(text);
-    const turns = displayTurns(parsed.turns);
-    if (!turns.length) return [];
-    const projectPath = parsed.projectPath ?? inferProjectPathFromTurns(turns);
-    if (isInternalExecutionPath(projectPath)) return [];
-    return [{
-      external_id: path.basename(requestedLocator, ".jsonl") || "claude-session",
-      title: resolveSessionTitle(parsed, turns, requestedLocator),
-      project_path: projectPath,
-      started_at: turns[0]?.started_at ?? null,
-      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
-      source_locator: requestedLocator,
-      source_fingerprint: versionToken,
-      user_visible: !isSubagentSessionPath(requestedLocator),
-      execution_origin: isSubagentSessionPath(requestedLocator) ? "subagent" : "user",
-      turns,
-    }];
+    if (isSubagentSessionPath(requestedLocator)) {
+      const child = buildSubagentSession(
+        requestedLocator,
+        resolveParentExternalIdForSubagent(requestedLocator),
+      );
+      return child ? [child] : [];
+    }
+    return buildParentSessionWithChildren(requestedLocator);
   }
 
   if (requestedSessionId) {
     const directCandidate = path.join(location, `${requestedSessionId}.jsonl`);
     if (existsSync(directCandidate)) {
-      const { text, versionToken } = readStableFile(directCandidate);
-      const parsed = parseJsonl(text);
-      const turns = displayTurns(parsed.turns);
-      if (turns.length) {
-        const projectPath = parsed.projectPath ?? inferProjectPathFromTurns(turns);
-        if (isInternalExecutionPath(projectPath)) return [];
-        return [{
-          external_id: String(requestedSessionId),
-          title: resolveSessionTitle(parsed, turns, directCandidate),
-          project_path: projectPath,
-          started_at: turns[0]?.started_at ?? null,
-          updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
-          source_locator: directCandidate,
-          source_fingerprint: versionToken,
-          user_visible: !isSubagentSessionPath(directCandidate),
-          execution_origin: isSubagentSessionPath(directCandidate) ? "subagent" : "user",
-          turns,
-        }];
-      }
+      return buildParentSessionWithChildren(directCandidate);
     }
   }
 
-  return collectJsonlFiles(location).filter((filePath) =>
+  const matchedFiles = collectJsonlFiles(location).filter((filePath) =>
     !requestedSessionId || path.basename(filePath, ".jsonl") === String(requestedSessionId)
-  ).flatMap((filePath) => {
-    const { text, versionToken } = readStableFile(filePath);
-    const parsed = parseJsonl(text);
-    const turns = displayTurns(parsed.turns);
-    if (!turns.length) return [];
-    const projectPath = parsed.projectPath ?? inferProjectPathFromTurns(turns);
-    if (isInternalExecutionPath(projectPath)) return [];
-    return [{
-      external_id: path.basename(filePath, ".jsonl") || "claude-session",
-      title: resolveSessionTitle(parsed, turns, filePath),
-      project_path: projectPath,
-      started_at: turns[0]?.started_at ?? null,
-      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
-      source_locator: filePath,
-      source_fingerprint: versionToken,
-      user_visible: !isSubagentSessionPath(filePath),
-      execution_origin: isSubagentSessionPath(filePath) ? "subagent" : "user",
-      turns,
-    }];
-  });
+  );
+  const seen = new Set();
+  const sessions = [];
+  for (const filePath of matchedFiles) {
+    const batch = isSubagentSessionPath(filePath)
+      ? [buildSubagentSession(filePath, resolveParentExternalIdForSubagent(filePath))].filter(Boolean)
+      : buildParentSessionWithChildren(filePath);
+    for (const session of batch) {
+      if (seen.has(session.external_id)) continue;
+      seen.add(session.external_id);
+      sessions.push(session);
+    }
+  }
+  return sessions;
 }
 
 function isInternalExecutionPath(cwd) {
@@ -992,17 +1297,23 @@ function isInternalExecutionPath(cwd) {
 function listSessions() {
   const location = expandPath(input.source?.location);
   if (!location || !existsSync(location)) return [];
-  return collectJsonlFiles(location)
-    .filter((filePath) => !isSubagentSessionPath(filePath))
-    .map((filePath) => {
-      const stat = statSync(filePath);
-      return {
-        external_id: path.basename(filePath, ".jsonl") || "claude-session",
-        updated_at: stat.mtime.toISOString(),
-        source_locator: filePath,
-        version_token: fileVersionToken(filePath),
-      };
-    });
+  // 子代理文件也要出现在描述符里：增量同步靠这份集合给缺失会话打 missing 标记，
+  // 漏掉它们会让隐藏子会话每轮都被误判为"源已消失"。
+  return collectJsonlFiles(location).map((filePath) => {
+    const stat = statSync(filePath);
+    const externalId = isSubagentSessionPath(filePath)
+      ? subagentExternalId(
+        resolveParentExternalIdForSubagent(filePath),
+        agentIdFromFilePath(filePath),
+      )
+      : path.basename(filePath, ".jsonl") || "claude-session";
+    return {
+      external_id: externalId,
+      updated_at: stat.mtime.toISOString(),
+      source_locator: filePath,
+      version_token: fileVersionToken(filePath),
+    };
+  });
 }
 
 function executionTextValue(value, depth = 0) {

@@ -288,12 +288,17 @@ function textPart(role, text) {
 
 
 function displayTurns(turns) {
-  return turns
-    .filter((turn) => (Array.isArray(turn.parts) && turn.parts.length > 0) || turn.turn_kind === "subagent" || turn.turn_kind === "continuation" || Boolean(turn.user_text?.trim()))
-    .map((turn, index) => ({
-      ...turn,
-      turn_index: index,
-    }));
+  // 宿主注入的上下文行（如 "Repository context only"）没有内容事实，若后面还有
+  // 真实提问轮次就不能占一个物理轮次号；但最后一轮即使是尚未回答的提问也要保留。
+  const lastIndex = turns.length - 1;
+  const kept = turns.filter(
+    (turn, index) => (Array.isArray(turn.parts) && turn.parts.length > 0) || index === lastIndex,
+  );
+  // 就地重排位置身份：保留对象引用，父轮次锚点才能继续指向同一个 Turn。
+  kept.forEach((turn, index) => {
+    turn.turn_index = index;
+  });
+  return kept;
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +371,42 @@ function inferProjectPathFromToolCalls(toolCalls) {
         const gitRoot = findGitRoot(dir);
         if (gitRoot) return gitRoot;
         if (!isAppDataPath(dir)) return dir;
+      }
+    }
+  }
+  return null;
+}
+
+function inferProjectPathFromTranscriptSteps(steps) {
+  if (!Array.isArray(steps)) return null;
+  for (const step of steps) {
+    const content = typeof step?.content === "string" ? step.content : "";
+    if (!content) continue;
+
+    const cwdMatch = content.match(/Command Working Directory:\s*([^\r\n<]+)/i);
+    if (cwdMatch) {
+      const candidate = cwdMatch[1].trim();
+      if (candidate.startsWith("/") && !isAppDataPath(candidate) && !isInternalExecutionPath(candidate)) {
+        const gitRoot = findGitRoot(candidate);
+        return gitRoot || candidate;
+      }
+    }
+
+    const wsMatch = content.match(/Active Workspaces:\s*[\r\n]+(?:-\s*([^\r\n<]+))/i);
+    if (wsMatch) {
+      const candidate = wsMatch[1].trim();
+      if (candidate.startsWith("/") && !isAppDataPath(candidate) && !isInternalExecutionPath(candidate)) {
+        const gitRoot = findGitRoot(candidate);
+        return gitRoot || candidate;
+      }
+    }
+
+    const fileMatches = content.matchAll(/^-\s*(\/(?:Users|home|root|[a-zA-Z]:\\)[^\r\n\t ]+)/gm);
+    for (const fm of fileMatches) {
+      const filePath = fm[1].trim();
+      if (filePath && !isAppDataPath(filePath) && !isInternalExecutionPath(filePath)) {
+        const gitRoot = findGitRoot(path.dirname(filePath));
+        if (gitRoot) return gitRoot;
       }
     }
   }
@@ -955,15 +996,18 @@ function viewFileBody(content) {
 // ---------------------------------------------------------------------------
 // Antigravity-specific: subagent registry tree
 //
-// Antigravity records every dispatched subagent in
-// `<conversation>/.system_generated/subagents/<conversationId>.json`, and each
-// subagent keeps its own conversation directory. The registry is the source of
-// truth for the tree; the main transcript only points at the dispatching step.
+// ADR-0022：子代理是独立从属会话（`brain/<childId>/`），父轮次里只留轻量委派锚点。
+// Antigravity 把每次派发登记在
+// `<conversation>/.system_generated/subagents/<childId>.json`：
+// - `conversationId` 是子会话所在的 brain 目录名；
+// - `subagentDescriptor.role / typeName` 给出角色与类型；
+// - `spawnStepIndex` 指向派发回执所在的 step，锚点必须落在该 step 所属的父轮次。
+// 下面只负责读取注册表、构造锚点与递归组装子会话；不再把子代理平铺成伪轮次。
 // ---------------------------------------------------------------------------
 
 const SUBAGENT_REGISTRY_DIR = path.join(".system_generated", "subagents");
-const MAX_SUBAGENT_DEPTH = 4;
 const SUBAGENT_PROMPT_FALLBACK = "Subagent execution";
+const SUBAGENT_REPORT_SUMMARY_MAX = 240;
 const INJECTED_PROMPT_BLOCK =
   /^\s*<(?:SYSTEM_MESSAGE|system_message|system_information|environment_context|user_instructions|additional_metadata|context|plugins?|plugin_list|plugin_inventory|available_plugins|rules|repository_context|INSTRUCTIONS)\b/i;
 
@@ -1012,15 +1056,81 @@ function subagentItemsFromCall(call) {
   return items;
 }
 
+function collapseWhitespace(text) {
+  return String(text ?? "").replace(/\s+/g, " ").trim();
+}
+
+function summarizeReport(text, max = SUBAGENT_REPORT_SUMMARY_MAX) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max).trim()}...`;
+}
+
+function anchorText(title, summary) {
+  const head = collapseWhitespace(title) || "子代理任务";
+  return summary ? `[委派任务] ${head}\n[汇报结论] ${summary}` : `[委派任务] ${head}`;
+}
+
+function parseMetadataObject(part) {
+  try {
+    const parsed = JSON.parse(part?.metadata_json ?? "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
- * 派发参数里没有可读提示词时的占位文本；这里只负责告警与兜底，
- * 不再假装"解析"入参，命名需如实反映行为。
+ * 就地更新锚点：补汇报摘要、状态、模型与步骤数，并同步刷新正文。
+ * @param {object} part - 锚点 Part
+ * @param {object} patch - 待合并的字段
  */
-function subagentPromptPlaceholder(item) {
-  emitWarning(
-    `Antigravity subagent ${item?.role ?? item?.typeName ?? "unknown"} has no dispatch prompt; using placeholder text`,
-  );
-  return SUBAGENT_PROMPT_FALLBACK;
+function updateSubagentAnchor(part, patch) {
+  if (!part) return;
+  const metadata = { ...parseMetadataObject(part), ...patch };
+  for (const key of Object.keys(metadata)) {
+    if (metadata[key] === null || metadata[key] === undefined) delete metadata[key];
+  }
+  part.metadata_json = JSON.stringify(metadata);
+  part.text = anchorText(metadata.title, metadata.report_summary);
+  if (metadata.status) part.status = metadata.status;
+}
+
+/**
+ * 构造父轮次里的轻量委派锚点 Part。
+ *
+ * 锚点不复制子代理的执行过程，只留任务标题与结论摘要，并把子会话的确定性
+ * `external_id` 写进 metadata。不设置 `content_card`（part 与 metadata 都不设）。
+ * @returns {object} NormalizedConversationPart
+ */
+function subagentAnchorPart({ childExternalId, spawnAnchor, agentRole, title, status = "running" }) {
+  const normalizedTitle = collapseWhitespace(title) || null;
+  return {
+    role: "assistant",
+    kind: "subagent",
+    text: anchorText(normalizedTitle, null),
+    language: null,
+    command: null,
+    cwd: null,
+    status,
+    exit_code: null,
+    source_execution_id: spawnAnchor ?? null,
+    metadata_json: JSON.stringify(compactObject({
+      child_external_id: childExternalId ?? null,
+      agent_role: agentRole ?? null,
+      title: normalizedTitle,
+      status,
+      spawn_anchor: spawnAnchor ?? null,
+    })),
+  };
+}
+
+function subagentStatusFromRegistryState(state) {
+  const normalized = String(state ?? "").toUpperCase();
+  if (!normalized) return "completed";
+  if (/ALIVE|RUNNING|ACTIVE|PENDING|IN_PROGRESS/.test(normalized)) return "running";
+  return "completed";
 }
 
 function readSubagentRegistry(conversationDir) {
@@ -1050,6 +1160,7 @@ function readSubagentRegistry(conversationDir) {
       conversationId,
       role: firstNonEmptyString(descriptor.role),
       typeName: firstNonEmptyString(descriptor.typeName),
+      state: firstNonEmptyString(raw?.state),
       spawnStepIndex: Number.isInteger(raw?.spawnStepIndex) ? raw.spawnStepIndex : null,
     });
   }
@@ -1096,194 +1207,209 @@ function firstRealUserInputFromSteps(steps) {
   return null;
 }
 
-function resolveSubagentModel(value, inheritedModel) {
-  const model = firstNonEmptyString(value);
-  if (!model || /^inherit$/i.test(model)) return inheritedModel ?? null;
-  return model;
-}
-
-function resolveDispatchForStep(stepIndex, dispatches) {
-  if (!Array.isArray(dispatches) || dispatches.length === 0) return null;
-  if (!Number.isInteger(stepIndex)) return dispatches.length === 1 ? dispatches[0] : null;
-  const exact = dispatches.find((dispatch) => dispatch.stepIndex === stepIndex);
+/**
+ * 把没有对应派发工具调用的注册表条目落到 `spawnStepIndex` 所属的父轮次。
+ * 找不到精确 step 时退回到数值不超过它的最近一步；再退则落在最后一个轮次。
+ */
+function resolveTurnForStep(stepIndex, stepIndexTurns, turns) {
+  if (!Number.isInteger(stepIndex)) return turns.at(-1) ?? null;
+  const exact = stepIndexTurns.get(stepIndex);
   if (exact) return exact;
-  let best = null;
-  let bestAnchor = -Infinity;
-  for (const dispatch of dispatches) {
-    const anchor = Number.isInteger(dispatch.stepIndex) ? dispatch.stepIndex : dispatch.plannerStepIndex;
-    if (!Number.isInteger(anchor) || anchor > stepIndex || anchor < bestAnchor) continue;
-    best = dispatch;
-    bestAnchor = anchor;
+  let bestIndex = -Infinity;
+  let bestTurn = null;
+  for (const [index, turn] of stepIndexTurns) {
+    if (index <= stepIndex && index > bestIndex) {
+      bestIndex = index;
+      bestTurn = turn;
+    }
   }
-  return best;
+  return bestTurn ?? turns.at(-1) ?? null;
 }
 
-function buildSubagentConversationContent({ conversationDir, transcriptPath, dispatchPrompt }) {
-  const steps = readTranscriptSteps(transcriptPath);
-  const entries = readSubagentRegistry(conversationDir);
-  const resolvedPrompt = firstNonEmptyString(dispatchPrompt) ?? firstRealUserInputFromSteps(steps);
-  if (!resolvedPrompt) {
-    emitWarning(
-      `Antigravity subagent ${path.basename(conversationDir)} has no task prompt; using placeholder text`,
-    );
+function summarizeChildSession(turns) {
+  let stepCount = 0;
+  let reportSummary = null;
+  let model = null;
+  for (const turn of turns) {
+    model ??= turn?.model ?? null;
+    for (const part of turn?.parts ?? []) {
+      if (part.kind === "command" || part.kind === "tool" || part.kind === "file_change") stepCount += 1;
+      if (part.role === "assistant" && (part.kind === "text" || part.kind === "code") && part.text?.trim()) {
+        reportSummary = part.text.trim();
+      }
+    }
   }
-  const userText = resolvedPrompt ?? SUBAGENT_PROMPT_FALLBACK;
-  let parts = [];
-  let dispatches = [];
-  if (steps.length > 0) {
-    const parsed = buildTurnsFromSteps(
-      [
-        {
-          source: "USER_EXPLICIT",
-          type: "USER_INPUT",
-          content: `<USER_REQUEST>${userText}</USER_REQUEST>`,
-          created_at: steps[0]?.created_at ?? null,
-        },
-        ...steps,
-      ],
-      { registryMode: entries.length > 0 },
-    );
-    parts = parsed.turns.flatMap((turn) => turn.parts);
-    dispatches = parsed.dispatches;
-  }
-  return {
-    userText,
-    parts,
-    dispatches,
-    entries,
-    startedAt: steps[0]?.created_at ?? null,
-    endedAt: steps.at(-1)?.created_at ?? null,
-  };
+  return { stepCount, model, reportSummary: summarizeReport(reportSummary) };
 }
 
-function takeMatchingSubagentItem(dispatch, usedItems, entry) {
-  if (!dispatch) return null;
-  const items = Array.isArray(dispatch.subagents) ? dispatch.subagents : [];
-  const used = usedItems.get(dispatch) ?? new Set();
-  usedItems.set(dispatch, used);
-  let index = entry.role
-    ? items.findIndex((item, candidate) => !used.has(candidate) && item.role === entry.role)
-    : -1;
-  if (index < 0 && entry.typeName) {
-    index = items.findIndex((item, candidate) => !used.has(candidate) && item.typeName === entry.typeName);
-  }
-  if (index < 0) index = items.findIndex((_, candidate) => !used.has(candidate));
-  if (index < 0) return null;
-  used.add(index);
-  return items[index];
+// 子代理目录名 → 父会话的反向索引，供"直接扫描 brain/<childId>/"时还原隐藏语义。
+const subagentRegistryIndexCache = new Map();
+
+function subagentRegistryIndex(brainDir) {
+  const key = path.resolve(brainDir);
+  const cached = subagentRegistryIndexCache.get(key);
+  if (cached) return cached;
+  const index = new Map();
+  try {
+    for (const entry of readdirSync(brainDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !isUuidDir(entry.name)) continue;
+      for (const registered of readSubagentRegistry(path.join(brainDir, entry.name))) {
+        if (index.has(registered.conversationId)) continue;
+        index.set(registered.conversationId, { parentId: entry.name, entry: registered });
+      }
+    }
+  } catch {}
+  subagentRegistryIndexCache.set(key, index);
+  return index;
+}
+
+function subagentLinkFor(conversationDir) {
+  if (!conversationDir) return null;
+  return subagentRegistryIndex(path.dirname(conversationDir)).get(path.basename(conversationDir)) ?? null;
 }
 
 /**
- * Turns the registry into one subagent turn per registered subagent, recursively.
- * Parent pointers come from the dispatching step index, so a subagent always hangs
- * off the turn that actually dispatched it.
+ * 解析一个会话目录，产出它自己以及名下所有子代理会话。
+ *
+ * - 可见会话：保留自然轮次，派发处只留锚点；
+ * - 子代理会话（`hidden`）：把全量委派 Prompt、工具链与最终汇报收进 `#T1`，
+ *   `execution_purpose` 记录 `parent_external_id` 等溯源字段；
+ * - 嵌套子代理由子会话自己解析产出，锚点写在各自的父轮次里。
+ *
+ * @param {object} options
+ * @returns {{session: object, children: object[]}|null}
  */
-function attachSubagentTurns({ conversationDir, registry, turns, dispatches }) {
-  const brainDir = path.dirname(conversationDir);
-  const visitedConversationIds = new Set([path.basename(conversationDir)]);
-  const childrenByTurnId = new Map();
-  const ordinalByTurnId = new Map();
-  const usedItems = new Map();
-
-  const expand = ({ entries, conversationDispatches, depth, ownerTurnId, ownerModel }) => {
-    const ownerDispatch = ownerTurnId
-      ? { parentTurnId: ownerTurnId, subagents: conversationDispatches.flatMap((dispatch) => dispatch.subagents ?? []) }
-      : null;
-    for (const entry of entries) {
-      const dispatch = ownerDispatch ?? resolveDispatchForStep(entry.spawnStepIndex, conversationDispatches);
-      const item = takeMatchingSubagentItem(dispatch, usedItems, entry);
-      const parentTurnId = ownerTurnId ?? dispatch?.parentTurnId ?? null;
-      if (!parentTurnId) {
-        emitWarning(`Antigravity subagent ${entry.conversationId} has no dispatching turn; skipped`);
-        continue;
-      }
-
-      const ordinal = (ordinalByTurnId.get(parentTurnId) ?? 0) + 1;
-      ordinalByTurnId.set(parentTurnId, ordinal);
-      const subagentTurn = {
-        external_id: `${parentTurnId}-subagent-${ordinal}-${entry.conversationId}`,
-        turn_index: 0,
-        user_text: item?.prompt ?? SUBAGENT_PROMPT_FALLBACK,
-        turn_kind: "subagent",
-        agent_role: entry.role ?? item?.role ?? undefined,
-        parent_turn_id: parentTurnId,
-        title: entry.typeName ?? item?.typeName ?? null,
-        started_at: null,
-        ended_at: null,
-        model: resolveSubagentModel(item?.model, ownerModel),
-        parts: [],
-      };
-      const siblings = childrenByTurnId.get(parentTurnId);
-      if (siblings) siblings.push(subagentTurn);
-      else childrenByTurnId.set(parentTurnId, [subagentTurn]);
-
-      const childDepth = depth + 1;
-      if (childDepth > MAX_SUBAGENT_DEPTH) {
-        emitWarning(
-          `Antigravity subagent ${entry.conversationId} exceeds the depth limit of ${MAX_SUBAGENT_DEPTH}; kept as a leaf turn`,
-        );
-        continue;
-      }
-      if (visitedConversationIds.has(entry.conversationId)) {
-        emitWarning(
-          `Antigravity subagent ${entry.conversationId} is already expanded (cycle); kept as a leaf turn`,
-        );
-        continue;
-      }
-      const childConversationDir = path.join(brainDir, entry.conversationId);
-      const childTranscriptPath = findTranscriptFile(childConversationDir);
-      if (!childTranscriptPath) {
-        emitWarning(
-          `Antigravity subagent ${entry.conversationId} has no child session record; kept the dispatch turn only`,
-        );
-        continue;
-      }
-
-      visitedConversationIds.add(entry.conversationId);
-      const content = buildSubagentConversationContent({
-        conversationDir: childConversationDir,
-        transcriptPath: childTranscriptPath,
-        dispatchPrompt: item?.prompt ?? null,
-      });
-      subagentTurn.user_text = content.userText;
-      subagentTurn.parts = content.parts;
-      subagentTurn.started_at = content.startedAt;
-      subagentTurn.ended_at = content.endedAt ?? content.startedAt;
-      subagentTurn.model ??= ownerModel ?? null;
-      expand({
-        entries: content.entries,
-        conversationDispatches: content.dispatches,
-        depth: childDepth,
-        ownerTurnId: subagentTurn.external_id,
-        ownerModel: subagentTurn.model,
-      });
+function buildSessionTree(options) {
+  const {
+    conversationDir,
+    externalId,
+    hidden = false,
+    parentLink = null,
+    visited = new Set(),
+    titleHint = null,
+    parentProjectPath = null,
+  } = options;
+  if (!conversationDir || !externalId) return null;
+  if (visited.has(externalId)) {
+    if (hidden) {
+      emitWarning(`Antigravity subagent ${externalId} is already expanded (cycle); skipped`);
     }
-  };
+    return null;
+  }
 
-  expand({ entries: registry, conversationDispatches: dispatches, depth: 0, ownerTurnId: null, ownerModel: null });
+  const transcriptPath = findTranscriptFile(conversationDir);
+  if (!transcriptPath) {
+    if (hidden) {
+      emitWarning(`Antigravity subagent ${externalId} has no child session record; kept the dispatch anchor only`);
+    }
+    return null;
+  }
+  visited.add(externalId);
 
-  const ordered = [];
-  const appendWithChildren = (turn) => {
-    ordered.push(turn);
-    for (const child of childrenByTurnId.get(turn.external_id) ?? []) appendWithChildren(child);
-  };
-  for (const turn of turns) appendWithChildren(turn);
-  return ordered;
-}
+  const registryEntries = readSubagentRegistry(conversationDir);
+  const rawSteps = readTranscriptSteps(transcriptPath);
+  let delegationPrompt = null;
+  let steps = rawSteps;
+  if (hidden) {
+    delegationPrompt = firstNonEmptyString(parentLink?.prompt) ?? firstRealUserInputFromSteps(rawSteps);
+    if (!delegationPrompt) {
+      emitWarning(`Antigravity subagent ${externalId} has no task prompt; using placeholder text`);
+      delegationPrompt = SUBAGENT_PROMPT_FALLBACK;
+    }
+    // 子代理自己落盘的 USER_INPUT 多为注入的系统上下文，统一由委派 Prompt 接管。
+    steps = [
+      {
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        content: `<USER_REQUEST>${delegationPrompt}</USER_REQUEST>`,
+        created_at: rawSteps[0]?.created_at ?? null,
+      },
+      ...rawSteps.filter((step) => !(step?.type === "USER_INPUT" && step?.source === "USER_EXPLICIT")),
+    ];
+  }
 
-function buildSessionTurnsFromSteps(steps, conversationDir) {
-  const registry = readSubagentRegistry(conversationDir);
-  const parsed = buildTurnsFromSteps(steps, { registryMode: registry.length > 0 });
-  if (registry.length === 0 || parsed.turns.length === 0) return parsed;
-  return {
-    ...parsed,
-    turns: attachSubagentTurns({
-      conversationDir,
-      registry,
-      turns: parsed.turns,
-      dispatches: parsed.dispatches,
-    }),
+  const parsed = buildTurnsFromSteps(steps, { registryEntries });
+  let turns = displayTurns(parsed.turns);
+  if (!turns.length) return null;
+
+  if (hidden) {
+    // 子会话 #T1 承载全量委派 Prompt、工具链与最终汇报。
+    const mergedParts = turns.flatMap((turn) => turn.parts ?? []);
+    const merged = {
+      external_id: `${externalId}-turn-0`,
+      turn_index: 0,
+      user_text: delegationPrompt,
+      title: null,
+      started_at: turns[0]?.started_at ?? null,
+      ended_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
+      model: turns.map((turn) => turn.model).find(Boolean) ?? null,
+      parts: mergedParts,
+    };
+    for (const anchor of parsed.anchors) anchor.turn = merged;
+    turns = [merged];
+  } else {
+    if (isSyntheticWorkOrderText(turns[0]?.user_text)) return null;
+    if (isInternalExecutionPath(parsed.projectPath)) return null;
+  }
+
+  const inferredProjectPath = parsed.projectPath ?? inferProjectPath(turns);
+  const projectPath = resolveProjectPath(inferredProjectPath, externalId) ?? parentProjectPath ?? null;
+  const title = hidden
+    ? (titleHint || getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text))
+    : (getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text));
+
+  const children = [];
+  for (const anchor of parsed.anchors) {
+    const childId = anchor.childId;
+    if (!childId) continue;
+    const childConversationDir = path.join(path.dirname(conversationDir), childId);
+    const childTree = buildSessionTree({
+      conversationDir: childConversationDir,
+      externalId: childId,
+      hidden: true,
+      parentLink: {
+        parentExternalId: externalId,
+        parentTurnIndex: anchor.turn?.turn_index ?? 0,
+        agentRole: anchor.agentRole,
+        spawnAnchor: anchor.spawnAnchor,
+        prompt: anchor.prompt,
+      },
+      visited,
+      titleHint: anchor.titleHint,
+      parentProjectPath: projectPath,
+    });
+    if (!childTree) continue;
+    const summary = summarizeChildSession(childTree.session.turns);
+    updateSubagentAnchor(anchor.part, {
+      status: "completed",
+      model: summary.model,
+      step_count: summary.stepCount,
+      report_summary: summary.reportSummary,
+    });
+    children.push(childTree.session, ...childTree.children);
+  }
+
+  const session = {
+    external_id: externalId,
+    title,
+    project_path: projectPath,
+    started_at: turns[0]?.started_at ?? null,
+    updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
+    source_locator: transcriptPath,
+    source_fingerprint: sessionVersionToken(transcriptPath, externalId),
+    user_visible: !hidden,
+    execution_origin: hidden ? "subagent" : detectClientFlavor(transcriptPath),
+    execution_purpose: hidden
+      ? JSON.stringify(compactObject({
+        parent_external_id: parentLink?.parentExternalId ?? null,
+        parent_turn_index: Number.isInteger(parentLink?.parentTurnIndex) ? parentLink.parentTurnIndex : null,
+        agent_role: parentLink?.agentRole ?? null,
+        spawn_anchor: parentLink?.spawnAnchor ?? null,
+      }))
+      : null,
+    turns,
   };
+  return { session, children };
 }
 
 function conversationDirForTranscript(transcriptPath) {
@@ -1305,20 +1431,61 @@ const IGNORED_STEP_TYPES = new Set([
 ]);
 
 function buildTurnsFromSteps(steps, options = {}) {
-  const registryMode = Boolean(options.registryMode);
+  const registryEntries = Array.isArray(options.registryEntries) ? options.registryEntries.slice() : [];
   const turns = [];
-  const dispatches = [];
+  const anchors = [];
+  const stepIndexTurns = new Map();
   let current = null;
-  let activeSubagent = null;
-  let anchorTurnId = null;
-  let subagentCount = 0;
-  let dispatchCount = 0;
-  let continuationCount = 0;
   let projectPath = null;
   let currentModel = null;
+  let dispatchOrdinal = 0;
   const pendingFileOperations = [];
   const pendingToolCalls = [];
   const knownFileContents = new Map();
+
+  const takeRegistryEntry = (item) => {
+    if (registryEntries.length === 0) return null;
+    let index = item?.role ? registryEntries.findIndex((entry) => entry.role === item.role) : -1;
+    if (index < 0 && item?.typeName) {
+      index = registryEntries.findIndex((entry) => entry.typeName === item.typeName);
+    }
+    if (index < 0) index = 0;
+    return registryEntries.splice(index, 1)[0] ?? null;
+  };
+
+  const appendDispatchAnchor = (item) => {
+    if (!current) return null;
+    const entry = takeRegistryEntry(item);
+    dispatchOrdinal += 1;
+    const spawnAnchor = entry?.conversationId
+      ?? firstNonEmptyString(item?.id)
+      ?? `${current.external_id}:dispatch:${dispatchOrdinal}`;
+    const childExternalId = entry?.conversationId ?? spawnAnchor;
+    const agentRole = firstNonEmptyString(entry?.role, item?.role, entry?.typeName, item?.typeName);
+    const prompt = firstNonEmptyString(item?.prompt);
+    const title = collapseWhitespace(sanitizeSessionShortTitle(prompt, 80))
+      || firstNonEmptyString(entry?.typeName, entry?.role, item?.typeName, item?.role)
+      || "Subagent task";
+    const part = subagentAnchorPart({
+      childExternalId,
+      spawnAnchor,
+      agentRole,
+      title,
+      status: entry ? subagentStatusFromRegistryState(entry.state) : "completed",
+    });
+    current.parts.push(part);
+    anchors.push({
+      part,
+      turn: current,
+      entry,
+      childId: entry?.conversationId ?? null,
+      agentRole,
+      spawnAnchor,
+      prompt,
+      titleHint: firstNonEmptyString(entry?.typeName, entry?.role, item?.typeName, item?.role),
+    });
+    return part;
+  };
 
   for (const step of steps) {
     if (!step) continue;
@@ -1331,34 +1498,28 @@ function buildTurnsFromSteps(steps, options = {}) {
       if (match) {
         currentModel = match[1].replace(/\.+$/, "").trim();
         if (current && !current.model) current.model = currentModel;
-        if (activeSubagent && !activeSubagent.model) activeSubagent.model = currentModel;
       }
     }
     if (step.model) {
       currentModel = String(step.model);
       if (current && !current.model) current.model = currentModel;
-      if (activeSubagent && !activeSubagent.model) activeSubagent.model = currentModel;
     }
+
+    // 记录 step → 轮次映射，供注册表里没有对应派发调用的条目的锚点定位。
+    if (Number.isInteger(step.step_index) && current) stepIndexTurns.set(step.step_index, current);
 
     // Skip system-only noise
     if (source === "SYSTEM" && IGNORED_STEP_TYPES.has(type)) continue;
 
-    // User input → new turn boundary
+    // User input → new turn boundary（一次真实人类提问严格 = 1 个 Turn）
     if (type === "USER_INPUT" && source === "USER_EXPLICIT") {
       const userText = extractUserRequestText(step.content);
       if (!userText) continue;
-      if (activeSubagent) {
-        turns.push(activeSubagent);
-        activeSubagent = null;
-      }
       if (current) turns.push(current);
       pendingFileOperations.length = 0;
       pendingToolCalls.length = 0;
-      anchorTurnId = `turn-${turns.length}`;
-      subagentCount = 0;
-      continuationCount = 0;
       current = {
-        external_id: anchorTurnId,
+        external_id: `turn-${turns.length}`,
         turn_index: turns.length,
         user_text: userText,
         title: null,
@@ -1367,139 +1528,54 @@ function buildTurnsFromSteps(steps, options = {}) {
         model: currentModel,
         parts: [],
       };
+      if (Number.isInteger(step.step_index)) stepIndexTurns.set(step.step_index, current);
       continue;
     }
 
-    if (!current && !activeSubagent && turns.length === 0) continue;
+    if (!current) continue;
 
     // PLANNER_RESPONSE → assistant text + tool calls
     if (type === "PLANNER_RESPONSE" && source === "MODEL") {
       const responseText = String(step.content ?? "").trim();
-      const subagentCalls = Array.isArray(step.tool_calls) ? step.tool_calls.filter(isSubagentCall) : [];
+      const toolCalls = Array.isArray(step.tool_calls) ? step.tool_calls : [];
+      const subagentCalls = toolCalls.filter(isSubagentCall);
+      const otherCalls = toolCalls.filter((call) => !isSubagentCall(call));
+
+      if (responseText) {
+        const part = textPart("assistant", responseText);
+        if (part) current.parts.push(part);
+      }
+
+      if (otherCalls.length > 0) {
+        pendingFileOperations.push(
+          ...otherCalls.map((call) => fileOperationFromToolCall(call, knownFileContents)).filter(Boolean),
+        );
+        for (const call of otherCalls) {
+          if (!call?.name) continue;
+          call.execution_id = toolCallExecutionId(call, current.external_id, current.parts.length + 1);
+          pendingToolCalls.push({ executionId: call.execution_id, name: call.name, args: call.args });
+        }
+        current.parts.push(...toolCallParts(otherCalls, current.external_id));
+        projectPath ??= inferProjectPathFromToolCalls(otherCalls);
+      }
 
       if (subagentCalls.length > 0) {
-        if (current) {
-          if (responseText) {
-            const part = textPart("assistant", responseText);
-            if (part) current.parts.push(part);
-          }
-          current.ended_at = timestamp;
-          turns.push(current);
-          anchorTurnId = current.external_id;
-          current = null;
-        } else if (activeSubagent) {
-          turns.push(activeSubagent);
-          activeSubagent = null;
-        }
-
-        const parentAnchorTurnId = anchorTurnId || (turns.at(-1)?.external_id ?? turns[0]?.external_id ?? "turn-0");
-
-        if (registryMode) {
-          // The registry owns subagent turn creation; only remember which step dispatched what.
-          const dispatch = {
-            parentTurnId: parentAnchorTurnId,
-            plannerStepIndex: Number.isInteger(step.step_index) ? step.step_index : null,
-            stepIndex: null,
-            subagents: subagentCalls.flatMap((call) => subagentItemsFromCall(call)),
-          };
-          dispatches.push(dispatch);
-          for (const call of subagentCalls) {
-            pendingToolCalls.push({
-              executionId: toolCallExecutionId(call, parentAnchorTurnId, ++dispatchCount),
-              name: call.name,
-              args: call.args,
-              isSubagentDispatch: true,
-              dispatch,
-            });
-          }
-          continue;
-        }
-
+        // 派发子代理：只插轻量锚点，绝不切分父轮次。
+        // 先把回执 step 也登记进 pendingToolCalls，避免回执被当成普通工具结果。
         for (const call of subagentCalls) {
-          const execId = toolCallExecutionId(call, parentAnchorTurnId, ++dispatchCount);
-          call.execution_id = execId;
-          pendingToolCalls.push({ executionId: execId, name: call.name, args: call.args, isSubagentDispatch: true });
-        }
-
-        const subagentItems = subagentCalls.flatMap((call) => subagentItemsFromCall(call));
-        for (let sIdx = 0; sIdx < subagentItems.length; sIdx++) {
-          const item = subagentItems[sIdx];
-          const prompt = item.prompt ?? subagentPromptPlaceholder(item);
-          const subTurn = {
-            external_id: `${parentAnchorTurnId}-subagent-${++subagentCount}`,
-            turn_index: turns.length,
-            user_text: prompt,
-            turn_kind: "subagent",
-            agent_role: item.role ?? undefined,
-            parent_turn_id: parentAnchorTurnId,
-            title: item.typeName ?? null,
-            started_at: timestamp,
-            ended_at: sIdx < subagentItems.length - 1 ? timestamp : null,
-            model: resolveSubagentModel(item.model, currentModel),
-            parts: [],
-          };
-
-          if (sIdx < subagentItems.length - 1) {
-            turns.push(subTurn);
-          } else {
-            activeSubagent = subTurn;
-          }
-        }
-
-        const otherCalls = step.tool_calls.filter((c) => !isSubagentCall(c));
-        if (otherCalls.length > 0 && activeSubagent) {
-          pendingFileOperations.push(
-            ...otherCalls.map((call) => fileOperationFromToolCall(call, knownFileContents)).filter(Boolean),
-          );
-          for (const call of otherCalls) {
-            if (!call?.name) continue;
-            activeSubagent.toolCallCount = (activeSubagent.toolCallCount || 0) + 1;
-            const cExecId = toolCallExecutionId(call, activeSubagent.external_id, activeSubagent.toolCallCount);
-            call.execution_id = cExecId;
-            pendingToolCalls.push({ executionId: cExecId, name: call.name, args: call.args });
-          }
-          activeSubagent.parts.push(...toolCallParts(otherCalls, activeSubagent.external_id));
-          projectPath ??= inferProjectPathFromToolCalls(otherCalls);
-        }
-        continue;
-      }
-
-      const parentAnchorTurnId = anchorTurnId || (turns[0]?.external_id ?? "turn-0");
-      if (!current && !activeSubagent) {
-        current = {
-          external_id: `${parentAnchorTurnId}-cont-${++continuationCount}`,
-          turn_index: turns.length,
-          user_text: "Continue following subagent execution",
-          turn_kind: "continuation",
-          parent_turn_id: parentAnchorTurnId,
-          title: null,
-          started_at: timestamp,
-          ended_at: null,
-          model: currentModel,
-          parts: [],
-        };
-      }
-
-      const targetTurn = activeSubagent || current;
-      if (responseText && targetTurn) {
-        const part = textPart("assistant", responseText);
-        if (part) targetTurn.parts.push(part);
-      }
-      if (Array.isArray(step.tool_calls) && step.tool_calls.length > 0 && targetTurn) {
-        pendingFileOperations.push(
-          ...step.tool_calls.map((call) => fileOperationFromToolCall(call, knownFileContents)).filter(Boolean),
-        );
-        for (const call of step.tool_calls) {
           if (!call?.name) continue;
-          targetTurn.toolCallCount = (targetTurn.toolCallCount || 0) + 1;
-          const execId = toolCallExecutionId(call, targetTurn.external_id, targetTurn.toolCallCount);
-          call.execution_id = execId;
-          pendingToolCalls.push({ executionId: execId, name: call.name, args: call.args });
+          const executionId = toolCallExecutionId(call, current.external_id, current.parts.length + 1);
+          call.execution_id = executionId;
+          pendingToolCalls.push({ executionId, name: call.name, args: call.args, isSubagentDispatch: true });
         }
-        targetTurn.parts.push(...toolCallParts(step.tool_calls, targetTurn.external_id));
-        projectPath ??= inferProjectPathFromToolCalls(step.tool_calls);
+        const items = subagentCalls.flatMap((call) => subagentItemsFromCall(call));
+        if (items.length === 0) {
+          items.push({ role: null, typeName: subagentCalls[0]?.name ?? null, prompt: null, model: null });
+        }
+        for (const item of items) appendDispatchAnchor(item);
       }
-      if (targetTurn) targetTurn.ended_at = timestamp;
+
+      current.ended_at = timestamp;
       continue;
     }
 
@@ -1528,21 +1604,9 @@ function buildTurnsFromSteps(steps, options = {}) {
         const matchedCall = matchedIndex >= 0 ? pendingToolCalls.splice(matchedIndex, 1)[0] : null;
         const sourceExecutionId = matchedCall?.executionId ?? null;
 
-        if (matchedCall?.isSubagentDispatch || (matchedCall && ["invoke_subagent", "call_subagent"].includes(matchedCall.name))) {
-          // The dispatch acknowledgement step is the anchor the host registry points at (`spawnStepIndex`).
-          if (matchedCall?.dispatch && Number.isInteger(step.step_index)) {
-            matchedCall.dispatch.stepIndex = step.step_index;
-          }
-          if (activeSubagent) {
-            const reportText = typeof step.content === "string" ? step.content.trim() : JSON.stringify(step.content);
-            if (reportText) {
-              const part = textPart("assistant", reportText);
-              if (part) activeSubagent.parts.push(part);
-            }
-            activeSubagent.ended_at = timestamp;
-            turns.push(activeSubagent);
-            activeSubagent = null;
-          }
+        if (matchedCall?.isSubagentDispatch || (matchedCall && isSubagentCall(matchedCall))) {
+          // 派发回执只是"子代理已创建"的确认，锚点已经在派发 step 落好，这里不再产出零件。
+          current.ended_at = timestamp;
           continue;
         }
 
@@ -1551,18 +1615,48 @@ function buildTurnsFromSteps(steps, options = {}) {
           ? (matchPendingFileOperation(pendingFileOperations, step.content) || operationFromMatchedCall(matchedCall, knownFileContents))
           : null;
 
-        const targetTurn = activeSubagent || current;
-        if (targetTurn) {
-          targetTurn.parts.push(...toolResultPart(step, fileOperation, sourceExecutionId, matchedCall));
-          targetTurn.ended_at = timestamp;
-        }
+        current.parts.push(...toolResultPart(step, fileOperation, sourceExecutionId, matchedCall));
+        current.ended_at = timestamp;
       }
     }
   }
-  if (activeSubagent) turns.push(activeSubagent);
   if (current) turns.push(current);
+
+  // 注册表里存在、但父 transcript 没有对应派发调用的子代理：在 spawnStepIndex
+  // 所属的轮次补一个锚点，保证"派发必有锚点"。
+  for (const entry of registryEntries) {
+    const turn = resolveTurnForStep(entry.spawnStepIndex, stepIndexTurns, turns);
+    if (!turn) {
+      emitWarning(`Antigravity subagent ${entry.conversationId} has no dispatching turn; skipped`);
+      continue;
+    }
+    const agentRole = firstNonEmptyString(entry.role, entry.typeName);
+    const title = firstNonEmptyString(entry.typeName, entry.role) ?? "Subagent task";
+    const part = subagentAnchorPart({
+      childExternalId: entry.conversationId,
+      spawnAnchor: entry.conversationId,
+      agentRole,
+      title,
+      status: subagentStatusFromRegistryState(entry.state),
+    });
+    turn.parts.push(part);
+    anchors.push({
+      part,
+      turn,
+      entry,
+      childId: entry.conversationId,
+      agentRole,
+      spawnAnchor: entry.conversationId,
+      prompt: null,
+      titleHint: firstNonEmptyString(entry.typeName, entry.role),
+    });
+  }
+
   for (let i = 0; i < turns.length; i++) {
     turns[i].turn_index = i;
+  }
+  if (!projectPath) {
+    projectPath = inferProjectPathFromTranscriptSteps(steps);
   }
   if (projectPath) {
     for (const turn of turns) {
@@ -1573,7 +1667,7 @@ function buildTurnsFromSteps(steps, options = {}) {
       }
     }
   }
-  return { turns, projectPath, dispatches };
+  return { turns, projectPath, anchors };
 }
 
 // 内部运行时目录使用白名单片段，而不是整个 `~/.assetiweave/` 前缀：
@@ -1655,21 +1749,194 @@ function isInternalSessionMeta(metaPath) {
   return false;
 }
 
-function isSyntheticWorkOrderText(text) {
-  if (!text || typeof text !== "string") return false;
-  const trimmed = text.trim();
-  if (
-    trimmed.startsWith("{") &&
-    (trimmed.includes('"work_order_id"') ||
-      trimmed.includes('"contract_version"') ||
-      trimmed.includes('"output_schema"') ||
-      trimmed.includes("memory.contract"))
-  ) {
-    return true;
+// 仅用于"是否子代理"的轻量判定：子代理元数据里带 is_subagent / parent_* 等标记，
+// 与内部执行目录判定区分开，保证子会话仍然出现在 list_sessions 描述符中。
+function isSubagentSessionMeta(metaPath) {
+  if (!metaPath || !existsSync(metaPath)) return false;
+  try {
+    const raw = readFileSync(metaPath, "utf8");
+    if (/"(?:is_subagent|subagent)"\s*:\s*true/.test(raw)) return true;
+    if (/"(?:parent_session_id|parent_thread_id|parent_external_id)"/.test(raw)) return true;
+    const meta = JSON.parse(raw);
+    return Boolean(
+      meta.is_subagent ||
+      meta.subagent ||
+      meta.parent_session_id ||
+      meta.parent_id ||
+      meta.parent_thread_id ||
+      meta.execution_origin === "subagent" ||
+      meta.role === "subagent"
+    );
+  } catch {
+    return false;
   }
-  if (trimmed.includes("Consolidate the successful Session Memory")) return true;
-  if (trimmed.includes("ASSETIWEAVE_ACP_OK")) return true;
-  return false;
+}
+
+// ---------------------------------------------------------------------------
+// 合成工单与非用户会话规约鉴别器 (Specification & Strategy Registry Pattern)
+// ---------------------------------------------------------------------------
+
+class SyntheticWorkOrderClassifier {
+  static JSON_ENVELOPE_KEYS = [
+    "work_order_id",
+    "contract_version",
+    "output_schema",
+    "memory.contract",
+  ];
+
+  static SYNTHETIC_RULES = [
+    {
+      id: "memory_consolidation_prompt",
+      category: "internal_directive",
+      pattern: /Consolidate the successful Session Memory/i,
+      reason: "synthetic_memory_consolidation",
+    },
+    {
+      id: "acp_control_handshake",
+      category: "protocol_signal",
+      pattern: /\bASSETIWEAVE_ACP_OK\b/,
+      reason: "acp_handshake_signal",
+    },
+    {
+      id: "cognitive_memory_agent",
+      category: "internal_agent",
+      pattern: /You are an expert cognitive memory extraction agent/i,
+      reason: "internal_memory_agent",
+    },
+    {
+      id: "prompt_editor_agent",
+      category: "internal_agent",
+      pattern: /^You are an expert prompt editor\b/i,
+      reason: "internal_prompt_editor",
+    },
+    {
+      id: "translation_agent",
+      category: "internal_agent",
+      pattern: /^You are translating a technical/i,
+      reason: "internal_translation_agent",
+    },
+    {
+      id: "probe_ok_reply",
+      category: "automated_probe",
+      pattern: /^Reply with OK only\b/i,
+      reason: "probe_ok_reply",
+    },
+    {
+      id: "probe_compliance_test",
+      category: "automated_probe",
+      pattern: /^Simple Compliance Test\b/i,
+      reason: "probe_compliance_test",
+    },
+    {
+      id: "probe_say_hello",
+      category: "automated_probe",
+      pattern: /^say hello$/i,
+      reason: "probe_say_hello",
+    },
+    {
+      id: "probe_placeholder_tag",
+      category: "automated_probe",
+      pattern: /<user_text>/i,
+      reason: "probe_placeholder",
+    },
+  ];
+
+  constructor(customRules = [], customAllowlist = []) {
+    this.jsonKeys = new Set(SyntheticWorkOrderClassifier.JSON_ENVELOPE_KEYS);
+    this.rules = [...SyntheticWorkOrderClassifier.SYNTHETIC_RULES, ...customRules];
+    this.allowlist = [...customAllowlist];
+  }
+
+  registerRule(rule) {
+    this.rules.push(rule);
+    return this;
+  }
+
+  registerAllowlist(rule) {
+    this.allowlist.push(rule);
+    return this;
+  }
+
+  evaluate(text) {
+    if (!text || typeof text !== "string") {
+      return { isSynthetic: false, reason: null, category: null };
+    }
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return { isSynthetic: false, reason: null, category: null };
+    }
+
+    // 1. 白名单放行规约 (Allowlist Specification: 最高优先级放行)
+    for (const allow of this.allowlist) {
+      if (typeof allow === "function" && allow(trimmed)) {
+        return { isSynthetic: false, isAllowed: true, reason: null, category: null };
+      }
+      if (allow instanceof RegExp && allow.test(trimmed)) {
+        return { isSynthetic: false, isAllowed: true, reason: null, category: null };
+      }
+    }
+
+    // 2. 结构化 JSON 工单契约规约 (JSON Envelope Specification)
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      for (const key of this.jsonKeys) {
+        if (trimmed.includes(`"${key}"`) || trimmed.includes(`'${key}'`)) {
+          return {
+            isSynthetic: true,
+            category: "json_work_order",
+            reason: `work_order_key:${key}`,
+          };
+        }
+      }
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === "object") {
+          for (const key of this.jsonKeys) {
+            if (key in parsed) {
+              return {
+                isSynthetic: true,
+                category: "json_work_order",
+                reason: `work_order_json_field:${key}`,
+              };
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 3. 声明式规则注册表匹配 (Declarative Rule Registry Matchers)
+    for (const rule of this.rules) {
+      let matched = false;
+      if (typeof rule.pattern === "function") {
+        matched = rule.pattern(trimmed);
+      } else if (rule.pattern instanceof RegExp) {
+        matched = rule.pattern.test(trimmed);
+      }
+      if (matched) {
+        return {
+          isSynthetic: true,
+          category: rule.category,
+          reason: rule.reason || rule.id,
+          ruleId: rule.id,
+        };
+      }
+    }
+
+    return { isSynthetic: false, reason: null, category: null };
+  }
+
+  isSynthetic(text) {
+    return this.evaluate(text).isSynthetic;
+  }
+}
+
+const defaultSyntheticClassifier = new SyntheticWorkOrderClassifier();
+
+function classifySyntheticWorkOrder(text) {
+  return defaultSyntheticClassifier.evaluate(text);
+}
+
+function isSyntheticWorkOrderText(text) {
+  return defaultSyntheticClassifier.isSynthetic(text);
 }
 
 function hasValidConversationSteps(dbPath) {
@@ -1704,28 +1971,6 @@ function hasValidConversationSteps(dbPath) {
       return false;
     }
   }
-}
-
-function parseTranscript(text, conversationDir = null) {
-  const steps = [];
-  for (const line of text.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    try {
-      steps.push(JSON.parse(line));
-    } catch {
-      continue;
-    }
-  }
-  const result = conversationDir
-    ? buildSessionTurnsFromSteps(steps, conversationDir)
-    : buildTurnsFromSteps(steps);
-  if (result.turns.length > 0 && isSyntheticWorkOrderText(result.turns[0]?.user_text)) {
-    return { turns: [], projectPath: null };
-  }
-  if (isInternalExecutionPath(result.projectPath)) {
-    return { turns: [], projectPath: null };
-  }
-  return result;
 }
 
 function decodeProto(buf) {
@@ -2289,33 +2534,82 @@ function fileUriToProjectPath(uri) {
   }
 }
 
+function toPortableProjectPath(p) {
+  if (!p || typeof p !== "string") return null;
+  const trimmed = p.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("~/") || trimmed.startsWith("@")) return trimmed;
+  const home = homedir();
+  if (trimmed === home) return "~";
+  const homePrefix = home.endsWith("/") || home.endsWith("\\") ? home : home + path.sep;
+  if (trimmed.startsWith(homePrefix)) {
+    const rel = trimmed.slice(homePrefix.length).replace(/\\/g, "/");
+    return `~/${rel}`;
+  }
+  return trimmed.replace(/\\/g, "/");
+}
+
 // 会话的 projectPath 优先级：工具调用推断的 git 根 → 摘要库 workspace_uris → 原始推断值。
-// 关键点是不要用应用私有数据目录冒充项目路径。
+// 关键点是不要用应用私有数据目录冒充项目路径，并强制折叠为便携锚点 (~/...)。
 function resolveProjectPath(inferred, externalId, startLocation = null) {
-  if (inferred && !isAppDataPath(inferred) && !isInternalExecutionPath(inferred)) return inferred;
-  const fallback = getSummaryWorkspacePath(externalId, startLocation);
-  return fallback || inferred || null;
+  let resolved = null;
+  if (inferred && !isAppDataPath(inferred) && !isInternalExecutionPath(inferred)) {
+    resolved = inferred;
+  } else {
+    const fallback = getSummaryWorkspacePath(externalId, startLocation);
+    resolved = fallback || inferred || null;
+  }
+  return toPortableProjectPath(resolved);
 }
 
 // 单条会话解析被丢弃时记录原因，供 read_session 显式回传 `session_skipped`。
 // 只有显式标注的跳过才会被上层当作「结构性跳过」写进增量水位；
 // 没有信号的零产出会被上层当成解析失败并重试。
 let lastParseSkipReason = null;
-function skipParsedSession(reason) {
+function skipParsedSessions(reason) {
   lastParseSkipReason = reason;
-  return null;
+  return [];
 }
 
-function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
-  if (!targetPath || !existsSync(targetPath)) return skipParsedSession("missing_source");
+/** 把一棵会话树（父会话 + 全部子代理会话）投影成可输出的会话数组。 */
+function materializeSessionTree(tree) {
+  if (!tree) return [];
+  return [tree.session, ...tree.children].map((session) =>
+    applyTextBudgets(finalizeStructuredContentCards(session)),
+  );
+}
+
+/** 解析一个会话目录；若它本身是已登记的子代理目录，则还原为隐藏子会话。 */
+function buildSessionsForConversationDir(conversationDir, externalId) {
+  const link = subagentLinkFor(conversationDir);
+  const tree = buildSessionTree({
+    conversationDir,
+    externalId,
+    hidden: Boolean(link),
+    parentLink: link
+      ? {
+        parentExternalId: link.parentId,
+        parentTurnIndex: null,
+        agentRole: link.entry.role ?? link.entry.typeName,
+        spawnAnchor: link.entry.conversationId,
+        prompt: null,
+      }
+      : null,
+  });
+  if (!tree) return skipParsedSessions("no_turns");
+  return materializeSessionTree(tree);
+}
+
+function parseSessionsFromTarget(targetPath, externalIdHint = null) {
+  if (!targetPath || !existsSync(targetPath)) return skipParsedSessions("missing_source");
   const flavor = detectClientFlavor(targetPath);
   try {
     const stat = statSync(targetPath);
     if (stat.isFile()) {
       if (targetPath.endsWith(".db")) {
         const metaP = targetPath.replace(/\.db$/, ".meta");
-        if (isInternalSessionMeta(metaP)) return skipParsedSession("internal_session_meta");
-        if (!hasValidConversationSteps(targetPath)) return skipParsedSession("no_valid_steps");
+        if (isInternalSessionMeta(metaP)) return skipParsedSessions("internal_session_meta");
+        if (!hasValidConversationSteps(targetPath)) return skipParsedSessions("no_valid_steps");
 
         const externalId = externalIdHint || path.basename(targetPath, ".db");
         emitProgress({
@@ -2327,11 +2621,11 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
         });
         const parsed = parseSqliteDb(targetPath);
         const turns = displayTurns(parsed.turns);
-        if (!turns.length) return skipParsedSession("no_turns");
-        if (isInternalExecutionPath(parsed.projectPath)) return skipParsedSession("internal_execution");
-        if (isSyntheticWorkOrderText(turns[0]?.user_text)) return skipParsedSession("synthetic_work_order");
+        if (!turns.length) return skipParsedSessions("no_turns");
+        if (isInternalExecutionPath(parsed.projectPath)) return skipParsedSessions("internal_execution");
+        if (isSyntheticWorkOrderText(turns[0]?.user_text)) return skipParsedSessions("synthetic_work_order");
         const title = getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text);
-        return applyTextBudgets(finalizeStructuredContentCards({
+        return [applyTextBudgets(finalizeStructuredContentCards({
           external_id: externalId,
           title,
           project_path: resolveProjectPath(parsed.projectPath ?? inferProjectPath(turns), externalId),
@@ -2341,7 +2635,7 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
           source_fingerprint: sessionVersionToken(targetPath, externalId),
           execution_origin: flavor,
           turns,
-        }));
+        }))];
       }
 
       // Pointing to a transcript file directly (e.g. transcript.jsonl or transcript_full.jsonl)
@@ -2352,25 +2646,9 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
         current: 1,
         total: 1,
       });
-      const text = readFileSync(targetPath, "utf8");
-      const parsed = parseTranscript(text, conversationDirForTranscript(targetPath));
-      const turns = displayTurns(parsed.turns);
-      if (!turns.length) return skipParsedSession("no_turns");
-      if (isInternalExecutionPath(parsed.projectPath)) return skipParsedSession("internal_execution");
-      if (isSyntheticWorkOrderText(turns[0]?.user_text)) return skipParsedSession("synthetic_work_order");
       const externalId = externalIdHint || path.basename(path.resolve(targetPath, "../../..")) || "antigravity-session";
-      const title = getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text);
-      return applyTextBudgets(finalizeStructuredContentCards({
-        external_id: externalId,
-        title,
-        project_path: resolveProjectPath(parsed.projectPath ?? inferProjectPath(turns), externalId),
-        started_at: turns[0]?.started_at ?? null,
-        updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
-        source_locator: targetPath,
-        source_fingerprint: sessionVersionToken(targetPath, externalId),
-        execution_origin: flavor,
-        turns,
-      }));
+      const sessions = buildSessionsForConversationDir(conversationDirForTranscript(targetPath), externalId);
+      return sessions.length ? sessions : skipParsedSessions("no_turns");
     }
 
     // Check if targetPath is a conversation directory
@@ -2384,29 +2662,13 @@ function parseSingleSessionFromTarget(targetPath, externalIdHint = null) {
         current: 1,
         total: 1,
       });
-      const text = readFileSync(transcriptInDir, "utf8");
-      const parsed = parseTranscript(text, targetPath);
-      const turns = displayTurns(parsed.turns);
-      if (!turns.length) return skipParsedSession("no_turns");
-      if (isInternalExecutionPath(parsed.projectPath)) return skipParsedSession("internal_execution");
-      if (isSyntheticWorkOrderText(turns[0]?.user_text)) return skipParsedSession("synthetic_work_order");
-      const title = getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text);
-      return applyTextBudgets(finalizeStructuredContentCards({
-        external_id: externalId,
-        title,
-        project_path: resolveProjectPath(parsed.projectPath ?? inferProjectPath(turns), externalId),
-        started_at: turns[0]?.started_at ?? null,
-        updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
-        source_locator: transcriptInDir,
-        source_fingerprint: sessionVersionToken(transcriptInDir, externalId),
-        execution_origin: flavor,
-        turns,
-      }));
+      const sessions = buildSessionsForConversationDir(targetPath, externalId);
+      return sessions.length ? sessions : skipParsedSessions("no_turns");
     }
   } catch {
-    return skipParsedSession("parse_error");
+    return skipParsedSessions("parse_error");
   }
-  return skipParsedSession("not_found");
+  return skipParsedSessions("not_found");
 }
 
 function listSessions() {
@@ -2418,6 +2680,8 @@ function listSessions() {
 
   for (const root of roots) {
     const flavor = detectClientFlavor(root);
+    // 纯内部 ACP 执行环境（如后台认知记忆提炼）不作为普通会话源展示
+    if (flavor === "antigravity-acp") continue;
     const sumDbPath = path.join(root, "conversation_summaries.db");
 
     // 1. 尝试从 conversation_summaries.db 读取摘要
@@ -2493,7 +2757,10 @@ function listSessions() {
           if (seenExternalIds.has(id)) continue;
           const metaJson = path.join(brainDir, id, "meta.json");
           const dotMeta = path.join(brainDir, id, ".meta");
-          if (isInternalSessionMeta(metaJson) || isInternalSessionMeta(dotMeta)) continue;
+          // 子代理会话必须继续出现在描述符里：顶层隐藏由后端 `user_visible = 0` 负责，
+          // 这里漏掉它们会让增量同步的 missing 对账把隐藏子会话误判为"源已消失"。
+          const subagentMeta = isSubagentSessionMeta(metaJson) || isSubagentSessionMeta(dotMeta);
+          if (!subagentMeta && (isInternalSessionMeta(metaJson) || isInternalSessionMeta(dotMeta))) continue;
           const transcript = findTranscriptFile(path.join(brainDir, id));
           if (transcript) {
             seenExternalIds.add(id);
@@ -2548,16 +2815,20 @@ function readSession(onSession = null) {
   const requestedLocator = expandPath(input.params?.source_locator);
   const requestedSessionId = input.params?.session_id ?? null;
 
+  const emitBatch = (batch, total = null) => {
+    batch.forEach((session, offset) => {
+      if (onSession) onSession(session, offset + 1, total ?? batch.length);
+    });
+    return batch;
+  };
+
   // 1. 如果指定了 source_locator，优先直连定位解析
   if (requestedLocator && existsSync(requestedLocator)) {
-    const single = parseSingleSessionFromTarget(requestedLocator, requestedSessionId);
-    if (single) {
-      if (onSession) onSession(single, 1, 1);
-      return [single];
-    }
+    const batch = parseSessionsFromTarget(requestedLocator, requestedSessionId);
+    if (batch.length) return emitBatch(batch);
   }
 
-  let location = expandPath(input.source?.location);
+  const location = expandPath(input.source?.location);
   const roots = resolveCandidateRoots(location);
 
   // 2. 如果指定了 session_id，尝试快速候选探测（跨所有 candidate roots）
@@ -2580,23 +2851,16 @@ function readSession(onSession = null) {
       );
     }
     for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        const single = parseSingleSessionFromTarget(candidate, requestedSessionId);
-        if (single) {
-          if (onSession) onSession(single, 1, 1);
-          return [single];
-        }
-      }
+      if (!existsSync(candidate)) continue;
+      const batch = parseSessionsFromTarget(candidate, requestedSessionId);
+      if (batch.length) return emitBatch(batch);
     }
   }
 
   // 3. 判断 location 本身是否直接指向单条记录
   if (location) {
-    const directSession = parseSingleSessionFromTarget(location, requestedSessionId);
-    if (directSession) {
-      if (onSession) onSession(directSession, 1, 1);
-      return [directSession];
-    }
+    const batch = parseSessionsFromTarget(location, requestedSessionId);
+    if (batch.length) return emitBatch(batch);
   }
 
   // 4. 全量遍历发现的所有脑区与 DB
@@ -2625,14 +2889,25 @@ function readSession(onSession = null) {
   const totalItems = allConvDirs.length + dbFiles.length;
   let currentItemIdx = 0;
 
+  // 先解析普通会话（父会话会把自己名下的子代理会话一并产出），
+  // 再兜底解析"父会话不在本次扫描范围内"的孤立子代理目录。
+  const primaryDirs = [];
+  const standaloneChildDirs = [];
   for (const convDir of allConvDirs) {
+    if (subagentLinkFor(convDir)) standaloneChildDirs.push(convDir);
+    else primaryDirs.push(convDir);
+  }
+
+  const processConversationDir = (convDir) => {
     currentItemIdx += 1;
     const externalId = path.basename(convDir);
-    if (requestedSessionId && externalId !== requestedSessionId) continue;
-    if (seenExternalIds.has(externalId)) continue;
-
+    if (seenExternalIds.has(externalId)) return [];
+    if (detectClientFlavor(convDir) === "antigravity-acp") {
+      lastParseSkipReason = "internal_execution";
+      return [];
+    }
     const transcriptPath = findTranscriptFile(convDir);
-    if (!transcriptPath) continue;
+    if (!transcriptPath) return [];
 
     emitProgress({
       stage: "parse",
@@ -2642,44 +2917,35 @@ function readSession(onSession = null) {
       total: totalItems,
     });
 
-    let text;
-    try {
-      text = readFileSync(transcriptPath, "utf8");
-    } catch {
-      continue;
-    }
-    const parsed = parseTranscript(text, convDir);
-    const turns = displayTurns(parsed.turns);
-    if (!turns.length) {
-      lastParseSkipReason = "no_turns";
-      continue;
-    }
-    if (isInternalExecutionPath(parsed.projectPath)) {
-      lastParseSkipReason = "internal_execution";
-      continue;
-    }
-    if (isSyntheticWorkOrderText(turns[0]?.user_text)) {
-      lastParseSkipReason = "synthetic_work_order";
-      continue;
-    }
-    seenExternalIds.add(externalId);
+    const batch = buildSessionsForConversationDir(convDir, externalId);
+    const fresh = batch.filter((session) => !seenExternalIds.has(session.external_id));
+    fresh.forEach((session) => {
+      seenExternalIds.add(session.external_id);
+      if (onSession) onSession(session, currentItemIdx, totalItems);
+      sessions.push(session);
+    });
+    return fresh;
+  };
 
-    const s = applyTextBudgets(finalizeStructuredContentCards({
-      external_id: externalId,
-      title: getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text),
-      project_path: resolveProjectPath(parsed.projectPath ?? inferProjectPath(turns), externalId),
-      started_at: turns[0]?.started_at ?? null,
-      updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
-      source_locator: transcriptPath,
-      source_fingerprint: sessionVersionToken(transcriptPath, externalId),
-      execution_origin: detectClientFlavor(transcriptPath),
-      turns,
-    }));
-    if (onSession) onSession(s, currentItemIdx, totalItems);
-    sessions.push(s);
-    if (requestedSessionId && externalId === requestedSessionId) {
-      return [s];
+  for (const convDir of primaryDirs) {
+    const externalId = path.basename(convDir);
+    if (requestedSessionId && externalId !== requestedSessionId) {
+      // 请求的可能是某个父会话名下的子会话，父会话仍要解析出来。
+      processConversationDir(convDir);
+      if (seenExternalIds.has(requestedSessionId)) return sessions;
+      continue;
     }
+    const fresh = processConversationDir(convDir);
+    if (requestedSessionId && fresh.some((session) => session.external_id === requestedSessionId)) {
+      return sessions;
+    }
+  }
+
+  for (const convDir of standaloneChildDirs) {
+    const externalId = path.basename(convDir);
+    if (requestedSessionId && externalId !== requestedSessionId) continue;
+    processConversationDir(convDir);
+    if (requestedSessionId && seenExternalIds.has(requestedSessionId)) return sessions;
   }
 
   // Conversation DB files (e.g. Antigravity ACP or standalone sqlite conversations)

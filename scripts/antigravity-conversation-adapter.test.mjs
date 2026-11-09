@@ -932,7 +932,7 @@ test("Antigravity reliably infers project path from modern Path parameter and re
   }
 });
 
-test("Antigravity inlines invoke_subagent calls into specialized subagent turns and emits continuation turn", () => {
+test("Antigravity keeps a single parent turn and records an anchor instead of a subagent pseudo-turn", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-"));
   try {
     const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
@@ -984,13 +984,6 @@ test("Antigravity inlines invoke_subagent calls into specialized subagent turns 
       }),
       JSON.stringify({
         source: "MODEL",
-        type: "GENERIC",
-        status: "DONE",
-        created_at: "2026-10-22T10:00:04Z",
-        content: "Audit complete: found 0 vulnerabilities.",
-      }),
-      JSON.stringify({
-        source: "MODEL",
         type: "PLANNER_RESPONSE",
         status: "DONE",
         created_at: "2026-10-22T10:00:05Z",
@@ -999,92 +992,66 @@ test("Antigravity inlines invoke_subagent calls into specialized subagent turns 
     ].join("\n"));
 
     const session = readFixtureSession(transcriptPath);
-    assert.equal(session.turns.length, 3);
+    assert.equal(session.turns.length, 1, "一次人类提问派发子代理后必须仍然只有 1 个 Turn");
 
-    // Turn 0: Anchor turn (User prompt + main pre-dispatch response)
-    const turn0 = session.turns[0];
-    assert.equal(turn0.turn_index, 0);
-    assert.equal(turn0.user_text, "Audit dependencies and verify build");
-    assert.equal(turn0.external_id, "turn-0");
-    assert.ok(turn0.parts.length > 0);
+    const turn = session.turns[0];
+    assert.equal(turn.turn_index, 0);
+    assert.equal(turn.user_text, "Audit dependencies and verify build");
+    assert.equal(turn.turn_kind, undefined);
+    assert.equal(turn.parent_turn_id, undefined);
 
-    // Turn 1: Specialized subagent turn
-    const turn1 = session.turns[1];
-    assert.equal(turn1.turn_index, 1);
-    assert.equal(turn1.turn_kind, "subagent");
-    assert.equal(turn1.agent_role, "auditor");
-    assert.equal(turn1.parent_turn_id, "turn-0");
-    assert.equal(turn1.user_text, "Audit npm packages for security vulnerabilities");
-    assert.equal(turn1.model, "gemini-2.5-pro");
-    assert.ok(turn1.parts.length >= 2);
-    const hasCommand = turn1.parts.some((p) => p.kind === "command" && p.command.includes("npm audit"));
-    assert.ok(hasCommand, "Subagent turn should contain command execution part");
-    const lastPart = turn1.parts[turn1.parts.length - 1];
-    assert.equal(lastPart.role, "assistant");
-    assert.match(lastPart.text, /Audit complete/);
+    const anchor = turn.parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor, "派发 invoke_subagent 必须留下委派锚点");
+    assert.equal(anchor.role, "assistant");
+    assert.match(anchor.text, /^\[委派任务\] /);
+    const metadata = JSON.parse(anchor.metadata_json);
+    assert.equal(metadata.agent_role, "auditor");
+    assert.ok(metadata.child_external_id, "锚点必须记录子会话标识");
+    assert.ok(metadata.spawn_anchor);
+    assert.equal(metadata.status, "completed");
+    assert.equal(anchor.content_card, undefined);
+    assert.equal(metadata.content_card, undefined);
 
-    // Subagent execution must appear only as specialized turns, never as JSON cards
-    const cardParts = session.turns.flatMap((turn) => turn.parts || []).filter(
-      (part) => String(part.content_card?.kind ?? part.kind ?? "").endsWith(".subagent"),
+    // 子代理返回后的工具调用与最终回答必须留在同一个父轮次里
+    assert.ok(
+      turn.parts.some((part) => part.kind === "command" && part.command.includes("npm audit")),
+      "主代理后续命令必须留在父轮次",
     );
-    assert.deepEqual(cardParts, [], "subagent JSON cards must not be generated");
-
-    // Turn 2: Continuation turn
-    const turn2 = session.turns[2];
-    assert.equal(turn2.turn_index, 2);
-    assert.equal(turn2.turn_kind, "continuation");
-    assert.equal(turn2.parent_turn_id, "turn-0");
-    assert.equal(turn2.user_text, "Continue following subagent execution");
-    assert.ok(turn2.parts.length > 0);
-    assert.match(turn2.parts[0].text, /All dependencies are secure/);
+    assert.match(turn.parts.at(-1).text, /All dependencies are secure/);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Antigravity excludes derivative subagent sessions from list_sessions", () => {
+test("Antigravity keeps subagent sessions in list_sessions descriptors", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-listsub-"));
   try {
     const brainDir = path.join(fixtureRoot, "brain");
     const parentId = "11111111-1111-1111-1111-111111111111";
     const subagentId = "22222222-2222-2222-2222-222222222222";
 
-    // Create parent brain dir with transcript
-    const parentLogs = path.join(brainDir, parentId, ".system_generated", "logs");
-    mkdirSync(parentLogs, { recursive: true });
-    writeFileSync(path.join(parentLogs, "transcript.jsonl"), [
-      JSON.stringify({
-        source: "USER_EXPLICIT",
-        type: "USER_INPUT",
-        content: "<USER_REQUEST>Main task</USER_REQUEST>",
-      }),
-      JSON.stringify({
-        source: "MODEL",
-        type: "PLANNER_RESPONSE",
-        content: "Main response",
-      }),
-    ].join("\n"));
+    // 父会话：派发一个登记在注册表里的子代理
+    writeConversation(brainDir, parentId, {
+      steps: [
+        userStep(0, "Main task"),
+        ...dispatchSteps(1, [{ Role: "Delegated Worker", TypeName: "teamwork_preview_worker", Prompt: "Do the subtask" }], [subagentId]),
+        step(3, "MODEL", "PLANNER_RESPONSE", { content: "Main response" }),
+      ],
+      subagents: [{ conversationId: subagentId, role: "Delegated Worker", typeName: "teamwork_preview_worker", spawnStepIndex: 2 }],
+    });
 
-    // Create subagent brain dir with meta.json indicating subagent
-    const subLogs = path.join(brainDir, subagentId, ".system_generated", "logs");
-    mkdirSync(subLogs, { recursive: true });
+    // 子代理目录自身带 meta.json 的 is_subagent 标记
+    writeConversation(brainDir, subagentId, {
+      steps: [
+        userStep(0, "Subagent delegated task"),
+        step(1, "MODEL", "PLANNER_RESPONSE", { content: "Subagent response" }),
+      ],
+    });
     writeFileSync(path.join(brainDir, subagentId, "meta.json"), JSON.stringify({
       is_subagent: true,
       parent_session_id: parentId,
       cwd: "/some/project",
     }));
-    writeFileSync(path.join(subLogs, "transcript.jsonl"), [
-      JSON.stringify({
-        source: "USER_EXPLICIT",
-        type: "USER_INPUT",
-        content: "<USER_REQUEST>Subagent delegated task</USER_REQUEST>",
-      }),
-      JSON.stringify({
-        source: "MODEL",
-        type: "PLANNER_RESPONSE",
-        content: "Subagent response",
-      }),
-    ].join("\n"));
 
     const listResult = spawnSync(process.execPath, [adapterPath], {
       encoding: "utf8",
@@ -1100,8 +1067,13 @@ test("Antigravity excludes derivative subagent sessions from list_sessions", () 
       .split("\n")
       .map((l) => JSON.parse(l))
       .filter((m) => m.type === "item")
-      .map((m) => m.item.external_id);
-    assert.deepEqual(items, [parentId]);
+      .map((m) => m.item.external_id)
+      .sort();
+    assert.deepEqual(
+      items,
+      [parentId, subagentId].sort(),
+      "子代理会话描述符必须保留，顶层隐藏由后端 user_visible 负责",
+    );
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -1140,18 +1112,16 @@ test("Antigravity preserves anchor user turn when assistant dispatches subagent 
     ].join("\n"));
 
     const session = readFixtureSession(transcriptPath);
-    assert.ok(session.turns.length >= 2, `Expected >= 2 turns, got ${session.turns.length}`);
-    // Anchor user turn must be preserved as turn 0
+    assert.equal(session.turns.length, 1, "派发子代理不得产生额外轮次");
     assert.equal(session.turns[0].turn_index, 0);
     assert.equal(session.turns[0].user_text, "Fix login bug immediately");
     assert.equal(session.turns[0].turn_kind, undefined);
 
-    // Subagent turn
-    assert.equal(session.turns[1].turn_index, 1);
-    assert.equal(session.turns[1].turn_kind, "subagent");
-    assert.equal(session.turns[1].parent_turn_id, session.turns[0].external_id);
-    assert.equal(session.turns[1].agent_role, "debugger");
-    assert.equal(session.turns[1].user_text, "Investigate login crash");
+    const anchor = session.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor, "零前置文本也必须留下委派锚点");
+    const metadata = JSON.parse(anchor.metadata_json);
+    assert.equal(metadata.agent_role, "debugger");
+    assert.match(anchor.text, /^\[委派任务\] /);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -1190,9 +1160,12 @@ test("Antigravity falls back to valid string when subagent prompt is whitespace-
     ].join("\n"));
 
     const session = readFixtureSession(transcriptPath);
-    assert.equal(session.turns[1].turn_kind, "subagent");
-    assert.equal(session.turns[1].user_text, "Subagent execution");
-    assert.ok(session.turns[1].user_text.trim().length > 0);
+    assert.equal(session.turns.length, 1, "空白 prompt 不得改变轮次数量");
+    const anchor = session.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor);
+    const metadata = JSON.parse(anchor.metadata_json);
+    assert.equal(metadata.agent_role, "worker");
+    assert.ok(String(metadata.title ?? "").trim().length > 0, "空白 prompt 必须回退到可读标题");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -1236,18 +1209,14 @@ test("Antigravity handles parallel subagents dispatching multiple distinct subag
     ].join("\n"));
 
     const session = readFixtureSession(transcriptPath);
-    // Turns: 0 = User, 1 = Subagent linter, 2 = Subagent tester
-    assert.ok(session.turns.length >= 3, `Expected >= 3 turns, got ${session.turns.length}`);
+    assert.equal(session.turns.length, 1, "并行派发仍属于同一个父轮次");
     assert.equal(session.turns[0].user_text, "Run parallel audits");
-    assert.equal(session.turns[1].turn_kind, "subagent");
-    assert.equal(session.turns[1].agent_role, "linter");
-    assert.equal(session.turns[1].user_text, "Lint source files");
-    assert.equal(session.turns[1].parent_turn_id, session.turns[0].external_id);
 
-    assert.equal(session.turns[2].turn_kind, "subagent");
-    assert.equal(session.turns[2].agent_role, "tester");
-    assert.equal(session.turns[2].user_text, "Run test suite");
-    assert.equal(session.turns[2].parent_turn_id, session.turns[0].external_id);
+    const anchors = session.turns[0].parts.filter((part) => part.kind === "subagent");
+    assert.equal(anchors.length, 2);
+    const roles = anchors.map((part) => JSON.parse(part.metadata_json).agent_role);
+    assert.deepEqual(roles, ["linter", "tester"]);
+    assert.equal(new Set(anchors.map((part) => JSON.parse(part.metadata_json).child_external_id)).size, 2);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -1293,15 +1262,18 @@ test("Antigravity does not emit subagent JSON cards when several dispatch calls 
 
     const session = readFixtureSession(transcriptPath);
 
-    const roleOf = (turn) => turn.agent_role;
-    const subTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
-    assert.ok(subTurns.length >= 1, "subagent turns must still be produced");
-    assert.ok(subTurns.every((turn) => roleOf(turn)), "subagent turns must keep their dispatched role");
-
-    const cardParts = session.turns.flatMap((turn) => turn.parts || []).filter(
-      (part) => String(part.content_card?.kind ?? part.kind ?? "").endsWith(".subagent"),
+    assert.equal(session.turns.length, 1, "同一条响应里的多次派发仍只有一个父轮次");
+    const anchors = session.turns[0].parts.filter((part) => part.kind === "subagent");
+    assert.equal(anchors.length, 2, "每次派发都必须有独立锚点");
+    assert.deepEqual(
+      anchors.map((part) => JSON.parse(part.metadata_json).agent_role),
+      ["linter", "tester"],
     );
-    assert.deepEqual(cardParts, [], "subagent JSON cards must not be generated");
+
+    const cardParts = anchors.filter(
+      (part) => part.content_card || JSON.parse(part.metadata_json ?? "{}").content_card,
+    );
+    assert.deepEqual(cardParts, [], "子代理锚点不得携带 content_card（其他普通零件仍可有自己的卡片）");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -1363,11 +1335,16 @@ test("Antigravity multi-turn session keeps subsequent question as standard user 
     ].join("\n"));
 
     const session = readFixtureSession(transcriptPath);
-    // Find Question 2 turn
-    const q2Turn = session.turns.find((t) => t.user_text && t.user_text.includes("Question 2: What is the weather in Tokyo?"));
-    assert.ok(q2Turn, "Question 2 turn should exist in session");
-    assert.equal(q2Turn.turn_kind, undefined, "Question 2 must NOT be marked as continuation");
-    assert.equal(q2Turn.parent_turn_id, undefined, "Question 2 must NOT have parent_turn_id");
+    assert.equal(session.turns.length, 2, "两次真实提问必须是两个物理轮次");
+    const q2Turn = session.turns[1];
+    assert.equal(q2Turn.turn_index, 1, "子代理派发不得让后续人类提问的轮次号偏移");
+    assert.equal(q2Turn.user_text, "Question 2: What is the weather in Tokyo?");
+    assert.equal(q2Turn.turn_kind, undefined, "Question 2 不得被标记为伪轮次");
+    assert.equal(q2Turn.parent_turn_id, undefined);
+    assert.ok(
+      session.turns[0].parts.some((part) => part.kind === "subagent"),
+      "Question 1 的派发锚点必须留在 Question 1 的轮次里",
+    );
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -1447,59 +1424,94 @@ test("Antigravity inlines every registered subagent as its own turn with a resol
     });
 
     const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
-    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+    const { session, sessions, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
 
-    const mainTurn = session.turns[0];
-    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
-    assert.equal(subagentTurns.length, 18, "every registered subagent must become exactly one turn");
     assert.deepEqual(warnings, []);
+    assert.equal(sessions.length, 19, "1 个父会话 + 18 个隐藏子代理会话");
+    const byId = new Map(sessions.map((entry) => [entry.external_id, entry]));
 
-    const turnIds = new Set(session.turns.map((turn) => turn.external_id));
-    for (const turn of subagentTurns) {
-      assert.ok(turnIds.has(turn.parent_turn_id), `parent ${turn.parent_turn_id} must resolve to an imported turn`);
-    }
+    // 父会话：一次人类提问 = 1 个 Turn，派发处只有锚点
+    const parent = byId.get(mainId);
+    assert.ok(parent);
+    assert.equal(parent.user_visible, true);
+    assert.equal(parent.turns.length, 1, "父会话只能有 1 个真实提问轮次");
+    const parentAnchor = parent.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(parentAnchor, "父轮次必须包含第一层委派锚点");
+    const parentAnchorMeta = JSON.parse(parentAnchor.metadata_json);
+    assert.equal(parentAnchorMeta.child_external_id, orchestratorId);
+    assert.equal(parentAnchorMeta.agent_role, "Teamwork Orchestrator");
+    assert.equal(parentAnchorMeta.status, "completed");
+    assert.equal(parentAnchorMeta.spawn_anchor, orchestratorId);
+    assert.match(parentAnchor.text, /^\[委派任务\] /);
+    assert.match(parentAnchor.text, /\[汇报结论\] /);
 
-    const byRole = new Map(subagentTurns.map((turn) => [turn.agent_role, turn]));
-    const orchestrator = byRole.get("Teamwork Orchestrator");
-    const project = byRole.get("Project Orchestrator");
-    assert.equal(orchestrator.parent_turn_id, mainTurn.external_id, "layer 1 must hang off the dispatching main turn");
-    assert.equal(project.parent_turn_id, orchestrator.external_id, "layer 2 must hang off its orchestrator turn");
-    assert.equal(orchestrator.title, "teamwork_preview");
-    assert.equal(project.title, "teamwork_preview_orchestrator");
-    assert.equal(orchestrator.user_text, "Coordinate the multi-agent review");
+    // 第一层子会话
+    const orchestrator = byId.get(orchestratorId);
+    assert.ok(orchestrator);
+    assert.equal(orchestrator.user_visible, false);
+    assert.equal(orchestrator.execution_origin, "subagent");
+    const orchestratorPurpose = JSON.parse(orchestrator.execution_purpose);
+    assert.equal(orchestratorPurpose.parent_external_id, mainId);
+    assert.equal(orchestratorPurpose.parent_turn_index, 0);
+    assert.equal(orchestratorPurpose.agent_role, "Teamwork Orchestrator");
+    assert.equal(orchestratorPurpose.spawn_anchor, orchestratorId);
+    assert.equal(orchestrator.turns.length, 1, "子会话 #T1 承载全量委派 Prompt 与执行链");
+    assert.equal(orchestrator.turns[0].user_text, "Coordinate the multi-agent review");
+    assert.equal(orchestrator.turns[0].turn_kind, undefined);
+    const orchestratorAnchor = orchestrator.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(orchestratorAnchor, "嵌套子代理的锚点必须写在子会话自己的轮次里");
+    assert.equal(JSON.parse(orchestratorAnchor.metadata_json).child_external_id, projectId);
 
-    const deepestTurns = subagentTurns.filter((turn) => turn.parent_turn_id === project.external_id);
-    assert.equal(deepestTurns.length, 16);
-    const deepest = deepestTurns[0];
-    assert.equal(deepest.agent_role, "Rust Core Reviewer 1");
-    assert.equal(deepest.title, "teamwork_preview_reviewer");
-    assert.equal(deepest.user_text, "Review module for Rust Core Reviewer 1");
-    assert.ok(deepest.parts.length > 0, "the deepest layer must carry execution content");
-    const commandPart = deepest.parts.find((part) => part.kind === "command");
-    assert.ok(commandPart, "the deepest layer must expose the commands it ran");
+    // 第二层子会话：16 个叶子锚点都挂在 project 自己的轮次里
+    const project = byId.get(projectId);
+    assert.ok(project);
+    assert.equal(project.turns.length, 1);
+    assert.equal(project.turns[0].user_text, "Plan the review work");
+    const leafAnchors = project.turns[0].parts.filter((part) => part.kind === "subagent");
+    assert.equal(leafAnchors.length, 16);
+    const firstLeafAnchorMeta = JSON.parse(leafAnchors[0].metadata_json);
+    assert.equal(firstLeafAnchorMeta.agent_role, "Rust Core Reviewer 1");
+    assert.equal(firstLeafAnchorMeta.status, "completed");
+    assert.match(leafAnchors[0].text, /\[汇报结论\] Module 1 review complete/);
+    assert.ok(firstLeafAnchorMeta.step_count >= 1, "锚点必须记录子代理执行的步骤数");
+
+    // 最深一层子会话：全量 Prompt + 工具链 + 最终汇报
+    const leaf = byId.get(leafIds[0]);
+    assert.ok(leaf);
+    assert.equal(leaf.user_visible, false);
+    assert.equal(leaf.turns.length, 1);
+    assert.equal(leaf.turns[0].user_text, "Review module for Rust Core Reviewer 1");
+    const commandPart = leaf.turns[0].parts.find((part) => part.kind === "command");
+    assert.ok(commandPart, "子会话必须暴露它执行的命令");
     assert.match(commandPart.command, /rg "module 1" src/);
-    const lastPart = deepest.parts.at(-1);
+    const lastPart = leaf.turns[0].parts.at(-1);
     assert.equal(lastPart.role, "assistant");
     assert.match(lastPart.text, /Module 1 review complete/);
-    // 最后一段助手输出必须是 answer 卡片，Triad 据此把子代理汇报提升为 response
     assert.equal(
       lastPart.content_card?.kind,
       "antigravity.answer",
       "子代理汇报必须以 answer 卡片收尾，才能落进该 Turn 的 response",
     );
 
+    for (const entry of sessions) {
+      for (const turn of entry.turns) {
+        assert.equal(turn.turn_kind, undefined, "不得再产出 subagent / continuation 伪轮次");
+        assert.equal(turn.parent_turn_id, undefined);
+      }
+    }
+
     const repeated = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
     assert.deepEqual(
-      repeated.session.turns.map((turn) => turn.external_id),
-      session.turns.map((turn) => turn.external_id),
-      "subagent turn identity must stay stable across repeated syncs",
+      repeated.sessions.map((entry) => [entry.external_id, entry.turns.map((turn) => turn.external_id)]),
+      sessions.map((entry) => [entry.external_id, entry.turns.map((turn) => turn.external_id)]),
+      "会话与轮次身份必须在重复同步时保持稳定",
     );
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Antigravity keeps every subagent dispatched inside the same execution step", () => {
+test("Antigravity keeps every subagent dispatched inside the same execution step as one anchor and one child session", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-parallel-step-"));
   try {
     const brainDir = path.join(fixtureRoot, "brain");
@@ -1555,19 +1567,39 @@ test("Antigravity keeps every subagent dispatched inside the same execution step
     });
 
     const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
-    const { session } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+    const { sessions } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
 
-    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
-    assert.equal(subagentTurns.length, 4);
-    assert.deepEqual(subagentTurns.map((turn) => turn.agent_role), roles);
-    assert.equal(new Set(subagentTurns.map((turn) => turn.parent_turn_id)).size, 1);
-    for (const turn of subagentTurns) assert.ok(turn.parts.length > 0);
+    const parent = sessions.find((entry) => entry.external_id === mainId);
+    assert.ok(parent);
+    assert.equal(parent.turns.length, 1, "同一步骤里的 4 次派发仍只属于 1 个父轮次");
+    const anchors = parent.turns[0].parts.filter((part) => part.kind === "subagent");
+    assert.equal(anchors.length, 4, "每次派发都必须有独立锚点");
+    assert.deepEqual(
+      anchors.map((part) => JSON.parse(part.metadata_json).agent_role),
+      roles,
+    );
+    assert.deepEqual(
+      anchors.map((part) => JSON.parse(part.metadata_json).child_external_id),
+      childIds,
+      "锚点必须指向确定性的子会话 external_id",
+    );
+    assert.equal(sessions.length, 5, "1 个父会话 + 4 个隐藏子会话");
+    for (const childId of childIds) {
+      const child = sessions.find((entry) => entry.external_id === childId);
+      assert.ok(child, `子会话 ${childId} 必须独立产出`);
+      assert.equal(child.user_visible, false);
+      assert.equal(child.execution_origin, "subagent");
+      assert.equal(child.turns.length, 1);
+      assert.ok(child.turns[0].parts.length > 0);
+      assert.equal(JSON.parse(child.execution_purpose).parent_external_id, mainId);
+    }
+    assert.ok(sessions.every((entry) => entry.turns.every((turn) => turn.turn_kind === undefined)));
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Antigravity hangs each subagent off the turn that dispatched it instead of the last main turn", () => {
+test("Antigravity hangs each subagent anchor off the turn that dispatched it", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-per-question-"));
   try {
     const brainDir = path.join(fixtureRoot, "brain");
@@ -1595,26 +1627,31 @@ test("Antigravity hangs each subagent off the turn that dispatched it instead of
     }
 
     const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
-    const { session } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+    const { sessions } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
 
-    const mainTurns = session.turns.filter((turn) => turn.turn_kind === undefined);
-    assert.equal(mainTurns.length, 2);
-    const [firstQuestion, secondQuestion] = mainTurns;
-    const firstWorker = session.turns.find((turn) => turn.agent_role === "First Worker");
-    const secondWorker = session.turns.find((turn) => turn.agent_role === "Second Worker");
-    assert.equal(firstWorker.parent_turn_id, firstQuestion.external_id);
-    assert.equal(secondWorker.parent_turn_id, secondQuestion.external_id);
-    assert.deepEqual(
-      session.turns.map((turn) => turn.external_id),
-      [firstQuestion.external_id, firstWorker.external_id, secondQuestion.external_id, secondWorker.external_id],
-      "each subagent turn must sit directly after the turn that dispatched it",
-    );
+    const parent = sessions.find((entry) => entry.external_id === mainId);
+    assert.ok(parent);
+    assert.equal(parent.turns.length, 2, "两次人类提问必须对应两个完整父轮次");
+    assert.deepEqual(parent.turns.map((turn) => turn.user_text), ["First question", "Second question"]);
+    const firstAnchors = parent.turns[0].parts.filter((part) => part.kind === "subagent");
+    const secondAnchors = parent.turns[1].parts.filter((part) => part.kind === "subagent");
+    assert.deepEqual(firstAnchors.map((part) => JSON.parse(part.metadata_json).child_external_id), [firstChildId]);
+    assert.deepEqual(secondAnchors.map((part) => JSON.parse(part.metadata_json).child_external_id), [secondChildId]);
+    assert.equal(JSON.parse(firstAnchors[0].metadata_json).agent_role, "First Worker");
+    assert.equal(JSON.parse(secondAnchors[0].metadata_json).agent_role, "Second Worker");
+    assert.equal(sessions.length, 3);
+    for (const childId of [firstChildId, secondChildId]) {
+      const child = sessions.find((entry) => entry.external_id === childId);
+      assert.ok(child);
+      assert.equal(JSON.parse(child.execution_purpose).parent_external_id, mainId);
+      assert.equal(child.turns[0].turn_kind, undefined);
+    }
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Antigravity degrades subagents beyond the depth limit to leaf turns and warns", () => {
+test("Antigravity materializes a deeply nested subagent chain as one session per level", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-depth-"));
   try {
     const brainDir = path.join(fixtureRoot, "brain");
@@ -1638,27 +1675,28 @@ test("Antigravity degrades subagents beyond the depth limit to leaf turns and wa
     });
 
     const transcriptPath = path.join(brainDir, chainIds[0], ".system_generated", "logs", "transcript_full.jsonl");
-    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+    const { sessions } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
 
-    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
-    assert.equal(subagentTurns.length, 5, "the tree must stop one level past the depth limit");
-    const depths = subagentTurns.map((turn) => {
-      let depth = 1;
-      let parentId = turn.parent_turn_id;
-      while (parentId && parentId !== session.turns[0].external_id) {
-        const parent = subagentTurns.find((candidate) => candidate.external_id === parentId);
-        if (!parent) break;
-        depth += 1;
-        parentId = parent.parent_turn_id;
-      }
-      return depth;
-    });
-    assert.equal(Math.max(...depths), 5);
-    const deepest = subagentTurns.find((turn) => turn.external_id.endsWith(chainIds[5]));
-    assert.ok(deepest, "the over-limit subagent must still be kept as a leaf turn");
-    assert.equal(deepest.parts.length, 0, "the over-limit subagent must not be expanded");
-    assert.equal(deepest.user_text, "Delegate level 6");
-    assert.ok(warnings.some((warning) => /depth/i.test(warning)), `expected a depth warning, got ${JSON.stringify(warnings)}`);
+    assert.equal(sessions.length, chainIds.length, "每一层子代理都产出独立会话，且不得无限展开");
+    const byId = new Map(sessions.map((entry) => [entry.external_id, entry]));
+    for (let index = 0; index < chainIds.length - 1; index += 1) {
+      const parent = byId.get(chainIds[index]);
+      assert.ok(parent, `第 ${index + 1} 层会话必须存在`);
+      assert.equal(parent.turns.length, 1);
+      const anchors = parent.turns[0].parts.filter((part) => part.kind === "subagent");
+      assert.deepEqual(
+        anchors.map((part) => JSON.parse(part.metadata_json).child_external_id),
+        [chainIds[index + 1]],
+        "每层的锚点只指向它的直接子会话",
+      );
+      assert.ok(parent.turns.every((turn) => turn.turn_kind === undefined));
+    }
+    const deepest = byId.get(chainIds.at(-1));
+    assert.ok(deepest);
+    assert.equal(deepest.turns.length, 1);
+    assert.equal(deepest.turns[0].parts.filter((part) => part.kind === "subagent").length, 0, "链尾不得继续派生");
+    assert.equal(byId.get(chainIds[1]).user_visible, false);
+    assert.equal(byId.get(chainIds[1]).execution_origin, "subagent");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -1689,20 +1727,33 @@ test("Antigravity stops expanding a cyclic subagent reference and warns", () => 
     });
 
     const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
-    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+    const { sessions, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
 
-    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
-    assert.equal(subagentTurns.length, 2, "a cyclic reference must not expand forever");
-    const cyclic = subagentTurns.find((turn) => turn.agent_role === "Root Again");
-    assert.ok(cyclic, "the cyclic dispatch must still be represented once");
-    assert.equal(cyclic.parts.length, 0);
-    assert.ok(warnings.some((warning) => /cycle|cyclic/i.test(warning)), `expected a cycle warning, got ${JSON.stringify(warnings)}`);
+    assert.equal(sessions.length, 2, "成环的两个会话各自只产出一次，不得无限展开");
+    const byId = new Map(sessions.map((entry) => [entry.external_id, entry]));
+    const root = byId.get(mainId);
+    const child = byId.get(childId);
+    assert.ok(root);
+    assert.ok(child);
+    assert.equal(root.turns.length, 1);
+    assert.equal(child.turns.length, 1);
+    assert.deepEqual(
+      root.turns[0].parts.filter((part) => part.kind === "subagent").map((part) => JSON.parse(part.metadata_json).child_external_id),
+      [childId],
+    );
+    assert.deepEqual(
+      child.turns[0].parts.filter((part) => part.kind === "subagent").map((part) => JSON.parse(part.metadata_json).child_external_id),
+      [mainId],
+      "回指父会话的派发仍以锚点形式出现一次",
+    );
+    assert.ok(sessions.every((entry) => entry.turns.every((turn) => turn.turn_kind === undefined)));
+    assert.ok(warnings.some((warning) => /cycle/i.test(warning)), `expected a cycle warning, got ${JSON.stringify(warnings)}`);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Antigravity keeps the dispatch turn and warns when the child session record is missing", () => {
+test("Antigravity keeps the dispatch anchor and warns when the child session record is missing", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-subagent-missing-"));
   try {
     const brainDir = path.join(fixtureRoot, "brain");
@@ -1719,13 +1770,18 @@ test("Antigravity keeps the dispatch turn and warns when the child session recor
     });
 
     const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
-    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+    const { sessions, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
 
-    const subagentTurn = session.turns.find((turn) => turn.turn_kind === "subagent");
-    assert.ok(subagentTurn, "the session must still import with the dispatch turn preserved");
-    assert.equal(subagentTurn.agent_role, "Ghost Worker");
-    assert.equal(subagentTurn.user_text, "Audit the migration");
-    assert.equal(subagentTurn.parts.length, 0);
+    assert.equal(sessions.length, 1, "子会话目录不存在时不得凭空造会话");
+    const parent = sessions[0];
+    assert.equal(parent.external_id, mainId);
+    assert.equal(parent.turns.length, 1);
+    const anchor = parent.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor, "父会话必须仍然导入，且保留派发锚点");
+    const meta = JSON.parse(anchor.metadata_json);
+    assert.equal(meta.agent_role, "Ghost Worker");
+    assert.equal(meta.child_external_id, missingId);
+    assert.match(anchor.text, /\[委派任务\] Audit the migration/);
     assert.ok(
       warnings.some((warning) => /child session|missing/i.test(warning)),
       `expected a missing-session warning, got ${JSON.stringify(warnings)}`,
@@ -1759,10 +1815,13 @@ test("Antigravity takes the dispatch task text instead of system injected prompt
     });
 
     const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
-    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+    const { sessions, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
 
-    const subagentTurn = session.turns.find((turn) => turn.turn_kind === "subagent");
-    assert.equal(subagentTurn.user_text, "Audit the antigravity adapter");
+    const child = sessions.find((entry) => entry.external_id === childId);
+    assert.ok(child, "子代理必须作为独立会话承载全量委派 Prompt");
+    assert.equal(child.turns.length, 1);
+    assert.equal(child.turns[0].user_text, "Audit the antigravity adapter");
+    assert.equal(child.turns[0].turn_kind, undefined);
     assert.deepEqual(warnings, []);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
@@ -1793,10 +1852,12 @@ test("Antigravity falls back to the child user input when no dispatch task text 
     });
 
     const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
-    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+    const { sessions, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
 
-    const subagentTurn = session.turns.find((turn) => turn.turn_kind === "subagent");
-    assert.equal(subagentTurn.user_text, "Investigate the flaky test");
+    const child = sessions.find((entry) => entry.external_id === childId);
+    assert.ok(child);
+    assert.equal(child.turns.length, 1);
+    assert.equal(child.turns[0].user_text, "Investigate the flaky test");
     assert.deepEqual(warnings, []);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
@@ -1823,10 +1884,12 @@ test("Antigravity uses a placeholder prompt and warns when no task text can be r
     });
 
     const transcriptPath = path.join(brainDir, mainId, ".system_generated", "logs", "transcript_full.jsonl");
-    const { session, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
+    const { sessions, warnings } = runFixtureAdapter({ method: "read_session", source: { location: transcriptPath }, params: {} });
 
-    const subagentTurn = session.turns.find((turn) => turn.turn_kind === "subagent");
-    assert.equal(subagentTurn.user_text, "Subagent execution");
+    const child = sessions.find((entry) => entry.external_id === childId);
+    assert.ok(child);
+    assert.equal(child.turns.length, 1);
+    assert.equal(child.turns[0].user_text, "Subagent execution");
     assert.ok(warnings.some((warning) => /prompt/i.test(warning)), `expected a prompt warning, got ${JSON.stringify(warnings)}`);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
@@ -1894,12 +1957,17 @@ function runFixtureAdapter(input) {
   });
   assert.equal(result.status, 0, result.stderr);
   const messages = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const sessions = messages
+    .filter((message) => message.type === "item" && message.item?.session)
+    .map((message) => message.item.session);
   return {
     messages,
-    session: messages.find((message) => message.type === "item" && message.item?.session)?.item.session ?? null,
+    sessions,
+    session: sessions[0] ?? null,
     warnings: messages.filter((message) => message.type === "warning").map((message) => message.message),
   };
 }
+
 
 function readFixtureSession(transcriptPath) {
   const result = spawnSync(process.execPath, [adapterPath], {

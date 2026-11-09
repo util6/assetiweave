@@ -241,7 +241,7 @@ test("OpenCode degrades oversized patch payloads exceeding budget to file paths,
   }
 });
 
-test("OpenCode inlines child session subagent turns, emits continuation turn, and excludes child sessions from list_sessions", () => {
+test("OpenCode models a dispatched subagent as an anchor Part plus a hidden child session", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-subagent-"));
   try {
     const dbPath = path.join(fixtureRoot, "opencode.db");
@@ -250,71 +250,119 @@ test("OpenCode inlines child session subagent turns, emits continuation turn, an
       "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
       "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
       "INSERT INTO session VALUES ('session-parent-1', '主任务会话', '/tmp/project', '2026-08-06T00:00:10Z', NULL);",
-      "INSERT INTO session VALUES ('session-sub-1', '代码审查子代理', '/tmp/project', '2026-08-06T00:00:04Z', 'session-parent-1');",
+      "INSERT INTO session VALUES ('session-sub-1', '代码审查子代理 (@general subagent)', '/tmp/project', '2026-08-06T00:00:04Z', 'session-parent-1');",
       `INSERT INTO message VALUES ('message-p1', 'session-parent-1', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
       `INSERT INTO part VALUES ('part-p1', 'message-p1', 'session-parent-1', '${sqlString(JSON.stringify({ type: "text", text: "派发子任务审查代码" }))}');`,
-      `INSERT INTO message VALUES ('message-p2', 'session-parent-1', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:05Z" } }))}');`,
-      `INSERT INTO part VALUES ('part-p2', 'message-p2', 'session-parent-1', '${sqlString(JSON.stringify({ type: "text", text: "主智能体继续：综合子任务审查，PR符合规范。" }))}');`,
+      `INSERT INTO message VALUES ('message-p2', 'session-parent-1', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:01Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-p2', 'message-p2', 'session-parent-1', '${sqlString(JSON.stringify({ type: "text", text: "正在派发子代理。" }))}');`,
+      `INSERT INTO message VALUES ('message-p3', 'session-parent-1', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:02Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-p3', 'message-p3', 'session-parent-1', '${sqlString(JSON.stringify({
+        type: "tool",
+        tool: "task",
+        callID: "call-task-1",
+        state: {
+          status: "completed",
+          input: { description: "代码审查子代理", prompt: "逐行审查 src/main.ts 的变更", subagent_type: "general" },
+          output: "子代理已完成。",
+          metadata: { sessionId: "session-sub-1" },
+        },
+      }))}');`,
+      `INSERT INTO message VALUES ('message-p4', 'session-parent-1', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:05Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-p4', 'message-p4', 'session-parent-1', '${sqlString(JSON.stringify({ type: "text", text: "主智能体继续：综合子任务审查，PR符合规范。" }))}');`,
       `INSERT INTO message VALUES ('message-s1', 'session-sub-1', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:01Z" } }))}');`,
       `INSERT INTO part VALUES ('part-s1', 'message-s1', 'session-sub-1', '${sqlString(JSON.stringify({ type: "text", text: "逐行审查 src/main.ts 的变更" }))}');`,
       `INSERT INTO message VALUES ('message-s2', 'session-sub-1', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:03Z" } }))}');`,
-      `INSERT INTO part VALUES ('part-s2', 'message-s2', 'session-sub-1', '${sqlString(JSON.stringify({ type: "text", text: "审查完成：没有发现类型安全问题。" }))}');`,
+      `INSERT INTO part VALUES ('part-s2a', 'message-s2', 'session-sub-1', '${sqlString(JSON.stringify({ type: "tool", tool: "read", callID: "read-1", state: { status: "completed", input: { filePath: "src/main.ts" }, output: "file body" } }))}');`,
+      `INSERT INTO part VALUES ('part-s2b', 'message-s2', 'session-sub-1', '${sqlString(JSON.stringify({ type: "text", text: "审查完成：没有发现类型安全问题。" }))}');`,
     ].join("\n"));
 
-    // 1. Verify list_sessions strictly excludes child session
+    const sessions = readFixtureSessions(dbPath);
+    assert.equal(sessions.length, 2, "父会话只产出一份 bundle：父会话 + 直接子会话");
+    const parent = sessions.find((session) => session.external_id === "session-parent-1");
+    const child = sessions.find((session) => session.external_id === "session-sub-1");
+    assert.ok(parent, "父会话必须存在");
+    assert.ok(child, "子代理必须产出独立子会话");
+
+    // 父会话：1 次人类提问 = 1 个真实轮次，子代理只留锚点。
+    assert.equal(parent.user_visible, true);
+    assert.equal(parent.execution_origin, "opencode");
+    assert.equal(parent.turns.length, 1);
+    const [turn] = parent.turns;
+    assert.equal(turn.turn_index, 0);
+    assert.equal(turn.user_text, "派发子任务审查代码");
+    assert.equal(turn.turn_kind, undefined);
+    assert.equal(turn.parent_turn_id, undefined);
+    assert.deepEqual(turn.parts.map((part) => part.kind), ["text", "subagent", "text"]);
+    assert.equal(turn.parts.at(-1).text, "主智能体继续：综合子任务审查，PR符合规范。");
+
+    const anchor = turn.parts[1];
+    assert.equal(anchor.role, "assistant");
+    assert.equal(anchor.status, "completed");
+    assert.equal(anchor.language, null);
+    assert.equal(anchor.command, null);
+    assert.equal(anchor.cwd, null);
+    assert.equal(anchor.exit_code, null);
+    assert.equal(anchor.source_execution_id, "call-task-1");
+    assert.equal(anchor.content_card, undefined, "锚点不得自带 content_card");
+    assert.equal(
+      anchor.text,
+      "[委派任务] 代码审查子代理\n[汇报结论] 审查完成：没有发现类型安全问题。",
+    );
+    const anchorMeta = JSON.parse(anchor.metadata_json);
+    assert.equal(anchorMeta.child_external_id, child.external_id);
+    assert.equal(anchorMeta.child_external_id, "session-sub-1");
+    assert.equal(anchorMeta.agent_role, "general");
+    assert.equal(anchorMeta.title, "代码审查子代理");
+    assert.equal(anchorMeta.status, "completed");
+    assert.equal(anchorMeta.step_count, 1);
+    assert.equal(anchorMeta.spawn_anchor, "call-task-1");
+    assert.equal(anchorMeta.report_summary, "审查完成：没有发现类型安全问题。");
+    assert.equal(anchorMeta.content_card, undefined);
+
+    // 子会话：隐藏、独立从属、#T1 承载全量委派 Prompt。
+    assert.equal(child.user_visible, false);
+    assert.equal(child.execution_origin, "subagent");
+    assert.equal(child.title, "代码审查子代理");
+    assert.equal(child.turns.length, 1);
+    assert.equal(child.turns[0].turn_index, 0);
+    assert.equal(child.turns[0].turn_kind, undefined);
+    assert.equal(child.turns[0].user_text, "逐行审查 src/main.ts 的变更");
+    assert.ok(child.turns[0].parts.some((part) => part.text?.includes("没有发现类型安全问题")));
+    assert.deepEqual(JSON.parse(child.execution_purpose), {
+      parent_external_id: "session-parent-1",
+      parent_turn_index: 0,
+      agent_role: "general",
+      spawn_anchor: "call-task-1",
+    });
+
+    // list_sessions 必须同时给出父/子描述符（顶层过滤交给后端 user_visible）。
     const listResult = spawnSync(process.execPath, [adapterPath], {
       encoding: "utf8",
       input: JSON.stringify({ method: "list_sessions", source: { location: dbPath }, params: {} }),
     });
     assert.equal(listResult.status, 0, listResult.stderr);
     const listMessages = listResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
-    const items = listMessages.filter((entry) => entry.type === "item");
-    assert.equal(items.length, 1, "Child sessions must be excluded from list_sessions");
-    assert.equal(items[0].item.external_id, "session-parent-1");
+    const listedIds = listMessages
+      .filter((entry) => entry.type === "item")
+      .map((entry) => entry.item.external_id)
+      .sort();
+    assert.deepEqual(listedIds, ["session-parent-1", "session-sub-1"]);
 
-    // 2. Verify read_session on parent session inlines subagent turn and continuation turn
-    const parentSession = readFixtureSession(dbPath);
-    assert.equal(parentSession.external_id, "session-parent-1");
-    assert.equal(parentSession.turns.length, 3, "Expected anchor, subagent, and continuation turns");
-
-    const [anchorTurn, subTurn, contTurn] = parentSession.turns;
-
-    // Anchor turn
-    assert.equal(anchorTurn.external_id, "message-p1");
-    assert.equal(anchorTurn.user_text, "派发子任务审查代码");
-    assert.equal(anchorTurn.turn_kind, undefined);
-
-    // Subagent turn
-    assert.equal(subTurn.turn_kind, "subagent");
-    assert.ok(!subTurn.agent_role, "title without a (@type subagent) suffix must not become the role");
-    assert.equal(subTurn.title, "代码审查子代理");
-    assert.equal(subTurn.parent_turn_id, anchorTurn.external_id);
-    assert.equal(subTurn.user_text, "逐行审查 src/main.ts 的变更");
-    assert.ok(subTurn.parts.some((p) => p.text?.includes("没有发现类型安全问题")));
-
-    // Continuation turn
-    assert.equal(contTurn.turn_kind, "continuation");
-    assert.equal(contTurn.parent_turn_id, anchorTurn.external_id);
-    assert.equal(contTurn.user_text, "Continue following subagent execution");
-    assert.ok(contTurn.parts.some((p) => p.text?.includes("主智能体继续")));
-
-    // 3. Verify read_session directly on child session marks it as subagent and not user visible
-    const childResult = spawnSync(process.execPath, [adapterPath], {
-      encoding: "utf8",
-      input: JSON.stringify({ method: "read_session", source: { location: dbPath }, params: { session_id: "session-sub-1" } }),
-    });
-    assert.equal(childResult.status, 0, childResult.stderr);
-    const childMessages = childResult.stdout.trim().split("\n").map((line) => JSON.parse(line));
-    const childSession = childMessages.find((entry) => entry.type === "item")?.item?.session;
-    assert.ok(childSession);
-    assert.equal(childSession.execution_origin, "subagent");
-    assert.equal(childSession.user_visible, false);
+    // 直接读取子会话：返回子会话本身，溯源信息与打包时一致。
+    const directSessions = readFixtureSessions(dbPath, { session_id: "session-sub-1" });
+    assert.equal(directSessions.length, 1);
+    const direct = directSessions[0];
+    assert.equal(direct.external_id, "session-sub-1");
+    assert.equal(direct.user_visible, false);
+    assert.equal(direct.execution_origin, "subagent");
+    assert.deepEqual(JSON.parse(direct.execution_purpose), JSON.parse(child.execution_purpose));
+    assert.equal(direct.turns.length, 1);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("OpenCode multi-turn session keeps subsequent question as standard user turn", () => {
+test("OpenCode keeps subsequent questions as standard turns after a subagent dispatch", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-multiturn-"));
   try {
     const dbPath = path.join(fixtureRoot, "opencode-multi.db");
@@ -322,21 +370,28 @@ test("OpenCode multi-turn session keeps subsequent question as standard user tur
       "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT, parent_id TEXT);",
       "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
       "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
-      // Sessions
       "INSERT INTO session VALUES ('session-multi', 'Multi-turn session', '/tmp/project', '2026-08-06T00:10:00Z', NULL);",
-      "INSERT INTO session VALUES ('session-child', 'Subtask worker', '/tmp/project', '2026-08-06T00:01:00Z', 'session-multi');",
-      // Question 1
+      "INSERT INTO session VALUES ('session-child', 'Subtask worker (@reviewer subagent)', '/tmp/project', '2026-08-06T00:01:00Z', 'session-multi');",
       `INSERT INTO message VALUES ('msg-q1', 'session-multi', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
       `INSERT INTO part VALUES ('part-q1', 'msg-q1', 'session-multi', '${sqlString(JSON.stringify({ type: "text", text: "Question 1: Fix bug" }))}');`,
-      // Subtask child messages
+      `INSERT INTO message VALUES ('msg-t1', 'session-multi', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:20Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-t1', 'msg-t1', 'session-multi', '${sqlString(JSON.stringify({
+        type: "tool",
+        tool: "task",
+        callID: "call-task-q1",
+        state: {
+          status: "completed",
+          input: { description: "Subtask worker", prompt: "Subtask execution details", subagent_type: "reviewer" },
+          output: "Subtask finished",
+          metadata: { sessionId: "session-child" },
+        },
+      }))}');`,
       `INSERT INTO message VALUES ('msg-c1', 'session-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:30Z" } }))}');`,
       `INSERT INTO part VALUES ('part-c1', 'msg-c1', 'session-child', '${sqlString(JSON.stringify({ type: "text", text: "Subtask execution details" }))}');`,
       `INSERT INTO message VALUES ('msg-c2', 'session-child', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:50Z" } }))}');`,
       `INSERT INTO part VALUES ('part-c2', 'msg-c2', 'session-child', '${sqlString(JSON.stringify({ type: "text", text: "Subtask finished" }))}');`,
-      // Main agent continuation for Q1
       `INSERT INTO message VALUES ('msg-a1', 'session-multi', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:01:00Z" } }))}');`,
       `INSERT INTO part VALUES ('part-a1', 'msg-a1', 'session-multi', '${sqlString(JSON.stringify({ type: "text", text: "Question 1 resolved" }))}');`,
-      // Question 2
       `INSERT INTO message VALUES ('msg-q2', 'session-multi', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:05:00Z" } }))}');`,
       `INSERT INTO part VALUES ('part-q2', 'msg-q2', 'session-multi', '${sqlString(JSON.stringify({ type: "text", text: "Question 2: What is the weather today in Tokyo?" }))}');`,
       `INSERT INTO message VALUES ('msg-a2', 'session-multi', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:05:30Z" } }))}');`,
@@ -344,16 +399,32 @@ test("OpenCode multi-turn session keeps subsequent question as standard user tur
     ].join("\n"));
 
     const session = readFixtureSession(dbPath);
-    const q2Turn = session.turns.find((t) => t.user_text && t.user_text.includes("Question 2: What is the weather today in Tokyo?"));
-    assert.ok(q2Turn, "Question 2 turn must exist");
-    assert.equal(q2Turn.turn_kind, undefined, "Question 2 turn_kind must be undefined");
-    assert.equal(q2Turn.parent_turn_id, undefined, "Question 2 parent_turn_id must be undefined");
+    assert.equal(session.external_id, "session-multi");
+    assert.equal(session.turns.length, 2, "两次人类提问只能产生两个真实轮次");
+
+    const [q1Turn, q2Turn] = session.turns;
+    assert.equal(q1Turn.user_text, "Question 1: Fix bug");
+    assert.deepEqual(q1Turn.parts.map((part) => part.kind), ["subagent", "text"]);
+    assert.equal(JSON.parse(q1Turn.parts[0].metadata_json).child_external_id, "session-child");
+    assert.equal(q1Turn.parts.at(-1).text, "Question 1 resolved");
+
+    assert.equal(q2Turn.turn_index, 1);
+    assert.equal(q2Turn.user_text, "Question 2: What is the weather today in Tokyo?");
+    assert.equal(q2Turn.turn_kind, undefined);
+    assert.equal(q2Turn.parent_turn_id, undefined);
+    assert.deepEqual(q2Turn.parts.map((part) => part.kind), ["text"]);
+
+    const child = readFixtureSessions(dbPath).find((entry) => entry.external_id === "session-child");
+    assert.ok(child);
+    const purpose = JSON.parse(child.execution_purpose);
+    assert.equal(purpose.parent_turn_index, 0);
+    assert.equal(purpose.spawn_anchor, "call-task-q1");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("OpenCode falls back to valid string when subagent prompt is whitespace-only", () => {
+test("OpenCode keeps child #T1 prompt non-empty when the delegation prompt is whitespace-only", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-ws-"));
   try {
     const dbPath = path.join(fixtureRoot, "opencode-ws.db");
@@ -365,21 +436,34 @@ test("OpenCode falls back to valid string when subagent prompt is whitespace-onl
       "INSERT INTO session VALUES ('session-ws-child', '   ', '/tmp/project', '2026-08-06T00:01:00Z', 'session-ws-parent');",
       `INSERT INTO message VALUES ('msg-p1', 'session-ws-parent', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
       `INSERT INTO part VALUES ('part-p1', 'msg-p1', 'session-ws-parent', '${sqlString(JSON.stringify({ type: "text", text: "Parent task" }))}');`,
+      `INSERT INTO message VALUES ('msg-p2', 'session-ws-parent', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:10Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-p2', 'msg-p2', 'session-ws-parent', '${sqlString(JSON.stringify({
+        type: "tool",
+        tool: "task",
+        callID: "call-ws",
+        state: { status: "completed", input: { description: "   ", prompt: "   \t\n  " }, output: "子代理已结束。", metadata: { sessionId: "session-ws-child" } },
+      }))}');`,
       `INSERT INTO message VALUES ('msg-c1', 'session-ws-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:30Z" } }))}');`,
       `INSERT INTO part VALUES ('part-c1', 'msg-c1', 'session-ws-child', '${sqlString(JSON.stringify({ type: "text", text: "   \t\n  " }))}');`,
     ].join("\n"));
 
-    const session = readFixtureSession(dbPath);
-    const subTurn = session.turns.find((t) => t.turn_kind === "subagent");
-    assert.ok(subTurn, "Subagent turn must exist");
-    assert.equal(subTurn.user_text, "Subagent execution");
-    assert.ok(subTurn.user_text.trim().length > 0);
+    const sessions = readFixtureSessions(dbPath);
+    const parent = sessions.find((entry) => entry.external_id === "session-ws-parent");
+    const child = sessions.find((entry) => entry.external_id === "session-ws-child");
+    assert.ok(parent);
+    assert.ok(child);
+    const anchor = parent.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor, "派发步必须留下锚点");
+    assert.equal(anchor.source_execution_id, "call-ws");
+    assert.equal(JSON.parse(anchor.metadata_json).child_external_id, "session-ws-child");
+    assert.ok(child.turns.length > 0);
+    assert.ok(child.turns[0].user_text && child.turns[0].user_text.trim().length > 0);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("OpenCode derives short agent role from subagent type and keeps task description in title", () => {
+test("OpenCode derives agent role from the subagent title suffix and keeps the task description as title", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-role-"));
   try {
     const dbPath = path.join(fixtureRoot, "opencode-role.db");
@@ -391,16 +475,29 @@ test("OpenCode derives short agent role from subagent type and keeps task descri
       "INSERT INTO session VALUES ('session-role-child', '查找PDF中的医保代码 (@general subagent)', '/tmp/project', '2026-08-06T00:01:00Z', 'session-role-parent');",
       `INSERT INTO message VALUES ('msg-rp', 'session-role-parent', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
       `INSERT INTO part VALUES ('part-rp', 'msg-rp', 'session-role-parent', '${sqlString(JSON.stringify({ type: "text", text: "Parent task" }))}');`,
+      `INSERT INTO message VALUES ('msg-rt', 'session-role-parent', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:10Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-rt', 'msg-rt', 'session-role-parent', '${sqlString(JSON.stringify({
+        type: "tool",
+        tool: "task",
+        callID: "call-role",
+        state: { status: "completed", input: { description: "查找PDF中的医保代码", prompt: "查找PDF中的医保代码" }, output: "找到 3 处", metadata: { sessionId: "session-role-child" } },
+      }))}');`,
       `INSERT INTO message VALUES ('msg-rc', 'session-role-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:30Z" } }))}');`,
       `INSERT INTO part VALUES ('part-rc', 'msg-rc', 'session-role-child', '${sqlString(JSON.stringify({ type: "text", text: "查找PDF中的医保代码" }))}');`,
     ].join("\n"));
 
-    const session = readFixtureSession(dbPath);
-    const subTurn = session.turns.find((t) => t.turn_kind === "subagent");
-    assert.ok(subTurn, "Subagent turn must exist");
-    assert.equal(subTurn.agent_role, "general", "agent_role must be the short subagent type");
-    assert.equal(subTurn.title, "查找PDF中的医保代码", "task description must be preserved as turn title");
-    assert.equal(subTurn.user_text, "查找PDF中的医保代码");
+    const sessions = readFixtureSessions(dbPath);
+    const parent = sessions.find((entry) => entry.external_id === "session-role-parent");
+    const child = sessions.find((entry) => entry.external_id === "session-role-child");
+    const anchor = parent.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor);
+    const anchorMeta = JSON.parse(anchor.metadata_json);
+    assert.equal(anchorMeta.agent_role, "general", "角色来自标题里的 (@type subagent)");
+    assert.equal(anchorMeta.title, "查找PDF中的医保代码");
+    assert.equal(child.title, "查找PDF中的医保代码");
+    const purpose = JSON.parse(child.execution_purpose);
+    assert.equal(purpose.agent_role, "general");
+    assert.equal(purpose.parent_external_id, "session-role-parent");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -418,21 +515,33 @@ test("OpenCode leaves agent role empty when subagent title carries no type suffi
       "INSERT INTO session VALUES ('session-nt-child', '自由命名的子任务', '/tmp/project', '2026-08-06T00:01:00Z', 'session-nt-parent');",
       `INSERT INTO message VALUES ('msg-ntp', 'session-nt-parent', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
       `INSERT INTO part VALUES ('part-ntp', 'msg-ntp', 'session-nt-parent', '${sqlString(JSON.stringify({ type: "text", text: "Parent task" }))}');`,
+      `INSERT INTO message VALUES ('msg-ntt', 'session-nt-parent', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:10Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-ntt', 'msg-ntt', 'session-nt-parent', '${sqlString(JSON.stringify({
+        type: "tool",
+        tool: "task",
+        callID: "call-notype",
+        state: { status: "completed", input: { description: "自由命名的子任务", prompt: "自由命名的子任务" }, output: "已完成", metadata: { sessionId: "session-nt-child" } },
+      }))}');`,
       `INSERT INTO message VALUES ('msg-ntc', 'session-nt-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:30Z" } }))}');`,
       `INSERT INTO part VALUES ('part-ntc', 'msg-ntc', 'session-nt-child', '${sqlString(JSON.stringify({ type: "text", text: "自由命名的子任务" }))}');`,
     ].join("\n"));
 
-    const session = readFixtureSession(dbPath);
-    const subTurn = session.turns.find((t) => t.turn_kind === "subagent");
-    assert.ok(subTurn, "Subagent turn must exist");
-    assert.ok(!subTurn.agent_role, "agent_role must stay empty without a type suffix");
-    assert.equal(subTurn.title, "自由命名的子任务");
+    const sessions = readFixtureSessions(dbPath);
+    const parent = sessions.find((entry) => entry.external_id === "session-nt-parent");
+    const child = sessions.find((entry) => entry.external_id === "session-nt-child");
+    const anchor = parent.turns[0].parts.find((part) => part.kind === "subagent");
+    assert.ok(anchor);
+    const anchorMeta = JSON.parse(anchor.metadata_json);
+    assert.equal(anchorMeta.agent_role, undefined, "取不到角色时必须留空，不能伪造常量角色");
+    assert.equal(anchorMeta.title, "自由命名的子任务");
+    assert.equal(child.title, "自由命名的子任务");
+    assert.equal(JSON.parse(child.execution_purpose).agent_role, undefined);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("OpenCode folds every child round into one subagent Turn", () => {
+test("OpenCode keeps every child round as a real turn inside the hidden child session", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-merge-"));
   try {
     const dbPath = path.join(fixtureRoot, "opencode-merge.db");
@@ -444,6 +553,13 @@ test("OpenCode folds every child round into one subagent Turn", () => {
       "INSERT INTO session VALUES ('session-merge-child', '核对迁移脚本 (@reviewer subagent)', '/tmp/project', '2026-08-06T00:05:00Z', 'session-merge-parent');",
       `INSERT INTO message VALUES ('msg-p1', 'session-merge-parent', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
       `INSERT INTO part VALUES ('part-p1', 'msg-p1', 'session-merge-parent', '${sqlString(JSON.stringify({ type: "text", text: "派发子代理核对迁移脚本" }))}');`,
+      `INSERT INTO message VALUES ('msg-p2', 'session-merge-parent', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:10Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-p2', 'msg-p2', 'session-merge-parent', '${sqlString(JSON.stringify({
+        type: "tool",
+        tool: "task",
+        callID: "call-merge",
+        state: { status: "completed", input: { description: "核对迁移脚本", prompt: "先核对索引", subagent_type: "reviewer" }, output: "已启动", metadata: { sessionId: "session-merge-child" } },
+      }))}');`,
       `INSERT INTO message VALUES ('msg-c1', 'session-merge-child', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:01:00Z" } }))}');`,
       `INSERT INTO part VALUES ('part-c1', 'msg-c1', 'session-merge-child', '${sqlString(JSON.stringify({ type: "text", text: "先核对索引" }))}');`,
       `INSERT INTO message VALUES ('msg-c2', 'session-merge-child', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:02:00Z" } }))}');`,
@@ -454,18 +570,82 @@ test("OpenCode folds every child round into one subagent Turn", () => {
       `INSERT INTO part VALUES ('part-c4', 'msg-c4', 'session-merge-child', '${sqlString(JSON.stringify({ type: "text", text: "外键核对完成：无违规。" }))}');`,
     ].join("\n"));
 
-    const session = readFixtureSession(dbPath);
-    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
-    assert.equal(subagentTurns.length, 1, "一个子会话只能产出一个 subagent Turn");
+    const sessions = readFixtureSessions(dbPath);
+    const parent = sessions.find((entry) => entry.external_id === "session-merge-parent");
+    const child = sessions.find((entry) => entry.external_id === "session-merge-child");
+    assert.equal(parent.turns.length, 1, "子会话的多轮不能外溢成父会话的伪轮次");
+    assert.equal(parent.turns[0].parts.filter((part) => part.kind === "subagent").length, 1);
 
-    const subTurn = subagentTurns[0];
-    assert.equal(subTurn.agent_role, "reviewer");
-    assert.equal(subTurn.user_text, "先核对索引");
     assert.deepEqual(
-      subTurn.parts.map((part) => part.text),
-      ["索引核对完成。", "外键核对完成：无违规。"],
-      "子会话逐轮内容按顺序合并进同一个 Turn 的 parts"
+      child.turns.map((turn) => turn.user_text),
+      ["先核对索引", "再核对外键"],
+      "子会话内部保持真实轮次，不折叠成 subagent Turn",
     );
+    assert.deepEqual(
+      child.turns.map((turn) => turn.turn_index),
+      [0, 1],
+    );
+    for (const turn of child.turns) {
+      assert.equal(turn.turn_kind, undefined);
+      assert.equal(turn.parent_turn_id, undefined);
+    }
+
+    const anchorMeta = JSON.parse(parent.turns[0].parts.find((part) => part.kind === "subagent").metadata_json);
+    assert.equal(anchorMeta.agent_role, "reviewer");
+    assert.equal(anchorMeta.report_summary, "外键核对完成：无违规。");
+    assert.equal(anchorMeta.step_count, 0);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("OpenCode pairs task steps with child sessions in dispatch order when session id metadata is absent", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-order-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode-order.db");
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT, parent_id TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
+      "INSERT INTO session VALUES ('session-order-parent', '顺序派发', '/tmp/project', '2026-08-06T00:10:00Z', NULL);",
+      "INSERT INTO session VALUES ('session-order-a', '第一个子任务 (@general subagent)', '/tmp/project', '2026-08-06T00:02:00Z', 'session-order-parent');",
+      "INSERT INTO session VALUES ('session-order-b', '第二个子任务 (@general subagent)', '/tmp/project', '2026-08-06T00:04:00Z', 'session-order-parent');",
+      `INSERT INTO message VALUES ('msg-op', 'session-order-parent', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-op', 'msg-op', 'session-order-parent', '${sqlString(JSON.stringify({ type: "text", text: "并行派发两个子任务" }))}');`,
+      `INSERT INTO message VALUES ('msg-ot1', 'session-order-parent', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:10Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-ot1', 'msg-ot1', 'session-order-parent', '${sqlString(JSON.stringify({ type: "tool", tool: "task", callID: "call-first", state: { status: "completed", input: { description: "第一个子任务", prompt: "任务一" }, output: "完成一" } }))}');`,
+      `INSERT INTO message VALUES ('msg-ot2', 'session-order-parent', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:20Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-ot2', 'msg-ot2', 'session-order-parent', '${sqlString(JSON.stringify({ type: "tool", tool: "task", callID: "call-second", state: { status: "completed", input: { description: "第二个子任务", prompt: "任务二" }, output: "完成二" } }))}');`,
+      `INSERT INTO message VALUES ('msg-oa1', 'session-order-a', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:01:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-oa1', 'msg-oa1', 'session-order-a', '${sqlString(JSON.stringify({ type: "text", text: "任务一" }))}');`,
+      `INSERT INTO message VALUES ('msg-oa2', 'session-order-a', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:01:30Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-oa2', 'msg-oa2', 'session-order-a', '${sqlString(JSON.stringify({ type: "text", text: "结果一" }))}');`,
+      `INSERT INTO message VALUES ('msg-ob1', 'session-order-b', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:03:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-ob1', 'msg-ob1', 'session-order-b', '${sqlString(JSON.stringify({ type: "text", text: "任务二" }))}');`,
+      `INSERT INTO message VALUES ('msg-ob2', 'session-order-b', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:03:30Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-ob2', 'msg-ob2', 'session-order-b', '${sqlString(JSON.stringify({ type: "text", text: "结果二" }))}');`,
+    ].join("\n"));
+
+    const sessions = readFixtureSessions(dbPath);
+    const parent = sessions.find((entry) => entry.external_id === "session-order-parent");
+    const anchors = parent.turns[0].parts.filter((part) => part.kind === "subagent");
+    assert.equal(anchors.length, 2, "两个派发步必须各留一个锚点");
+
+    const firstMeta = JSON.parse(anchors[0].metadata_json);
+    const secondMeta = JSON.parse(anchors[1].metadata_json);
+    assert.equal(firstMeta.child_external_id, "session-order-a");
+    assert.equal(firstMeta.spawn_anchor, "call-first");
+    assert.equal(firstMeta.report_summary, "结果一");
+    assert.equal(secondMeta.child_external_id, "session-order-b");
+    assert.equal(secondMeta.spawn_anchor, "call-second");
+    assert.equal(secondMeta.report_summary, "结果二");
+
+    const childA = sessions.find((entry) => entry.external_id === "session-order-a");
+    const childB = sessions.find((entry) => entry.external_id === "session-order-b");
+    assert.equal(firstMeta.child_external_id, childA.external_id);
+    assert.equal(secondMeta.child_external_id, childB.external_id);
+    assert.equal(JSON.parse(childA.execution_purpose).spawn_anchor, "call-first");
+    assert.equal(JSON.parse(childB.execution_purpose).spawn_anchor, "call-second");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -625,14 +805,19 @@ test("OpenCode supports incremental cursor queries using last_time_created", () 
   }
 });
 
-function readFixtureSession(dbPath) {
+function readFixtureSessions(dbPath, params = {}) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",
-    input: JSON.stringify({ method: "read_session", source: { location: dbPath }, params: {} }),
+    input: JSON.stringify({ method: "read_session", source: { location: dbPath }, params }),
   });
   assert.equal(result.status, 0, result.stderr);
   const messages = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
-  const session = messages.find((entry) => entry.type === "item")?.item?.session;
+  return messages.filter((entry) => entry.type === "item").map((entry) => entry.item.session);
+}
+
+function readFixtureSession(dbPath, params = {}) {
+  const sessions = readFixtureSessions(dbPath, params);
+  const session = sessions[0];
   assert.ok(session);
   return session;
 }

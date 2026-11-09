@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package_id": "io.github.util6.antigravity-session",
   "name": "Antigravity Session Parser",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "min_core_version": "0.5.2",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
@@ -15,6 +15,15 @@
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "1.5.3",
+      "date": "2026-11-05",
+      "notes": [
+        "Fold resolved project paths to portable anchors (~/...) to enforce the storage-folding contract across platforms.",
+        "Ignore internal antigravity-acp execution directories and filter out cognitive memory extraction prompts and test probes from user session listings.",
+        "Infer project workspace paths reliably from transcript context environments (Command Working Directory, Active Workspaces, and open files)."
+      ]
+    },
     {
       "version": "1.5.2",
       "date": "2026-11-03",

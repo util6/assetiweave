@@ -55,8 +55,10 @@ pub async fn import_web_record_sessions_sqlx(
                 .count();
             let prepared = prepare_session_snapshot(
                 ConversationRecordKind::Web,
+                &source.id,
                 &session.id,
                 &session.adapter_id,
+                None,
                 session.started_at.as_deref(),
                 session.updated_at.as_deref(),
                 &normalized.turns,

@@ -20,6 +20,25 @@ function readFixtureSession(filePath) {
   return session;
 }
 
+function readFixtureSessions(filePath, sourceLocation = filePath) {
+  const result = spawnSync(process.execPath, [adapterPath], {
+    encoding: "utf8",
+    input: JSON.stringify({ method: "read_session", source: { location: sourceLocation }, params: { source_locator: filePath } }),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((message) => message.type === "item" && message.item?.session)
+    .map((message) => message.item.session);
+}
+
+function anchorPartsOf(session) {
+  return session.turns.flatMap((turn) => (turn.parts ?? []).filter((part) => part.kind === "subagent"));
+}
+
 test("CodeBuddy parses Bash command and extracts clean output with exitCode", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codebuddy-bash-"));
   try {
@@ -306,46 +325,70 @@ test("CodeBuddy links Agent tool call to subagent child session and discovers su
       }),
     ].join("\n"));
 
-    // 1. Read main session
-    const mainSession = readFixtureSession(mainSessionFile);
-    assert.equal(mainSession.turns.length, 2, "main session should contain anchor turn and inlined subagent turn");
+    // 1. 父会话：一次人类提问 = 1 个完整 Turn，派发处只有锚点 Part
+    const sessions = readFixtureSessions(mainSessionFile);
+    assert.equal(sessions.length, 2, "一个父会话 + 一个独立子代理会话");
+    const parent = sessions.find((entry) => entry.external_id === parentSessionId);
+    assert.ok(parent);
+    assert.equal(parent.user_visible, true);
+    assert.equal(parent.turns.length, 1, "派发子代理不得切分父轮次");
+    assert.ok(parent.turns.every((turn) => turn.turn_kind === undefined));
 
-    const cardParts = mainSession.turns.flatMap((turn) => turn.parts || []).filter(
-      (part) => [part.kind, part.content_card?.kind].some(
-        (kind) => typeof kind === "string" && (kind === "subagent" || kind.endsWith(".subagent")),
-      ),
-    );
-    assert.deepEqual(cardParts, [], "Agent tool calls must not emit subagent JSON cards");
+    const anchors = anchorPartsOf(parent);
+    assert.equal(anchors.length, 1);
+    assert.equal(anchors[0].source_execution_id, "call_agent_1");
+    assert.ok(!("content_card" in anchors[0]), "锚点不得携带 content_card");
+    assert.match(anchors[0].text, /^\[委派任务\] /);
+    assert.match(anchors[0].text, /\[汇报结论\] 已完成架构摸底/);
+    const meta = JSON.parse(anchors[0].metadata_json);
+    assert.equal(meta.child_external_id, `${parentSessionId}:subagent:${subagentId}`);
+    assert.equal(meta.agent_role, "Explore");
+    assert.equal(meta.title, "摸底架构设计与实现");
+    assert.equal(meta.status, "completed");
+    assert.equal(meta.spawn_anchor, "call_agent_1");
+    assert.equal(meta.report_summary, "已完成架构摸底。");
 
-    // Verify inlined subagent turn
-    const subTurn = mainSession.turns[1];
-    assert.equal(subTurn.turn_kind, "subagent");
-    assert.equal(subTurn.agent_role, "Explore");
-    assert.equal(subTurn.parent_turn_id, mainSession.turns[0].external_id);
-    assert.equal(subTurn.user_text, "摸底架构设计与实现");
-    assert.ok(subTurn.parts.some((p) => p.role === "assistant" && p.text?.includes("已完成架构摸底")));
+    // 2. 子会话：独立、隐藏、带父子溯源元数据
+    const child = sessions.find((entry) => entry.external_id === `${parentSessionId}:subagent:${subagentId}`);
+    assert.ok(child);
+    assert.equal(child.user_visible, false);
+    assert.equal(child.execution_origin, "subagent");
+    assert.match(child.title, /子代理/);
+    assert.equal(child.turns.length, 1, "子会话 #T1 承载全量委派 Prompt 与最终汇报");
+    assert.equal(child.turns[0].user_text, "摸底架构设计与实现");
+    assert.ok(child.turns[0].parts.some((part) => part.role === "assistant" && part.text?.includes("已完成架构摸底")));
+    const purpose = JSON.parse(child.execution_purpose);
+    assert.equal(purpose.parent_external_id, parentSessionId);
+    assert.equal(purpose.parent_turn_index, 0);
+    assert.equal(purpose.agent_role, "Explore");
+    assert.equal(purpose.spawn_anchor, "call_agent_1");
 
-    // 2. Read subagent session directly
-    const subSession = readFixtureSession(subagentFile);
-    assert.equal(subSession.execution_origin, "subagent");
-    assert.equal(subSession.user_visible, false);
-    assert.match(subSession.title, /子代理/);
+    // 3. 单独读取子代理文件同样产出隐藏子会话
+    const standalone = readFixtureSession(subagentFile);
+    assert.equal(standalone.external_id, `${parentSessionId}:subagent:${subagentId}`);
+    assert.equal(standalone.execution_origin, "subagent");
+    assert.equal(standalone.user_visible, false);
 
-    // 3. List sessions in fixtureRoot
+    // 4. list_sessions 必须列出子代理描述符，否则增量同步会把它误判为源已消失
     const listResult = spawnSync(process.execPath, [adapterPath], {
       encoding: "utf8",
       input: JSON.stringify({ method: "list_sessions", source: { location: fixtureRoot }, params: {} }),
     });
     assert.equal(listResult.status, 0);
-    const items = listResult.stdout.trim().split("\n").map((l) => JSON.parse(l)).filter((m) => m.type === "item");
-    assert.equal(items.length, 1); // Subagent session is filtered out from top-level list_sessions
-    assert.equal(items[0].item.external_id, "session-main");
+    const ids = listResult.stdout
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((m) => m.type === "item")
+      .map((m) => m.item.external_id)
+      .sort();
+    assert.deepEqual(ids, [parentSessionId, `${parentSessionId}:subagent:${subagentId}`].sort());
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("CodeBuddy inlines Agent subagent child turns and emits continuation turn when main agent resumes", () => {
+test("CodeBuddy keeps the main agent continuation inside the same parent turn", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codebuddy-cont-"));
   try {
     const parentSessionId = "session-cont-main";
@@ -417,28 +460,36 @@ test("CodeBuddy inlines Agent subagent child turns and emits continuation turn w
       }),
     ].join("\n"));
 
-    const session = readFixtureSession(mainSessionFile);
-    assert.equal(session.turns.length, 3, "expected anchor, subagent, and continuation turns");
+    const sessions = readFixtureSessions(mainSessionFile);
+    assert.equal(sessions.length, 2, "父会话 + 一个独立子会话");
+    const parent = sessions.find((entry) => entry.external_id === parentSessionId);
+    const child = sessions.find((entry) => entry.external_id === `${parentSessionId}:subagent:${subagentId}`);
+    assert.ok(parent);
+    assert.ok(child);
 
-    const [anchorTurn, subTurn, contTurn] = session.turns;
+    assert.equal(parent.turns.length, 1, "子代理返回后主代理的动作必须留在同一个父轮次");
+    const turn = parent.turns[0];
+    assert.equal(turn.external_id, "msg-1");
+    assert.equal(turn.user_text, "请协助设计微服务架构");
+    assert.equal(turn.turn_kind, undefined);
+    assert.equal(turn.parent_turn_id, undefined);
+    assert.ok(
+      turn.parts.some((part) => part.text?.includes("综合子代理调研结论")),
+      "主代理的最终回答不能再被切到续接伪轮次里",
+    );
 
-    // Anchor turn
-    assert.equal(anchorTurn.external_id, "msg-1");
-    assert.equal(anchorTurn.user_text, "请协助设计微服务架构");
-    assert.equal(anchorTurn.turn_kind, undefined);
+    const anchors = anchorPartsOf(parent);
+    assert.equal(anchors.length, 1);
+    const meta = JSON.parse(anchors[0].metadata_json);
+    assert.equal(meta.child_external_id, `${parentSessionId}:subagent:${subagentId}`);
+    assert.equal(meta.agent_role, "ArchitectureExpert");
+    assert.match(anchors[0].text, /\[汇报结论\] 微服务划分方案/);
 
-    // Subagent turn
-    assert.equal(subTurn.turn_kind, "subagent");
-    assert.equal(subTurn.agent_role, "ArchitectureExpert");
-    assert.equal(subTurn.parent_turn_id, anchorTurn.external_id);
-    assert.equal(subTurn.user_text, "调研微服务划分");
-    assert.ok(subTurn.parts.some((p) => p.text?.includes("微服务划分方案")));
-
-    // Continuation turn
-    assert.equal(contTurn.turn_kind, "continuation");
-    assert.equal(contTurn.parent_turn_id, anchorTurn.external_id);
-    assert.equal(contTurn.user_text, "Continue following subagent execution");
-    assert.ok(contTurn.parts.some((p) => p.text?.includes("综合子代理调研结论")));
+    assert.equal(child.turns.length, 1);
+    assert.equal(child.turns[0].user_text, "调研微服务划分");
+    assert.ok(child.turns[0].parts.some((part) => part.text?.includes("微服务划分方案")));
+    assert.equal(JSON.parse(child.execution_purpose).parent_turn_index, 0);
+    assert.ok(sessions.every((entry) => entry.turns.every((item) => item.turn_kind === undefined)));
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -688,7 +739,7 @@ test("CodeBuddy multi-turn session keeps subsequent question as standard user tu
   }
 });
 
-test("CodeBuddy falls back to valid string when subagent prompt is whitespace-only", () => {
+test("CodeBuddy keeps a non-empty anchor title when the subagent prompt is whitespace-only", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codebuddy-ws-"));
   try {
     const sessionFile = path.join(fixtureRoot, "session-ws.jsonl");
@@ -723,16 +774,22 @@ test("CodeBuddy falls back to valid string when subagent prompt is whitespace-on
     ].join("\n"));
 
     const session = readFixtureSession(sessionFile);
-    const subTurn = session.turns.find((t) => t.turn_kind === "subagent");
-    assert.ok(subTurn, "Subagent turn must exist");
-    assert.equal(subTurn.user_text, "Subagent execution");
-    assert.ok(subTurn.user_text.trim().length > 0);
+    assert.equal(session.turns.length, 1, "空提示词不得让父轮次被切分");
+    const anchors = anchorPartsOf(session);
+    assert.equal(anchors.length, 1);
+    assert.ok(anchors[0].text.trim().length > 0);
+    assert.match(anchors[0].text, /^\[委派任务\] /);
+    assert.match(anchors[0].text, /\[汇报结论\] Subtask complete/);
+    const meta = JSON.parse(anchors[0].metadata_json);
+    assert.equal(meta.child_external_id, "session-ws:subagent:call_agent_ws");
+    assert.ok(!meta.title, "全空白的 description/prompt 不得成为锚点标题");
+    assert.ok(session.turns.every((turn) => turn.turn_kind === undefined));
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("CodeBuddy folds every child round into one subagent Turn", () => {
+test("CodeBuddy folds every child round into the child session #T1", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codebuddy-merge-"));
   try {
     const parentSessionId = "session-merge-main";
@@ -811,30 +868,32 @@ test("CodeBuddy folds every child round into one subagent Turn", () => {
       }),
     ].join("\n"));
 
-    const session = readFixtureSession(mainSessionFile);
-    const subagentTurns = session.turns.filter((turn) => turn.turn_kind === "subagent");
-    assert.equal(subagentTurns.length, 1, "一个子代理只能产出一个 Turn");
+    const sessions = readFixtureSessions(mainSessionFile);
+    assert.equal(sessions.length, 2);
+    const parent = sessions.find((entry) => entry.external_id === parentSessionId);
+    const child = sessions.find((entry) => entry.external_id === `${parentSessionId}:subagent:${subagentId}`);
+    assert.ok(parent);
+    assert.ok(child);
 
-    const subTurn = subagentTurns[0];
-    assert.equal(subTurn.agent_role, "DatabaseReviewer");
-    assert.equal(subTurn.parent_turn_id, session.turns[0].external_id);
-    assert.equal(subTurn.user_text, "先核对索引");
+    assert.equal(parent.turns.length, 1, "子代理的多轮内容不得裂成父会话的伪轮次");
+    assert.equal(anchorPartsOf(parent).length, 1);
+    assert.equal(JSON.parse(anchorPartsOf(parent)[0].metadata_json).agent_role, "DatabaseReviewer");
+
+    assert.equal(child.turns.length, 1, "子代理逐轮内容折进独立子会话的 #T1");
+    assert.equal(child.turns[0].user_text, "先核对索引");
+    assert.equal(child.turns[0].turn_kind, undefined);
     assert.deepEqual(
-      subTurn.parts.filter((part) => part.role === "assistant").map((part) => part.text),
+      child.turns[0].parts.filter((part) => part.role === "assistant").map((part) => part.text),
       ["索引核对完成。", "外键核对完成：无违规。"],
-      "子代理逐轮内容按顺序合并进同一个 Turn 的 parts"
+      "子代理逐轮内容按原顺序串成 #T1 的 parts"
     );
-    assert.equal(
-      subagentTurns.length,
-      1,
-      "子代理的多轮内容不得拆成多个 Turn"
-    );
+    assert.equal(JSON.parse(child.execution_purpose).parent_turn_index, 0);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("CodeBuddy leaves agent_role empty when the dispatch declares no subagent_type", () => {
+test("CodeBuddy leaves anchor agent_role empty when the dispatch declares no subagent_type", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codebuddy-roleless-"));
   try {
     const sessionFile = path.join(fixtureRoot, "session-roleless.jsonl");
@@ -877,9 +936,11 @@ test("CodeBuddy leaves agent_role empty when the dispatch declares no subagent_t
     const session = messages.find((message) => message.type === "item")?.item?.session;
     assert.ok(session);
 
-    const subTurn = session.turns.find((turn) => turn.turn_kind === "subagent");
-    assert.ok(subTurn, "Subagent turn must exist");
-    assert.ok(!subTurn.agent_role, "缺少 subagent_type 时角色必须留空，不得伪造 Explore");
+    const anchors = anchorPartsOf(session);
+    assert.equal(anchors.length, 1, "派发仍必须留下锚点");
+    const meta = JSON.parse(anchors[0].metadata_json);
+    assert.ok(!meta.agent_role, "缺少 subagent_type 时角色必须留空，不得伪造 Explore");
+    assert.equal(session.turns.length, 1);
     assert.ok(
       messages.some(
         (message) =>

@@ -45,8 +45,10 @@ pub(super) async fn import_single_session_sqlx_tx(
 
     let prepared = prepare_session_snapshot(
         ConversationRecordKind::Session,
+        &source.id,
         &session.id,
         &session.adapter_id,
+        normalized.execution_origin.as_deref(),
         session.started_at.as_deref(),
         session.updated_at.as_deref(),
         &normalized.turns,
