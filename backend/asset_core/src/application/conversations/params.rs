@@ -249,6 +249,9 @@ pub struct ConversationSessionListParams {
     pub window: Option<String>,
     #[serde(default)]
     pub range: Option<String>,
+    /// 传入父会话 ID（完整或 8 位短 ID）时，改为列出该父会话名下的子代理会话。
+    #[serde(default, alias = "parentSessionId")]
+    pub parent_session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

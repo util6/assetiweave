@@ -213,9 +213,6 @@ async fn test_conversation_outline_and_card_get_full_suite() {
                     "question",
                     "activities",
                     "cards",
-                    "turn_kind",
-                    "agent_role",
-                    "parent_turn_id",
                     "started_at",
                 ]
             );
@@ -277,7 +274,15 @@ async fn test_conversation_outline_and_card_get_full_suite() {
             assert_eq!(t.started_at, Some(timestamp.to_string()));
             assert_eq!(
                 t.cards.columns,
-                vec!["order", "card_id", "kind", "label", "status", "chars"]
+                vec![
+                    "order",
+                    "card_id",
+                    "kind",
+                    "label",
+                    "status",
+                    "chars",
+                    "child_session_id"
+                ]
             );
             assert_eq!(t.cards.rows.len(), 4);
             assert_eq!(t.cards.rows[0].order, 1);
@@ -343,13 +348,20 @@ async fn test_conversation_outline_and_card_get_full_suite() {
     let json_session = serde_json::to_string(&outline_session).expect("serialize session outline");
     assert!(json_session.contains("\"level\":\"session\""));
     assert!(json_session.contains(
-        "\"columns\":[\"index\",\"turn_id\",\"question\",\"activities\",\"cards\",\"turn_kind\",\"agent_role\",\"parent_turn_id\",\"started_at\"]"
+        "\"columns\":[\"index\",\"turn_id\",\"question\",\"activities\",\"cards\",\"started_at\"]"
     ));
     assert!(!json_session.contains("\"stats\""));
     assert!(!json_session.contains("\"title\""));
     assert!(!json_session.contains("\"answer_id\""));
+    // 伪轮次字段必须从 JSON 契约里彻底消失，而不只是置空。
+    for forbidden in ["turn_kind", "agent_role", "parent_turn_id"] {
+        assert!(
+            !json_session.contains(forbidden),
+            "{forbidden} must not appear in the session outline contract"
+        );
+    }
 
-    // 6.1 Row 序列化必须能无损回读（子代理语义列随行回读）
+    // 6.1 Row 序列化必须能无损回读
     if let ConversationOutline::Session(s) = &outline_session {
         let row = &s.turns.rows[0];
         let round_trip: SessionTurnRow =
@@ -370,15 +382,7 @@ async fn test_conversation_outline_and_card_get_full_suite() {
     if let ConversationOutline::Session(s) = &outline_questions {
         assert_eq!(
             s.turns.columns,
-            vec![
-                "index",
-                "turn_id",
-                "question",
-                "turn_kind",
-                "agent_role",
-                "parent_turn_id",
-                "started_at",
-            ]
+            vec!["index", "turn_id", "question", "started_at"]
         );
         assert_eq!(s.turns.rows.len(), 2);
         assert_eq!(s.turns.rows[0].index(), 1);
@@ -393,9 +397,6 @@ async fn test_conversation_outline_and_card_get_full_suite() {
                 1,
                 s.turns.rows[0].turn_id(),
                 "Please run diagnostics and show status",
-                null,
-                null,
-                null,
                 timestamp
             ])
         );
@@ -414,21 +415,12 @@ async fn test_conversation_outline_and_card_get_full_suite() {
     if let ConversationOutline::Session(s) = &outline_qa {
         assert_eq!(
             s.turns.columns,
-            vec![
-                "index",
-                "turn_id",
-                "question",
-                "answer",
-                "turn_kind",
-                "agent_role",
-                "parent_turn_id",
-                "started_at",
-            ]
+            vec!["index", "turn_id", "question", "answer", "started_at"]
         );
         assert_eq!(s.turns.rows.len(), 2);
         let qa_val = serde_json::to_value(&s.turns.rows[0]).unwrap();
         assert!(qa_val.is_array());
-        assert_eq!(qa_val.as_array().unwrap().len(), 8);
+        assert_eq!(qa_val.as_array().unwrap().len(), 5);
     } else {
         panic!("expected session outline");
     }
@@ -451,24 +443,22 @@ async fn test_conversation_outline_and_card_get_full_suite() {
                 "activities",
                 "cards",
                 "answer",
-                "turn_kind",
-                "agent_role",
-                "parent_turn_id",
                 "started_at",
             ]
         );
         assert_eq!(s.turns.rows.len(), 2);
         let full_val = serde_json::to_value(&s.turns.rows[0]).unwrap();
         assert!(full_val.is_array());
-        assert_eq!(full_val.as_array().unwrap().len(), 10);
+        assert_eq!(full_val.as_array().unwrap().len(), 7);
     } else {
         panic!("expected session outline");
     }
 
     let json_turn = serde_json::to_string(&outline_turn).expect("serialize turn outline");
     assert!(json_turn.contains("\"level\":\"turn\""));
-    assert!(json_turn
-        .contains("\"columns\":[\"order\",\"card_id\",\"kind\",\"label\",\"status\",\"chars\"]"));
+    assert!(json_turn.contains(
+        "\"columns\":[\"order\",\"card_id\",\"kind\",\"label\",\"status\",\"chars\",\"child_session_id\"]"
+    ));
 
     let json_card = serde_json::to_string(&outline_card).expect("serialize card outline");
     assert!(json_card.contains("\"level\":\"card\""));
@@ -483,6 +473,353 @@ async fn test_conversation_outline_and_card_get_full_suite() {
         })
         .await;
     assert!(matches!(not_found, Err(AppError::NotFound(_))));
+
+    drop(service);
+    std::fs::remove_dir_all(root).ok();
+}
+
+/// 父子会话单缝验证：大纲面包屑、activities 委派段、列表检索向上归集、卡片检索溯源。
+#[tokio::test(flavor = "multi_thread")]
+async fn test_subagent_parent_child_outline_and_search_breadcrumbs() {
+    use crate::backend::application::{ConversationSearchParams, ConversationSessionListParams};
+
+    const UNIQUE_TOKEN: &str = "UNIQUE_SUBAGENT_ERROR_TOKEN_9921";
+    let (service, root) = setup_fixture_service("subagent-outline").await;
+    let pool = service.db.pool();
+    let tenant_id = "default";
+    let timestamp = "2026-11-09T08:00:00Z";
+
+    let adapter = ConversationAdapter {
+        id: "subagent-adapter".to_string(),
+        name: "Subagent Adapter".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "1.0.0".to_string(),
+        enabled: true,
+        manifest_path: None,
+        executable_path: None,
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(1),
+        capabilities: vec!["read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: Some(1),
+        card_kinds: Vec::new(),
+        projection_version: Some(1),
+        created_at: timestamp.to_string(),
+        updated_at: timestamp.to_string(),
+    };
+    let source = ConversationSource {
+        id: "subagent-source".to_string(),
+        adapter_id: adapter.id.clone(),
+        name: "Subagent Source".to_string(),
+        kind: ConversationSourceKind::Directory,
+        location: "/fixture/subagent".to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: timestamp.to_string(),
+        updated_at: timestamp.to_string(),
+    };
+    crate::backend::store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter)
+        .await
+        .expect("upsert adapter");
+    crate::backend::store::upsert_conversation_source_sqlx(pool, tenant_id, &source)
+        .await
+        .expect("upsert source");
+
+    // 父会话：1 个真实人类轮次 = 1 个 Turn，轮内保留一个轻量委派锚点 Part。
+    let parent = NormalizedConversationSession {
+        external_id: "parent-session-outline".to_string(),
+        title: Some("父会话".to_string()),
+        started_at: Some(timestamp.to_string()),
+        updated_at: Some(timestamp.to_string()),
+        source_locator: Some("fixture://parent-session-outline".to_string()),
+        turns: vec![NormalizedConversationTurn {
+            external_id: Some("turn-parent-1".to_string()),
+            turn_index: 0,
+            user_text: "查一下检索为什么漏召回".to_string(),
+            started_at: Some(timestamp.to_string()),
+            parts: vec![
+                NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Command,
+                    text: None,
+                    language: None,
+                    command: Some("cargo test -p asset_core".to_string()),
+                    cwd: None,
+                    status: Some("success".to_string()),
+                    exit_code: Some(0),
+                    command_label: Some("test".to_string()),
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                },
+                NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Subagent,
+                    text: Some("「委派任务」定位列表检索漏召回的根因。".to_string()),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: Some("completed".to_string()),
+                    exit_code: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: Some(
+                        serde_json::json!({
+                            "child_external_id": "subagent-explore-1",
+                            "agent_role": "Explore",
+                            "title": "检索并归集",
+                            "report_summary": "列表检索没把子会话的命中向上归集。",
+                        })
+                        .to_string(),
+                    ),
+                },
+            ],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    // 子代理会话：独立行、不可见，父子关系由 execution_purpose 承载。
+    let child = NormalizedConversationSession {
+        external_id: "subagent-explore-1".to_string(),
+        title: Some("Explore 子代理".to_string()),
+        started_at: Some(timestamp.to_string()),
+        updated_at: Some(timestamp.to_string()),
+        source_locator: Some("fixture://parent-session-outline#subagent:explore-1".to_string()),
+        execution_origin: Some("subagent".to_string()),
+        execution_purpose: Some(
+            serde_json::json!({
+                "parent_external_id": "parent-session-outline",
+                "agent_role": "Explore",
+                "parent_turn_index": 1,
+            })
+            .to_string(),
+        ),
+        turns: vec![NormalizedConversationTurn {
+            external_id: Some("turn-child-1".to_string()),
+            turn_index: 0,
+            user_text: "定位列表检索漏召回的根因".to_string(),
+            started_at: Some(timestamp.to_string()),
+            parts: vec![
+                NormalizedConversationPart {
+                    role: ConversationPartRole::Tool,
+                    kind: ConversationPartKind::Tool,
+                    text: Some(format!(
+                        "工具输出：{UNIQUE_TOKEN} at list_conversation_sessions_filtered_sqlx"
+                    )),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: Some("failure".to_string()),
+                    exit_code: Some(1),
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                },
+                NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Text,
+                    text: Some("根因已定位：列表检索只匹配了主会话自身。".to_string()),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                },
+            ],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    crate::backend::store::import_conversation_sessions_sqlx(
+        pool,
+        tenant_id,
+        &source,
+        &[parent, child],
+        false,
+    )
+    .await
+    .expect("import parent and child sessions");
+
+    let parent_id = session_id_by_external_id(pool, tenant_id, "parent-session-outline").await;
+    let child_id = session_id_by_external_id(pool, tenant_id, "subagent-explore-1").await;
+    let parent_short = crate::backend::domain::conversation_id_fragment(&parent_id);
+    let child_short = crate::backend::domain::conversation_id_fragment(&child_id);
+
+    // 1. 父会话大纲：没有伪轮次，activities 末尾带委派段。
+    let parent_outline = service
+        .get_conversation_outline(ConversationOutlineParams::new(parent_id.clone()))
+        .await
+        .expect("parent outline");
+    let ConversationOutline::Session(session) = parent_outline else {
+        panic!("expected session outline");
+    };
+    assert_eq!(session.session_id, parent_short);
+    assert_eq!(session.parent_session_id, None, "父会话没有上游面包屑");
+    assert_eq!(
+        session.turns.columns,
+        vec![
+            "index",
+            "turn_id",
+            "question",
+            "activities",
+            "cards",
+            "started_at"
+        ]
+    );
+    assert_eq!(session.turns.rows.len(), 1, "1 次人类提问 = 1 个 Turn");
+    let activities = session.turns.rows[0].activities().expect("activities");
+    assert_eq!(activities.first().map(String::as_str), Some("test"));
+    let expected_activity = format!("Subagent(Explore -> {child_short})");
+    assert_eq!(
+        activities.last().map(String::as_str),
+        Some(expected_activity.as_str())
+    );
+    let parent_turn_short = session.turns.rows[0].turn_id().to_string();
+    let outline_json =
+        serde_json::to_string(&ConversationOutline::Session(session)).expect("serialize outline");
+    for forbidden in ["turn_kind", "agent_role", "parent_turn_id"] {
+        assert!(
+            !outline_json.contains(forbidden),
+            "{forbidden} must not survive in the outline contract"
+        );
+    }
+
+    // 2. 子会话大纲：顶层透出父会话短 ID 与角色面包屑。
+    let child_outline = service
+        .get_conversation_outline(ConversationOutlineParams::new(child_short.clone()))
+        .await
+        .expect("child outline by short id");
+    let ConversationOutline::Session(child_session) = child_outline else {
+        panic!("expected session outline");
+    };
+    assert_eq!(child_session.session_id, child_short);
+    assert_eq!(
+        child_session.parent_session_id.as_deref(),
+        Some(parent_short.as_str())
+    );
+    assert_eq!(child_session.agent_role.as_deref(), Some("Explore"));
+
+    // 3. Turn 级卡片列表：委派锚点携带 child_session_id。
+    let turn_outline = service
+        .get_conversation_outline(ConversationOutlineParams::new(parent_turn_short))
+        .await
+        .expect("turn outline");
+    let ConversationOutline::Turn(turn) = turn_outline else {
+        panic!("expected turn outline");
+    };
+    assert!(turn
+        .cards
+        .columns
+        .iter()
+        .any(|column| column == "child_session_id"));
+    let anchor_card = turn
+        .cards
+        .rows
+        .iter()
+        .find(|row| row.child_session_id.is_some())
+        .expect("subagent anchor card");
+    assert_eq!(
+        anchor_card.child_session_id.as_deref(),
+        Some(child_short.as_str())
+    );
+    assert!(anchor_card.kind.ends_with("subagent"));
+    assert_eq!(anchor_card.label.as_deref(), Some("检索并归集"));
+
+    // 4. 列表检索：只在子会话内部出现的词，必须把父会话顶上来。
+    let list = service
+        .list_conversation_sessions(ConversationSessionListParams {
+            query: Some(UNIQUE_TOKEN.to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("list by body keyword");
+    assert_eq!(list.len(), 1, "只能返回可见的父会话");
+    assert_eq!(list[0].session.id, parent_id);
+
+    // 4.1 锚点结构化属性（角色 / 标题 / 汇报摘要）同样进入父会话索引。
+    let list_by_anchor_attr = service
+        .list_conversation_sessions(ConversationSessionListParams {
+            query: Some("检索并归集".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("list by anchor attrs");
+    assert_eq!(list_by_anchor_attr.len(), 1);
+    assert_eq!(list_by_anchor_attr[0].session.id, parent_id);
+
+    // 5. --parent 过滤：按父会话枚举子代理会话。
+    let children = service
+        .list_conversation_sessions(ConversationSessionListParams {
+            parent_session_id: Some(parent_short.clone()),
+            ..Default::default()
+        })
+        .await
+        .expect("list children");
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].session.id, child_id);
+    assert!(!children[0].session.user_visible);
+
+    // 5.1 `--parent` 叠加 `--query`：仍按子会话自身正文过滤，且不再二次向上归集。
+    let children_by_body = service
+        .list_conversation_sessions(ConversationSessionListParams {
+            parent_session_id: Some(parent_short.clone()),
+            query: Some(UNIQUE_TOKEN.to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("list children by body keyword");
+    assert_eq!(children_by_body.len(), 1);
+    assert_eq!(children_by_body[0].session.id, child_id);
+    let children_no_match = service
+        .list_conversation_sessions(ConversationSessionListParams {
+            parent_session_id: Some(parent_short.clone()),
+            query: Some("NO_SUCH_TOKEN_IN_CHILD_BODY".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("list children by missing keyword");
+    assert!(children_no_match.is_empty());
+
+    // 6. 卡片检索：命中子会话内部时附带父会话溯源。
+    let search = service
+        .search_conversation_records(ConversationSearchParams {
+            record_kind: Some("session".to_string()),
+            adapter_id: None,
+            source_id: None,
+            project_path: None,
+            query: UNIQUE_TOKEN.to_string(),
+            content_types: Vec::new(),
+            card_kinds: Vec::new(),
+            semantic_roles: Vec::new(),
+            include_questions: None,
+            include_cards: None,
+            since: None,
+            until: None,
+            timeline: false,
+            limit: Some(10),
+            offset: Some(0),
+            search_options: None,
+        })
+        .await
+        .expect("search inside subagent session");
+    assert!(!search.hits.is_empty(), "子会话内部必须可被检索命中");
+    for hit in &search.hits {
+        assert_eq!(hit.session.session.id, child_id);
+        assert_eq!(hit.parent_session_id.as_deref(), Some(parent_id.as_str()));
+        assert_eq!(hit.parent_turn_index, Some(1));
+    }
 
     drop(service);
     std::fs::remove_dir_all(root).ok();
@@ -526,6 +863,21 @@ fn test_truncate_qa_digest() {
             "后".repeat(300)
         )
     );
+}
+
+async fn session_id_by_external_id(
+    pool: &sqlx::SqlitePool,
+    tenant_id: &str,
+    external_id: &str,
+) -> String {
+    sqlx::query_scalar(
+        "SELECT id FROM conversation_sessions WHERE tenant_id = ?1 AND external_id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(external_id)
+    .fetch_one(pool)
+    .await
+    .expect("load session id")
 }
 
 fn make_text_part(text: &str) -> NormalizedConversationPart {

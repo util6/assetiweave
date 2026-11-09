@@ -1,143 +1,100 @@
 use super::*;
 use serde_json::json;
 
-#[test]
-fn deserializes_legacy_three_four_five_element_rows() {
-    let questions: SessionTurnRow =
-        serde_json::from_value(json!([1, "turn-a", "Question A"])).unwrap();
-    assert_eq!(questions.index(), 1);
-    assert_eq!(questions.turn_id(), "turn-a");
-    assert_eq!(questions.question(), "Question A");
-    assert_eq!(questions.turn_kind(), None);
-    assert_eq!(questions.agent_role(), None);
-    assert_eq!(questions.parent_turn_id(), None);
-
-    let qa: SessionTurnRow =
-        serde_json::from_value(json!([2, "turn-b", "Question B", "Answer B"])).unwrap();
-    assert_eq!(qa.answer(), Some("Answer B"));
-    assert_eq!(qa.agent_role(), None);
-
-    let default: SessionTurnRow =
-        serde_json::from_value(json!([3, "turn-c", "Question C", ["run tests"], 2])).unwrap();
-    assert_eq!(default.activities(), Some(&["run tests".to_string()][..]));
-    assert_eq!(default.cards(), Some(2));
-    assert_eq!(default.parent_turn_id(), None);
+fn facts(started_at: Option<&str>) -> SessionTurnFacts {
+    SessionTurnFacts {
+        turn_id: "turn-f".to_string(),
+        question: "Question F".to_string(),
+        activities: Vec::new(),
+        cards: 0,
+        answer: None,
+        started_at: started_at.map(str::to_string),
+    }
 }
 
 #[test]
-fn keeps_subagent_semantics_for_current_formats() {
-    // 兼容历史 8 元素 (Default 带 3 列语义，无 started_at)
-    let legacy_row: SessionTurnRow = serde_json::from_value(json!([
-        4,
-        "turn-d",
-        "Question D",
-        ["run tests"],
-        1,
-        "subagent",
-        "guard_audit",
-        "turn-parent"
-    ]))
-    .unwrap();
-    assert_eq!(legacy_row.turn_kind(), Some("subagent"));
-    assert_eq!(legacy_row.agent_role(), Some("guard_audit"));
-    assert_eq!(legacy_row.parent_turn_id(), Some("turn-parent"));
-    assert_eq!(legacy_row.started_at(), None);
-
-    // 兼容历史 9 元素 (Full 带 3 列语义，无 started_at)
-    let legacy_full: SessionTurnRow = serde_json::from_value(json!([
-        5,
-        "turn-e",
-        "Question E",
-        [],
-        0,
-        "Answer E",
-        "subagent",
-        null,
-        "turn-parent"
-    ]))
-    .unwrap();
-    assert_eq!(legacy_full.answer(), Some("Answer E"));
-    assert_eq!(legacy_full.turn_kind(), Some("subagent"));
-    assert_eq!(legacy_full.agent_role(), None);
-    assert_eq!(legacy_full.parent_turn_id(), Some("turn-parent"));
-    assert_eq!(legacy_full.started_at(), None);
-
-    // 当前 9 元素格式 (Default 带 started_at)
-    let cur_default: SessionTurnRow = serde_json::from_value(json!([
-        6,
-        "turn-f",
-        "Question F",
-        ["run cargo test"],
-        2,
-        "user",
-        null,
-        null,
-        "2026-10-21T10:00:00Z"
-    ]))
-    .unwrap();
-    assert_eq!(cur_default.cards(), Some(2));
-    assert_eq!(cur_default.turn_kind(), Some("user"));
-    assert_eq!(cur_default.started_at(), Some("2026-10-21T10:00:00Z"));
-
-    // 当前 10 元素格式 (Full 带 started_at)
-    let cur_full: SessionTurnRow = serde_json::from_value(json!([
-        7,
-        "turn-g",
-        "Question G",
-        [],
-        0,
-        "Answer G",
-        "subagent",
-        "reviewer",
-        "turn-parent",
-        "2026-10-21T10:05:00Z"
-    ]))
-    .unwrap();
-    assert_eq!(cur_full.answer(), Some("Answer G"));
-    assert_eq!(cur_full.turn_kind(), Some("subagent"));
-    assert_eq!(cur_full.agent_role(), Some("reviewer"));
-    assert_eq!(cur_full.parent_turn_id(), Some("turn-parent"));
-    assert_eq!(cur_full.started_at(), Some("2026-10-21T10:05:00Z"));
-}
-
-#[test]
-fn serializes_rows_with_semantics_columns_at_the_tail() {
-    let row = SessionTurnRow::from_facts(
+fn serializes_rows_with_started_at_at_the_tail() {
+    let questions = SessionTurnRow::from_facts(
         ConversationOutlineDetailLevel::Questions,
         1,
-        SessionTurnFacts {
-            turn_id: "turn-f".to_string(),
-            question: "Question F".to_string(),
-            activities: Vec::new(),
-            cards: 0,
-            answer: None,
-            turn_kind: Some("subagent".to_string()),
-            agent_role: Some("reviewer".to_string()),
-            parent_turn_id: Some("turn-parent".to_string()),
-            started_at: Some("2026-10-21T10:00:00Z".to_string()),
-        },
+        facts(Some("2026-10-21T10:00:00Z")),
     );
     assert_eq!(
-        serde_json::to_value(&row).unwrap(),
+        serde_json::to_value(&questions).unwrap(),
+        json!([1, "turn-f", "Question F", "2026-10-21T10:00:00Z"])
+    );
+
+    let mut qa_facts = facts(Some("2026-10-21T10:00:00Z"));
+    qa_facts.answer = Some("Answer F".to_string());
+    let qa = SessionTurnRow::from_facts(ConversationOutlineDetailLevel::Qa, 2, qa_facts);
+    assert_eq!(
+        serde_json::to_value(&qa).unwrap(),
         json!([
-            1,
+            2,
             "turn-f",
             "Question F",
-            "subagent",
-            "reviewer",
-            "turn-parent",
+            "Answer F",
             "2026-10-21T10:00:00Z"
         ])
     );
+
+    let mut default_facts = facts(Some("2026-10-21T10:00:00Z"));
+    default_facts.activities = vec![
+        "check".to_string(),
+        "Subagent(Explore -> 8f3a1c2b)".to_string(),
+    ];
+    default_facts.cards = 2;
+    let default =
+        SessionTurnRow::from_facts(ConversationOutlineDetailLevel::Default, 3, default_facts);
+    assert_eq!(
+        serde_json::to_value(&default).unwrap(),
+        json!([
+            3,
+            "turn-f",
+            "Question F",
+            ["check", "Subagent(Explore -> 8f3a1c2b)"],
+            2,
+            "2026-10-21T10:00:00Z"
+        ])
+    );
+
+    let mut full_facts = facts(Some("2026-10-21T10:05:00Z"));
+    full_facts.activities = vec!["check".to_string()];
+    full_facts.cards = 1;
+    full_facts.answer = Some("Answer G".to_string());
+    let full = SessionTurnRow::from_facts(ConversationOutlineDetailLevel::Full, 4, full_facts);
+    assert_eq!(
+        serde_json::to_value(&full).unwrap(),
+        json!([
+            4,
+            "turn-f",
+            "Question F",
+            ["check"],
+            1,
+            "Answer G",
+            "2026-10-21T10:05:00Z"
+        ])
+    );
+}
+
+#[test]
+fn column_sets_match_row_arity() {
     assert_eq!(
         SessionTurnRow::columns(ConversationOutlineDetailLevel::Questions),
+        vec!["index", "turn_id", "question", "started_at"]
+    );
+    assert_eq!(
+        SessionTurnRow::columns(ConversationOutlineDetailLevel::Qa),
+        vec!["index", "turn_id", "question", "answer", "started_at"]
+    );
+    assert_eq!(
+        SessionTurnRow::columns(ConversationOutlineDetailLevel::Default),
         vec![
             "index",
             "turn_id",
             "question",
-            "turn_kind",
-            "agent_role",
-            "parent_turn_id",
+            "activities",
+            "cards",
             "started_at"
         ]
     );
@@ -150,10 +107,72 @@ fn serializes_rows_with_semantics_columns_at_the_tail() {
             "activities",
             "cards",
             "answer",
-            "turn_kind",
-            "agent_role",
-            "parent_turn_id",
             "started_at"
         ]
     );
+    // 伪轮次语义列被物理删除后，不得再出现在列名单里。
+    for level in [
+        ConversationOutlineDetailLevel::Default,
+        ConversationOutlineDetailLevel::Questions,
+        ConversationOutlineDetailLevel::Qa,
+        ConversationOutlineDetailLevel::QaDigest,
+        ConversationOutlineDetailLevel::Full,
+    ] {
+        let columns = SessionTurnRow::columns(level);
+        for forbidden in ["turn_kind", "agent_role", "parent_turn_id"] {
+            assert!(!columns.iter().any(|column| column == forbidden));
+        }
+    }
+}
+
+#[test]
+fn deserializes_legacy_three_element_question_row() {
+    let questions: SessionTurnRow =
+        serde_json::from_value(json!([1, "turn-a", "Question A"])).unwrap();
+    assert_eq!(questions.index(), 1);
+    assert_eq!(questions.turn_id(), "turn-a");
+    assert_eq!(questions.question(), "Question A");
+    assert_eq!(questions.started_at(), None);
+}
+
+#[test]
+fn round_trips_every_detail_level() {
+    let rows = [
+        SessionTurnRow::from_facts(
+            ConversationOutlineDetailLevel::Questions,
+            1,
+            facts(Some("2026-10-21T10:00:00Z")),
+        ),
+        {
+            let mut f = facts(None);
+            f.answer = Some("Answer".to_string());
+            SessionTurnRow::from_facts(ConversationOutlineDetailLevel::Qa, 2, f)
+        },
+        {
+            let mut f = facts(Some("2026-10-21T10:01:00Z"));
+            f.activities = vec!["run tests".to_string()];
+            f.cards = 2;
+            SessionTurnRow::from_facts(ConversationOutlineDetailLevel::Default, 3, f)
+        },
+        {
+            let mut f = facts(Some("2026-10-21T10:02:00Z"));
+            f.activities = vec!["run tests".to_string()];
+            f.cards = 2;
+            f.answer = Some("Answer".to_string());
+            SessionTurnRow::from_facts(ConversationOutlineDetailLevel::Full, 4, f)
+        },
+    ];
+    for row in rows {
+        let json = serde_json::to_value(&row).unwrap();
+        let round_trip: SessionTurnRow = serde_json::from_value(json).unwrap();
+        assert_eq!(round_trip, row);
+    }
+}
+
+#[test]
+fn rejects_rows_outside_the_contract() {
+    for len in [0usize, 2, 8] {
+        let value = serde_json::Value::Array(vec![json!(1); len]);
+        assert!(serde_json::from_value::<SessionTurnRow>(value).is_err());
+    }
 }

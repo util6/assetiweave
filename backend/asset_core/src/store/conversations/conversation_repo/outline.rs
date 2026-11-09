@@ -286,6 +286,12 @@ pub async fn resolve_outline_target_sqlx(
         }
     }
 
+    // 同一张卡片可能同时被 `conversation_parts.id_key` 索引与 triad 的
+    // `process.items` 命中；两条路径产出的是同一个实体，不能算作歧义。
+    // 只有真正不同的实体（不同主键 / 会话 / 轮次）才需要报冲突。
+    let mut seen = std::collections::HashSet::new();
+    rows.retain(|row| seen.insert(row.clone()));
+
     if rows.is_empty() {
         return Err(StoreError::NotFound(format!(
             "no session, turn, or card found matching identifier {:?}",

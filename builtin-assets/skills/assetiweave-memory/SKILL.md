@@ -58,8 +58,8 @@ description: 通过 AssetIWeave 的纯读写 Memory CLI 与会话逐级取证体
 | --- | --- | --- |
 | **大纲骨架（支持批量）** | `aiwc conversation outline <id1> [<id2> ...] [--questions \| --qa-digest \| --qa \| --full] --format json` | 按 ID 类型自适应返回 **session / turn / card** 三级骨架（多 ID 时返回 `level: "batch"`），含轮次真实开始时间 `started_at` |
 | **单卡正文** | `aiwc conversation card get <card_id> [--raw] --format json` | O(1) 直读单张卡片正文；加 `--raw` 直接输出纯文本到 stdout |
-| **定位会话** | `aiwc conversation list [--window 48h] [--unprocessed] [--current-project] --format json` | 返回会话列表及 `project_slug`、`watermark`、`unprocessed_turns` |
-| **跨会话检索** | `aiwc conversation search --query "<q>" [--limit 20] --format json` | 按关键词检索命中的会话卡片与摘要片段 |
+| **定位会话** | `aiwc conversation list [--window 48h] [--unprocessed] [--current-project] [--query <q>] [--parent <session-id>] --format json` | 返回会话列表及 `project_slug`、`watermark`、`unprocessed_turns`；`--query` 会把隐藏子代理会话内部的命中归集到可见父会话，`--parent` 则枚举指定父会话名下的子代理会话（支持 8 位短 ID） |
+| **跨会话检索** | `aiwc conversation search --query "<q>" [--limit 20] --format json` | 按关键词检索命中的会话卡片与摘要片段；命中子代理会话内部时每条 hit 附带 `parent_session_id` 与 `parent_turn_index` 返回面包屑 |
 | **近期工作视图（读）** | `aiwc memory recent get [--date <YYYY-MM-DD>] --format json` | 读取 `recent/latest.md`（或指定日期快照），查看近期闭环任务与常驻悬空叶子 |
 | **项目记忆视图（读）** | `aiwc memory project get [<project_path> \| --current-project] --format json` | 读取目标项目的 `projects/<slug>.md` 记忆视图 |
 | **结构化状态树（读）** | `aiwc memory state get [--project <path_or_slug> \| --current-project] --format json` | 读取 `.state/projects/<slug>.json`（不传项目时读 `.state/recent.json`）强类型多叉树与水位 |
@@ -73,27 +73,28 @@ description: 通过 AssetIWeave 的纯读写 Memory CLI 与会话逐级取证体
 所有骨架统一为 `{"columns": [...], "rows": [[...]]}`：列名只声明一次，行是**定长元组数组**。必须严格按 **columns 的列序**取值。
 
 #### 1. Session 级（`level: "session"`）
-顶层字段：`session_id`、`source_id`、`total_turns`、`created_at?`、`turns { columns, rows }`。
-支持四档互斥详细度开关与默认骨架（末尾均包含轮次真实开始时间 `started_at`）：
-- **默认（不带开关，9 列）**：
-  `turns.columns = ["index", "turn_id", "question", "activities", "cards", "turn_kind", "agent_role", "parent_turn_id", "started_at"]`
-- **`--questions`（最精简，7 列）**：
-  `turns.columns = ["index", "turn_id", "question", "turn_kind", "agent_role", "parent_turn_id", "started_at"]`
-- **`--qa-digest`（问答摘要主力档，防爆上下文，8 列）**：
-  `turns.columns = ["index", "turn_id", "question", "answer", "turn_kind", "agent_role", "parent_turn_id", "started_at"]`
+顶层字段：`session_id`、`source_id`、`total_turns`、`created_at?`、`turns { columns, rows }`；若被查看的会话本身是 `Subagent Session`，还会额外输出 `parent_session_id`（父会话 8 位短 ID）与 `agent_role`（子代理语义角色）面包屑。
+支持四档互斥详细度开关与默认骨架（末尾均包含轮次真实开始时间 `started_at`）。**`turn_kind` / `agent_role` / `parent_turn_id` 三个伪轮次列已物理删除**，一律按 `columns` 列序取值，不要按旧列号硬编码：
+- **默认（不带开关，6 列）**：
+  `turns.columns = ["index", "turn_id", "question", "activities", "cards", "started_at"]`
+- **`--questions`（最精简，4 列）**：
+  `turns.columns = ["index", "turn_id", "question", "started_at"]`
+- **`--qa-digest`（问答摘要主力档，防爆上下文，5 列）**：
+  `turns.columns = ["index", "turn_id", "question", "answer", "started_at"]`
   返回完整 `question` 与首尾高信号截取的 `answer`（超过 500 字时保留前 200 字与后 300 字），非常适合多会话批量快速浏览。
-- **`--qa`（完整问答档，8 列）**：
-  `turns.columns = ["index", "turn_id", "question", "answer", "turn_kind", "agent_role", "parent_turn_id", "started_at"]`
+- **`--qa`（完整问答档，5 列）**：
+  `turns.columns = ["index", "turn_id", "question", "answer", "started_at"]`
   返回未截断的最终回答内容（当批量请求总体积超过 64 KB 安全预算时会自动降级截断并标记 `truncated: true`）。
-- **`--full`（最详细，10 列）**：
-  `turns.columns = ["index", "turn_id", "question", "activities", "cards", "answer", "turn_kind", "agent_role", "parent_turn_id", "started_at"]`
+- **`--full`（最详细，7 列）**：
+  `turns.columns = ["index", "turn_id", "question", "activities", "cards", "answer", "started_at"]`
 
 列语义说明：
 - `index`：**1-based** 轮次序号。
-- `activities`：该轮工具/命令活动的**连续去重**摘要（如 `["Git status check", "Build desktop crate"]`）。
+- `activities`：该轮工具/命令活动的**连续去重**摘要（如 `["Git status check", "Build desktop crate"]`）；末尾可能追加子代理委派段 `Subagent(<role> -> <child_short_id>)`，多个锚点折叠为 `Subagent xN(...)`。
 - `cards`：该轮卡片数量（整数），据此判断是否需要下钻到 Turn 级。
-- `turn_kind` / `agent_role` / `parent_turn_id`：子代理轮次种类、语义角色与父轮次 8 位短 ID（主代理顶层轮次为 `null`）。
 - `started_at`：该交互轮次真实的开始时间戳（RFC3339）。
+
+子代理不再以伪轮次并列出现在父会话大纲里（1 次人类提问 = 1 个 Turn）。下钻方式：从 `activities` 里的 `Subagent(...)` 或 Turn 级 `cards` 中 `kind` 以 `subagent` 结尾的卡片取 `child_session_id`，再用 `aiwc conversation outline <child_session_id>` 查看子会话；也可用 `aiwc conversation list --parent <parent_session_id>` 一次枚举全部子代理会话。
 
 #### 2. 批量模式（`level: "batch"`）
 当向 `aiwc conversation outline` 传入 2 个及以上 ID 时，`data` 返回：
@@ -109,10 +110,11 @@ description: 通过 AssetIWeave 的纯读写 Memory CLI 与会话逐级取证体
 ```
 
 #### 3. Turn 级（`level: "turn"`）
-顶层字段：`session_id`、`turn_id`、`turn_index`、`total_turns`、`user_question`、`turn_kind`、`agent_role`、`parent_turn_id`、`started_at`，以及：
-`cards.columns = ["order", "card_id", "kind", "label", "status", "chars"]`
-- `label`：命令/工具的语义标签，是判断卡片价值的最强信号。
+顶层字段：`session_id`、`turn_id`、`turn_index`、`total_turns`、`user_question`、`started_at`，以及：
+`cards.columns = ["order", "card_id", "kind", "label", "status", "chars", "child_session_id"]`
+- `label`：命令/工具的语义标签，是判断卡片价值的最强信号；委派锚点卡片取锚点标题。
 - `chars`：正文长度预估。**先看 `chars` 再决定是否下钻**，避免把超长输出拉进上下文。
+- `child_session_id`：仅 `kind` 以 `subagent` 结尾的 `Subagent Dispatch Anchor` 非空，为子会话 8 位短 ID，可直接下钻；其余卡片为 `null`。
 
 #### 4. Card 级（`level: "card"`）
 顶层字段：`session_id`、`turn_id`、`turn_index`、`turn_user_question`、`target { card_id, order, kind, label?, status?, chars }`，以及邻域矩阵 `neighborhood.columns = ["order", "card_id", "kind", "label", "is_target"]`。

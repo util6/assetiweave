@@ -24,7 +24,21 @@ impl AppService {
             value.trim().len() == 8
                 && crate::backend::domain::conversation_id_search_term(value).is_some()
         });
-        if direct_id_query {
+        let parent_session_id = match params
+            .parent_session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(raw) => Some(
+                crate::backend::store::resolve_conversation_session_id_prefix_sqlx(
+                    pool, tenant_id, raw,
+                )
+                .await?,
+            ),
+            None => None,
+        };
+        if direct_id_query && parent_session_id.is_none() {
             Ok(
                 crate::backend::store::list_conversation_sessions_by_id_fragment_sqlx(
                     pool,
@@ -52,6 +66,7 @@ impl AppService {
                 project_path: params.project_path.as_deref(),
                 since: since.as_deref(),
                 until: until.as_deref(),
+                parent_session_id: parent_session_id.as_deref(),
                 limit,
                 offset,
             };

@@ -248,6 +248,12 @@ pub struct ConversationSearchHit {
     pub card_type: ConversationSearchCardType,
     pub snippet: String,
     pub score: usize,
+    /// 命中发生在 `Subagent Session` 内部时，附带其父会话 ID，供调用方给出返回面包屑。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
+    /// 命中发生在 `Subagent Session` 内部时，附带父会话里派发它的轮次序号。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_turn_index: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub incremental: Option<ConversationSearchIncrementalMatch>,
     #[serde(skip_serializing_if = "Option::is_none")]

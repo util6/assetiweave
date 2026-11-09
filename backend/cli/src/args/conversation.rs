@@ -132,6 +132,13 @@ pub struct ConversationListArgs {
     #[arg(long, help = "Filter by adapter id")]
     pub adapter: Option<String>,
 
+    #[arg(
+        long,
+        value_name = "SESSION_ID",
+        help = "List the Subagent Sessions dispatched under this parent session (accepts 8-hex short ID)"
+    )]
+    pub parent: Option<String>,
+
     #[arg(long, help = "Search query filter")]
     pub query: Option<String>,
 
@@ -153,28 +160,28 @@ pub struct ConversationOutlineArgs {
     #[arg(
         long,
         conflicts_with_all = ["qa", "qa_digest", "full"],
-        help = "Show questions only: [index, turn_id, question, turn_kind, agent_role, parent_turn_id, started_at]"
+        help = "Show questions only: [index, turn_id, question, started_at]"
     )]
     pub questions: bool,
 
     #[arg(
         long,
         conflicts_with_all = ["questions", "qa_digest", "full"],
-        help = "Show QA pairs with answers: [index, turn_id, question, answer, turn_kind, agent_role, parent_turn_id, started_at]"
+        help = "Show QA pairs with answers: [index, turn_id, question, answer, started_at]"
     )]
     pub qa: bool,
 
     #[arg(
         long,
         conflicts_with_all = ["questions", "qa", "full"],
-        help = "Show QA pairs with digested answers: [index, turn_id, question, answer, turn_kind, agent_role, parent_turn_id, started_at]"
+        help = "Show QA pairs with digested answers: [index, turn_id, question, answer, started_at]"
     )]
     pub qa_digest: bool,
 
     #[arg(
         long,
         conflicts_with_all = ["questions", "qa", "qa_digest"],
-        help = "Show full outline including answers: [index, turn_id, question, activities, cards, answer, turn_kind, agent_role, parent_turn_id, started_at]"
+        help = "Show full outline including answers: [index, turn_id, question, activities, cards, answer, started_at]"
     )]
     pub full: bool,
 }

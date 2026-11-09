@@ -20,6 +20,11 @@ pub fn merge_turn_triad(
     // 1. 还原 process.items 为命令零件
     if let Some(p) = process {
         for item in &p.items {
+            // 子代理委派锚点的 item 只是过程链上的跳转指针（content 是子会话主键），
+            // 锚点正文由 parts 还原，不能被当成命令零件重复造一份。
+            if item.kind == "subagent" {
+                continue;
+            }
             let part_id = derive_part_id(prefix, turn_id, item.seq);
             let cwd = item.cwd.clone().or_else(|| p.cwd.clone());
             let source_execution_id = Some(format!("exec-{turn_id}-{}", item.seq));
@@ -201,7 +206,11 @@ pub fn merge_turn_triad(
                 renderer,
                 semantic_role,
             }),
-            metadata_json: None,
+            // 委派锚点的全部语义（子会话主键 / 角色 / 标题 / 汇报摘要）都只在 attrs 里，
+            // 没有对应的强类型列；其余零件的 attrs 已逐项提升为字段，无需再回传原始载荷。
+            metadata_json: (kind == ConversationPartKind::Subagent)
+                .then(|| p.attrs_json.clone())
+                .flatten(),
             translated_text: p.translated_text.clone(),
             signal,
             tool_name,

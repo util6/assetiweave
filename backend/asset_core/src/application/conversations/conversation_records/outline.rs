@@ -6,12 +6,14 @@ use crate::backend::domain::conversations::outline::{
     SessionOutline, SessionTurnFacts, SessionTurnRow, TurnCardRow, TurnOutline,
 };
 use crate::backend::domain::conversations::{
-    ConversationCardDetail, ConversationOutline, ConversationQuestionDetail,
-    ConversationRecordKind, ConversationSessionDetail,
+    subagent_activity_summary, ConversationCardDetail, ConversationOutline,
+    ConversationQuestionDetail, ConversationRecordKind, ConversationSessionDetail,
+    SubagentDispatchAnchor, SubagentSessionLink,
 };
-use crate::backend::domain::ConversationPartRole;
+use crate::backend::domain::{ConversationPartKind, ConversationPartRole};
 use crate::backend::store::conversations::outline::ResolvedOutlineTarget;
 use sqlx::SqlitePool;
+use std::collections::BTreeMap;
 
 impl AppService {
     pub async fn get_conversation_outline(
@@ -163,9 +165,28 @@ struct SimpleCardNode {
     status: Option<String>,
     role: ConversationPartRole,
     content_chars: usize,
+    /// 命中 `kind == "subagent"` 的委派锚点时携带父子下钻信息。
+    anchor: Option<SubagentDispatchAnchor>,
+}
+
+/// 一轮内所有委派锚点的结构化属性，按 Part 主键索引。
+fn subagent_anchors_by_part(
+    question: &ConversationQuestionDetail,
+    turn_id: &str,
+) -> BTreeMap<String, SubagentDispatchAnchor> {
+    question
+        .parts
+        .iter()
+        .filter(|part| part.turn_id == turn_id && part.kind == ConversationPartKind::Subagent)
+        .filter_map(|part| {
+            SubagentDispatchAnchor::from_metadata(part.metadata_json.as_deref())
+                .map(|anchor| (part.id.clone(), anchor))
+        })
+        .collect()
 }
 
 fn collect_turn_cards(question: &ConversationQuestionDetail, turn_id: &str) -> Vec<SimpleCardNode> {
+    let anchors = subagent_anchors_by_part(question, turn_id);
     let mut turn_nodes: Vec<_> = question
         .projected_content_nodes
         .iter()
@@ -183,6 +204,7 @@ fn collect_turn_cards(question: &ConversationQuestionDetail, turn_id: &str) -> V
             status: node.status.clone(),
             role: node.role,
             content_chars: node.content.chars().count(),
+            anchor: anchors.get(&node.part_id).cloned(),
         })
         .collect();
 
@@ -204,17 +226,37 @@ fn collect_turn_cards(question: &ConversationQuestionDetail, turn_id: &str) -> V
             status: part.status.clone(),
             role: part.role,
             content_chars: text_ref.map_or(0, |t| t.chars().count()),
+            anchor: anchors.get(&part.id).cloned(),
         });
     }
 
     cards
 }
 
-fn short_parent_turn_id(parent_turn_id: Option<&str>) -> Option<String> {
-    parent_turn_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(crate::backend::domain::conversation_id_fragment)
+/// 一轮的 activities 摘要：命令标签在前，子代理委派段固定压在末尾。
+///
+/// 委派段不参与 15 条截断——它是下钻到子会话的唯一入口，不能被高密度命令刷掉。
+fn turn_activities(cards: &[SimpleCardNode]) -> Vec<String> {
+    let mut acts = Vec::new();
+    for card in cards.iter().filter(|card| card.anchor.is_none()) {
+        if let Some(ref label) = card.command_label {
+            let trimmed = label.trim();
+            if !trimmed.is_empty() && acts.last().map(|s: &String| s.as_str()) != Some(trimmed) {
+                acts.push(trimmed.to_string());
+            }
+        }
+    }
+    if acts.len() > 15 {
+        acts.truncate(15);
+    }
+    let anchors: Vec<SubagentDispatchAnchor> = cards
+        .iter()
+        .filter_map(|card| card.anchor.clone())
+        .collect();
+    if let Some(summary) = subagent_activity_summary(&anchors) {
+        acts.push(summary);
+    }
+    acts
 }
 
 fn build_session_outline(
@@ -222,6 +264,10 @@ fn build_session_outline(
     detail_level: ConversationOutlineDetailLevel,
 ) -> AppResult<ConversationOutline> {
     let session_short_id = crate::backend::domain::conversation_id_fragment(&detail.session.id);
+    let link = SubagentSessionLink::from_session(
+        &detail.session.execution_origin,
+        detail.session.execution_purpose.as_deref(),
+    );
     let mut all_turns = Vec::new();
     let need_cards_and_activities = matches!(
         detail_level,
@@ -232,21 +278,7 @@ fn build_session_outline(
         for turn in &question.turns {
             let (activities, cards_count) = if need_cards_and_activities {
                 let cards = collect_turn_cards(question, &turn.id);
-                let mut acts = Vec::new();
-                for card in &cards {
-                    if let Some(ref label) = card.command_label {
-                        let trimmed = label.trim();
-                        if !trimmed.is_empty()
-                            && acts.last().map(|s: &String| s.as_str()) != Some(trimmed)
-                        {
-                            acts.push(trimmed.to_string());
-                        }
-                    }
-                }
-                if acts.len() > 15 {
-                    acts.truncate(15);
-                }
-                (acts, cards.len())
+                (turn_activities(&cards), cards.len())
             } else {
                 (Vec::new(), 0)
             };
@@ -273,9 +305,6 @@ fn build_session_outline(
                     activities,
                     cards: cards_count,
                     answer,
-                    turn_kind: turn.turn_kind.clone(),
-                    agent_role: turn.agent_role.clone(),
-                    parent_turn_id: short_parent_turn_id(turn.parent_turn_id.as_deref()),
                     started_at: Some(turn.started_at.clone()),
                 },
             ));
@@ -297,6 +326,10 @@ fn build_session_outline(
         source_id: detail.session.source_id.clone(),
         total_turns,
         created_at: detail.session.started_at.clone(),
+        parent_session_id: link
+            .as_ref()
+            .map(SubagentSessionLink::short_parent_session_id),
+        agent_role: link.as_ref().and_then(|link| link.agent_role.clone()),
         turns: MatrixView { columns, rows },
     }))
 }
@@ -337,9 +370,15 @@ fn build_turn_outline(
             order: idx + 1,
             card_id: crate::backend::domain::conversation_id_fragment(&card.node_id),
             kind: card.node_type,
-            label: card.command_label,
+            label: card
+                .command_label
+                .or_else(|| card.anchor.as_ref().and_then(|anchor| anchor.title.clone())),
             status: card.status,
             chars: card.content_chars,
+            child_session_id: card
+                .anchor
+                .as_ref()
+                .and_then(SubagentDispatchAnchor::short_child_session_id),
         })
         .collect();
 
@@ -357,9 +396,6 @@ fn build_turn_outline(
         turn_index: target_pos + 1,
         total_turns,
         user_question,
-        turn_kind: turn.turn_kind.clone(),
-        agent_role: turn.agent_role.clone(),
-        parent_turn_id: short_parent_turn_id(turn.parent_turn_id.as_deref()),
         started_at: Some(turn.started_at.clone()),
         cards: MatrixView {
             columns: vec![
@@ -369,6 +405,7 @@ fn build_turn_outline(
                 "label".into(),
                 "status".into(),
                 "chars".into(),
+                "child_session_id".into(),
             ],
             rows,
         },

@@ -27,6 +27,7 @@ pub fn render_conversation_search(
                 Cell::new("Session Title").fg(Color::Cyan),
                 Cell::new("Adapter").fg(Color::Cyan),
                 Cell::new("Type").fg(Color::Cyan),
+                Cell::new("Parent").fg(Color::Cyan),
                 Cell::new("Snippet").fg(Color::Cyan),
             ]);
             for hit in &res.hits {
@@ -40,12 +41,25 @@ pub fn render_conversation_search(
                     Cell::new(&hit.session.session.title),
                     Cell::new(&hit.session.session.adapter_id),
                     Cell::new(format!("{:?}", hit.card_type)),
+                    Cell::new(parent_breadcrumb(hit)),
                     Cell::new(truncated),
                 ]);
             }
             println!("{table}");
             println!("\nShowing {} hits", res.hits.len());
         }
+    }
+}
+
+/// 子代理会话内命中的返回面包屑：`<父会话短 ID>#T<轮次>`。
+fn parent_breadcrumb(hit: &asset_core::domain::conversations::ConversationSearchHit) -> String {
+    let Some(parent_id) = hit.parent_session_id.as_deref() else {
+        return "—".to_string();
+    };
+    let short = asset_core::domain::conversation_id_fragment(parent_id);
+    match hit.parent_turn_index {
+        Some(index) => format!("{short}#T{index}"),
+        None => short,
     }
 }
 

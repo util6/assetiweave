@@ -59,6 +59,7 @@ List normalized conversation sessions.
 - Browsing recent conversation sessions across local IDEs and agents.
 - Filtering dialogue history by time window (`--window 24h`, `--since yesterday`), project path, or adapter.
 - Discovering session IDs to pass to `outline`.
+- Enumerating the hidden subagent sessions dispatched under one parent session (`--parent <SESSION_ID>`).
 
 ### Avoid when
 - Searching for specific keywords or message contents across conversations (use `aiwc conversation search` instead).
@@ -69,6 +70,7 @@ List normalized conversation sessions.
 - `aiwc conversation list --window 24h`
 - `aiwc conversation list --current-project`
 - `aiwc conversation list --adapter codex`
+- `aiwc conversation list --parent 8f3a1c2b`
 
 ### Related skills
 - `aiwc skill builtin read assetiweave-conversation-recall`
@@ -85,6 +87,7 @@ Inspect conversation structure with compact columnar outline.
 - Gaining an overview of conversation turns, participants, and cards with minimal token overhead.
 - Navigating hierarchical conversation structure using any identifier (session ID, turn ID, or card ID / 8-hex prefix).
 - Identifying target card IDs before pulling detailed message contents.
+- Drilling from a parent turn into the subagent session dispatched there: a turn whose `activities` ends with `Subagent(<role> -> <short_id>)` can be inspected via `aiwc conversation outline <short_id>`.
 
 ### Avoid when
 - Broadly discovering unknown sessions or searching by topic keyword (use `aiwc conversation list` or `aiwc conversation search` first).
@@ -94,6 +97,11 @@ Inspect conversation structure with compact columnar outline.
 - `aiwc conversation outline <SESSION_ID>`
 - `aiwc conversation outline <TURN_ID>`
 - `aiwc conversation outline <CARD_ID>`
+
+### Output notes
+- Session rows carry only real turns: `[index, turn_id, question, activities, cards, answer?, started_at]` (`answer` only with `--qa`/`--qa-digest`/`--full`). Pseudo-turn columns `turn_kind` / `agent_role` / `parent_turn_id` no longer exist.
+- Turn-level card rows end with `child_session_id`, filled only for `kind = "subagent"` dispatch anchors.
+- Inspecting a subagent session itself surfaces `parent_session_id` and `agent_role` at the top level for a breadcrumb back to the parent.
 
 ### Related skills
 - `aiwc skill builtin read assetiweave-conversation-recall`

@@ -132,14 +132,14 @@ aiwc conversation outline <id1> <id2> --qa-digest --format json
 # 单会话抽取完整问答（仅在短会话或摘要不足以判断结论时使用）
 aiwc conversation outline <id1> --qa --format json
 ```
-- **列序契约（`--qa-digest` 与 `--qa` 完全相同，共 8 列）**：
-  `columns = ["index", "turn_id", "question", "answer", "turn_kind", "agent_role", "parent_turn_id", "started_at"]`
+- **列序契约（`--qa-digest` 与 `--qa` 完全相同，共 5 列）**：
+  `columns = ["index", "turn_id", "question", "answer", "started_at"]`
   - `index`（列 0）：**1-based** 轮次序号（提交 `commit` 时的 `turn_index` 必须严格使用此序号）。
   - `turn_id`（列 1）：轮次 8 位短 ID。
   - `question`（列 2）：用户提问原文。
   - `answer`（列 3）：AI 最终回复（`--qa-digest` 下超过 500 字会自动保留前 200 字与后 300 字）。
-  - `turn_kind` / `agent_role` / `parent_turn_id`（列 4~6）：轮次种类与子代理父轮次指针。
-  - `started_at`（列 7）：该交互轮次真实的开始时间戳（RFC3339）。
+  - `started_at`（列 4）：该交互轮次真实的开始时间戳（RFC3339）。
+  - 旧版文档里的 `turn_kind` / `agent_role` / `parent_turn_id`（原列 4~6）已随 ADR-0022 物理删除；子代理改为独立隐藏会话，父轮次只在 `--full` / 默认档的 `activities` 末尾以 `Subagent(<role> -> <child_short_id>)` 呈现。**必须按 `columns` 列序取值，不要沿用旧列号。**
 - **单 ID 与多 ID 返回结构差异**：
   - 传入 1 个 ID 时：`data` 直接为 `{"level": "session", "session_id": "...", "total_turns": 3, "turns": {"columns": [...], "rows": [...]}}`。
   - 传入多个 ID 时：`data` 为批量容器 `{"level": "batch", "items": [ {"level": "session", ...}, ... ], "truncated": false}`。

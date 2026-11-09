@@ -367,6 +367,7 @@ pub async fn hydrate_conversation_search_matches_sqlx(
                     "conversation search index returned an invalid card type".to_string(),
                 )
             })?;
+        let link = crate::backend::domain::conversations::subagent_session_link(&session.session);
         hits.push(ConversationSearchHit {
             session: session.clone(),
             question_id: question.id.clone(),
@@ -382,6 +383,8 @@ pub async fn hydrate_conversation_search_matches_sqlx(
                 search_snippet(&text, &needle)
             },
             score: matched.score,
+            parent_session_id: link.as_ref().map(|link| link.parent_session_id.clone()),
+            parent_turn_index: link.as_ref().and_then(|link| link.parent_turn_index),
             incremental: None,
             highlight_segments: if matched_by_id {
                 None

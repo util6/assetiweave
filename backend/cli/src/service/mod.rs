@@ -397,6 +397,7 @@ impl CliService {
             until: args.until.clone(),
             window: args.window.clone(),
             range: args.range.clone(),
+            parent_session_id: args.parent.clone(),
         };
         let mut sessions = self
             .app_service

@@ -37,6 +37,7 @@ pub(super) fn push_search_hit_if_matching(
         return;
     }
 
+    let link = crate::backend::domain::conversations::subagent_session_link(&session.session);
     hits.push(ConversationSearchHit {
         session: session.clone(),
         question_id: question.id.clone(),
@@ -56,6 +57,8 @@ pub(super) fn push_search_hit_if_matching(
         } else {
             match_count(text, needle) * 100
         },
+        parent_session_id: link.as_ref().map(|link| link.parent_session_id.clone()),
+        parent_turn_index: link.as_ref().and_then(|link| link.parent_turn_index),
         incremental: None,
         highlight_segments: None,
     });

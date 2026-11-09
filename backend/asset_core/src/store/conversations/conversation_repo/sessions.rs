@@ -8,6 +8,8 @@ pub struct ConversationSessionListFilter<'a> {
     pub project_path: Option<&'a str>,
     pub since: Option<&'a str>,
     pub until: Option<&'a str>,
+    /// 传入父会话完整 ID 时改为列出该父会话名下的子代理会话。
+    pub parent_session_id: Option<&'a str>,
     pub limit: usize,
     pub offset: usize,
 }
@@ -102,7 +104,15 @@ pub async fn list_conversation_sessions_filtered_sqlx(
                ) ELSE NULL END AS window_end_user_prompt
         FROM conversation_sessions s
         WHERE s.tenant_id = ?1
-          AND s.user_visible = 1
+          AND (
+              (?12 IS NULL AND s.user_visible = 1)
+              OR (
+                  ?12 IS NOT NULL
+                  AND s.user_visible = 0
+                  AND s.execution_origin = 'subagent'
+                  AND json_extract(s.execution_purpose, '$.parent_session_id') = ?12
+              )
+          )
           AND (?2 IS NULL OR s.adapter_id = ?2)
           AND (?3 IS NULL OR s.source_id = ?3)
           AND s.missing = 0
@@ -112,13 +122,32 @@ pub async fn list_conversation_sessions_filtered_sqlx(
               OR instr(lower(COALESCE(s.project_path, '')), ?4) > 0
               OR instr(lower(s.external_id), ?4) > 0
               OR (?5 IS NOT NULL AND instr(lower(s.id), ?5) > 0)
-              OR (?11 = 1 AND ?4 IS NOT NULL AND EXISTS (
-                SELECT 1
-                  FROM conversation_part_fts f
-                  WHERE f.tenant_id = s.tenant_id
-                    AND f.session_id = s.id
-                    AND instr(lower(f.text), ?4) > 0
-              ))
+              OR (
+                  ?11 = 1
+                  AND ?4 IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                        FROM conversation_part_fts f
+                        WHERE f.tenant_id = ?1
+                          AND (
+                              -- 两种模式都先匹配会话自己的 Part 正文。
+                              f.session_id = s.id
+                              -- 只有默认可见列表才把子代理会话的命中向上归集；
+                              -- `--parent` 模式列的是子会话本身，不做二次归集。
+                              OR (
+                                  ?12 IS NULL
+                                  AND f.session_id IN (
+                                      SELECT c.id
+                                        FROM conversation_sessions c
+                                        WHERE c.tenant_id = ?1
+                                          AND c.execution_origin = 'subagent'
+                                          AND json_extract(c.execution_purpose, '$.parent_session_id') = s.id
+                                  )
+                              )
+                          )
+                          AND instr(lower(f.text), ?4) > 0
+                  )
+              )
               OR (?11 = 1 AND ?4 IS NOT NULL AND EXISTS (
                 SELECT 1
                   FROM conversation_turns t
@@ -166,6 +195,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
     .bind(filter.until)
     .bind(project_needle.as_deref())
     .bind(i64::from(body_search_ready))
+    .bind(filter.parent_session_id)
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
@@ -194,6 +224,7 @@ pub async fn list_conversation_sessions_sqlx(
             project_path: None,
             since: None,
             until: None,
+            parent_session_id: None,
             limit,
             offset,
         },

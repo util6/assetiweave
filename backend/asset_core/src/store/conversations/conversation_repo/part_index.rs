@@ -5,6 +5,9 @@ use sqlx::Row;
 ///
 /// 只取投影出来的正文，不对语义角色做任何判断——工具输出、执行结果、文件变更、子代理
 /// 正文与答复、代码、命令走同一条路径。
+///
+/// 子代理委派锚点额外拼上 `attrs_json` 里的角色 / 标题 / 汇报摘要：这些词只存在于结构化
+/// 属性里，不落正文，漏掉就会让"搜角色名找不到父会话"。
 pub(crate) fn part_index_text(
     part: &ConversationPart,
     adapter_id: &str,
@@ -14,12 +17,25 @@ pub(crate) fn part_index_text(
         crate::backend::domain::conversations::projection::project_conversation_content_cards(
             part, adapter_id, card_kinds,
         )?;
-    let text = cards
+    let body = cards
         .into_iter()
         .map(|card| card.body)
         .filter(|body| !body.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
+    let anchor_attrs = (part.kind == crate::backend::domain::ConversationPartKind::Subagent)
+        .then(|| {
+            crate::backend::domain::conversations::subagent_anchor_index_text(
+                part.metadata_json.as_deref(),
+            )
+        })
+        .flatten();
+    let text = match (body.trim().is_empty(), anchor_attrs) {
+        (true, None) => return Ok(None),
+        (true, Some(anchor)) => anchor,
+        (false, None) => body,
+        (false, Some(anchor)) => format!("{body}\n\n{anchor}"),
+    };
     Ok((!text.trim().is_empty()).then_some(text))
 }
 
