@@ -735,29 +735,49 @@ async fn migrations_repair_the_known_modified_question_contract_checksum() {
 }
 
 #[tokio::test]
-async fn conversation_session_observations_keeps_only_incremental_sync_columns() {
-    let db_path = temp_database_path("conversation-observation-slim");
+async fn conversation_session_watermark_table_is_retired() {
+    let db_path = temp_database_path("conversation-observation-dropped");
     migrate_database(&db_path).await.expect("run migrations");
 
     let conn = Connection::open(&db_path).expect("open migrated database");
-    assert_eq!(
-        conversation_session_observation_columns(&conn),
-        expected_conversation_session_observation_columns()
-    );
-    let dirty_index_count: i64 = conn
+    let table_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_conversation_session_observations_dirty'",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversation_session_observations'",
             [],
             |row| row.get(0),
         )
-        .expect("query observation dirty index");
-    assert_eq!(dirty_index_count, 0);
+        .expect("query watermark table");
+    assert_eq!(
+        table_count, 0,
+        "per-session watermark rows are retired in favour of session fingerprints"
+    );
+
+    let contract_columns: Vec<String> = conn
+        .prepare(
+            "SELECT name FROM pragma_table_info('conversation_sources') WHERE name LIKE 'synced_%' ORDER BY name",
+        )
+        .expect("prepare source contract columns")
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("query source contract columns")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect source contract columns");
+    assert_eq!(
+        contract_columns,
+        vec![
+            "synced_adapter_hash".to_string(),
+            "synced_card_contract_version".to_string(),
+            "synced_payload_policy_version".to_string(),
+            "synced_projection_version".to_string(),
+        ],
+        "the source-level sync contract stays as the only watermark row per source"
+    );
+
     cleanup_database(&db_path);
 }
 
 #[tokio::test]
-async fn migrations_rebuild_legacy_observation_table_preserving_incremental_state() {
-    let db_path = temp_database_path("conversation-observation-legacy-rebuild");
+async fn migrations_promote_legacy_observation_versions_into_session_fingerprints() {
+    let db_path = temp_database_path("conversation-observation-legacy-backfill");
     migrate_database(&db_path)
         .await
         .expect("create current database");
@@ -765,16 +785,22 @@ async fn migrations_rebuild_legacy_observation_table_preserving_incremental_stat
     let conn = Connection::open(&db_path).expect("open current database");
     conn.execute_batch(
         r#"
-            INSERT INTO conversation_adapters (tenant_id, id, name, kind, version, enabled, trust_state, capabilities, input_kinds, created_at, updated_at) 
+            INSERT INTO conversation_adapters (tenant_id, id, name, kind, version, enabled, trust_state, capabilities, input_kinds, created_at, updated_at)
             VALUES ('default', 'legacy-adp', 'Test', 'cli', '1.0.0', 1, 'trusted', '[]', '[]', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z');
             INSERT INTO conversation_sources (tenant_id, id, adapter_id, name, kind, location, enabled, created_at, updated_at)
             VALUES ('default', 'legacy-source', 'legacy-adp', 'Test Source', 'cli', '/path', 1, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z');
+            INSERT INTO conversation_sessions (
+                tenant_id, id, source_id, adapter_id, external_id, title,
+                source_fingerprint, missing, created_at, imported_at
+            ) VALUES (
+                'default', 'legacy-session', 'legacy-source', 'legacy-adp', 'legacy-external', 'Legacy',
+                NULL, 0, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z'
+            );
             ALTER TABLE conversation_sources DROP COLUMN synced_adapter_hash;
             ALTER TABLE conversation_sources DROP COLUMN synced_card_contract_version;
             ALTER TABLE conversation_sources DROP COLUMN synced_payload_policy_version;
             ALTER TABLE conversation_sources DROP COLUMN synced_projection_version;
-            DROP TABLE conversation_session_observations;
-            CREATE TABLE conversation_session_observations (
+            CREATE TABLE IF NOT EXISTS conversation_session_observations (
                 tenant_id TEXT NOT NULL,
                 source_id TEXT NOT NULL,
                 record_kind TEXT NOT NULL CHECK (record_kind IN ('session', 'web')),
@@ -799,7 +825,8 @@ async fn migrations_rebuild_legacy_observation_table_preserving_incremental_stat
                 'hydrated-v1', '2026-10-01T00:00:00Z', 0,
                 'adapter-hash-v1', 7, 3, 5
             );
-            DELETE FROM _sqlx_migrations WHERE version = 20261028000001;
+            DELETE FROM _sqlx_migrations
+            WHERE version IN (20261028000001, 20261110000001);
             "#,
     )
     .expect("seed legacy observation schema");
@@ -807,26 +834,30 @@ async fn migrations_rebuild_legacy_observation_table_preserving_incremental_stat
 
     migrate_database(&db_path)
         .await
-        .expect("slim legacy observation schema");
+        .expect("converge legacy observation schema");
 
-    let conn = Connection::open(&db_path).expect("open rebuilt database");
-    assert_eq!(
-        conversation_session_observation_columns(&conn),
-        expected_conversation_session_observation_columns()
-    );
-    let synced_version: String = conn
+    let conn = Connection::open(&db_path).expect("open converged database");
+    let fingerprint: Option<String> = conn
         .query_row(
-            r#"
-            SELECT synced_version
-            FROM conversation_session_observations
-            WHERE tenant_id = 'default' AND source_id = 'legacy-source'
-              AND record_kind = 'session' AND external_id = 'legacy-external'
-            "#,
+            "SELECT source_fingerprint FROM conversation_sessions WHERE tenant_id = 'default' AND id = 'legacy-session'",
             [],
             |row| row.get(0),
         )
-        .expect("query rebuilt observation row");
-    assert_eq!(synced_version, "hydrated-v1");
+        .expect("query promoted fingerprint");
+    assert_eq!(
+        fingerprint.as_deref(),
+        Some("hydrated-v1"),
+        "legacy watermark versions must be promoted into the session record before the table is dropped"
+    );
+
+    let table_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversation_session_observations'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query watermark table");
+    assert_eq!(table_count, 0, "the watermark table must be dropped");
 
     let (hash, card_ver, policy_ver, proj_ver): (
         Option<String>,
@@ -851,27 +882,6 @@ async fn migrations_rebuild_legacy_observation_table_preserving_incremental_stat
     assert_eq!(proj_ver, Some(5));
 
     cleanup_database(&db_path);
-}
-
-fn expected_conversation_session_observation_columns() -> Vec<&'static str> {
-    vec![
-        "tenant_id",
-        "source_id",
-        "record_kind",
-        "external_id",
-        "synced_version",
-    ]
-}
-
-fn conversation_session_observation_columns(conn: &Connection) -> Vec<String> {
-    conn.prepare(
-        "SELECT name FROM pragma_table_info('conversation_session_observations') ORDER BY cid",
-    )
-    .expect("prepare observation columns")
-    .query_map([], |row| row.get::<_, String>(0))
-    .expect("query observation columns")
-    .collect::<Result<Vec<_>, _>>()
-    .expect("collect observation columns")
 }
 
 #[tokio::test]
@@ -1841,7 +1851,7 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         .collect::<Result<Vec<_>, _>>()
         .expect("collect table names");
 
-    // 规格 #104 与 ADR-0019 定义的 22 张核心表收敛白名单
+    // 规格 #104 与 ADR-0019 定义的 21 张核心表收敛白名单
     let expected_core_tables = [
         "agent_execution_bindings",
         "app_extension_catalog_releases",
@@ -1856,7 +1866,6 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         "conversation_parts",
         "conversation_payload_policy_state",
         "conversation_search_index_state",
-        "conversation_session_observations",
         "conversation_sessions",
         "conversation_sources",
         "conversation_turns",
@@ -2396,13 +2405,6 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
     )
     .expect("insert util6 fts");
 
-    // 插入 util6 的衍生记录（如 session_memory_jobs、conversation_session_observations 等）
-    conn.execute(
-        "INSERT INTO conversation_session_observations (tenant_id, source_id, record_kind, external_id, synced_version)
-         VALUES ('util6', 'src-1', 'session', 'ext-2', '1')",
-        [],
-    ).expect("insert util6 observation");
-
     // 3. 回退 20261024000001~20261024000005 迁移记录，模拟从旧版本升级触发迁移
     conn.execute_batch(
         r#"
@@ -2412,7 +2414,15 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         CREATE TABLE IF NOT EXISTS memory_extractions (tenant_id TEXT, id TEXT, PRIMARY KEY (tenant_id, id));
         CREATE TABLE IF NOT EXISTS conversation_adapter_packages (tenant_id TEXT);
         CREATE TABLE IF NOT EXISTS conversation_adapter_catalog_releases (tenant_id TEXT);
-        DELETE FROM _sqlx_migrations WHERE version IN (20261024000001, 20261024000002, 20261024000003, 20261024000004);
+        CREATE TABLE IF NOT EXISTS conversation_session_observations (
+            tenant_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            record_kind TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            synced_version TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, source_id, record_kind, external_id)
+        );
+        DELETE FROM _sqlx_migrations WHERE version IN (20261024000001, 20261024000002, 20261024000003, 20261024000004, 20261110000001);
         "#,
     )
     .expect("rollback migration version");
@@ -3659,7 +3669,6 @@ async fn adversarial_challenge_3_zero_zombie_tables_oracle_failure_injection() {
         "conversation_parts",
         "conversation_payload_policy_state",
         "conversation_search_index_state",
-        "conversation_session_observations",
         "conversation_sessions",
         "conversation_sources",
         "conversation_turns",
@@ -3675,7 +3684,7 @@ async fn adversarial_challenge_3_zero_zombie_tables_oracle_failure_injection() {
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>(),
-        "baseline clean database must match exactly 22 core tables"
+        "baseline clean database must match exactly 21 core tables"
     );
 
     // Helper to test oracle rejection
@@ -3732,7 +3741,6 @@ async fn adversarial_challenge_3_zero_zombie_tables_oracle_failure_injection() {
             "conversation_parts",
             "conversation_payload_policy_state",
             "conversation_search_index_state",
-            "conversation_session_observations",
             "conversation_sessions",
             "conversation_sources",
             "conversation_turns",

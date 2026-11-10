@@ -92,6 +92,10 @@ pub(crate) fn derive_child_session_id(source_id: &str, child_external_id: &str) 
 ///
 /// 锚点 Part 由适配器产出 `kind = "subagent"`，`split_turn_triad` 会把它留在
 /// `parts` 里（`part_index` 即原始零件下标），这里只做"补算主键 + 挂过程节点"。
+///
+/// 本路径下 `part_index` 与 `process.seq` 同源相等；但存量折算产物里两者
+/// **各占一个序号**（见 `conversation_subagent_fold_build::append_anchor`），
+/// 所以任何消费方都不得按序号对齐，只能按 `child_session_id` 对齐。
 pub(crate) fn annotate_subagent_anchors(
     source_id: &str,
     parts: &[NormalizedConversationPart],
@@ -276,7 +280,7 @@ pub(crate) async fn reconcile_orphan_subagent_sessions_sqlx_tx(
     .map_err(StoreError::external)?;
 
     let mut outcome = OrphanReconcileOutcome::default();
-    for (child_id, external_id, purpose, locator, missing) in rows {
+    for (child_id, _external_id, purpose, locator, missing) in rows {
         if child_id == parent_session_id || referenced.contains(&child_id) {
             continue;
         }
@@ -285,8 +289,7 @@ pub(crate) async fn reconcile_orphan_subagent_sessions_sqlx_tx(
             continue;
         }
         if missing != 0 || is_inline_subagent_locator(locator.as_deref()) {
-            delete_subagent_session_sqlx_tx(tx, tenant_id, source_id, &child_id, &external_id)
-                .await?;
+            delete_subagent_session_sqlx_tx(tx, tenant_id, &child_id).await?;
             outcome.deleted.push(child_id);
         } else {
             unbind_subagent_parent_turn_sqlx_tx(tx, tenant_id, &child_id, purpose.as_deref())
@@ -326,9 +329,7 @@ pub(crate) fn is_inline_subagent_locator(source_locator: Option<&str>) -> bool {
 async fn delete_subagent_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
-    source_id: &str,
     session_id: &str,
-    external_id: &str,
 ) -> StoreResult<()> {
     for statement in [
         "DELETE FROM conversation_part_fts WHERE tenant_id = ?1 AND session_id = ?2",
@@ -344,16 +345,6 @@ async fn delete_subagent_session_sqlx_tx(
             .await
             .map_err(StoreError::external)?;
     }
-    sqlx::query(
-        "DELETE FROM conversation_session_observations \
-         WHERE tenant_id = ?1 AND source_id = ?2 AND record_kind = 'session' AND external_id = ?3",
-    )
-    .bind(tenant_id)
-    .bind(source_id)
-    .bind(external_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
     Ok(())
 }
 

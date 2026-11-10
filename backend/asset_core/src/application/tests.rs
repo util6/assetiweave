@@ -2281,7 +2281,7 @@ esac
     assert_eq!(session_count, 2);
 
     let s2_observed: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
+        "SELECT count(*) FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2' AND source_fingerprint IS NOT NULL",
     )
     .bind(tenant_id)
     .bind(&source_id)
@@ -2291,7 +2291,7 @@ esac
     assert_eq!(s2_observed, 0);
 
     let s1_observed: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-1'",
+        "SELECT count(*) FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-1' AND source_fingerprint IS NOT NULL",
     )
     .bind(tenant_id)
     .bind(&source_id)
@@ -2328,7 +2328,7 @@ esac
     assert_eq!(session_count_r2, 3);
 
     let s2_r2_observed: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
+        "SELECT count(*) FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2' AND source_fingerprint IS NOT NULL",
     )
     .bind(tenant_id)
     .bind(&source_id)
@@ -2620,8 +2620,8 @@ esac
     assert_eq!(res1["results"][0]["status"], "completed");
     assert_eq!(res1["results"][0]["active_session_count"], 1);
 
-    let obs_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2",
+    let fingerprinted_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2 AND source_fingerprint IS NOT NULL",
     )
     .bind(tenant_id)
     .bind(&source_id)
@@ -2629,8 +2629,8 @@ esac
     .await
     .unwrap();
     assert_eq!(
-        obs_count, 2,
-        "both normal and empty sessions must be recorded in watermarks"
+        fingerprinted_count, 1,
+        "only sessions with persisted content carry a fingerprint; empty sessions stay re-discoverable"
     );
 
     let synced_hash: Option<String> = sqlx::query_scalar(
@@ -2660,7 +2660,8 @@ esac
         "incremental sync skips both sessions"
     );
 
-    // Round 3: Update adapter content hash (contract change on source)
+    // Round 3: 适配器内容哈希漂移（等价于桌面端更新了适配器包）。
+    // 会话级版本由会话记录自身的指纹承载，源级契约漂移不再作废差集。
     adapter.content_hash = Some("hash-v2".to_string());
     crate::backend::store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter)
         .await
@@ -2678,8 +2679,8 @@ esac
         .unwrap();
     assert_eq!(res3["results"][0]["status"], "completed");
     assert_eq!(
-        res3["results"][0]["active_session_count"], 1,
-        "contract change invalidates watermarks and triggers full re-sync"
+        res3["results"][0]["active_session_count"], 0,
+        "adapter contract drift must not invalidate the session baseline"
     );
 
     let updated_hash: Option<String> = sqlx::query_scalar(

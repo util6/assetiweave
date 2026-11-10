@@ -360,14 +360,6 @@ pub struct ConversationSession {
     pub last_cwd: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConversationSessionObservation {
-    pub external_id: String,
-    pub updated_at: Option<String>,
-    pub source_locator: Option<String>,
-    pub version_token: String,
-}
-
 fn default_execution_origin() -> String {
     "user".to_string()
 }

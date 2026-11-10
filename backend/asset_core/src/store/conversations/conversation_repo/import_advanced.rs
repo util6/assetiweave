@@ -1,5 +1,24 @@
 use super::*;
 
+/// 会话版本指纹优先取适配器归一化结果；当适配器显式声明「没有独立文件指纹」
+/// （例如内联子代理会话，其内容寄生在父会话文件里）时，退回本轮发现阶段给出的
+/// 描述符令牌，使该会话在下一轮增量差集中仍可被判定为未变更，
+/// 而不是每轮都因为「指纹为空」被重复解析。
+fn session_with_descriptor_fingerprint(
+    source: &ConversationSource,
+    normalized: &NormalizedConversationSession,
+    now: &str,
+    descriptor_versions: Option<&BTreeMap<String, String>>,
+) -> ConversationSession {
+    let mut session = conversation_session_from_normalized(source, normalized, now);
+    if session.source_fingerprint.is_none() {
+        session.source_fingerprint = descriptor_versions
+            .and_then(|versions| versions.get(&session.external_id))
+            .cloned();
+    }
+    session
+}
+
 pub async fn import_conversation_sessions_advanced_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -71,19 +90,14 @@ pub async fn import_conversation_sessions_advanced_sqlx(
     let mut skipped_session_count = 0usize;
     let mut changed_session_count = 0usize;
 
-    // 先记录读取阶段失败的会话到 observation 表，dirty = 1 是下一轮重试的唯一信号
+    // 读取阶段失败的会话直接清空版本指纹，这是下一轮差集重新纳入它们的唯一信号
     for failure in &session_failures {
-        let observed_version = descriptor_versions.and_then(|map| {
-            map.get(failure.session_external_id.as_str())
-                .map(|s| s.as_str())
-        });
         let _ = record_conversation_session_failure_sqlx(
             pool,
             tenant_id,
             &source.id,
             "session",
             &failure.session_external_id,
-            observed_version,
         )
         .await;
     }
@@ -127,7 +141,12 @@ pub async fn import_conversation_sessions_advanced_sqlx(
             let mut chunk_ok = true;
 
             for normalized in chunk {
-                let session = conversation_session_from_normalized(source, normalized, &now);
+                let session = session_with_descriptor_fingerprint(
+                    source,
+                    normalized,
+                    &now,
+                    descriptor_versions,
+                );
                 if is_droppable_internal_session(normalized, &session) {
                     chunk_skipped += 1;
                     continue;
@@ -140,10 +159,6 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                     &session,
                     &now,
                     &sync_run_id,
-                    adapter_content_hash,
-                    card_contract_version,
-                    payload_policy_version,
-                    projection_version,
                     force_reparse,
                 )
                 .await
@@ -179,7 +194,12 @@ pub async fn import_conversation_sessions_advanced_sqlx(
         if !batch_success {
             for normalized in chunk {
                 ensure_sync_import_active(cancellation)?;
-                let session = conversation_session_from_normalized(source, normalized, &now);
+                let session = session_with_descriptor_fingerprint(
+                    source,
+                    normalized,
+                    &now,
+                    descriptor_versions,
+                );
                 if is_droppable_internal_session(normalized, &session) {
                     skipped_session_count += 1;
                     succeeded_external_ids.push(normalized.external_id.clone());
@@ -204,7 +224,6 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                             &source.id,
                             "session",
                             &normalized.external_id,
-                            session.source_fingerprint.as_deref(),
                         )
                         .await;
                         completed_session_count += 1;
@@ -221,10 +240,6 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                     &session,
                     &now,
                     &sync_run_id,
-                    adapter_content_hash,
-                    card_contract_version,
-                    payload_policy_version,
-                    projection_version,
                     force_reparse,
                 )
                 .await;
@@ -269,7 +284,6 @@ pub async fn import_conversation_sessions_advanced_sqlx(
                             &source.id,
                             "session",
                             &session.external_id,
-                            session.source_fingerprint.as_deref(),
                         )
                         .await;
                     }

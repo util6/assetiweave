@@ -2233,9 +2233,9 @@ async fn sqlx_round_trips_structured_cards_and_clears_translation_on_snapshot_re
 }
 
 #[tokio::test]
-async fn sqlx_adapter_or_card_contract_change_invalidates_incremental_hydration_versions() {
+async fn sqlx_adapter_contract_drift_keeps_session_fingerprints() {
     let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-conversation-card-hydration-{}.sqlite",
+        "assetiweave-conversation-contract-drift-{}.sqlite",
         Uuid::new_v4()
     ));
     let database = Database::open_async(&db_path).await.expect("open database");
@@ -2253,110 +2253,123 @@ async fn sqlx_adapter_or_card_contract_change_invalidates_incremental_hydration_
         .await
         .expect("upsert source");
 
-    let descriptors = vec![
-        crate::backend::domain::conversations::ConversationSessionObservation {
-            external_id: "session-1".to_string(),
-            updated_at: None,
-            source_locator: None,
-            version_token: "source-v1".to_string(),
-        },
-    ];
-    let hydrated = BTreeSet::from(["session-1".to_string()]);
-
-    let (same, adapter_changed, contract_changed, payload_policy_changed, projection_changed) =
-        async {
-            persist_conversation_session_observations_sqlx(
-                database.pool(),
-                TEST_TENANT_ID,
-                "source-1",
-                ConversationRecordKind::Session,
-                &descriptors,
-                &hydrated,
-                Some("adapter-hash-v1"),
-                Some(1),
-                crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                Some(1),
-            )
-            .await?;
-            let same = load_conversation_session_versions_sqlx(
-                database.pool(),
-                TEST_TENANT_ID,
-                "source-1",
-                ConversationRecordKind::Session,
-                Some("adapter-hash-v1"),
-                Some(1),
-                crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                Some(1),
-            )
-            .await?;
-            let adapter_changed = load_conversation_session_versions_sqlx(
-                database.pool(),
-                TEST_TENANT_ID,
-                "source-1",
-                ConversationRecordKind::Session,
-                Some("adapter-hash-v2"),
-                Some(1),
-                crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                Some(1),
-            )
-            .await?;
-            let contract_changed = load_conversation_session_versions_sqlx(
-                database.pool(),
-                TEST_TENANT_ID,
-                "source-1",
-                ConversationRecordKind::Session,
-                Some("adapter-hash-v1"),
-                Some(2),
-                crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                Some(1),
-            )
-            .await?;
-            let payload_policy_changed = load_conversation_session_versions_sqlx(
-                database.pool(),
-                TEST_TENANT_ID,
-                "source-1",
-                ConversationRecordKind::Session,
-                Some("adapter-hash-v1"),
-                Some(1),
-                crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION
-                    + 1,
-                Some(1),
-            )
-            .await?;
-            let projection_changed = load_conversation_session_versions_sqlx(
-                database.pool(),
-                TEST_TENANT_ID,
-                "source-1",
-                ConversationRecordKind::Session,
-                Some("adapter-hash-v1"),
-                Some(1),
-                crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                Some(2),
-            )
-            .await?;
-            Ok::<_, StoreError>((
-                same,
-                adapter_changed,
-                contract_changed,
-                payload_policy_changed,
-                projection_changed,
-            ))
-        }
+    let mut session = fixture_session("v1");
+    session.source_fingerprint = Some("source-v1".to_string());
+    import_conversation_sessions_sqlx(database.pool(), TEST_TENANT_ID, &source, &[session], false)
         .await
-        .expect("compare hydration identity");
+        .expect("import session");
 
-    assert_eq!(same.get("session-1").map(String::as_str), Some("source-v1"));
-    assert!(adapter_changed.is_empty());
-    assert!(contract_changed.is_empty());
+    stamp_source_sync_contract_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        "source-1",
+        Some("adapter-hash-v1"),
+        Some(1),
+        crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+        Some(1),
+    )
+    .await
+    .expect("stamp source contract");
+
+    let (same, adapter_changed, card_changed, projection_changed, payload_policy_changed) = async {
+        let policy =
+            crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION;
+        let same = load_conversation_session_versions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            "source-1",
+            ConversationRecordKind::Session,
+            Some("adapter-hash-v1"),
+            Some(1),
+            policy,
+            Some(1),
+        )
+        .await?;
+        let adapter_changed = load_conversation_session_versions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            "source-1",
+            ConversationRecordKind::Session,
+            Some("adapter-hash-v2"),
+            Some(1),
+            policy,
+            Some(1),
+        )
+        .await?;
+        let card_changed = load_conversation_session_versions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            "source-1",
+            ConversationRecordKind::Session,
+            Some("adapter-hash-v1"),
+            Some(2),
+            policy,
+            Some(1),
+        )
+        .await?;
+        let projection_changed = load_conversation_session_versions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            "source-1",
+            ConversationRecordKind::Session,
+            Some("adapter-hash-v1"),
+            Some(1),
+            policy,
+            Some(2),
+        )
+        .await?;
+        let payload_policy_changed = load_conversation_session_versions_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            "source-1",
+            ConversationRecordKind::Session,
+            Some("adapter-hash-v1"),
+            Some(1),
+            policy + 1,
+            Some(1),
+        )
+        .await?;
+        Ok::<_, StoreError>((
+            same,
+            adapter_changed,
+            card_changed,
+            projection_changed,
+            payload_policy_changed,
+        ))
+    }
+    .await
+    .expect("compare hydration identity");
+
+    // 会话级版本由会话记录自身承载：适配器、卡片契约与投影版本漂移都不再清空差集，
+    // 真正变化的会话交给版本令牌自证。
+    for versions in [&same, &adapter_changed, &card_changed, &projection_changed] {
+        assert_eq!(
+            versions.get("session-1").map(String::as_str),
+            Some("source-v1")
+        );
+    }
+    // 只有载荷策略升级才允许整源重解析。
     assert!(payload_policy_changed.is_empty());
-    assert!(projection_changed.is_empty());
+
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2",
+    )
+    .bind(TEST_TENANT_ID)
+    .bind("source-1")
+    .fetch_one(database.pool())
+    .await
+    .expect("count sessions");
+    assert_eq!(
+        remaining, 1,
+        "contract drift must never delete session rows"
+    );
 
     drop(database);
     cleanup_database(&db_path);
 }
 
 #[tokio::test]
-async fn sqlx_observation_missing_session_invalidates_watermark() {
+async fn sqlx_missing_session_is_excluded_from_incremental_versions() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-observation-missing-invalidation-{}.sqlite",
         Uuid::new_v4()
@@ -2389,29 +2402,17 @@ async fn sqlx_observation_missing_session_invalidates_watermark() {
     .await
     .expect("import session v1");
 
-    let descriptors = vec![
-        crate::backend::domain::conversations::ConversationSessionObservation {
-            external_id: "session-missing".to_string(),
-            updated_at: None,
-            source_locator: None,
-            version_token: "v1".to_string(),
-        },
-    ];
-    let hydrated = BTreeSet::from(["session-missing".to_string()]);
-    persist_conversation_session_observations_sqlx(
+    stamp_source_sync_contract_sqlx(
         database.pool(),
         TEST_TENANT_ID,
         &source.id,
-        ConversationRecordKind::Session,
-        &descriptors,
-        &hydrated,
         None,
         None,
         crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
         None,
     )
     .await
-    .expect("persist observations");
+    .expect("stamp source contract");
 
     let versions = load_conversation_session_versions_sqlx(
         database.pool(),
@@ -2458,7 +2459,7 @@ async fn sqlx_observation_missing_session_invalidates_watermark() {
     .expect("load versions after missing");
     assert!(
         after_missing.get("session-missing").is_none(),
-        "Missing session watermark should be removed"
+        "Missing sessions must be excluded from the incremental baseline"
     );
 
     drop(database);
@@ -2466,14 +2467,14 @@ async fn sqlx_observation_missing_session_invalidates_watermark() {
 }
 
 #[tokio::test]
-async fn sqlx_dirty_failed_session_is_retried_without_affecting_unchanged_neighbours() {
+async fn sqlx_failed_session_leaves_incremental_baseline_until_reparsed() {
     let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-observation-dirty-retry-{}.sqlite",
+        "assetiweave-observation-failed-retry-{}.sqlite",
         Uuid::new_v4()
     ));
     let database = Database::open_async(&db_path).await.expect("open database");
     let adapter = test_conversation_adapter(
-        "dirty-retry-adapter",
+        "failed-retry-adapter",
         ConversationAdapterKind::External,
         ConversationAdapterTrustState::Trusted,
     );
@@ -2486,18 +2487,33 @@ async fn sqlx_dirty_failed_session_is_retried_without_affecting_unchanged_neighb
         .await
         .expect("upsert source");
 
-    let descriptors = ["session-1", "session-2"]
-        .into_iter()
-        .map(
-            |external_id| crate::backend::domain::conversations::ConversationSessionObservation {
-                external_id: external_id.to_string(),
-                updated_at: None,
-                source_locator: None,
-                version_token: "v1".to_string(),
-            },
-        )
-        .collect::<Vec<_>>();
-    let hydrated = BTreeSet::from(["session-1".to_string(), "session-2".to_string()]);
+    let mut session_1 = fixture_session("v1");
+    session_1.external_id = "session-1".to_string();
+    session_1.source_fingerprint = Some("v1".to_string());
+    let mut session_2 = fixture_session("v1");
+    session_2.external_id = "session-2".to_string();
+    session_2.source_fingerprint = Some("v1".to_string());
+    import_conversation_sessions_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &source,
+        &[session_1, session_2],
+        false,
+    )
+    .await
+    .expect("import two sessions");
+
+    stamp_source_sync_contract_sqlx(
+        database.pool(),
+        TEST_TENANT_ID,
+        &source.id,
+        None,
+        None,
+        crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+        None,
+    )
+    .await
+    .expect("stamp source contract");
 
     let load_versions = || async {
         load_conversation_session_versions_sqlx(
@@ -2513,21 +2529,6 @@ async fn sqlx_dirty_failed_session_is_retried_without_affecting_unchanged_neighb
         .await
     };
 
-    persist_conversation_session_observations_sqlx(
-        database.pool(),
-        TEST_TENANT_ID,
-        &source.id,
-        ConversationRecordKind::Session,
-        &descriptors,
-        &hydrated,
-        None,
-        None,
-        crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-        None,
-    )
-    .await
-    .expect("persist clean observations");
-
     let before_failure = load_versions().await.expect("load versions before failure");
     assert_eq!(
         before_failure.keys().cloned().collect::<Vec<_>>(),
@@ -2540,7 +2541,6 @@ async fn sqlx_dirty_failed_session_is_retried_without_affecting_unchanged_neighb
         &source.id,
         "session",
         "session-2",
-        Some("v1"),
     )
     .await
     .expect("record session-2 failure");
@@ -2549,7 +2549,7 @@ async fn sqlx_dirty_failed_session_is_retried_without_affecting_unchanged_neighb
     assert_eq!(
         after_failure.keys().cloned().collect::<Vec<_>>(),
         vec!["session-1".to_string()],
-        "only the failed session must leave known versions so it is re-read next round"
+        "only the failed session must leave the baseline so it is re-read next round"
     );
     assert_eq!(
         after_failure.get("session-1").map(String::as_str),
@@ -2557,26 +2557,29 @@ async fn sqlx_dirty_failed_session_is_retried_without_affecting_unchanged_neighb
         "unchanged neighbour must stay skippable"
     );
 
-    persist_conversation_session_observations_sqlx(
+    // 非增量的整包导入把入参视为完整快照：未出现在本轮结果的会话会被标记 missing，
+    // 因此恢复单条会话时必须连同其余会话一起提交。
+    let mut recovered_1 = fixture_session("v1");
+    recovered_1.external_id = "session-1".to_string();
+    recovered_1.source_fingerprint = Some("v1".to_string());
+    let mut recovered_2 = fixture_session("v1");
+    recovered_2.external_id = "session-2".to_string();
+    recovered_2.source_fingerprint = Some("v1".to_string());
+    import_conversation_sessions_sqlx(
         database.pool(),
         TEST_TENANT_ID,
-        &source.id,
-        ConversationRecordKind::Session,
-        &descriptors[1..],
-        &BTreeSet::from(["session-2".to_string()]),
-        None,
-        None,
-        crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-        None,
+        &source,
+        &[recovered_1, recovered_2],
+        false,
     )
     .await
-    .expect("persist recovered observation");
+    .expect("recover session-2");
 
     let after_recovery = load_versions().await.expect("load versions after recovery");
     assert_eq!(
         after_recovery.keys().cloned().collect::<Vec<_>>(),
         vec!["session-1".to_string(), "session-2".to_string()],
-        "successful re-parse must clear dirty and restore incremental skipping"
+        "successful re-parse must restore incremental skipping"
     );
 
     drop(database);
@@ -2719,40 +2722,24 @@ async fn sqlx_payload_policy_upgrade_reparses_sessions_synced_by_previous_releas
         "subagent Turn payload must advance the payload policy version past {PRE_SUBAGENT_TURNS_PAYLOAD_POLICY_VERSION}, otherwise existing sessions never get re-parsed"
     );
 
-    import_conversation_sessions_sqlx(
-        pool,
-        TEST_TENANT_ID,
-        &source,
-        &[fixture_session("v1")],
-        false,
-    )
-    .await
-    .expect("import legacy session");
+    let mut legacy = fixture_session("v1");
+    legacy.source_fingerprint = Some("source-v1".to_string());
+    import_conversation_sessions_sqlx(pool, TEST_TENANT_ID, &source, &[legacy], false)
+        .await
+        .expect("import legacy session");
 
     // 模拟上一个发行版完成的增量同步：源级契约与已应用策略版本都停留在旧值。
-    let descriptors = vec![
-        crate::backend::domain::conversations::ConversationSessionObservation {
-            external_id: "session-1".to_string(),
-            updated_at: None,
-            source_locator: None,
-            version_token: "source-v1".to_string(),
-        },
-    ];
-    let hydrated = BTreeSet::from(["session-1".to_string()]);
-    persist_conversation_session_observations_sqlx(
+    stamp_source_sync_contract_sqlx(
         pool,
         TEST_TENANT_ID,
         &source.id,
-        ConversationRecordKind::Session,
-        &descriptors,
-        &hydrated,
         Some("adapter-hash-v1"),
         Some(1),
         PRE_SUBAGENT_TURNS_PAYLOAD_POLICY_VERSION,
         Some(1),
     )
     .await
-    .expect("persist legacy observations");
+    .expect("stamp legacy source contract");
     mark_conversation_payload_policy_applied_sqlx(
         pool,
         TEST_TENANT_ID,
@@ -2820,9 +2807,10 @@ async fn sqlx_payload_policy_upgrade_reparses_sessions_synced_by_previous_releas
     )
     .await
     .expect("load versions after watermark clear");
-    assert!(
-        after_clear.is_empty(),
-        "cleared watermarks must stay cleared instead of resurfacing for the previous policy version"
+    assert_eq!(
+        after_clear.get("session-1").map(String::as_str),
+        Some("source-v1"),
+        "a policy version bump must not delete the session baseline"
     );
 
     drop(database);
@@ -2830,39 +2818,40 @@ async fn sqlx_payload_policy_upgrade_reparses_sessions_synced_by_previous_releas
 }
 
 #[tokio::test]
-async fn sqlx_matching_payload_policy_version_reuses_session_watermarks() {
+async fn sqlx_matching_payload_policy_version_reuses_session_fingerprints() {
     let (database, db_path, source) =
         open_conversation_reparse_fixture("payload-policy-match").await;
     let pool = database.pool();
     let policy_version =
         crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION;
 
-    let descriptors = ["session-1", "session-2"]
-        .into_iter()
-        .map(
-            |external_id| crate::backend::domain::conversations::ConversationSessionObservation {
-                external_id: external_id.to_string(),
-                updated_at: None,
-                source_locator: None,
-                version_token: format!("{external_id}-v1"),
-            },
-        )
-        .collect::<Vec<_>>();
-    let hydrated = BTreeSet::from(["session-1".to_string(), "session-2".to_string()]);
-    persist_conversation_session_observations_sqlx(
+    let mut session_1 = fixture_session("v1");
+    session_1.external_id = "session-1".to_string();
+    session_1.source_fingerprint = Some("session-1-v1".to_string());
+    let mut session_2 = fixture_session("v1");
+    session_2.external_id = "session-2".to_string();
+    session_2.source_fingerprint = Some("session-2-v1".to_string());
+    import_conversation_sessions_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        &source,
+        &[session_1, session_2],
+        false,
+    )
+    .await
+    .expect("import sessions");
+
+    stamp_source_sync_contract_sqlx(
         pool,
         TEST_TENANT_ID,
         &source.id,
-        ConversationRecordKind::Session,
-        &descriptors,
-        &hydrated,
         None,
         None,
         policy_version,
         None,
     )
     .await
-    .expect("persist observations");
+    .expect("stamp source contract");
 
     let versions = load_conversation_session_versions_sqlx(
         pool,
@@ -2886,16 +2875,16 @@ async fn sqlx_matching_payload_policy_version_reuses_session_watermarks() {
     );
 
     let stored: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2",
+        "SELECT COUNT(*) FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2",
     )
     .bind(TEST_TENANT_ID)
     .bind(&source.id)
     .fetch_one(pool)
     .await
-    .expect("count stored watermarks");
+    .expect("count stored sessions");
     assert_eq!(
         stored, 2,
-        "matching payload policy version must keep watermarks for incremental skipping"
+        "matching payload policy version must keep the session baseline for incremental skipping"
     );
 
     drop(database);

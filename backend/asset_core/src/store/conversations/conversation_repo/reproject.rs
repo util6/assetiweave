@@ -48,14 +48,10 @@ pub async fn reproject_conversation_session_sqlx(
     )
     .await?;
 
-    upsert_single_session_observation_clean_sqlx_tx(
+    stamp_source_sync_contract_sqlx_tx(
         &mut tx,
         tenant_id,
         &source.id,
-        "session",
-        &session.external_id,
-        session.source_fingerprint.as_deref().unwrap_or(&now),
-        &now,
         adapter_content_hash,
         card_contract_version,
         payload_policy_version,

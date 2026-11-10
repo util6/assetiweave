@@ -152,13 +152,12 @@ impl AppService {
                 )
                 .await
                 .map_err(conversation_storage_error)?;
-                let retained_session_count = persist_successful_conversation_observation(
+                let retained_session_count = stamp_source_contract_after_sync(
                     pool,
                     tenant_id,
                     &source.id,
                     source_record_kind,
                     &read,
-                    &result.succeeded_external_ids,
                     params.dry_run,
                     adapter_content_hash.as_deref(),
                     card_contract_version,
@@ -218,13 +217,12 @@ impl AppService {
                 )
                 .await
                 .map_err(conversation_storage_error)?;
-                let retained_session_count = persist_successful_conversation_observation(
+                let retained_session_count = stamp_source_contract_after_sync(
                     pool,
                     tenant_id,
                     &source.id,
                     source_record_kind,
                     &read,
-                    &result.succeeded_external_ids,
                     params.dry_run,
                     adapter_content_hash.as_deref(),
                     card_contract_version,
@@ -257,13 +255,16 @@ pub fn ensure_conversation_sync_not_cancelled(
     Ok(())
 }
 
-async fn persist_successful_conversation_observation(
+/// 同步收尾：标记失败会话，并回签数据源级同步契约。
+///
+/// 会话级版本指纹已随会话记录一同落库，这里不再逐条写水位行；
+/// 源级契约只占一行，记录本轮同步所依据的适配器契约版本。
+async fn stamp_source_contract_after_sync(
     pool: &sqlx::SqlitePool,
     tenant_id: &str,
     source_id: &str,
     record_kind: crate::backend::domain::conversations::ConversationRecordKind,
     read: &crate::backend::infrastructure::conversations::ConversationSourceReadResult,
-    succeeded_external_ids: &[String],
     dry_run: bool,
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
@@ -273,59 +274,39 @@ async fn persist_successful_conversation_observation(
     if dry_run || !read.incremental {
         return Ok(0);
     }
-    let mut hydrated_external_ids = succeeded_external_ids
-        .iter()
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
-    hydrated_external_ids.extend(read.skipped_clean_external_ids.iter().cloned());
 
+    let kind_str = match record_kind {
+        crate::backend::domain::conversations::ConversationRecordKind::Session => "session",
+        crate::backend::domain::conversations::ConversationRecordKind::Web => "web",
+    };
     for failure in &read.session_failures {
-        let kind_str = match record_kind {
-            crate::backend::domain::conversations::ConversationRecordKind::Session => "session",
-            crate::backend::domain::conversations::ConversationRecordKind::Web => "web",
-        };
+        // 失败会话清空版本指纹，下一轮差集必然重新纳入。
         let _ = crate::backend::store::record_conversation_session_failure_sqlx(
             pool,
             tenant_id,
             source_id,
             kind_str,
             &failure.session_external_id,
-            None,
         )
         .await;
     }
 
-    let observations = persistable_conversation_session_observations(&read.session_descriptors);
-    crate::backend::store::persist_conversation_session_observations_sqlx(
+    crate::backend::store::stamp_source_sync_contract_sqlx(
         pool,
         tenant_id,
         source_id,
-        record_kind,
-        &observations,
-        &hydrated_external_ids,
         adapter_content_hash,
         card_contract_version,
         payload_policy_version,
         projection_version,
     )
     .await
-    .map_err(conversation_storage_error)
-}
+    .map_err(conversation_storage_error)?;
 
-pub fn persistable_conversation_session_observations(
-    descriptors: &[crate::backend::infrastructure::conversations::ConversationSessionDescriptor],
-) -> Vec<crate::backend::domain::conversations::ConversationSessionObservation> {
-    descriptors
-        .iter()
-        .map(
-            |descriptor| crate::backend::domain::conversations::ConversationSessionObservation {
-                external_id: descriptor.external_id.clone(),
-                updated_at: descriptor.updated_at.clone(),
-                source_locator: descriptor.source_locator.clone(),
-                version_token: descriptor.version_token.clone(),
-            },
-        )
-        .collect()
+    // 本轮结束后，除失败会话外，所有被发现到的会话都已持有可用的版本指纹。
+    Ok(read
+        .discovered_session_count
+        .saturating_sub(read.session_failures.len()))
 }
 
 pub fn conversation_sync_result_value(

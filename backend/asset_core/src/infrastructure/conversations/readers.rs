@@ -14,7 +14,6 @@ pub struct ConversationSourceReadResult {
     pub incremental: bool,
     pub session_failures: Vec<SessionSyncFailure>,
     pub session_warnings: Vec<SessionSyncWarning>,
-    pub skipped_clean_external_ids: Vec<String>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -115,7 +114,6 @@ pub async fn read_source_sessions_with_progress_listener(
             incremental: false,
             session_failures: Vec::new(),
             session_warnings: warnings,
-            skipped_clean_external_ids: Vec::new(),
         });
     };
     let descriptors = deduplicate_session_descriptors(&discovery.session_descriptors)?;
@@ -134,14 +132,12 @@ pub async fn read_source_sessions_with_progress_listener(
             incremental: true,
             session_failures: Vec::new(),
             session_warnings: Vec::new(),
-            skipped_clean_external_ids: Vec::new(),
         });
     }
 
     let mut sessions = Vec::with_capacity(active.len());
     let mut session_failures = Vec::new();
     let mut session_warnings = Vec::new();
-    let mut skipped_clean_external_ids = Vec::new();
     let mut empty_session_count = 0usize;
     let mut legacy_cards_upgraded = 0usize;
     for (index, descriptor) in active.iter().enumerate() {
@@ -173,8 +169,8 @@ pub async fn read_source_sessions_with_progress_listener(
                 if read.is_empty() {
                     empty_session_count += 1;
                     if let Some(reason) = skipped_reason {
-                        // 适配器显式声明了跳过原因（子代理轨迹、内部工单等），
-                        // 只有这类结构性跳过才能写入增量水位，避免重复解析。
+                        // 适配器显式声明了跳过原因（子代理轨迹、内部工单等）时保留告警，
+                        // 便于排查「会话被结构性跳过、因而永远不进入增量基线」的情况。
                         if reason != "no_turns" {
                             session_warnings.push(SessionSyncWarning {
                                 session_external_id: Some(descriptor.external_id.clone()),
@@ -183,7 +179,6 @@ pub async fn read_source_sessions_with_progress_listener(
                             });
                         }
                     }
-                    skipped_clean_external_ids.push(descriptor.external_id.clone());
                     continue;
                 }
                 if read.len() != 1 || read[0].external_id != descriptor.external_id {
@@ -256,7 +251,6 @@ pub async fn read_source_sessions_with_progress_listener(
         incremental: true,
         session_failures,
         session_warnings,
-        skipped_clean_external_ids,
     })
 }
 
@@ -283,11 +277,18 @@ pub async fn read_source_sessions_incrementally_with_adapter(
     .await
 }
 
+/// 适配器可以显式声明「本会话没有独立指纹」（例如内联子代理会话，
+/// 其内容寄生在父会话文件里）。此时以发现阶段的描述符令牌为准：两者来自
+/// 同一份源文件，若内容真的发生变化，下一轮发现阶段会给出不同令牌并重新
+/// 纳入差集，因此不应把它当成版本漂移而丢弃整条解析结果。
 fn session_matches_descriptor(
     session: &NormalizedConversationSession,
     descriptor: &ConversationSessionDescriptor,
 ) -> bool {
-    session.source_fingerprint.as_deref() == Some(descriptor.version_token.as_str())
+    session
+        .source_fingerprint
+        .as_deref()
+        .is_none_or(|fingerprint| fingerprint == descriptor.version_token)
 }
 
 fn deduplicate_session_descriptors(

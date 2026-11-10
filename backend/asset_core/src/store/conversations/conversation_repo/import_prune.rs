@@ -5,7 +5,7 @@ pub(super) async fn mark_missing_conversation_sessions_sqlx_tx(
     tenant_id: &str,
     source_id: &str,
     incoming_session_ids: &BTreeSet<String>,
-    sync_run_id: &str,
+    _sync_run_id: &str,
     now: &str,
 ) -> StoreResult<Vec<String>> {
     let mut changed_session_ids = Vec::new();
@@ -49,19 +49,6 @@ pub(super) async fn mark_missing_conversation_sessions_sqlx_tx(
         )
         .bind(now)
         .bind(tenant_id)
-        .bind(&session_id)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-        sqlx::query(
-            r#"
-            DELETE FROM conversation_session_observations
-            WHERE tenant_id = ?1 AND source_id = ?2 AND record_kind = 'session'
-              AND external_id = (SELECT external_id FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?3)
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(source_id)
         .bind(&session_id)
         .execute(&mut **tx)
         .await
