@@ -29,15 +29,11 @@ fn make_test_node(
 async fn test_state_service_commit_evolution_and_watermarks() {
     let tmp = std::env::temp_dir().join(format!("assetiweave-state-srv-{}", Uuid::new_v4()));
     let db_path = tmp.join("db").join("app.db");
-    let mem_dir = tmp.join("memories");
     std::fs::create_dir_all(tmp.join("db")).unwrap();
-    std::fs::create_dir_all(&mem_dir).unwrap();
-
-    std::env::set_var("ASSETIWEAVE_MEMORY_ROOT", &mem_dir);
 
     let service = AppService::open_with_db_path(db_path).await.unwrap();
     let tenant_id = service.tenant_id();
-    let storage = MemoryStorage::new_with_root(mem_dir.clone(), tenant_id);
+    let storage = service.memory_storage();
 
     // 1. Watermark initially None
     assert_eq!(
@@ -150,13 +146,11 @@ async fn test_state_service_commit_evolution_and_watermarks() {
 async fn test_auto_fill_turn_started_at_from_sqlite() {
     let tmp = std::env::temp_dir().join(format!("assetiweave-autofill-{}", Uuid::new_v4()));
     let db_path = tmp.join("db").join("app.db");
-    let mem_dir = tmp.join("memories");
     std::fs::create_dir_all(tmp.join("db")).unwrap();
-    std::fs::create_dir_all(&mem_dir).unwrap();
 
     let service = AppService::open_with_db_path(db_path).await.unwrap();
     let tenant_id = service.tenant_id();
-    let storage = MemoryStorage::new_with_root(mem_dir.clone(), tenant_id);
+    let storage = service.memory_storage();
 
     sqlx::query(
         "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, started_at, updated_at, source_locator, source_fingerprint, missing, created_at, imported_at) \
@@ -223,13 +217,11 @@ async fn test_auto_fill_turn_started_at_from_sqlite() {
 async fn test_windowing_recent_slice_and_cutoff_behavior() {
     let tmp = std::env::temp_dir().join(format!("assetiweave-cutoff-{}", Uuid::new_v4()));
     let db_path = tmp.join("db").join("app.db");
-    let mem_dir = tmp.join("memories");
     std::fs::create_dir_all(tmp.join("db")).unwrap();
-    std::fs::create_dir_all(&mem_dir).unwrap();
 
     let service = AppService::open_with_db_path(db_path).await.unwrap();
     let tenant_id = service.tenant_id();
-    let storage = MemoryStorage::new_with_root(mem_dir.clone(), tenant_id);
+    let storage = service.memory_storage();
 
     let now = chrono::Utc::now();
     let ts_100h_ago = (now - chrono::Duration::hours(100)).to_rfc3339();
@@ -380,13 +372,11 @@ async fn test_windowing_recent_slice_and_cutoff_behavior() {
 async fn test_update_memory_node_status_explicit_and_scan() {
     let tmp = std::env::temp_dir().join(format!("assetiweave-status-{}", Uuid::new_v4()));
     let db_path = tmp.join("db").join("app.db");
-    let mem_dir = tmp.join("memories");
     std::fs::create_dir_all(tmp.join("db")).unwrap();
-    std::fs::create_dir_all(&mem_dir).unwrap();
 
     let service = AppService::open_with_db_path(db_path).await.unwrap();
     let tenant_id = service.tenant_id();
-    let storage = MemoryStorage::new_with_root(mem_dir.clone(), tenant_id);
+    let storage = service.memory_storage();
 
     let mut proj = ProjectMemoryState::new("proj-target");
     let mut tree = TopicTree::new("topic-1", "Topic One");
@@ -472,6 +462,110 @@ async fn test_update_memory_node_status_explicit_and_scan() {
         )
         .await;
     assert!(err.is_err());
+
+    std::fs::remove_dir_all(tmp).ok();
+}
+
+/// 便携路径锚点折叠前生成的历史 slug 状态，必须自动并入规范 slug 且不丢悬空分支。
+#[tokio::test]
+async fn test_legacy_unfolded_slug_state_merges_into_canonical_slug() {
+    let tmp = std::env::temp_dir().join(format!("assetiweave-legacy-slug-{}", Uuid::new_v4()));
+    let db_path = tmp.join("db").join("app.db");
+    std::fs::create_dir_all(tmp.join("db")).unwrap();
+    let service = AppService::open_with_db_path(db_path).await.unwrap();
+    // 历史 slug 前缀在真实主机上由 home 目录推导；测试显式注入以便断言确定性。
+    let storage = service
+        .memory_storage()
+        .with_legacy_slug_prefix(Some("users-fixture-user".to_string()));
+
+    let canonical_slug =
+        crate::backend::application::memory::project_path_to_slug("~/code-space/demo-project");
+    let legacy_slug = format!("users-fixture-user-{canonical_slug}");
+    assert_eq!(canonical_slug, "code-space-demo-project");
+
+    // 1. 旧未折叠 slug：含一个 unexplored 悬空分支与一条较高水位
+    let mut legacy_state = crate::backend::domain::memory::ProjectMemoryState::new(&legacy_slug);
+    legacy_state.set_watermark("sess-legacy-1", 7);
+    legacy_state.topic_trees.insert(
+        "legacy-topic".to_string(),
+        TopicTree {
+            topic_id: "legacy-topic".to_string(),
+            topic_name: "历史主题".to_string(),
+            root_node_ids: vec!["11111111#T2".to_string()],
+            nodes: std::collections::HashMap::from([(
+                "11111111#T2".to_string(),
+                MemoryTreeNode {
+                    id: "11111111#T2".to_string(),
+                    parent_id: None,
+                    topic_id: "legacy-topic".to_string(),
+                    summary: "历史遗留的待探索分支".to_string(),
+                    status: NodeStatus::Unexplored,
+                    source_session_id: "sess-legacy-1".to_string(),
+                    turn_index: 2,
+                    turn_started_at: Some("2026-10-05T09:00:00Z".to_string()),
+                    created_at: "2026-10-05T09:00:00Z".to_string(),
+                    updated_at: "2026-10-05T09:00:00Z".to_string(),
+                },
+            )]),
+        },
+    );
+    storage
+        .write_project_state_atomic(&legacy_slug, &legacy_state)
+        .expect("write legacy state");
+
+    // 2. 规范 slug 下追加一个新分支（走 AppService 提交路径）
+    let payload = TopicEvolutionCommitPayload {
+        project_slug: canonical_slug.clone(),
+        topic_id: "canonical-topic".to_string(),
+        topic_name: Some("规范主题".to_string()),
+        parent_node_id: None,
+        parent_new_status: None,
+        new_node: MemoryTreeNode {
+            id: "22222222#T1".to_string(),
+            parent_id: None,
+            topic_id: "canonical-topic".to_string(),
+            summary: "规范 slug 下的新结论".to_string(),
+            status: NodeStatus::Completed,
+            source_session_id: "sess-canonical-1".to_string(),
+            turn_index: 1,
+            turn_started_at: Some("2026-11-02T10:00:00Z".to_string()),
+            created_at: "2026-11-02T10:00:00Z".to_string(),
+            updated_at: "2026-11-02T10:00:00Z".to_string(),
+        },
+        unexplored_siblings: Vec::new(),
+    };
+    service
+        .commit_memory_topic_evolution_to(payload, &storage)
+        .await
+        .expect("commit new branch");
+
+    // 3. 读取规范 slug 时历史主题、悬空分支与水位被无损合并
+    let state = service
+        .get_project_memory_state(&canonical_slug)
+        .await
+        .expect("read canonical state")
+        .expect("canonical state exists");
+    assert!(state.topic_trees.contains_key("canonical-topic"));
+    let legacy_tree = state
+        .topic_trees
+        .get("legacy-topic")
+        .expect("legacy topic merged");
+    assert_eq!(
+        legacy_tree.nodes.get("11111111#T2").map(|n| n.status),
+        Some(NodeStatus::Unexplored),
+        "历史悬空分支不得在合并中丢失"
+    );
+    assert_eq!(state.get_watermark("sess-legacy-1"), Some(7));
+
+    // 4. 旧状态文件被收敛清理，Markdown 投影同时包含新旧分支
+    assert!(!storage.state_project_file(&legacy_slug).exists());
+    assert!(storage.state_project_file(&canonical_slug).exists());
+    let markdown = storage
+        .read_markdown(format!("projects/{canonical_slug}.md"))
+        .expect("read project markdown")
+        .expect("project markdown exists");
+    assert!(markdown.contains("历史遗留的待探索分支"));
+    assert!(markdown.contains("规范 slug 下的新结论"));
 
     std::fs::remove_dir_all(tmp).ok();
 }

@@ -195,9 +195,7 @@ pub fn convert_recent_memory_state_to_file(
 
 impl AppService {
     pub async fn get_recent_memory_snapshot(&self) -> AppResult<RecentMemoryStateView> {
-        let tenant_id = self.tenant_id().to_string();
-        let storage =
-            crate::backend::infrastructure::memory::storage::MemoryStorage::new(&tenant_id);
+        let storage = self.memory_storage();
         self.get_recent_memory_snapshot_with_storage(&storage).await
     }
 

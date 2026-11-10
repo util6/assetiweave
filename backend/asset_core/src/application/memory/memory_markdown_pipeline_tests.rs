@@ -132,7 +132,8 @@ impl AgentExecutionRuntime for TestPipelineRuntime {
 async fn setup_pipeline_fixture() -> (AppService, std::path::PathBuf, std::path::PathBuf) {
     let base = std::env::temp_dir().join(format!("assetiweave-pipe-{}", Uuid::new_v4()));
     let db_dir = base.join("db");
-    let mem_dir = base.join("memories");
+    // 记忆根目录由运行时锚定在数据库同级目录，不再另建兄弟目录。
+    let mem_dir = db_dir.join("memories");
     std::fs::create_dir_all(&db_dir).unwrap();
     std::fs::create_dir_all(&mem_dir).unwrap();
 
@@ -144,10 +145,10 @@ async fn setup_pipeline_fixture() -> (AppService, std::path::PathBuf, std::path:
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_end_to_end_full_memory_pipeline_and_leaf_ablation() {
-    let (service, root_base, mem_dir) = setup_pipeline_fixture().await;
+    let (service, root_base, _mem_dir) = setup_pipeline_fixture().await;
     let pool = service.pool();
     let tenant_id = "default";
-    let storage = MemoryStorage::new_with_root(mem_dir.clone(), tenant_id);
+    let storage = service.memory_storage();
 
     let adapter = ConversationAdapter {
         id: "adapter-pipe-1".to_string(),

@@ -19,9 +19,11 @@ impl AppService {
         &self,
         project_path: &str,
     ) -> AppResult<Option<crate::backend::domain::L2ProjectMemoryView>> {
-        let storage =
-            crate::backend::infrastructure::memory::storage::MemoryStorage::new(self.tenant_id());
+        let storage = self.memory_storage();
         let slug = crate::backend::application::memory::project_path_to_slug(project_path);
+        // 先按累计真源加载一次（自动收敛未折叠锚点的历史 slug 并刷新 Markdown 投影），
+        // 避免旧 slug 状态存在、规范 slug 的 Markdown 尚未生成时投影滞后。
+        let _ = self.get_project_memory_state(&slug).await?;
         let rel_path = format!("projects/{}.md", slug);
         let full_path = storage.root_dir().join(&rel_path);
         if !full_path.exists() {

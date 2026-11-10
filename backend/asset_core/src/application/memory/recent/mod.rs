@@ -1,4 +1,5 @@
 pub mod recent;
+pub mod recent_refresh;
 pub mod recent_snapshot;
 
 pub use recent::{

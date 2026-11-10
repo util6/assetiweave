@@ -148,8 +148,25 @@ impl ProjectMemoryState {
         }
     }
 
+    /// 会话已处理到的轮次水位。
+    ///
+    /// 水位可能以完整会话 ID 或 8 位短 ID 写入（历史上两种都出现过），
+    /// 因此先按原样精确命中，再按统一的短 ID 片段兜底匹配，多个命中取最大值。
     pub fn get_watermark(&self, session_id: &str) -> Option<u32> {
-        self.session_watermarks.get(session_id).copied()
+        if let Some(&watermark) = self.session_watermarks.get(session_id) {
+            return Some(watermark);
+        }
+        let target = crate::backend::domain::conversation_id_fragment(session_id);
+        if target.is_empty() {
+            return None;
+        }
+        self.session_watermarks
+            .iter()
+            .filter(|(stored_id, _)| {
+                crate::backend::domain::conversation_id_fragment(stored_id) == target
+            })
+            .map(|(_, watermark)| *watermark)
+            .max()
     }
 
     pub fn set_watermark(&mut self, session_id: impl Into<String>, turn: u32) {
@@ -158,6 +175,60 @@ impl ProjectMemoryState {
             .and_modify(|w| *w = (*w).max(turn))
             .or_insert(turn);
         self.updated_at = Utc::now().to_rfc3339();
+    }
+
+    /// 把同一项目的历史累计状态无损合并进当前状态。
+    ///
+    /// 便携路径锚点折叠引入前，同一项目可能落成多个 slug 状态文件；合并时遵循
+    /// 累计真源不可毁灭原则：
+    /// 1. 主题按 `topic_id`、分支按 `node.id` 增量补齐，缺的一律补齐；
+    /// 2. 同一节点两侧都存在时取「状态更靠后」或「`updated_at` 更新」的一侧，
+    ///    但绝不把 `completed` / `dismissed` / `continued` 退回 `unexplored`，
+    ///    也绝不因为一侧缺失而丢掉另一侧的悬空分支；
+    /// 3. 会话水位取两者最大值，`updated_at` 取较新者。
+    pub fn merge_legacy(&mut self, legacy: ProjectMemoryState) {
+        for (topic_id, legacy_tree) in legacy.topic_trees {
+            let tree = self
+                .topic_trees
+                .entry(topic_id)
+                .or_insert_with(|| TopicTree {
+                    topic_id: legacy_tree.topic_id.clone(),
+                    topic_name: legacy_tree.topic_name.clone(),
+                    root_node_ids: Vec::new(),
+                    nodes: HashMap::new(),
+                });
+            if tree.topic_name.trim().is_empty() && !legacy_tree.topic_name.trim().is_empty() {
+                tree.topic_name = legacy_tree.topic_name.clone();
+            }
+            for root_id in legacy_tree.root_node_ids {
+                if !tree.root_node_ids.contains(&root_id) {
+                    tree.root_node_ids.push(root_id);
+                }
+            }
+            for (node_id, legacy_node) in legacy_tree.nodes {
+                match tree.nodes.entry(node_id) {
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        slot.insert(legacy_node);
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut slot) => {
+                        if is_newer_node(slot.get(), &legacy_node) {
+                            slot.insert(legacy_node);
+                        }
+                    }
+                }
+            }
+        }
+
+        for (session_id, watermark) in legacy.session_watermarks {
+            self.session_watermarks
+                .entry(session_id)
+                .and_modify(|current| *current = (*current).max(watermark))
+                .or_insert(watermark);
+        }
+
+        if legacy.updated_at > self.updated_at {
+            self.updated_at = legacy.updated_at;
+        }
     }
 
     /// Apply an evolution commit payload to this project memory state.
@@ -237,6 +308,20 @@ impl ProjectMemoryState {
             unexplored_node_ids,
             updated_at: self.updated_at.clone(),
         })
+    }
+}
+
+/// 合并历史状态时判断「哪一侧节点更可信」。
+///
+/// 优先保留已经推进过的状态（非 `unexplored`），其次比较 `updated_at`；
+/// 这样可以避免历史文件把已闭环/已废弃的节点重新变回悬空分支。
+fn is_newer_node(existing: &MemoryTreeNode, legacy: &MemoryTreeNode) -> bool {
+    let existing_progressed = existing.status != NodeStatus::Unexplored;
+    let legacy_progressed = legacy.status != NodeStatus::Unexplored;
+    match (existing_progressed, legacy_progressed) {
+        (false, true) => true,
+        (true, false) => false,
+        _ => legacy.updated_at > existing.updated_at,
     }
 }
 

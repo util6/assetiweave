@@ -13,7 +13,8 @@ impl TestHarness {
         let tmp =
             std::env::temp_dir().join(format!("aiw-snapshot-test-{prefix}-{}", Uuid::new_v4()));
         let db_dir = tmp.join("db");
-        let mem_dir = tmp.join("memories");
+        // 记忆根目录由运行时锚定在数据库同级目录，测试不再写全局环境变量。
+        let mem_dir = db_dir.join("memories");
         fs::create_dir_all(&db_dir).unwrap();
         fs::create_dir_all(&mem_dir).unwrap();
         let db_path = db_dir.join("app.db");
@@ -25,7 +26,6 @@ impl TestHarness {
     }
 
     async fn create_service(&self) -> AppService {
-        std::env::set_var("ASSETIWEAVE_MEMORY_ROOT", &self.mem_dir);
         AppService::open_with_db_path(self.db_path.clone())
             .await
             .unwrap()

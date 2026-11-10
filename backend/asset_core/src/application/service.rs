@@ -16,6 +16,20 @@ pub struct AppService {
 }
 
 impl AppService {
+    /// 记忆存储的唯一构造入口。
+    ///
+    /// 根目录由绑定当前实例的运行时配置决定：生产环境是用户主目录下的
+    /// `memories`（允许 `ASSETIWEAVE_MEMORY_ROOT` 覆盖），测试与临时库则强制落在
+    /// 数据库同级的隔离目录。业务层禁止绕过本方法自建 `MemoryStorage`，
+    /// 否则测试会与生产记忆目录互相污染，甚至被重建流程清空。
+    pub fn memory_storage(&self) -> crate::backend::infrastructure::memory::storage::MemoryStorage {
+        crate::backend::infrastructure::memory::storage::MemoryStorage::new_with_root(
+            self.runtime.config().memory_root.clone(),
+            self.tenant_id(),
+        )
+        .with_legacy_slug_prefix(crate::backend::application::memory::legacy_project_slug_prefix())
+    }
+
     pub fn backend_settings(
         &self,
     ) -> AppResult<crate::backend::infrastructure::app_settings::BackendSettings> {

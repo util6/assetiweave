@@ -18,6 +18,13 @@ pub struct RecentConversationSessionListParams {
     pub view: RecentConversationView,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
+    /// 覆盖默认近期窗口的小时数。
+    ///
+    /// `None` 使用后端设置里的 `memory.recent_window_hours`（默认 48h）；
+    /// `Some(0)` 表示不限时间窗口，按活动时间向后兜底回溯全部历史会话——
+    /// 记忆提炼必须据此发现「水位仍为 0 却早已滑出窗口」的积压会话。
+    #[serde(default)]
+    pub window_hours: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -60,12 +67,25 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let settings = self.backend_settings()?;
-        let window_hours = if settings.memory.recent_window_hours > 0 {
-            settings.memory.recent_window_hours as i64
-        } else {
-            48
+        // `window_hours == Some(0)` 表示不限窗口（回溯全部历史会话）。
+        let unbounded = params.window_hours == Some(0);
+        let window_hours = match params.window_hours {
+            Some(hours) if hours > 0 => hours as i64,
+            Some(_) => 0,
+            None => {
+                if settings.memory.recent_window_hours > 0 {
+                    settings.memory.recent_window_hours as i64
+                } else {
+                    48
+                }
+            }
         };
-        let cutoff = (now - chrono::Duration::hours(window_hours)).to_rfc3339();
+        let cutoff_dt = now - chrono::Duration::hours(window_hours);
+        let cutoff = if unbounded {
+            "1970-01-01T00:00:00+00:00".to_string()
+        } else {
+            cutoff_dt.to_rfc3339()
+        };
         let now_text = now.to_rfc3339();
         let internal_agent_workspace =
             crate::backend::infrastructure::agent_execution::agent_execution_workspace_root(
@@ -91,7 +111,6 @@ impl AppService {
 
         let excluded_sessions = &settings.memory.excluded_session_ids;
         let excluded_sources = &settings.memory.excluded_source_ids;
-        let cutoff_dt = now - chrono::Duration::hours(window_hours);
         let mut sessions = records
             .into_iter()
             .filter_map(|record| {
@@ -116,7 +135,7 @@ impl AppService {
                 }
                 let last_activity_at =
                     crate::backend::domain::parse_conversation_timestamp(&record.last_activity_at)?;
-                if last_activity_at < cutoff_dt || last_activity_at > now {
+                if (!unbounded && last_activity_at < cutoff_dt) || last_activity_at > now {
                     return None;
                 }
                 let raw_project_path = record.cwd.as_deref().or(session.project_path.as_deref());

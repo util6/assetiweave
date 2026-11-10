@@ -18,7 +18,7 @@ impl AppService {
         &self,
         date: Option<&str>,
     ) -> AppResult<MemoryMarkdownFileView> {
-        let storage = MemoryStorage::new(self.tenant_id());
+        let storage = self.memory_storage();
         let rel_path = match date {
             Some(d) if !d.trim().is_empty() => format!("recent/{}.md", d.trim()),
             _ => "recent/latest.md".to_string(),
@@ -51,8 +51,10 @@ impl AppService {
         &self,
         project_path: &str,
     ) -> AppResult<MemoryMarkdownFileView> {
-        let storage = MemoryStorage::new(self.tenant_id());
+        let storage = self.memory_storage();
         let slug = crate::backend::application::memory::project_path_to_slug(project_path);
+        // 先按累计真源加载一次，触发历史未折叠 slug 的合并与 Markdown 重投影。
+        let _ = self.get_project_memory_state(&slug).await?;
         let rel_path = format!("projects/{}.md", slug);
         let full_path = storage.root_dir().join(&rel_path);
         let exists = full_path.exists();

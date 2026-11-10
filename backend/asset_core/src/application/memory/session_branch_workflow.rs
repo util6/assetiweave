@@ -19,6 +19,13 @@ pub struct SessionBranchWorkflowReport {
     pub skipped_count: usize,
 }
 
+/// 回溯扫描的会话上限。按最后活动时间倒序取最新的一批，
+/// 既覆盖全部近期活跃会话，也覆盖较早但仍有未处理轮次的积压会话。
+///
+/// 注意：该值必须 ≤ `list_recent_conversation_sessions` 的 `limit` 上限（2000），
+/// 否则请求会被静默截断，回溯深度与直觉不符。
+const BACKLOG_SCAN_LIMIT: usize = 2000;
+
 #[derive(Debug, Clone, Default)]
 pub struct ExtractedSessionBranches {
     pub unexplored_branches: Vec<BranchItem>,
@@ -65,15 +72,19 @@ impl AppService {
         let storage: &MemoryStorage = match storage_override {
             Some(s) => s,
             None => {
-                owned_storage = MemoryStorage::new(self.tenant_id());
+                owned_storage = self.memory_storage();
                 &owned_storage
             }
         };
+        // 第一阶段默认按活动时间向后兜底回溯全部历史会话，不做窄窗口裁剪：
+        // 水位仅为 0（从未提炼）或水位落后的积压会话即使早已滑出近期窗口，
+        // 也必须被重新发现，否则历史未闭环任务会永久漏扫。
         let mut recent_sessions = self
             .list_recent_conversation_sessions_at(
                 RecentConversationSessionListParams {
                     view: RecentConversationView::Time,
-                    limit: Some(1000),
+                    window_hours: Some(0),
+                    limit: Some(BACKLOG_SCAN_LIMIT),
                     offset: Some(0),
                 },
                 now,
@@ -126,6 +137,19 @@ impl AppService {
             let short_id = crate::backend::domain::conversation_id_fragment(&session.id);
             let project_slug = project_path_to_slug(item.project_path.as_deref().unwrap_or(""));
 
+            // 低成本水位短路：先用列表里的 turn_count 与已记录水位比对，
+            // 已处理完的会话无需再拉大纲、无需进入认知提炼。
+            // 这是全量回溯发现（可能上千条历史会话）不拖慢流水线的前提。
+            let known_watermark = self
+                .check_memory_session_watermark_in(&project_slug, &session.id, storage)
+                .await?;
+            if let Some(wm) = known_watermark {
+                if item.turn_count > 0 && wm as usize >= item.turn_count {
+                    report.skipped_count += 1;
+                    continue;
+                }
+            }
+
             // 拉取 --qa 问答主干
             let outline = self
                 .get_conversation_outline(ConversationOutlineParams {
@@ -159,11 +183,10 @@ impl AppService {
             }
 
             // 水位短路比对（0 LLM 调用）：
-            // 若 .state/projects/<slug>.json 中的水位已到达或超过当前会话的最大轮次，直接跳过
-            let watermark = self
-                .check_memory_session_watermark_in(&project_slug, &session.id, storage)
-                .await?;
-            if let Some(wm) = watermark {
+            // 若 .state/projects/<slug>.json 中的水位已到达或超过该会话在问答主干里的
+            // 最大轮次（`max_turn`），直接跳过。上面基于 `turn_count` 的预筛是廉价粗筛，
+            // 这里才是与真实问答轮次对齐的精确判定。
+            if let Some(wm) = known_watermark {
                 if wm >= max_turn && max_turn > 0 {
                     report.skipped_count += 1;
                     continue;

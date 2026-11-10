@@ -8,26 +8,33 @@ use uuid::Uuid;
 pub struct MemoryStorage {
     root_dir: PathBuf,
     tenant: String,
+    /// 未折叠便携锚点时的历史 slug 前缀（如 `users-util6`）。
+    ///
+    /// 由调用方（`AppService::memory_storage`）从宿主机主目录确定性推导后注入。
+    /// 为 `None` 时不做任何历史状态收敛，绝不使用模糊后缀匹配去猜，
+    /// 避免把别的项目状态误判成本项目历史并删除。
+    legacy_slug_prefix: Option<String>,
 }
 
 impl MemoryStorage {
-    pub fn new(tenant: &str) -> Self {
-        let base = if let Ok(custom) = std::env::var("ASSETIWEAVE_MEMORY_ROOT") {
-            PathBuf::from(custom)
-        } else if let Some(home) = dirs::home_dir() {
-            home.join(".assetiweave").join("memories")
-        } else {
-            PathBuf::from("/tmp/assetiweave/memories")
-        };
-        Self::new_with_root(base, tenant)
-    }
-
+    /// 绑定到显式根目录的记忆存储。
+    ///
+    /// 应用层唯一入口是 `AppService::memory_storage()`：根目录由运行时配置决定
+    /// （生产指向用户主目录，测试/临时库指向数据库同级的隔离目录），
+    /// 严禁在业务代码里自行猜测路径。
     pub fn new_with_root(base_dir: PathBuf, tenant: &str) -> Self {
         let root_dir = base_dir.join(tenant);
         Self {
             root_dir,
             tenant: tenant.to_string(),
+            legacy_slug_prefix: None,
         }
+    }
+
+    /// 注入宿主机主目录对应的历史 slug 前缀，开启未折叠锚点旧状态的自动收敛。
+    pub fn with_legacy_slug_prefix(mut self, prefix: Option<String>) -> Self {
+        self.legacy_slug_prefix = prefix.filter(|p| !p.trim().is_empty());
+        self
     }
 
     pub fn tenant(&self) -> &str {
@@ -89,6 +96,66 @@ impl MemoryStorage {
         let state: ProjectMemoryState = serde_json::from_str(&content)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         Ok(Some(state))
+    }
+
+    /// Read project state and automatically converge legacy un-folded slug files.
+    ///
+    /// 便携路径锚点折叠（`~/`）引入之前，同一项目会按宿主机绝对路径生成
+    /// `users-<name>-<repo>` 这类旧 slug，导致累计主题树与 `unexplored` 分支分裂。
+    /// 这里在读取规范 slug 时，把 `.state/projects/` 下所有以 `-<slug>.json`
+    /// 结尾的历史状态无损合并（主题按 `topic_id`、分支按 `node.id` 增量补齐，
+    /// 会话水位取最大值），随后清理历史文件，保证同一项目只有一份真相源。
+    ///
+    /// 返回值第二项是被吸收并清理的历史 slug 列表，调用方可据此再刷新 Markdown 投影。
+    pub fn read_project_state_merged(
+        &self,
+        slug: &str,
+    ) -> std::io::Result<(Option<ProjectMemoryState>, Vec<String>)> {
+        let canonical = self.read_project_state(slug)?;
+        let legacy_slugs = self.legacy_state_slugs(slug)?;
+        if legacy_slugs.is_empty() {
+            return Ok((canonical, Vec::new()));
+        }
+
+        let mut merged = canonical.unwrap_or_else(|| ProjectMemoryState::new(slug));
+        let mut absorbed = Vec::new();
+        for legacy_slug in &legacy_slugs {
+            let Some(legacy_state) = self.read_project_state(legacy_slug)? else {
+                continue;
+            };
+            merged.merge_legacy(legacy_state);
+            absorbed.push(legacy_slug.clone());
+        }
+        if absorbed.is_empty() {
+            return Ok((Some(merged), absorbed));
+        }
+
+        self.write_project_state_atomic(slug, &merged)?;
+        for legacy_slug in &absorbed {
+            // 旧状态已无损吸收，删除冗余文件避免下一次读取再次分裂。
+            fs::remove_file(self.state_project_file(legacy_slug)).ok();
+            fs::remove_file(self.projects_dir().join(format!("{legacy_slug}.md"))).ok();
+        }
+        Ok((Some(merged), absorbed))
+    }
+
+    /// List legacy state slugs derived from the host home prefix.
+    ///
+    /// 只返回**确定性推导**出的一个候选：`<home-slug>-<canonical-slug>`。
+    /// 不做目录后缀扫描——`<任意前缀>-<slug>` 的后缀匹配会把别的项目状态误判为
+    /// 本项目历史，随后被合并并物理删除。
+    fn legacy_state_slugs(&self, slug: &str) -> std::io::Result<Vec<String>> {
+        let Some(prefix) = self.legacy_slug_prefix.as_deref() else {
+            return Ok(Vec::new());
+        };
+        if slug == "unspecified" || slug.starts_with(&format!("{prefix}-")) {
+            return Ok(Vec::new());
+        }
+        let candidate = format!("{prefix}-{slug}");
+        if !self.state_project_file(&candidate).exists() {
+            return Ok(Vec::new());
+        }
+        Ok(vec![candidate])
     }
 
     /// Atomically write project state to `.state/projects/<slug>.json` via same-directory temp rename.
@@ -179,34 +246,6 @@ impl MemoryStorage {
         }
 
         Ok(target_path)
-    }
-
-    /// Clean memory directory and re-initialize clean directories.
-    pub fn clear_all(&self) -> std::io::Result<()> {
-        if self.root_dir.exists() {
-            for entry in fs::read_dir(&self.root_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                let file_type = entry.file_type()?;
-                if file_type.is_dir() {
-                    fs::remove_dir_all(&path)?;
-                } else {
-                    #[cfg(windows)]
-                    {
-                        if let Ok(metadata) = fs::metadata(&path) {
-                            let mut perms = metadata.permissions();
-                            if perms.readonly() {
-                                perms.set_readonly(false);
-                                let _ = fs::set_permissions(&path, perms);
-                            }
-                        }
-                    }
-                    fs::remove_file(&path)?;
-                }
-            }
-        }
-        self.init_dirs()?;
-        Ok(())
     }
 
     pub fn write_markdown_atomic(

@@ -102,35 +102,15 @@ impl ConversationSessionViewModel {
         }
     }
 
-    pub fn from_item_with_storage(
+    /// 由外部批量水位索引（`AppService::memory_session_watermark_index`）驱动的视图构造。
+    ///
+    /// 渲染层不再自行读取/收敛记忆状态文件，避免逐行 I/O 与业务规则重复。
+    pub fn from_item_with_watermark(
         item: &asset_core::domain::conversations::ConversationSessionListItem,
         now: chrono::DateTime<chrono::Utc>,
-        storage: &asset_core::infrastructure::memory::MemoryStorage,
+        watermark: u32,
     ) -> Self {
-        let effective_path = item
-            .session
-            .project_path
-            .as_deref()
-            .or(item.session.last_cwd.as_deref());
-        let project_slug =
-            asset_core::application::memory::project_path_to_slug(effective_path.unwrap_or(""));
-        let watermark = storage
-            .read_project_state(&project_slug)
-            .ok()
-            .flatten()
-            .and_then(|s| s.get_watermark(&item.session.id))
-            .unwrap_or(0);
         Self::from_item(item, now, watermark)
-    }
-
-    #[allow(dead_code)]
-    pub fn from_item_with_tenant(
-        item: &asset_core::domain::conversations::ConversationSessionListItem,
-        now: chrono::DateTime<chrono::Utc>,
-        tenant: &str,
-    ) -> Self {
-        let storage = asset_core::infrastructure::memory::MemoryStorage::new(tenant);
-        Self::from_item_with_storage(item, now, &storage)
     }
 }
 

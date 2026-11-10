@@ -32,7 +32,8 @@ impl TestHarness {
     fn new(prefix: &str) -> Self {
         let tmp = std::env::temp_dir().join(format!("aiw-m2-adv-{prefix}-{}", Uuid::new_v4()));
         let db_dir = tmp.join("db");
-        let mem_dir = tmp.join("memories");
+        // 记忆根目录由运行时锚定在数据库同级目录，测试不写全局环境变量。
+        let mem_dir = db_dir.join("memories");
         fs::create_dir_all(&db_dir).unwrap();
         fs::create_dir_all(&mem_dir).unwrap();
         let db_path = db_dir.join("app.db");
@@ -44,11 +45,13 @@ impl TestHarness {
     }
 
     async fn create_service(&self) -> AppService {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("ASSETIWEAVE_HOME", &self.tmp_dir);
-        std::env::set_var("ASSETIWEAVE_DB_PATH", &self.db_path);
-        std::env::set_var("ASSETIWEAVE_MEMORY_ROOT", &self.mem_dir);
-        AppService::open_for_engine().await.unwrap()
+        let runtime = AppService::bootstrap_runtime(
+            self.db_path.clone(),
+            asset_core::infrastructure::runtime::RuntimeRole::OneShot,
+        )
+        .await
+        .unwrap();
+        AppService::from_runtime(&runtime)
     }
 
     fn storage(&self, tenant: &str) -> MemoryStorage {

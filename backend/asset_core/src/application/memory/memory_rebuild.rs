@@ -1,8 +1,28 @@
+use super::memory_workflow_recent_project::RecentAndProjectWorkflowReport;
 use super::types::MemoryRebuildResult;
 use crate::backend::application::prelude::*;
 use crate::backend::application::AppService;
+use crate::backend::infrastructure::memory::storage::MemoryStorage;
 
 impl AppService {
+    /// 非破坏性重建：从项目累计状态树重新投影 Markdown 视图并重算近期工作快照。
+    ///
+    /// 这是 `force_rebuild` 的唯一合法实现语义。ADR-0018 的分层（Markdown 视图 +
+    /// `.state/` JSON 状态树 + 薄 SQLite 水位）保持不变，本方法只做层内重算：
+    /// 依据 `.state/projects/*.json` 里累计的主题树、分支节点与会话水位，
+    /// 重写 `projects/<slug>.md`、`.state/recent.json` 与 `recent/latest.md`。
+    /// 严禁物理删除任何累计状态或全局长期记忆 `MEMORY.md`——那些是跨周累积、
+    /// 无法由流水线重跑再生的事实。
+    pub async fn reproject_memory_views(
+        &self,
+        storage: &MemoryStorage,
+    ) -> AppResult<RecentAndProjectWorkflowReport> {
+        // 只补齐缺失的目录层级，不删除任何既有文件。
+        storage.init_dirs().map_err(AppError::from)?;
+        self.refresh_recent_memory_state_in(None, storage).await?;
+        self.run_recent_and_project_workflow(storage).await
+    }
+
     pub async fn rebuild_memory_scope(
         &self,
         params: MemoryScopeRebuildParams,

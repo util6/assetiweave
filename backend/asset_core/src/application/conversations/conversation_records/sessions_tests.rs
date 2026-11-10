@@ -780,3 +780,142 @@ async fn test_web_record_session_detail_derives_members_from_turn_columns() {
     drop(service);
     std::fs::remove_dir_all(root).ok();
 }
+
+/// 时间窗口过滤必须覆盖「起始时间在窗口外、但窗口内仍有新增交互轮次」的跨期长会话。
+#[tokio::test(flavor = "multi_thread")]
+async fn test_session_list_window_includes_cross_window_long_running_sessions() {
+    let (service, root) = setup_fixture_service("cross-window").await;
+    let tenant_id = "default";
+    let adapter_id = "window-adapter";
+    let source_id = "window-source";
+    let fixture_ts = "2026-09-01T08:00:00Z";
+
+    let adapter = ConversationAdapter {
+        id: adapter_id.to_string(),
+        name: "Window Adapter".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "1.0.0".to_string(),
+        enabled: true,
+        manifest_path: None,
+        executable_path: None,
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(1),
+        capabilities: vec!["read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        projection_version: Some(1),
+        created_at: fixture_ts.to_string(),
+        updated_at: fixture_ts.to_string(),
+    };
+    let source = ConversationSource {
+        id: source_id.to_string(),
+        adapter_id: adapter_id.to_string(),
+        name: "Window Source".to_string(),
+        kind: ConversationSourceKind::Directory,
+        location: "/fixture/window".to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: fixture_ts.to_string(),
+        updated_at: fixture_ts.to_string(),
+    };
+
+    let now = chrono::Utc::now();
+    let long_span_start = (now - chrono::Duration::days(40)).to_rfc3339();
+    let stale_ts = (now - chrono::Duration::days(40)).to_rfc3339();
+    let in_window_ts = (now - chrono::Duration::hours(1)).to_rfc3339();
+
+    let build_turn = |index: i64, ts: &str, text: &str| NormalizedConversationTurn {
+        external_id: Some(format!("turn-{index}")),
+        turn_index: index,
+        user_text: text.to_string(),
+        title: None,
+        started_at: Some(ts.to_string()),
+        ended_at: Some(ts.to_string()),
+        model: None,
+        parts: vec![],
+        ..Default::default()
+    };
+
+    // 跨期长会话：40 天前开始，最后活动也在 40 天前，但窗口内仍有新轮次
+    let long_running = NormalizedConversationSession {
+        external_id: "session-long-running".to_string(),
+        title: Some("Long Running".to_string()),
+        project_path: None,
+        started_at: Some(long_span_start),
+        updated_at: Some(stale_ts.clone()),
+        source_locator: None,
+        source_fingerprint: None,
+        turns: vec![
+            build_turn(0, &stale_ts, "四十天前的开场轮次"),
+            build_turn(1, &in_window_ts, "窗口内的新增轮次"),
+        ],
+        ..Default::default()
+    };
+    // 完全在窗口外的会话：不得被检出
+    let stale = NormalizedConversationSession {
+        external_id: "session-stale".to_string(),
+        title: Some("Stale".to_string()),
+        project_path: None,
+        started_at: Some(stale_ts.clone()),
+        updated_at: Some(stale_ts.clone()),
+        source_locator: None,
+        source_fingerprint: None,
+        turns: vec![build_turn(0, &stale_ts, "四十天前的旧轮次")],
+        ..Default::default()
+    };
+
+    crate::backend::store::upsert_conversation_adapter_sqlx(service.db.pool(), tenant_id, &adapter)
+        .await
+        .expect("upsert adapter");
+    crate::backend::store::upsert_conversation_source_sqlx(service.db.pool(), tenant_id, &source)
+        .await
+        .expect("upsert source");
+    crate::backend::store::import_conversation_sessions_sqlx(
+        service.db.pool(),
+        tenant_id,
+        &source,
+        &[long_running, stale],
+        false,
+    )
+    .await
+    .expect("import sessions");
+
+    let since = (now - chrono::Duration::hours(48)).to_rfc3339();
+    let until = now.to_rfc3339();
+    let sessions = service
+        .list_conversation_sessions(ConversationSessionListParams {
+            adapter_id: None,
+            source_id: None,
+            query: None,
+            limit: Some(50),
+            offset: Some(0),
+            project_path: None,
+            since: Some(since),
+            until: Some(until),
+            window: None,
+            range: None,
+            parent_session_id: None,
+        })
+        .await
+        .expect("list sessions in window");
+
+    let external_ids: Vec<&str> = sessions
+        .iter()
+        .map(|item| item.session.external_id.as_str())
+        .collect();
+    assert!(
+        external_ids.contains(&"session-long-running"),
+        "起始时间早于窗口、但窗口内有新轮次的跨期会话必须被窗口查询命中: {external_ids:?}"
+    );
+    assert!(
+        !external_ids.contains(&"session-stale"),
+        "完全没有窗口内活动的会话不得被窗口查询命中: {external_ids:?}"
+    );
+
+    std::fs::remove_dir_all(root).ok();
+}

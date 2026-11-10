@@ -94,7 +94,8 @@ async fn setup_fixture_service(
         Uuid::new_v4()
     ));
     let db_dir = base.join("db");
-    let mem_dir = base.join("memories");
+    // 记忆根目录由运行时锚定在数据库同级目录，不再另建兄弟目录。
+    let mem_dir = db_dir.join("memories");
     std::fs::create_dir_all(&db_dir).expect("create db dir");
     std::fs::create_dir_all(&mem_dir).expect("create mem dir");
 
@@ -206,10 +207,10 @@ async fn insert_adapter_and_source(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_oldest_first_sorting_order_workflow() {
-    let (service, root_base, mem_dir) = setup_fixture_service("oldest-first").await;
+    let (service, root_base, _mem_dir) = setup_fixture_service("oldest-first").await;
     let pool = service.pool();
     let tenant_id = service.tenant_id();
-    let storage = MemoryStorage::new_with_root(mem_dir.clone(), tenant_id);
+    let storage = service.memory_storage();
     let source = insert_adapter_and_source(&service, "ad-order", "src-order").await;
 
     // Create 3 sessions with distinct timestamps: t1 (oldest) < t2 (middle) < t3 (newest)
@@ -306,10 +307,10 @@ async fn test_oldest_first_sorting_order_workflow() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_watermark_match_zero_llm_calls_short_circuit() {
-    let (service, root_base, mem_dir) = setup_fixture_service("watermark-zero-llm").await;
+    let (service, root_base, _mem_dir) = setup_fixture_service("watermark-zero-llm").await;
     let pool = service.pool();
     let tenant_id = service.tenant_id();
-    let storage = MemoryStorage::new_with_root(mem_dir.clone(), tenant_id);
+    let storage = service.memory_storage();
     let source = insert_adapter_and_source(&service, "ad-wm", "src-wm").await;
 
     let now = chrono::Utc::now();
@@ -375,10 +376,10 @@ async fn test_watermark_match_zero_llm_calls_short_circuit() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_zero_sessions_markdown_and_zero_sqlite_watermarks() {
-    let (service, root_base, mem_dir) = setup_fixture_service("zero-sessions-md").await;
+    let (service, root_base, _mem_dir) = setup_fixture_service("zero-sessions-md").await;
     let pool = service.pool();
     let tenant_id = service.tenant_id();
-    let storage = MemoryStorage::new_with_root(mem_dir.clone(), tenant_id);
+    let storage = service.memory_storage();
     let source = insert_adapter_and_source(&service, "ad-zero", "src-zero").await;
 
     let now = chrono::Utc::now();
@@ -477,10 +478,10 @@ async fn test_zero_sessions_markdown_and_zero_sqlite_watermarks() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_empty_qa_turns_session_advances_watermark_without_llm() {
-    let (service, root_base, mem_dir) = setup_fixture_service("empty-turns").await;
+    let (service, root_base, _mem_dir) = setup_fixture_service("empty-turns").await;
     let pool = service.pool();
     let tenant_id = service.tenant_id();
-    let storage = MemoryStorage::new_with_root(mem_dir.clone(), tenant_id);
+    let storage = service.memory_storage();
     let source = insert_adapter_and_source(&service, "ad-empty", "src-empty").await;
 
     let now = chrono::Utc::now();

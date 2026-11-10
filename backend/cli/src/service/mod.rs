@@ -57,6 +57,21 @@ impl CliService {
         self.app_service.tenant_id()
     }
 
+    /// 记忆存储统一从 AppService 运行时配置派生，CLI 不再自行猜测根目录。
+    pub fn memory_storage(&self) -> asset_core::infrastructure::memory::MemoryStorage {
+        self.app_service.memory_storage()
+    }
+
+    /// 批量会话水位索引，供列表渲染与未处理判定共用（一次遍历全部项目状态）。
+    pub async fn memory_session_watermark_index(
+        &self,
+    ) -> Result<std::collections::HashMap<String, u32>> {
+        self.app_service
+            .memory_session_watermark_index()
+            .await
+            .context("failed to build memory watermark index")
+    }
+
     #[allow(dead_code)]
     pub fn app_service(&self) -> &AppService {
         &self.app_service
@@ -386,7 +401,7 @@ impl CliService {
         } else {
             args.project.clone()
         };
-        let params = asset_core::application::ConversationSessionListParams {
+        let base_params = asset_core::application::ConversationSessionListParams {
             adapter_id: args.adapter.clone(),
             source_id: None,
             query: args.query.clone(),
@@ -399,34 +414,26 @@ impl CliService {
             range: args.range.clone(),
             parent_session_id: args.parent.clone(),
         };
-        let mut sessions = self
-            .app_service
-            .list_conversation_sessions(params)
-            .await
-            .context("failed to list conversation sessions")?;
-        if args.unprocessed {
-            let storage = asset_core::infrastructure::memory::MemoryStorage::new(
-                self.app_service.tenant_id(),
-            );
-            sessions.retain(|s| {
-                let effective_path = s
-                    .session
-                    .project_path
-                    .as_deref()
-                    .or(s.session.last_cwd.as_deref());
-                let slug = asset_core::application::memory::project_path_to_slug(
-                    effective_path.unwrap_or(""),
-                );
-                let watermark = storage
-                    .read_project_state(&slug)
-                    .ok()
-                    .flatten()
-                    .and_then(|st| st.get_watermark(&s.session.id))
-                    .unwrap_or(0);
-                watermark < (s.turn_count as u32) && s.turn_count > 0
-            });
+
+        if !args.unprocessed {
+            return self
+                .app_service
+                .list_conversation_sessions(base_params)
+                .await
+                .context("failed to list conversation sessions");
         }
-        Ok(sessions)
+
+        // 未处理过滤与分页顺序由后端统一收口（过滤在分页之前完成）。
+        self.app_service
+            .list_unprocessed_conversation_sessions(
+                asset_core::application::memory::UnprocessedSessionScanParams {
+                    list: base_params,
+                    limit: args.limit,
+                    offset: args.offset,
+                },
+            )
+            .await
+            .context("failed to list unprocessed conversation sessions")
     }
 
     pub fn list_conversation_adapters(

@@ -82,13 +82,16 @@ pub fn render_conversation_sessions(
     sessions: &[asset_core::domain::conversations::ConversationSessionListItem],
     format: OutputFormat,
     window_expr: Option<&str>,
-    tenant: &str,
+    watermarks: &std::collections::HashMap<String, u32>,
 ) {
     let now = chrono::Utc::now();
-    let storage = asset_core::infrastructure::memory::MemoryStorage::new(tenant);
     let view_models: Vec<ConversationSessionViewModel> = sessions
         .iter()
-        .map(|s| ConversationSessionViewModel::from_item_with_storage(s, now, &storage))
+        .map(|item| {
+            let short_id = asset_core::domain::conversation_id_fragment(&item.session.id);
+            let watermark = watermarks.get(&short_id).copied().unwrap_or(0);
+            ConversationSessionViewModel::from_item_with_watermark(item, now, watermark)
+        })
         .collect();
 
     match format {

@@ -101,7 +101,8 @@ impl AppRuntime {
             )),
         };
         let mut config = super::config::RuntimeConfig::from_environment()?;
-        config.db_path = db_path.clone();
+        let environment_db_path = std::mem::replace(&mut config.db_path, db_path.clone());
+        config.anchor_memory_root_for_isolated_db(&environment_db_path);
         let config = Arc::new(config);
 
         let app_runtime = Arc::new(Self {
@@ -205,19 +206,7 @@ impl AppRuntime {
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
             builtin_conversation_adapters: Arc::new(builtin_conversation_adapters),
-            config: {
-                let mut config =
-                    super::config::RuntimeConfig::from_environment().unwrap_or_else(|_| {
-                        let defaults = super::config::RuntimeConfigDefaults {
-                            home_dir: PathBuf::from("/fixture/home"),
-                            data_dir: PathBuf::from("/fixture/data"),
-                        };
-                        super::config::RuntimeConfig::from_env_map(&Default::default(), &defaults)
-                            .unwrap()
-                    });
-                config.db_path = db_path;
-                Arc::new(config)
-            },
+            config: Arc::new(super::config::RuntimeConfig::for_isolated_db(db_path)),
             settings: ArcSwap::from_pointee(initial_settings),
         })
     }

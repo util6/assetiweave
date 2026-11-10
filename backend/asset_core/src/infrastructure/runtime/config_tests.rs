@@ -161,3 +161,65 @@ fn runtime_config_defaults_from_dirs_succeeds_or_returns_app_error() {
         }
     }
 }
+
+#[test]
+fn memory_root_defaults_under_app_home() {
+    let defaults = test_defaults();
+    let value = RuntimeConfig::from_env_map(&BTreeMap::new(), &defaults).unwrap();
+    assert_eq!(
+        value.memory_root,
+        PathBuf::from("/fixture/home/.assetiweave/memories")
+    );
+}
+
+#[test]
+fn explicit_memory_root_override_is_honored_for_production_db() {
+    let defaults = test_defaults();
+    let env = BTreeMap::from([(
+        "ASSETIWEAVE_MEMORY_ROOT".into(),
+        OsString::from("/fixture/custom-memories"),
+    )]);
+    let value = RuntimeConfig::from_env_map(&env, &defaults).unwrap();
+    assert_eq!(value.memory_root, PathBuf::from("/fixture/custom-memories"));
+}
+
+#[test]
+fn isolated_db_path_overrides_explicit_memory_root_for_safety() {
+    let defaults = test_defaults();
+    let env = BTreeMap::from([
+        (
+            "ASSETIWEAVE_DB_PATH".into(),
+            OsString::from("/fixture/prod/app.db"),
+        ),
+        (
+            "ASSETIWEAVE_MEMORY_ROOT".into(),
+            OsString::from("/Users/someone/.assetiweave/memories"),
+        ),
+    ]);
+    let mut value = RuntimeConfig::from_env_map(&env, &defaults).unwrap();
+    let environment_db_path = value.db_path.clone();
+
+    // 绑定到另一个（临时/测试）数据库：显式覆盖也必须让位于隔离安全。
+    value.db_path = PathBuf::from("/fixture/tmp/db/app.db");
+    value.anchor_memory_root_for_isolated_db(&environment_db_path);
+    assert_eq!(value.memory_root, PathBuf::from("/fixture/tmp/db/memories"));
+
+    // 绑定回环境解析出的数据库：保持显式覆盖不变。
+    let mut production = RuntimeConfig::from_env_map(&env, &defaults).unwrap();
+    production.anchor_memory_root_for_isolated_db(&environment_db_path);
+    assert_eq!(
+        production.memory_root,
+        PathBuf::from("/Users/someone/.assetiweave/memories")
+    );
+}
+
+#[test]
+fn isolated_runtime_config_derives_memory_root_beside_database() {
+    let config = RuntimeConfig::for_isolated_db(PathBuf::from("/fixture/tmp/db/app.db"));
+    assert_eq!(
+        config.memory_root,
+        PathBuf::from("/fixture/tmp/db/memories")
+    );
+    assert_eq!(config.home_dir, PathBuf::from("/fixture/tmp/db/home"));
+    assert_eq!(config.log_dir, PathBuf::from("/fixture/tmp/db/logs"));
+}

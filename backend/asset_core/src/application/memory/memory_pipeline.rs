@@ -72,13 +72,20 @@ impl AppService {
         let service = self.clone();
         self.spawn_pipeline_task(spec, move |cx| async move {
             let tenant_id = service.tenant_id().to_string();
-            let storage =
-                crate::backend::infrastructure::memory::storage::MemoryStorage::new(&tenant_id);
+            let storage = service.memory_storage();
 
+            // 强制重建 = 从累计状态树重新投影视图（ADR-0018 分层不变）。
+            // 严禁清空 `.state/projects/*.json`、`projects/*.md` 与 `MEMORY.md`：
+            // 项目记忆是按主题与分支持续演进的累计状态，历史节点（尤其是
+            // `unexplored` 悬空叶子）在显式流转为完成前必须永久保留，
+            // 且流水线本身并不会重跑历史会话的 AI 认知提炼，删掉即不可逆。
             if params.force_rebuild {
-                let _ = store::clear_watermarks_sqlx(service.db.pool(), &tenant_id).await;
-                if let Err(e) = storage.clear_all() {
-                    tracing::warn!(tenant = %tenant_id, error = %e, "Failed to clear memory storage during force rebuild");
+                if let Err(e) = service.reproject_memory_views(&storage).await {
+                    tracing::warn!(
+                        tenant = %tenant_id,
+                        error = %e,
+                        "Memory view re-projection failed during force rebuild"
+                    );
                 }
             }
 

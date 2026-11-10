@@ -59,11 +59,12 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                 list_args.until = until;
             }
             let sessions = service.list_conversation_sessions(&list_args).await?;
+            let watermarks = service.memory_session_watermark_index().await?;
             render::render_conversation_sessions(
                 &sessions,
                 format,
                 window_desc.as_deref(),
-                service.tenant_id(),
+                &watermarks,
             );
         }
         ConversationCommands::Outline(o) => {

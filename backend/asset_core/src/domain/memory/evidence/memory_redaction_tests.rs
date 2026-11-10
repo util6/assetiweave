@@ -32,9 +32,11 @@ fn redaction_preserves_non_secret_code_entities_and_hashes() {
     let unix_path = "/Users/developer/code-space/assetiweave/engine/session_memory.rs";
     let windows_path = r"C:\Users\admin\workspace\assetiweave\src\index.ts";
     let long_fn_name = "test_internal_source_isolation_hides_agent_sessions_from_views_and_memory";
+    let project_slug = "users-util6-code-space-assetiweave";
+    let topic_id = "conversation-question-concept-removal";
 
     let input = format!(
-        "commit: {git_sha}\nchecksum: {sha256}\nsession: {uuid}\nfile1: {unix_path}\nfile2: {windows_path}\nfn: {long_fn_name}\n"
+        "commit: {git_sha}\nchecksum: {sha256}\nsession: {uuid}\nfile1: {unix_path}\nfile2: {windows_path}\nfn: {long_fn_name}\nslug: {project_slug}\ntopic: {topic_id}\n"
     );
 
     let result = redact_memory_text(&input);
@@ -62,6 +64,14 @@ fn redaction_preserves_non_secret_code_entities_and_hashes() {
     assert!(
         result.text.contains(long_fn_name),
         "Long test/function name must be preserved without redaction"
+    );
+    assert!(
+        result.text.contains(project_slug),
+        "Kebab-case project slug must be preserved without redaction"
+    );
+    assert!(
+        result.text.contains(topic_id),
+        "Kebab-case topic ID must be preserved without redaction"
     );
     assert_eq!(
         result.redaction_count, 0,

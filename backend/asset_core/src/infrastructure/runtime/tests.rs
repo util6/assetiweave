@@ -412,6 +412,33 @@ async fn runtime_config_db_path_matches_injected_path() {
     let _ = std::fs::remove_file(&temp_db);
 }
 
+#[tokio::test]
+async fn non_default_db_path_anchors_memory_root_beside_database() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "assetiweave-test-memory-root-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let temp_db = temp_dir.join("db").join("app.db");
+    let runtime = crate::backend::application::AppService::bootstrap_runtime(
+        temp_db.clone(),
+        RuntimeRole::OneShot,
+    )
+    .await
+    .expect("bootstrap test runtime");
+
+    // 记忆根目录必须锚定在数据库同级的 memories 目录，绝不回落到用户主目录，
+    // 否则测试/临时库会读写用户真实的记忆资产。
+    assert_eq!(
+        runtime.config().memory_root,
+        temp_dir.join("db").join("memories")
+    );
+    assert!(!runtime
+        .config()
+        .memory_root
+        .starts_with(dirs::home_dir().unwrap_or_default()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
 #[test]
 fn task_runtime_uses_tracker_instead_of_condvar_accounting() {
     let source = include_str!("../tasks/tasks.rs");

@@ -102,6 +102,11 @@ fn looks_like_high_entropy_secret(value: &str) -> bool {
         return false;
     }
 
+    // 5. 排除短横线命名代码标识符/路径 slug/Topic ID（如 users-util6-code-space-assetiweave、conversation-question-concept-removal）
+    if is_kebab_case_identifier(value) {
+        return false;
+    }
+
     let mut has_lower = false;
     let mut has_upper = false;
     let mut has_digit = false;
@@ -186,6 +191,23 @@ fn is_snake_case_identifier(value: &str) -> bool {
     }
     let underscore_count = value.chars().filter(|&c| c == '_').count();
     underscore_count >= 2
+}
+
+/// 判断是否为短横线命名的代码标识符（项目 slug、topic id 等）。
+///
+/// 记忆状态 JSON 会整体过一遍脱敏，slug（如 `code-space-assetiweave`）与
+/// topic id（如 `conversation-question-concept-removal`）必须原样保留，
+/// 否则写回的 `.state/projects/*.json` 会被脱敏破坏、导致项目状态读不出来。
+/// 仅当整串都是小写字母/数字/短横线且至少含两个短横线（多词标识符特征）时豁免，
+/// 带大写或其它字符的前缀型密钥（如 `sk-proj-...`）仍然走熵检测。
+fn is_kebab_case_identifier(value: &str) -> bool {
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return false;
+    }
+    value.chars().filter(|&c| c == '-').count() >= 2
 }
 
 fn shannon_entropy(value: &str) -> f64 {

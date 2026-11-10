@@ -5,8 +5,36 @@ use crate::backend::infrastructure::memory::projection::{
 use crate::backend::infrastructure::memory::storage::MemoryStorage;
 use std::fs;
 
+/// 项目目录 → 规范项目 Slug。
+///
+/// 第一步恒先折叠便携路径锚点（宿主机主目录 → `~/`），保证
+/// `/Users/<user>/code-space/foo` 与 `~/code-space/foo` 永远得到同一个 slug，
+/// 不会因调用方传入哪种形态而分裂成两份项目状态。
 pub fn project_path_to_slug(project_path: &str) -> String {
-    let trimmed = project_path.trim().trim_matches('/');
+    let normalized =
+        crate::backend::infrastructure::path_utils::normalize_path_for_storage(project_path)
+            .unwrap_or_else(|_| project_path.to_string());
+    slugify_path(&normalized)
+}
+
+/// 便携路径锚点折叠（`~/`）引入前的历史 slug 前缀，例如 `users-util6`。
+///
+/// 旧版本按宿主机绝对路径直接拼 slug，同一项目会落成
+/// `<home-slug>-<canonical-slug>`（如 `users-util6-code-space-assetiweave`）。
+/// 返回 `None` 表示当前主机主目录无法确定性解析，此时不做任何历史状态收敛，
+/// 避免用后缀模糊匹配误伤其它项目的状态文件。
+pub fn legacy_project_slug_prefix() -> Option<String> {
+    let home = dirs::home_dir()?;
+    let slug = slugify_path(&home.to_string_lossy());
+    if slug.is_empty() || slug == "unspecified" {
+        return None;
+    }
+    Some(slug)
+}
+
+/// 把已折叠的路径文本压成 slug（不做锚点折叠，纯字符串归一）。
+fn slugify_path(path: &str) -> String {
+    let trimmed = path.trim().trim_matches('/');
     if trimmed.is_empty() {
         return "unspecified".to_string();
     }
@@ -213,7 +241,10 @@ impl AppService {
             for entry in entries {
                 let file_name = entry.file_name().to_string_lossy().to_string();
                 if let Some(slug) = file_name.strip_suffix(".json") {
-                    if let Ok(Some(project_state)) = storage.read_project_state(slug) {
+                    // 统一走「读取即收敛」入口，历史未折叠 slug 会在此被并入规范状态。
+                    if let Ok(Some(project_state)) =
+                        super::state_loader::load_project_state(storage, slug)
+                    {
                         sync_project_markdown(storage, &project_state).map_err(AppError::from)?;
                         project_count += 1;
                     }

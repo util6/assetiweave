@@ -1,85 +1,12 @@
+use super::state_loader::{load_all_project_states, load_project_state};
 use crate::backend::application::prelude::*;
 use crate::backend::domain::memory::{
     MemoryCommitResult, MemoryTreeNode, NodeStatus, ProjectMemoryState, RecentMemoryState,
-    TopicEvolutionCommitPayload, TopicTree,
+    TopicEvolutionCommitPayload,
 };
-use crate::backend::infrastructure::memory::projection::{
-    sync_project_markdown, sync_recent_markdown,
-};
+use crate::backend::infrastructure::memory::projection::sync_project_markdown;
 use crate::backend::infrastructure::memory::storage::MemoryStorage;
 use std::collections::HashMap;
-
-fn parse_window_duration(window: Option<&str>) -> chrono::Duration {
-    let raw = window.unwrap_or("48h").trim();
-    if raw.is_empty() {
-        return chrono::Duration::hours(48);
-    }
-    if let Some(h_str) = raw.strip_suffix(['h', 'H']) {
-        if let Ok(h) = h_str.trim().parse::<i64>() {
-            return chrono::Duration::hours(h);
-        }
-    }
-    if let Some(d_str) = raw.strip_suffix(['d', 'D']) {
-        if let Ok(d) = d_str.trim().parse::<i64>() {
-            return chrono::Duration::days(d);
-        }
-    }
-    if let Ok(h) = raw.parse::<i64>() {
-        return chrono::Duration::hours(h);
-    }
-    chrono::Duration::hours(48)
-}
-
-fn parse_node_timestamp(node: &MemoryTreeNode) -> Option<chrono::DateTime<chrono::Utc>> {
-    let ts_str = node
-        .turn_started_at
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or(&node.updated_at);
-
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_str) {
-        return Some(dt.with_timezone(&chrono::Utc));
-    }
-    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S") {
-        return Some(chrono::DateTime::from_naive_utc_and_offset(
-            naive,
-            chrono::Utc,
-        ));
-    }
-    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M") {
-        return Some(chrono::DateTime::from_naive_utc_and_offset(
-            naive,
-            chrono::Utc,
-        ));
-    }
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&node.created_at) {
-        return Some(dt.with_timezone(&chrono::Utc));
-    }
-    None
-}
-
-fn load_all_project_states(storage: &MemoryStorage) -> AppResult<Vec<ProjectMemoryState>> {
-    let dir = storage.state_projects_dir();
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-    let mut entries: Vec<_> = std::fs::read_dir(&dir)
-        .map_err(AppError::from)?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("json"))
-        .collect();
-    entries.sort_by_key(|e| e.path());
-
-    let mut states = Vec::with_capacity(entries.len());
-    for entry in entries {
-        if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
-            if let Ok(Some(state)) = storage.read_project_state(stem) {
-                states.push(state);
-            }
-        }
-    }
-    Ok(states)
-}
 
 fn find_and_update_node_in_project(
     state: &mut ProjectMemoryState,
@@ -176,11 +103,9 @@ impl AppService {
 
         let slug = payload.project_slug.clone();
 
-        // 1. Read existing project state, or initialize new
-        let mut project_state = storage
-            .read_project_state(&slug)
-            .map_err(AppError::from)?
-            .unwrap_or_else(|| ProjectMemoryState::new(&slug));
+        // 1. Read existing project state (legacy slugs merged), or initialize new
+        let mut project_state =
+            load_project_state(storage, &slug)?.unwrap_or_else(|| ProjectMemoryState::new(&slug));
 
         // 2. Apply evolution to domain model
         let result = project_state
@@ -206,7 +131,7 @@ impl AppService {
         &self,
         payload: TopicEvolutionCommitPayload,
     ) -> AppResult<MemoryCommitResult> {
-        let storage = MemoryStorage::new(self.tenant_id());
+        let storage = self.memory_storage();
         self.commit_memory_topic_evolution_to(payload, &storage)
             .await
     }
@@ -226,9 +151,7 @@ impl AppService {
             } else {
                 raw_slug.to_string()
             };
-            let state = storage
-                .read_project_state(&slug)
-                .map_err(AppError::from)?
+            let state = load_project_state(storage, &slug)?
                 .ok_or_else(|| AppError::NotFound(format!("Project not found: {}", slug)))?;
             (state, slug)
         } else {
@@ -274,92 +197,9 @@ impl AppService {
         project_slug: Option<&str>,
         window: Option<&str>,
     ) -> AppResult<MemoryTreeNode> {
-        let storage = MemoryStorage::new(self.tenant_id());
+        let storage = self.memory_storage();
         self.update_memory_node_status_in(node_id, status, project_slug, window, &storage)
             .await
-    }
-
-    /// Refresh recent memory state across projects with windowing slice in specified storage.
-    pub async fn refresh_recent_memory_state_in(
-        &self,
-        window: Option<&str>,
-        storage: &MemoryStorage,
-    ) -> AppResult<RecentMemoryState> {
-        let duration = parse_window_duration(window);
-        let cutoff = chrono::Utc::now() - duration;
-        let mut recent_state = RecentMemoryState::new();
-
-        for proj in load_all_project_states(storage)? {
-            let mut filtered_trees = HashMap::new();
-            let mut unex_count = 0usize;
-            let mut comp_count = 0usize;
-
-            for (t_id, tree) in proj.topic_trees {
-                let mut filtered_nodes = HashMap::new();
-                for (n_id, node) in tree.nodes {
-                    match node.status {
-                        NodeStatus::Unexplored => {
-                            // 🍂 Unexplored: RETAIN ALL across time windows regardless of cutoff
-                            unex_count += 1;
-                            filtered_nodes.insert(n_id, node);
-                        }
-                        NodeStatus::Completed => {
-                            // ✅ Completed: STRICTLY filtered by timestamp: turn_started_at (or updated_at/created_at) >= cutoff
-                            if let Some(ts) = parse_node_timestamp(&node) {
-                                if ts >= cutoff {
-                                    comp_count += 1;
-                                    filtered_nodes.insert(n_id, node);
-                                }
-                            }
-                        }
-                        NodeStatus::Dismissed | NodeStatus::Continued => {
-                            // 🗑️ Dismissed: EXCLUDE completely
-                            // Continued: intermediate non-leaf, exclude from recent slice
-                        }
-                    }
-                }
-                if !filtered_nodes.is_empty() {
-                    filtered_trees.insert(
-                        t_id.clone(),
-                        TopicTree {
-                            topic_id: t_id,
-                            topic_name: tree.topic_name,
-                            root_node_ids: tree.root_node_ids,
-                            nodes: filtered_nodes,
-                        },
-                    );
-                }
-            }
-
-            // Project-level pruning: If a project has zero Unexplored and zero Completed nodes in this window, omit from RecentMemoryState
-            if unex_count > 0 || comp_count > 0 {
-                let filtered_proj = ProjectMemoryState {
-                    project_slug: proj.project_slug.clone(),
-                    topic_trees: filtered_trees,
-                    session_watermarks: proj.session_watermarks,
-                    updated_at: proj.updated_at,
-                };
-                recent_state
-                    .projects
-                    .insert(proj.project_slug, filtered_proj);
-            }
-        }
-
-        storage
-            .write_recent_state_atomic(&recent_state)
-            .map_err(AppError::from)?;
-        sync_recent_markdown(storage, &recent_state).map_err(AppError::from)?;
-
-        Ok(recent_state)
-    }
-
-    /// Refresh recent memory state across projects with windowing slice.
-    pub async fn refresh_recent_memory_state(
-        &self,
-        window: Option<&str>,
-    ) -> AppResult<RecentMemoryState> {
-        let storage = MemoryStorage::new(self.tenant_id());
-        self.refresh_recent_memory_state_in(window, &storage).await
     }
 
     /// Advance a session's watermark without modifying the topic tree in specified storage.
@@ -370,9 +210,7 @@ impl AppService {
         turn: u32,
         storage: &MemoryStorage,
     ) -> AppResult<()> {
-        let mut project_state = storage
-            .read_project_state(project_slug)
-            .map_err(AppError::from)?
+        let mut project_state = load_project_state(storage, project_slug)?
             .unwrap_or_else(|| ProjectMemoryState::new(project_slug));
 
         project_state.set_watermark(session_id, turn);
@@ -391,7 +229,7 @@ impl AppService {
         session_id: &str,
         turn: u32,
     ) -> AppResult<()> {
-        let storage = MemoryStorage::new(self.tenant_id());
+        let storage = self.memory_storage();
         self.advance_memory_session_watermark_in(project_slug, session_id, turn, &storage)
             .await
     }
@@ -403,9 +241,7 @@ impl AppService {
         session_id: &str,
         storage: &MemoryStorage,
     ) -> AppResult<Option<u32>> {
-        let project_state = storage
-            .read_project_state(project_slug)
-            .map_err(AppError::from)?;
+        let project_state = load_project_state(storage, project_slug)?;
 
         Ok(project_state.and_then(|s| s.get_watermark(session_id)))
     }
@@ -416,7 +252,7 @@ impl AppService {
         project_slug: &str,
         session_id: &str,
     ) -> AppResult<Option<u32>> {
-        let storage = MemoryStorage::new(self.tenant_id());
+        let storage = self.memory_storage();
         self.check_memory_session_watermark_in(project_slug, session_id, &storage)
             .await
     }
@@ -427,9 +263,7 @@ impl AppService {
         project_slug: &str,
         storage: &MemoryStorage,
     ) -> AppResult<Option<ProjectMemoryState>> {
-        storage
-            .read_project_state(project_slug)
-            .map_err(AppError::from)
+        load_project_state(storage, project_slug)
     }
 
     /// Get strong-typed project memory state.
@@ -437,7 +271,7 @@ impl AppService {
         &self,
         project_slug: &str,
     ) -> AppResult<Option<ProjectMemoryState>> {
-        let storage = MemoryStorage::new(self.tenant_id());
+        let storage = self.memory_storage();
         self.get_project_memory_state_in(project_slug, &storage)
             .await
     }
@@ -452,8 +286,38 @@ impl AppService {
 
     /// Get strong-typed recent memory state.
     pub async fn get_recent_memory_state(&self) -> AppResult<Option<RecentMemoryState>> {
-        let storage = MemoryStorage::new(self.tenant_id());
+        let storage = self.memory_storage();
         self.get_recent_memory_state_in(&storage).await
+    }
+
+    /// 全部项目记忆的会话水位索引（8 位会话短 ID → 已处理轮次）。
+    ///
+    /// 供会话列表、CLI 视图与「未处理会话发现」批量判定使用：一次遍历所有项目
+    /// 状态即可回答任意多会话的 `watermark`，避免每行都去读状态文件
+    /// （历史未折叠 slug 的收敛写入也会被重复触发）。同一会话多处记录时取最大值。
+    pub async fn memory_session_watermark_index(&self) -> AppResult<HashMap<String, u32>> {
+        let storage = self.memory_storage();
+        self.memory_session_watermark_index_in(&storage).await
+    }
+
+    pub async fn memory_session_watermark_index_in(
+        &self,
+        storage: &MemoryStorage,
+    ) -> AppResult<HashMap<String, u32>> {
+        let mut index: HashMap<String, u32> = HashMap::new();
+        for project in load_all_project_states(storage)? {
+            for (session_id, watermark) in project.session_watermarks {
+                let short_id = crate::backend::domain::conversation_id_fragment(&session_id);
+                if short_id.is_empty() {
+                    continue;
+                }
+                index
+                    .entry(short_id)
+                    .and_modify(|current| *current = (*current).max(watermark))
+                    .or_insert(watermark);
+            }
+        }
+        Ok(index)
     }
 }
 

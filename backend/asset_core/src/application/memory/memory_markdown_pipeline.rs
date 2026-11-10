@@ -19,12 +19,11 @@ impl AppService {
         runtime_override: Option<&dyn AgentExecutionRuntime>,
         storage_override: Option<&MemoryStorage>,
     ) -> AppResult<MemoryMarkdownPipelineReport> {
-        let tenant_id = self.tenant_id();
         let owned_storage;
         let storage = match storage_override {
             Some(s) => s,
             None => {
-                owned_storage = MemoryStorage::new(tenant_id);
+                owned_storage = self.memory_storage();
                 &owned_storage
             }
         };

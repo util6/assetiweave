@@ -22,6 +22,7 @@ pub mod reasoning_loop;
 pub mod recent;
 pub mod session_branch_workflow;
 pub mod session_coordinator;
+pub mod state_loader;
 pub mod state_service;
 pub mod types;
 
@@ -34,8 +35,8 @@ pub use memory_markdown_pipeline::MemoryMarkdownPipelineReport;
 pub use memory_markdown_views::MemoryMarkdownFileView;
 pub use memory_workflow_global::GlobalMemoryWorkflowReport;
 pub use memory_workflow_recent_project::{
-    parse_session_markdown, project_path_to_slug, ParsedSessionMarkdown,
-    RecentAndProjectWorkflowReport,
+    legacy_project_slug_prefix, parse_session_markdown, project_path_to_slug,
+    ParsedSessionMarkdown, RecentAndProjectWorkflowReport,
 };
 pub use session_branch_workflow::{
     BranchItem, ExtractedSessionBranches, SessionBranchExtractorAgent, SessionBranchWorkflowReport,
@@ -45,6 +46,7 @@ pub use activity_watchdog::{
     run_with_activity_watchdog, ActivityWatchdogConfig, WatchdogTimeoutKind,
 };
 pub use memory_pipeline::MemoryPipelineParams;
+pub use memory_pipeline_query::UnprocessedSessionScanParams;
 pub use types::{
     MemoryContextReference, MemoryContextResult, MemoryProjectView, MemoryRebuildResult,
     MemoryTaskView,

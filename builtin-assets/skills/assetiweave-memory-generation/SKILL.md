@@ -23,13 +23,18 @@ description: AssetIWeave 记忆认知提炼工作流 SOP 与 CLI 契约说明书
    - `completed`（✅ 已完成闭环任务）：在 `recent/latest.md` 中**严格按轮次开始时间戳 `turn_started_at` 是否落在本次时间窗口内**滚动过滤展示；
    - `dismissed`（🗑️ 已废弃/误报墓碑）：代表废案或 AI 误判。在 `.state/` JSON 中持久化保留以防后续重扫复活，但在 Markdown 与 GUI 默认视图中**自动隐藏**。
 
-### 三条最高执行红线（违反将导致严重耗时劣化）
+### 四条最高执行红线（违反将导致严重耗时劣化或不可逆的记忆丢失）
 1. **强制 `--format json`**：
    AI 调用任何 `aiwc` CLI 命令时，**必须显式加上 `--format json` 参数**，统一解析 `{"ok": true, "data": ...}` 标准信封，严禁在默认的人类终端表格（Table）模式下调用。
 2. **严禁契约摸索、源码逆向与临时采集脚本**：
    本文件第 2 节已完整给出所有命令的参数与 JSON Schema。执行过程中**严禁运行 `--help` 试探命令、严禁 `grep` 或读取仓库 Rust 源码查字段、严禁编写临时 Python 脚本循环调用 CLI**。
 3. **批量分级控体积，防止挤爆上下文**：
-   优先使用 `aiwc conversation list --window <W> --unprocessed --format json` 一步筛出增量会话，并用 `aiwc conversation outline <id1> <id2> ... --qa-digest --format json` 批量拉取问答摘要骨架；仅对极少数短会话或需核实细节的单个会话使用 `--qa`。
+   优先使用 `aiwc conversation list --unprocessed --limit 200 --format json` 一步筛出增量会话，并用 `aiwc conversation outline <id1> <id2> ... --qa-digest --format json` 批量拉取问答摘要骨架；仅对极少数短会话或需核实细节的单个会话使用 `--qa`。
+4. **🚨 严禁对记忆存储目录执行任何物理删除命令（`rm` / `rm -rf` / `find -delete` 等）**：
+   记忆目录（`~/.assetiweave/memories/<tenant>/` 下的 `.state/projects/`、`projects/`、`recent/` 与 `MEMORY.md`）是**累计状态真源**，历史主题、`in-progress` 分支与 `unexplored` 悬空叶子在显式流转为 `completed` / `dismissed` 之前必须永久保留。
+   - ❌ 严禁「遇到格式错乱 / 命名不一致 / 状态看着不对」就直接删除整个目录或某个 `.state/projects/*.json`（一次 `rm -rf` 会物理抹掉数周积累且无法恢复）；
+   - ✅ 状态修正一律走 CLI 增量写接口：`aiwc memory commit --file ... --format json`（追加/演进节点）或 `aiwc memory status <node_id> <状态> --format json`（翻转单节点状态）；
+   - ✅ 仅在用户**明确要求**「彻底重置该项目记忆」并二次确认后，才允许由用户本人手动删除对应 slug 的状态文件，Agent 不得代劳。
 
 ---
 
@@ -37,21 +42,26 @@ description: AssetIWeave 记忆认知提炼工作流 SOP 与 CLI 契约说明书
 
 一次完整的近期记忆生成应在 **3~6 次工具调用** 内完成：
 
-### Step 1：单次调用获取时间窗口内的未处理增量会话
-调用 `conversation list` 并开启 `--unprocessed` 过滤（默认窗口 `48h`，可按用户要求指定 `24h` 或 `72h`）：
+### Step 1：单次调用获取全部未处理增量会话（默认不限时间窗口）
+调用 `conversation list` 并开启 `--unprocessed` 过滤。**默认不要叠加 `--window`**——窄窗口会漏掉「起始时间早已滑出窗口、但水位仍为 0 的历史积压会话」：
 ```bash
-aiwc conversation list --window 48h --unprocessed --format json
+aiwc conversation list --unprocessed --limit 200 --format json
 ```
+- **时间窗口的正确用法**：
+  - 默认（推荐）：只带 `--unprocessed`，按活动时间倒序回溯全部历史会话，凡 `watermark < turn_count` 一律返回；
+  - 仅当用户**明确要求**「只看最近 N 天的增量」时才追加 `--window <24h|48h|72h>`。窗口过滤已覆盖「起始时间在窗口外、但窗口内仍有新交互轮次」的跨期长会话，但仍然会漏掉长期没动静却从未提炼的会话，因此不能作为增量发现的默认口径。
 - **返回字段（`data` 数组每项）**：
   - `short_id`：8 位会话短 ID（如 `"dff13ef0"`）
   - `session_id`：完整会话 ID
-  - `project_path`：项目物理路径（如 `"/Users/util6/code-space/assetiweave"`）
-  - `project_slug`：后端已归一化好的项目标识（如 `"users-util6-code-space-assetiweave"`，后续命令直接使用此值，无需自行拼算）
+  - `project_path`：项目物理路径或便携路径锚点（如 `"~/code-space/assetiweave"`）
+  - `project_slug`：后端已归一化好的项目标识（如 `"code-space-assetiweave"`，便携锚点与物理路径始终折叠为同一 slug，后续命令直接使用此值，无需自行拼算）
   - `turn_count`：会话当前总轮次数（1-based 上限）
   - `watermark`：该会话在对应项目记忆中已处理到的轮次水位
   - `unprocessed_turns`：尚未处理的增量轮次数（`turn_count - watermark`）
 - **0-Token 短路判定**：
-  若返回的 `data` 为空数组 `[]`，说明窗口内所有会话均已处理完毕，**立即结束流程并告知用户无需更新**。
+  若返回的 `data` 为空数组 `[]`，说明所有会话均已处理完毕，**立即结束流程并告知用户无需更新**。
+- **积压很多时的收敛策略**：
+  若 `data` 条数明显超出单次处理预算（如 > 20 条），按 `updated_at` 倒序取最近的一批先做，并明确告知用户「还有 N 条历史积压会话待下一轮提炼」，**严禁为了省事直接丢弃或断崖式跳过**。
 
 ### Step 2：批量拉取增量会话问答骨架 & 读取涉及项目的既有状态
 1. **批量拉取增量会话大纲**：
@@ -100,8 +110,12 @@ aiwc conversation list --window 48h --unprocessed --format json
 
 > **注意**：以下所有命令均必须携带 `--format json`。
 
-### 2.1 `aiwc conversation list` —— 查询窗口内增量会话
+### 2.1 `aiwc conversation list` —— 查询未处理增量会话（默认全量回溯）
 ```bash
+# 推荐口径：不限时间窗口，回溯全部未处理会话
+aiwc conversation list --unprocessed --limit 200 --format json
+
+# 仅在用户明确要求「只看最近 N 天」时追加窗口
 aiwc conversation list --window 48h --unprocessed --format json
 ```
 输出信封示例：
@@ -116,9 +130,9 @@ aiwc conversation list --window 48h --unprocessed --format json
       "turn_count": 3,
       "watermark": 1,
       "unprocessed_turns": 2,
-      "project_path": "/Users/util6/code-space/assetiweave",
+      "project_path": "~/code-space/assetiweave",
       "project_name": "assetiweave",
-      "project_slug": "users-util6-code-space-assetiweave"
+      "project_slug": "code-space-assetiweave"
     }
   ]
 }
@@ -163,7 +177,7 @@ aiwc memory state get --current-project --format json
   "window": "48h",
   "commits": [
     {
-      "project": "users-util6-code-space-assetiweave",
+      "project": "code-space-assetiweave",
       "session_id": "dff13ef0",
       "turn_index": 3,
       "topic_id": "memory-cli-convergence",
@@ -182,7 +196,7 @@ aiwc memory state get --current-project --format json
   ],
   "advance_watermarks": [
     {
-      "project": "users-util6-code-space-assetiweave",
+      "project": "code-space-assetiweave",
       "session_id": "a1b2c3d4",
       "turn": 4
     }

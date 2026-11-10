@@ -11,6 +11,7 @@ fn test_project_path_to_slug() {
         project_path_to_slug("C:\\Users\\admin\\repo"),
         "c-users-admin-repo"
     );
+    assert_eq!(project_path_to_slug("~/my-project"), "my-project");
     assert_eq!(project_path_to_slug("///"), "unspecified");
     assert_eq!(project_path_to_slug("   "), "unspecified");
 }

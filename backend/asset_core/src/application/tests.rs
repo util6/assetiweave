@@ -533,6 +533,7 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
         .list_recent_conversation_sessions_at(
             RecentConversationSessionListParams {
                 view: RecentConversationView::Project,
+                window_hours: None,
                 limit: Some(50),
                 offset: Some(0),
             },
@@ -544,6 +545,7 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
         .list_recent_conversation_sessions_at(
             RecentConversationSessionListParams {
                 view: RecentConversationView::Time,
+                window_hours: None,
                 limit: Some(50),
                 offset: Some(0),
             },
@@ -636,6 +638,7 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
         .list_recent_conversation_sessions_at(
             RecentConversationSessionListParams {
                 view: RecentConversationView::Project,
+                window_hours: None,
                 limit: Some(50),
                 offset: Some(0),
             },

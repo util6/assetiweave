@@ -278,6 +278,27 @@ fn test_watermark_monotonicity() {
 }
 
 #[test]
+fn test_watermark_short_and_full_id_matching() {
+    let mut state = ProjectMemoryState::new("proj-wm-match");
+    let full_id =
+        "conversation-session-404625a62bfb60489a0f2e0fb069df8a2ccd33bd423e954fbe1ba23e383528ba";
+    let short_id = "404625a6";
+
+    // When stored by short_id, full_id query must hit
+    state.set_watermark(short_id, 5);
+    assert_eq!(state.get_watermark(short_id), Some(5));
+    assert_eq!(state.get_watermark(full_id), Some(5));
+
+    // When stored by full_id, short_id query must hit
+    let full_id_2 =
+        "conversation-session-48ef40184b97d12f23f0149f638e3e690048c96ecf36dabed993c580e5c541b4";
+    let short_id_2 = "48ef4018";
+    state.set_watermark(full_id_2, 11);
+    assert_eq!(state.get_watermark(full_id_2), Some(11));
+    assert_eq!(state.get_watermark(short_id_2), Some(11));
+}
+
+#[test]
 fn test_validate_parent_node_must_exist() {
     let mut state = ProjectMemoryState::new("proj-orphan");
     let node = MemoryTreeNode {
