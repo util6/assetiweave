@@ -9905,6 +9905,14 @@
             ],
             "default": null,
             "description": "range"
+          },
+          "parent_session_id": {
+            "description": "传入父会话 ID（完整或 8 位短 ID）时，改为列出该父会话名下的子代理会话。",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           }
         },
         "type": "object",
@@ -10042,6 +10050,7 @@
               "default",
               "questions",
               "qa",
+              "qa_digest",
               "full"
             ],
             "default": "default",
@@ -10274,6 +10283,14 @@
             ],
             "default": null,
             "description": "range"
+          },
+          "parent_session_id": {
+            "description": "传入父会话 ID（完整或 8 位短 ID）时，改为列出该父会话名下的子代理会话。",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           }
         },
         "type": "object",
@@ -10922,6 +10939,14 @@
             ],
             "default": null,
             "description": "range"
+          },
+          "parent_session_id": {
+            "description": "传入父会话 ID（完整或 8 位短 ID）时，改为列出该父会话名下的子代理会话。",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           }
         },
         "type": "object",
@@ -11059,6 +11084,7 @@
               "default",
               "questions",
               "qa",
+              "qa_digest",
               "full"
             ],
             "default": "default",
@@ -11251,6 +11277,14 @@
             ],
             "default": null,
             "description": "range"
+          },
+          "parent_session_id": {
+            "description": "传入父会话 ID（完整或 8 位短 ID）时，改为列出该父会话名下的子代理会话。",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           }
         },
         "type": "object",
