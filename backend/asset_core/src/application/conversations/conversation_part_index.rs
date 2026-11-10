@@ -138,15 +138,27 @@ impl AppService {
                 tenant_id: self.tenant_id().to_string(),
                 status: store::PART_INDEX_READY.to_string(),
                 part_count: 0,
+                corpus_policy_version: crate::backend::domain::conversations::search_corpus::search_corpus_policy_version(),
                 last_error: None,
                 rebuilt_at: None,
                 updated_at: None,
             });
+        let current_corpus_policy_version =
+            crate::backend::domain::conversations::search_corpus::search_corpus_policy_version();
+        let corpus_outdated = state.corpus_policy_version != current_corpus_policy_version;
         Ok(ConversationPartIndexStatus {
             is_ready: state.is_ready(),
             status: state.status,
             part_count: state.part_count,
-            last_error: state.last_error,
+            corpus_policy_version: state.corpus_policy_version,
+            current_corpus_policy_version,
+            last_error: state.last_error.or_else(|| {
+                corpus_outdated.then(|| {
+                    format!(
+                        "corpus policy upgraded to v{current_corpus_policy_version}; a controlled rebuild is required"
+                    )
+                })
+            }),
             rebuilt_at: state.rebuilt_at,
             updated_at: state.updated_at,
         })

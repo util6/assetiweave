@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::backend::domain::conversations::search_corpus::current_search_corpus_policy;
 use crate::backend::store::StoreResult;
 use sqlx::{AssertSqlSafe, SqlitePool};
 
@@ -32,7 +33,6 @@ struct SearchIndexTurnRow {
     adapter_id: String,
     source_id: String,
     project_path: Option<String>,
-    card_kinds_json: String,
 }
 
 pub async fn load_conversation_search_index_documents_sqlx(
@@ -46,10 +46,9 @@ pub async fn load_conversation_search_index_documents_sqlx(
             SELECT s.id AS session_id, t.id AS turn_id, t.turn_index AS turn_index, t.prompt AS prompt,
                    t.process AS process, t.response AS response,
                    s.adapter_id AS adapter_id, s.source_id AS source_id,
-                   {project_path} AS project_path, COALESCE(a.card_kinds_json, '[]') AS card_kinds_json
+                   {project_path} AS project_path
             FROM {sessions} s
             JOIN {turns} t ON t.tenant_id = s.tenant_id AND t.session_id = s.id
-            LEFT JOIN conversation_adapters a ON a.tenant_id = s.tenant_id AND a.id = s.adapter_id
             WHERE s.tenant_id = ?1 AND s.missing = 0
             ORDER BY s.id ASC, t.turn_index ASC, t.id ASC
             "#,
@@ -135,84 +134,83 @@ pub async fn load_conversation_search_index_documents_sqlx(
                     .unwrap_or_else(|| "Untitled question".to_string());
 
                 for turn in group.turns {
-                    documents.push(ConversationSearchIndexDocumentRow {
-                        document_kind: "question".to_string(),
-                        record_kind: tables.record_kind.to_string(),
-                        session_id: turn.session_id.clone(),
-                        question_id: question_id.clone(),
-                        turn_id: turn.turn_id.clone(),
-                        part_id: String::new(),
-                        block_id: format!("{}-question", turn.turn_id),
-                        card_kind: String::new(),
-                        semantic_role: String::new(),
-                        question_title: question_title.clone(),
-                        content: turn.prompt.clone(),
-                        adapter_id: turn.adapter_id.clone(),
-                        source_id: turn.source_id.clone(),
-                        project_path: turn.project_path.clone().unwrap_or_default(),
-                    });
-
                     let turn_parts = parts_by_turn.remove(&turn.turn_id).unwrap_or_default();
-                    let process: Option<crate::backend::domain::conversations::triad::TurnProcess> =
-                        turn.process
-                            .as_deref()
-                            .and_then(|s| serde_json::from_str(s).ok());
                     let restored_parts =
-                        crate::backend::domain::conversations::triad::merge_turn_triad(
+                        crate::backend::store::conversations::snapshot::restore_turn_parts(
                             &turn.adapter_id,
                             tables.prefix,
                             &turn.turn_id,
                             &turn.prompt,
-                            process.as_ref(),
+                            turn.process.as_deref(),
                             turn.response.as_deref(),
                             &turn_parts,
                         );
+                    // 与 FTS5 派生索引共用同一份语料：只放行提问、最终回答、
+                    // 变更文件路径与命令语义标签（ADR-0023）。
+                    let corpus_documents = current_search_corpus_policy().extract(
+                        &crate::backend::domain::conversations::search_corpus::CorpusTurnFacts {
+                            turn_id: &turn.turn_id,
+                            prompt: &turn.prompt,
+                            response: turn.response.as_deref(),
+                            parts: &restored_parts,
+                        },
+                    );
 
-                    let card_kinds = serde_json::from_str::<
-                        Vec<crate::backend::domain::ConversationCardKindDefinition>,
-                    >(&turn.card_kinds_json)
-                    .unwrap_or_default();
-
-                    for part in restored_parts {
-                        let cards =
-                            crate::backend::domain::conversations::projection::project_conversation_content_cards(
-                                &part,
-                                &turn.adapter_id,
-                                &card_kinds,
-                            )?;
-                        for card in cards {
-                            let card_kind = card.kind;
-                            let semantic_role = card
-                                .semantic_role
-                                .or_else(|| {
-                                    card_kind
-                                        .rsplit_once('.')
-                                        .map(|(_, value)| value.to_string())
-                                })
-                                .unwrap_or_default();
-                            documents.push(ConversationSearchIndexDocumentRow {
-                                document_kind: "card".to_string(),
-                                record_kind: tables.record_kind.to_string(),
-                                session_id: turn.session_id.clone(),
-                                question_id: question_id.clone(),
-                                turn_id: turn.turn_id.clone(),
-                                part_id: part.id.clone(),
-                                block_id: card.node_id,
-                                card_kind,
-                                semantic_role,
-                                question_title: question_title.clone(),
-                                content: card.body,
-                                adapter_id: turn.adapter_id.clone(),
-                                source_id: turn.source_id.clone(),
-                                project_path: turn.project_path.clone().unwrap_or_default(),
-                            });
-                        }
+                    for document in corpus_documents {
+                        let (document_kind, card_kind, semantic_role) =
+                            corpus_signal_scoping(document.signal);
+                        documents.push(ConversationSearchIndexDocumentRow {
+                            document_kind,
+                            record_kind: tables.record_kind.to_string(),
+                            session_id: turn.session_id.clone(),
+                            question_id: question_id.clone(),
+                            turn_id: turn.turn_id.clone(),
+                            part_id: String::new(),
+                            block_id: document.anchor_id(),
+                            card_kind,
+                            semantic_role,
+                            question_title: question_title.clone(),
+                            content: document.text,
+                            adapter_id: turn.adapter_id.clone(),
+                            source_id: turn.source_id.clone(),
+                            project_path: turn.project_path.clone().unwrap_or_default(),
+                        });
                     }
                 }
             }
         }
     }
     Ok(documents)
+}
+
+/// 把语料信号映射成独立索引的文档筛选维度。
+///
+/// 既有的 `include_questions` / `card_kinds` / `semantic_roles` 过滤语义保持可用：
+/// 提问仍归入 `question`，其余三类归入 `card` 并沿用适配器作用域下的卡片种类。
+fn corpus_signal_scoping(
+    signal: crate::backend::domain::conversations::search_corpus::SearchCorpusSignal,
+) -> (String, String, String) {
+    use crate::backend::domain::conversations::search_corpus::SearchCorpusSignal;
+
+    // 卡片种类统一用信号名，不带适配器前缀：两个检索后端必须给出同一套分类与筛选维度。
+    match signal {
+        SearchCorpusSignal::Prompt => ("question".to_string(), String::new(), String::new()),
+        SearchCorpusSignal::Answer => (
+            "card".to_string(),
+            SearchCorpusSignal::Answer.as_str().to_string(),
+            SearchCorpusSignal::Answer.as_str().to_string(),
+        ),
+        SearchCorpusSignal::ChangedFile => (
+            "card".to_string(),
+            SearchCorpusSignal::ChangedFile.as_str().to_string(),
+            SearchCorpusSignal::ChangedFile.as_str().to_string(),
+        ),
+        SearchCorpusSignal::CommandLabel => (
+            "card".to_string(),
+            SearchCorpusSignal::CommandLabel.as_str().to_string(),
+            SearchCorpusSignal::CommandLabel.as_str().to_string(),
+        ),
+    }
 }
 
 struct SearchDocumentTables {

@@ -126,7 +126,11 @@ async fn rebuild_part_index_runs_as_staged_pipeline_and_restores_body_matching()
     .fetch_all(service.pool())
     .await
     .expect("read indexed rows");
-    assert_eq!(indexed, vec!["pipe probe body".to_string()]);
+    assert_eq!(
+        indexed,
+        vec!["index rebuild probe".to_string()],
+        "高信号语料只放行提问与最终回答，工具输出正文不再下沉"
+    );
 
     drop(service);
     let _ = std::fs::remove_file(db_path);

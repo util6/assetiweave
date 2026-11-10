@@ -1448,12 +1448,14 @@ async fn sqlx_conversation_reads_and_filters_questions() {
             false,
         )
         .await?;
+        // 正文匹配走高信号语料（ADR-0023）：只有提问与最终回答会进索引，
+        // 轮次中的 reasoning / 工具输出不再下沉，因此这里用 t1 的最终回答取证。
         let sessions = list_conversation_sessions_sqlx(
             database.pool(),
             TEST_TENANT_ID,
             None,
             Some(&source.id),
-            Some("answer for t3"),
+            Some("answer for t1"),
             20,
             0,
         )
@@ -1978,7 +1980,13 @@ async fn sqlx_search_and_aggregates_only_declared_content_cards() {
             .map(|node| node.content.as_str()),
         Some("declared answer needle")
     );
-    assert!(undeclared_list.is_empty());
+    // 会话列表的正文匹配走高信号语料：已提交的最终回答即使没有被适配器卡片契约声明，
+    // 也依然可搜（检索口径不能由展示契约决定）；卡片检索仍然只认已声明的卡片。
+    assert_eq!(
+        undeclared_list.len(),
+        1,
+        "未声明的最终回答属于已提交事实，仍应可搜"
+    );
     assert_eq!(undeclared_page.total_count, 0);
     assert_eq!(declared_page.total_count, 1);
 
@@ -2891,6 +2899,106 @@ async fn sqlx_matching_payload_policy_version_reuses_session_fingerprints() {
     cleanup_database(&db_path);
 }
 
+/// ADR-0023：热路径（增量）绝不做缺失对账，冷路径（全量）才承担 missing / resurrect。
+#[tokio::test]
+async fn sqlx_incremental_sync_skips_missing_reconciliation() {
+    let (database, db_path, source) = open_conversation_reparse_fixture("hot-cold-split").await;
+    let pool = database.pool();
+    let policy_version =
+        crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION;
+    let mut session = fixture_session("v1");
+    session.source_fingerprint = Some("fingerprint-v1".to_string());
+    let discovered = std::collections::BTreeSet::from(["session-1".to_string()]);
+
+    import_conversation_sessions_advanced_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        &source,
+        &[session.clone()],
+        Some(&discovered),
+        Vec::new(),
+        Vec::new(),
+        None,
+        None,
+        policy_version,
+        None,
+        crate::backend::domain::ConversationSyncMode::Full,
+        false,
+        None,
+        &mut |_, _| {},
+    )
+    .await
+    .expect("initial full import");
+
+    let missing_flag = |pool: &sqlx::SqlitePool| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT missing FROM conversation_sessions WHERE tenant_id = ?1 AND external_id = 'session-1'",
+            )
+            .bind(TEST_TENANT_ID)
+            .fetch_one(&pool)
+            .await
+            .expect("read missing flag")
+        }
+    };
+
+    // 增量：源端这一轮什么都没发现，也不许把本地会话判成缺失。
+    import_conversation_sessions_advanced_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        &source,
+        &[],
+        Some(&std::collections::BTreeSet::new()),
+        Vec::new(),
+        Vec::new(),
+        None,
+        None,
+        policy_version,
+        None,
+        crate::backend::domain::ConversationSyncMode::Incremental,
+        false,
+        None,
+        &mut |_, _| {},
+    )
+    .await
+    .expect("incremental import");
+    assert_eq!(missing_flag(pool).await, 0, "增量同步不做全盘缺失对账");
+
+    // 全量：显式对账把源端缺失表达为 missing 状态，而不是物理删除。
+    import_conversation_sessions_advanced_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        &source,
+        &[],
+        Some(&std::collections::BTreeSet::new()),
+        Vec::new(),
+        Vec::new(),
+        None,
+        None,
+        policy_version,
+        None,
+        crate::backend::domain::ConversationSyncMode::Full,
+        false,
+        None,
+        &mut |_, _| {},
+    )
+    .await
+    .expect("full import");
+    assert_eq!(missing_flag(pool).await, 1, "全量同步才标记缺失");
+    let still_there: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_sessions WHERE tenant_id = ?1 AND external_id = 'session-1'",
+    )
+    .bind(TEST_TENANT_ID)
+    .fetch_one(pool)
+    .await
+    .expect("count sessions");
+    assert_eq!(still_there, 1, "缺失只标记，绝不物理删除本地资产");
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
 #[tokio::test]
 async fn sqlx_repeated_sync_keeps_turn_identity_without_duplicating_turns() {
     let (database, db_path, source) = open_conversation_reparse_fixture("reparse-idempotent").await;
@@ -2944,7 +3052,6 @@ async fn sqlx_single_session_reparse_failure_degrades_without_blocking_siblings(
         &source,
         &[healthy],
         None,
-        None,
         vec![crate::backend::domain::SessionSyncFailure {
             session_external_id: "session-broken".to_string(),
             stage: "parse".to_string(),
@@ -2957,6 +3064,7 @@ async fn sqlx_single_session_reparse_failure_degrades_without_blocking_siblings(
         None,
         policy_version,
         None,
+        crate::backend::domain::ConversationSyncMode::Full,
         false,
         None,
         &mut |_, _| {},
@@ -3990,7 +4098,7 @@ async fn sqlx_question_fragment_and_any_id_resolve_through_turn_columns() {
 }
 
 #[tokio::test]
-async fn sqlx_session_search_hits_tool_output_file_change_and_prompt_bodies() {
+async fn sqlx_session_search_follows_the_high_signal_corpus() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-conversation-part-search-sqlx-{}.sqlite",
         Uuid::new_v4()
@@ -4009,12 +4117,15 @@ async fn sqlx_session_search_hits_tool_output_file_change_and_prompt_bodies() {
         "tool_result",
         "fatal: unable to access remote repository",
     ));
-    session.turns[1].parts.push(normalized_search_part(
+    let mut file_change = normalized_search_part(
         ConversationPartRole::Assistant,
         ConversationPartKind::FileChange,
         "file_change",
         "modified src/lib.rs and added a retry loop",
-    ));
+    );
+    file_change.metadata_json =
+        Some(r#"{"file_path":"src/lib.rs","command_label":"Edit"}"#.to_string());
+    session.turns[1].parts.push(file_change);
     session.turns[2].parts.push(normalized_search_part(
         ConversationPartRole::Tool,
         ConversationPartKind::Tool,
@@ -4022,7 +4133,15 @@ async fn sqlx_session_search_hits_tool_output_file_change_and_prompt_bodies() {
         "exit status 128 from the test runner",
     ));
 
-    let (tool_hits, file_hits, execution_hits, answer_hits, prompt_hits, missing_hits) = async {
+    let (
+        tool_hits,
+        file_hits,
+        execution_hits,
+        file_path_hits,
+        answer_hits,
+        prompt_hits,
+        missing_hits,
+    ) = async {
         upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
         upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
         import_conversation_sessions_sqlx(
@@ -4038,6 +4157,7 @@ async fn sqlx_session_search_hits_tool_output_file_change_and_prompt_bodies() {
             "unable to access remote",
             "retry loop",
             "exit status 128",
+            "src/lib.rs",
             "answer for t1",
             "How does sync work?",
             "nothing-matches-this-needle",
@@ -4063,16 +4183,21 @@ async fn sqlx_session_search_hits_tool_output_file_change_and_prompt_bodies() {
             results.next().unwrap(),
             results.next().unwrap(),
             results.next().unwrap(),
+            results.next().unwrap(),
         ))
     }
     .await
-    .expect("search sessions by part bodies through SQLx");
+    .expect("search sessions through the high-signal corpus");
 
-    assert_eq!(tool_hits.len(), 1, "工具输出正文必须可搜");
-    assert_eq!(file_hits.len(), 1, "文件变更正文必须可搜");
-    assert_eq!(execution_hits.len(), 1, "执行结果正文必须可搜");
-    assert_eq!(answer_hits.len(), 1, "改造前可搜的答复正文必须仍可搜");
-    assert_eq!(prompt_hits.len(), 1, "改造前可搜的提问正文必须仍可搜");
+    assert!(tool_hits.is_empty(), "工具输出正文属于过程噪音，不得入库");
+    assert!(file_hits.is_empty(), "diff 正文属于过程噪音，不得入库");
+    assert!(
+        execution_hits.is_empty(),
+        "执行结果正文属于过程噪音，不得入库"
+    );
+    assert_eq!(file_path_hits.len(), 1, "变更文件路径必须可搜");
+    assert_eq!(answer_hits.len(), 1, "最终回答必须可搜");
+    assert_eq!(prompt_hits.len(), 1, "用户提问必须可搜");
     assert!(missing_hits.is_empty());
 
     drop(database);
@@ -4102,6 +4227,13 @@ async fn sqlx_session_search_degrades_to_title_while_part_index_rebuilds() {
             &source,
             &[fixture_session("v1")],
             false,
+        )
+        .await?;
+        // 派生索引不再随事实事务同步写入，这里显式推进一次消费者应做的工作。
+        crate::backend::store::replace_source_search_corpus_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source.id,
         )
         .await?;
         let search = |needle: &'static str| {

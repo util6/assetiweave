@@ -625,7 +625,7 @@ async fn test_subagent_parent_child_outline_and_search_breadcrumbs() {
                 NormalizedConversationPart {
                     role: ConversationPartRole::Assistant,
                     kind: ConversationPartKind::Text,
-                    text: Some("根因已定位：列表检索只匹配了主会话自身。".to_string()),
+                    text: Some(format!("根因已定位：{UNIQUE_TOKEN} 只匹配了主会话自身。")),
                     language: None,
                     command: None,
                     cwd: None,
@@ -748,7 +748,7 @@ async fn test_subagent_parent_child_outline_and_search_breadcrumbs() {
     assert_eq!(list.len(), 1, "只能返回可见的父会话");
     assert_eq!(list[0].session.id, parent_id);
 
-    // 4.1 锚点结构化属性（角色 / 标题 / 汇报摘要）同样进入父会话索引。
+    // 4.1 委派锚点的角色 / 标题 / 汇报摘要属于过程明细，按 ADR-0023 不再进入检索语料。
     let list_by_anchor_attr = service
         .list_conversation_sessions(ConversationSessionListParams {
             query: Some("检索并归集".to_string()),
@@ -756,8 +756,10 @@ async fn test_subagent_parent_child_outline_and_search_breadcrumbs() {
         })
         .await
         .expect("list by anchor attrs");
-    assert_eq!(list_by_anchor_attr.len(), 1);
-    assert_eq!(list_by_anchor_attr[0].session.id, parent_id);
+    assert!(
+        list_by_anchor_attr.is_empty(),
+        "委派明细不得成为检索入口，否则搜索会被过程噪音淹没"
+    );
 
     // 5. --parent 过滤：按父会话枚举子代理会话。
     let children = service

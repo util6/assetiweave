@@ -182,16 +182,6 @@ impl AppService {
                         .map(|descriptor| descriptor.external_id.clone())
                         .collect::<std::collections::BTreeSet<_>>()
                 });
-                let descriptor_versions = {
-                    let mut map = std::collections::BTreeMap::new();
-                    for descriptor in &read.session_descriptors {
-                        map.insert(
-                            descriptor.external_id.clone(),
-                            descriptor.version_token.clone(),
-                        );
-                    }
-                    map
-                };
                 let mut on_import_progress = |done: usize, total: usize| {
                     on_progress_detail(format!(
                         "{} · {} {done}/{total}",
@@ -204,13 +194,13 @@ impl AppService {
                     source,
                     &read.sessions,
                     discovered_external_ids.as_ref(),
-                    Some(&descriptor_versions),
                     read.session_failures.clone(),
                     read.session_warnings.clone(),
                     adapter_content_hash.as_deref(),
                     card_contract_version,
                     payload_policy_version,
                     projection_version,
+                    params.mode,
                     params.dry_run,
                     cancellation,
                     &mut on_import_progress,

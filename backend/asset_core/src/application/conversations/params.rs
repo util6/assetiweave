@@ -1,3 +1,4 @@
+pub use crate::backend::domain::ConversationSyncMode;
 use crate::backend::domain::{
     ConversationAdapterPackageChangeAction, ConversationAdapterPackageOrigin,
     ConversationPackageUpdatePolicy, ConversationSource,
@@ -165,20 +166,6 @@ pub struct ConversationAdapterWorkspaceUpgradeParams {
     pub developer: bool,
     #[serde(default, alias = "dryRun")]
     pub dry_run: bool,
-}
-
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ConversationSyncMode {
-    #[default]
-    Incremental,
-    Full,
-}
-
-impl ConversationSyncMode {
-    pub fn uses_known_versions(self) -> bool {
-        matches!(self, Self::Incremental)
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

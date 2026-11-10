@@ -231,9 +231,38 @@ pub struct ConversationPartIndexStatus {
     pub status: String,
     pub is_ready: bool,
     pub part_count: i64,
+    /// 该代索引落盘时使用的检索语料策略版本。
+    pub corpus_policy_version: u32,
+    /// 当前代码生效的检索语料策略版本；两者不一致说明需要一次受控重建。
+    pub current_corpus_policy_version: u32,
     pub last_error: Option<String>,
     pub rebuilt_at: Option<String>,
     pub updated_at: Option<String>,
+}
+
+/// 会话同步模式。
+///
+/// 热路径（`Incremental`）只在"没有成功版本凭据或版本令牌变化"时重扫会话，
+/// 完全不枚举全盘做缺失对账；冷路径（`Full`）额外承担 missing / resurrect 对账。
+/// 该枚举由应用编排层决定，并原样传到仓储导入边界，避免仓储自行猜测调用意图。
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationSyncMode {
+    #[default]
+    Incremental,
+    Full,
+}
+
+impl ConversationSyncMode {
+    /// 是否使用已落库版本做增量差集。
+    pub fn uses_known_versions(self) -> bool {
+        matches!(self, Self::Incremental)
+    }
+
+    /// 是否执行缺失 / 复活对账这类冷路径工作。
+    pub fn reconciles_missing_sessions(self) -> bool {
+        matches!(self, Self::Full)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

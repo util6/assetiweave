@@ -5,29 +5,16 @@
 //!    锚点通过 `metadata_json.child_external_id` 指向子会话的 `external_id`；
 //! 2. 会话主键由 `stable_id("conversation-session", [source_id, external_id])` 纯函数派生，
 //!    因此父锚点在入库时即可算出子会话主键，与文件扫描先后顺序无关；
-//! 3. 父会话整包快照替换时，按"本次快照引用集合"对账清理不再被引用的孤儿子会话
-//!    （父会话在宿主侧 `/rewind` 回滚后，被抹掉的派发不会留下幽灵子会话）。
-
-use std::collections::BTreeSet;
-
-use sqlx::{Sqlite, Transaction};
+//! 3. 父会话整包快照替换只覆盖自己的事实，不对子会话做物理清理（ADR-0023 数据保险箱语义）。
 
 use crate::backend::domain::conversations::triad::{SplitTurnTriad, TurnProcessItem};
 use crate::backend::domain::{stable_id, ConversationPartKind, NormalizedConversationPart};
-use crate::backend::store::{StoreError, StoreResult};
 
 /// 子代理会话在 `conversation_sessions.execution_origin` 上的取值。
 pub(crate) const SUBAGENT_EXECUTION_ORIGIN: &str = "subagent";
 
 /// 委派锚点 Part 在 `TurnProcess.items` 与零件属性上的语义类型。
 pub(crate) const SUBAGENT_ANCHOR_KIND: &str = "subagent";
-
-/// 内联子代理会话的虚拟定位器前缀。
-///
-/// 宿主把子代理流内联在主会话文件里时没有独立磁盘文件，`source_locator`
-/// 用 `<父文件>#subagent:<id>` 表达；这类子会话一旦失去父引用就没有任何
-/// 源数据可以重新读取，必须随父快照整包替换一起清理。
-const INLINE_SUBAGENT_LOCATOR_MARKER: &str = "#subagent:";
 
 /// 委派锚点携带的子代理元数据。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -203,176 +190,6 @@ fn merge_anchor_attrs(
         );
     }
     serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default()
-}
-
-/// 从已备好的快照里收集被引用的子会话主键。
-pub(crate) fn collect_referenced_child_session_ids(
-    prepared: &[super::snapshot::PreparedTurn],
-) -> BTreeSet<String> {
-    let mut referenced = BTreeSet::new();
-    for entry in prepared {
-        if let Some(raw) = entry.turn.process.as_deref() {
-            if let Ok(process) = serde_json::from_str::<
-                crate::backend::domain::conversations::triad::TurnProcess,
-            >(raw)
-            {
-                for item in process.items {
-                    if item.kind == SUBAGENT_ANCHOR_KIND {
-                        if let Some(child) = item.content.filter(|value| !value.trim().is_empty()) {
-                            referenced.insert(child);
-                        }
-                    }
-                }
-            }
-        }
-        for part in &entry.parts {
-            let Some(raw) = part.attrs_json.as_deref() else {
-                continue;
-            };
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
-                continue;
-            };
-            if let Some(child) = value
-                .get("child_session_id")
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                referenced.insert(child.to_string());
-            }
-        }
-    }
-    referenced
-}
-
-/// 孤儿子会话的对账结果，供调用方按需观测。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct OrphanReconcileOutcome {
-    /// 被级联删除（源数据已不存在）的子会话主键。
-    pub deleted: Vec<String>,
-    /// 保留为隐藏会话、仅解除父轮次绑定的子会话主键。
-    pub unbound: Vec<String>,
-}
-
-/// 对账并清理父会话快照不再引用的孤儿子会话。
-///
-/// - 源数据已消失（`missing = 1`）或子会话本身是内联虚拟路径：
-///   在同一事务内级联删除全文索引、内容事实、交互轮次与会话行；
-/// - 独立磁盘文件仍在：只解除父轮次绑定，保留 `user_visible = 0` 的隐藏状态，
-///   等它自己的文件被宿主清理时再由 missing 对账接管。
-pub(crate) async fn reconcile_orphan_subagent_sessions_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    source_id: &str,
-    parent_session_id: &str,
-    referenced: &BTreeSet<String>,
-) -> StoreResult<OrphanReconcileOutcome> {
-    let rows = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, i64)>(
-        "SELECT id, external_id, execution_purpose, source_locator, missing \
-         FROM conversation_sessions \
-         WHERE tenant_id = ?1 AND source_id = ?2 AND execution_origin = ?3",
-    )
-    .bind(tenant_id)
-    .bind(source_id)
-    .bind(SUBAGENT_EXECUTION_ORIGIN)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-
-    let mut outcome = OrphanReconcileOutcome::default();
-    for (child_id, _external_id, purpose, locator, missing) in rows {
-        if child_id == parent_session_id || referenced.contains(&child_id) {
-            continue;
-        }
-        if parent_session_id_of(purpose.as_deref()).as_deref() != Some(parent_session_id) {
-            // 归属其他父会话的子会话由它自己的父快照对账，不在本轮处理。
-            continue;
-        }
-        if missing != 0 || is_inline_subagent_locator(locator.as_deref()) {
-            delete_subagent_session_sqlx_tx(tx, tenant_id, &child_id).await?;
-            outcome.deleted.push(child_id);
-        } else {
-            unbind_subagent_parent_turn_sqlx_tx(tx, tenant_id, &child_id, purpose.as_deref())
-                .await?;
-            outcome.unbound.push(child_id);
-        }
-    }
-    Ok(outcome)
-}
-
-fn parent_session_id_of(execution_purpose: Option<&str>) -> Option<String> {
-    let raw = execution_purpose?.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
-    value
-        .get("parent_session_id")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-/// 内联子代理会话没有独立磁盘文件，只能随父会话一起消失。
-pub(crate) fn is_inline_subagent_locator(source_locator: Option<&str>) -> bool {
-    match source_locator.map(str::trim) {
-        None | Some("") => true,
-        Some(locator) => {
-            locator.contains(INLINE_SUBAGENT_LOCATOR_MARKER)
-                || locator.starts_with("inline:")
-                || locator.starts_with("subagent:")
-        }
-    }
-}
-
-async fn delete_subagent_session_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-) -> StoreResult<()> {
-    for statement in [
-        "DELETE FROM conversation_part_fts WHERE tenant_id = ?1 AND session_id = ?2",
-        "DELETE FROM conversation_parts WHERE tenant_id = ?1 AND turn_id IN \
-         (SELECT id FROM conversation_turns WHERE tenant_id = ?1 AND session_id = ?2)",
-        "DELETE FROM conversation_turns WHERE tenant_id = ?1 AND session_id = ?2",
-        "DELETE FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2",
-    ] {
-        sqlx::query(statement)
-            .bind(tenant_id)
-            .bind(session_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(StoreError::external)?;
-    }
-    Ok(())
-}
-
-async fn unbind_subagent_parent_turn_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-    execution_purpose: Option<&str>,
-) -> StoreResult<()> {
-    let mut map = execution_purpose
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-        .and_then(|value| value.as_object().cloned())
-        .unwrap_or_default();
-    // 只解除轮次绑定：`parent_session_id` 必须留着，否则子会话的磁盘文件随后被宿主
-    // 清理时，父快照再也认不出这个孤儿，脏行会永久滞留。
-    map.remove("parent_turn_index");
-    let purpose = serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default();
-    sqlx::query(
-        "UPDATE conversation_sessions SET execution_purpose = ?1, user_visible = 0 \
-         WHERE tenant_id = ?2 AND id = ?3",
-    )
-    .bind(purpose)
-    .bind(tenant_id)
-    .bind(session_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    Ok(())
 }
 
 #[cfg(test)]

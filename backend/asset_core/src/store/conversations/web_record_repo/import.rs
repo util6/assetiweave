@@ -113,17 +113,18 @@ pub async fn import_web_record_sessions_sqlx(
     })
 }
 
+/// Web 记录会话是否未发生变化：同样只比较不透明版本令牌。
 pub async fn web_record_session_is_unchanged_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session: &ConversationSession,
 ) -> StoreResult<bool> {
-    let Some(source_fingerprint) = session.source_fingerprint.as_deref() else {
+    let Some(discovered) = session.source_fingerprint.as_deref() else {
         return Ok(false);
     };
-    let Some(row) = sqlx::query_as::<_, ExistingWebRecordSessionRow>(
+    let stored: Option<Option<String>> = sqlx::query_scalar(
         r#"
-        SELECT title, started_at, updated_at, source_locator, source_fingerprint, missing
+        SELECT source_fingerprint
         FROM web_record_sessions
         WHERE tenant_id = ?1 AND id = ?2
         "#,
@@ -132,17 +133,9 @@ pub async fn web_record_session_is_unchanged_sqlx_tx(
     .bind(&session.id)
     .fetch_optional(&mut **tx)
     .await
-    .map_err(StoreError::external)?
-    else {
-        return Ok(false);
-    };
+    .map_err(StoreError::external)?;
 
-    Ok(row.title == session.title
-        && row.started_at == session.started_at
-        && row.updated_at == session.updated_at
-        && row.source_locator == session.source_locator
-        && row.source_fingerprint.as_deref() == Some(source_fingerprint)
-        && row.missing == 0)
+    Ok(stored.flatten().as_deref() == Some(discovered))
 }
 
 pub async fn upsert_web_record_session_sqlx_tx(

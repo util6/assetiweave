@@ -38,6 +38,8 @@ pub struct ConversationSearchIndexState {
     pub index_instance_id: String,
     pub schema_version: i64,
     pub tokenizer_version: String,
+    /// 该代索引落盘时使用的检索语料策略版本。
+    pub corpus_policy_version: u32,
     pub source_revision: i64,
     pub indexed_revision: Option<i64>,
     pub active_generation: Option<String>,
@@ -59,6 +61,8 @@ impl ConversationSearchIndexState {
     pub fn is_compatible(&self) -> bool {
         self.schema_version == CONVERSATION_SEARCH_SCHEMA_VERSION
             && self.tokenizer_version == CONVERSATION_SEARCH_TOKENIZER_VERSION
+            && self.corpus_policy_version
+                == crate::backend::domain::conversations::search_corpus::search_corpus_policy_version()
     }
 }
 
@@ -70,8 +74,9 @@ pub async fn load_or_create_conversation_search_index_state_sqlx(
     sqlx::query(
         r#"
         INSERT INTO conversation_search_index_state (
-            tenant_id, index_instance_id, schema_version, tokenizer_version, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5)
+            tenant_id, index_instance_id, schema_version, tokenizer_version,
+            corpus_policy_version, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
         ON CONFLICT(tenant_id) DO NOTHING
         "#,
     )
@@ -79,6 +84,9 @@ pub async fn load_or_create_conversation_search_index_state_sqlx(
     .bind(Uuid::new_v4().to_string())
     .bind(CONVERSATION_SEARCH_SCHEMA_VERSION)
     .bind(CONVERSATION_SEARCH_TOKENIZER_VERSION)
+    .bind(i64::from(
+        crate::backend::domain::conversations::search_corpus::search_corpus_policy_version(),
+    ))
     .bind(&now)
     .execute(pool)
     .await?;
@@ -86,7 +94,7 @@ pub async fn load_or_create_conversation_search_index_state_sqlx(
     let row = sqlx::query_as::<_, SearchIndexStateRow>(
         r#"
         SELECT tenant_id, index_instance_id, schema_version, tokenizer_version,
-               source_revision, indexed_revision, active_generation, health,
+               corpus_policy_version, source_revision, indexed_revision, active_generation, health,
                document_count, size_bytes, last_built_at, last_error,
                lease_owner, lease_expires_at, updated_at
         FROM conversation_search_index_state
@@ -116,8 +124,9 @@ pub async fn bump_conversation_search_source_revision_sqlx_tx(
     sqlx::query(
         r#"
         INSERT INTO conversation_search_index_state (
-            tenant_id, index_instance_id, schema_version, tokenizer_version, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5)
+            tenant_id, index_instance_id, schema_version, tokenizer_version,
+            corpus_policy_version, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
         ON CONFLICT(tenant_id) DO NOTHING
         "#,
     )
@@ -125,6 +134,9 @@ pub async fn bump_conversation_search_source_revision_sqlx_tx(
     .bind(Uuid::new_v4().to_string())
     .bind(CONVERSATION_SEARCH_SCHEMA_VERSION)
     .bind(CONVERSATION_SEARCH_TOKENIZER_VERSION)
+    .bind(i64::from(
+        crate::backend::domain::conversations::search_corpus::search_corpus_policy_version(),
+    ))
     .bind(Utc::now().to_rfc3339())
     .execute(&mut *connection)
     .await?;
@@ -181,6 +193,7 @@ struct SearchIndexStateRow {
     index_instance_id: String,
     schema_version: i64,
     tokenizer_version: String,
+    corpus_policy_version: i64,
     source_revision: i64,
     indexed_revision: Option<i64>,
     active_generation: Option<String>,
@@ -211,7 +224,8 @@ pub async fn complete_conversation_search_index_rebuild_with_offset_sqlx(
         SET indexed_revision = ?1, active_generation = ?2, health = 'ready',
             document_count = ?3, size_bytes = ?4, last_built_at = ?5,
             last_error = NULL, lease_owner = NULL, lease_expires_at = NULL,
-            schema_version = ?6, tokenizer_version = ?7, updated_at = ?5
+            schema_version = ?6, tokenizer_version = ?7,
+            corpus_policy_version = ?9, updated_at = ?5
         WHERE tenant_id = ?8 AND source_revision = ?1
         "#,
     )
@@ -223,6 +237,9 @@ pub async fn complete_conversation_search_index_rebuild_with_offset_sqlx(
     .bind(CONVERSATION_SEARCH_SCHEMA_VERSION)
     .bind(CONVERSATION_SEARCH_TOKENIZER_VERSION)
     .bind(tenant_id)
+    .bind(i64::from(
+        crate::backend::domain::conversations::search_corpus::search_corpus_policy_version(),
+    ))
     .execute(&mut *tx)
     .await?;
     if result.rows_affected() == 1 {
@@ -292,6 +309,7 @@ fn map_search_index_state(row: SearchIndexStateRow) -> StoreResult<ConversationS
         index_instance_id: row.index_instance_id,
         schema_version: row.schema_version,
         tokenizer_version: row.tokenizer_version,
+        corpus_policy_version: u32::try_from(row.corpus_policy_version).unwrap_or(0),
         source_revision: row.source_revision,
         indexed_revision: row.indexed_revision,
         active_generation: row.active_generation,

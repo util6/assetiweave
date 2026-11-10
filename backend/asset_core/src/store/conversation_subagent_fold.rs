@@ -38,7 +38,8 @@ use crate::backend::domain::ConversationSession;
 use super::conversations::snapshot::replace_session_snapshot_sqlx_tx;
 use super::conversations::{
     bump_conversation_search_source_revision_sqlx_tx, map_sqlx_conversation_session,
-    update_conversation_session_last_cwd_sqlx_tx, upsert_conversation_session_sqlx_tx,
+    replace_session_search_corpus_sqlx, update_conversation_session_last_cwd_sqlx_tx,
+    upsert_conversation_session_sqlx_tx,
 };
 use super::database::table_exists;
 use super::{StoreError, StoreResult};
@@ -334,6 +335,12 @@ async fn fold_one_session(
     )
     .await?;
     tx.commit().await.map_err(StoreError::external)?;
+
+    // 派生语料索引不参与事实事务，折算后逐会话推进一次（幂等，可安全重跑）。
+    for child in &folded.children {
+        replace_session_search_corpus_sqlx(pool, tenant_id, &child.session.id).await?;
+    }
+    replace_session_search_corpus_sqlx(pool, tenant_id, &parent.id).await?;
 
     Ok(Some(FoldOutcome {
         child_count: folded.children.len(),

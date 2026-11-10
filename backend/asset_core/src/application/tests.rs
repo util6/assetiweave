@@ -5738,7 +5738,10 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         .rebuild_conversation_search_index()
         .await
         .expect("rebuild raw shell search index");
-    assert_eq!(report.document_count, 6);
+    assert_eq!(
+        report.document_count, 3,
+        "高信号语料只保留提问 / 最终回答 / 命令语义标签"
+    );
     let indexed_command_search = service
         .search_conversation_records(ConversationSearchParams {
             record_kind: Some("session".to_string()),
@@ -5763,8 +5766,10 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         .await
         .expect("search raw shell command Part in Tantivy");
     assert_eq!(indexed_command_search.backend, "tantivy");
-    assert_eq!(indexed_command_search.total_count, 1);
-    assert_eq!(indexed_command_search.hits[0].block_id, cmd_part_id);
+    assert_eq!(
+        indexed_command_search.total_count, 0,
+        "原始命令正文属于终端噪音，不得进入检索语料"
+    );
     let _ = fs::remove_dir_all(root);
 }
 

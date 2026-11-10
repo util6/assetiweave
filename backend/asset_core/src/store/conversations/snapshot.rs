@@ -1,8 +1,12 @@
-//! 会话快照整包替换。
+//! 会话快照整包替换（ADR-0023）。
 //!
 //! 对话适配器每次返回的都是单个会话的完整快照，宿主又普遍支持回滚与分支切换，
 //! 因此落库粒度统一收口在会话级：版本未变直接短路，版本变化就在单事务里
-//! 把该会话的全文索引、内容事实与交互轮次整体清空后重写。
+//! 把该会话的内容事实与交互轮次整体清空后重写。
+//!
+//! 本层只写业务事实（`conversation_sessions` / `turns` / `parts`）。搜索索引是只读派生产物，
+//! 由事实提交后的事件消费者异步推进；旋钮对账（missing / resurrect）属于冷路径，
+//! 父快照替换也不承担子会话的物理清理——本地资产遵循保险箱语义。
 //!
 //! 轮次身份只表达"某会话的第几轮"（`sha256(session_id, turn_index)`），
 //! 适配器提供的 `external_id` 降级为导入期的内存临时源键，仅用于解析子代理父子关系。
@@ -16,17 +20,12 @@ use crate::backend::domain::conversations::triad::{
     merge_turn_triad, split_normalized_turn, TriadPart, TurnProcess,
 };
 use crate::backend::domain::{
-    derive_part_id, derive_part_id_key, derive_turn_id, ConversationCardKindDefinition,
-    ConversationPart, ConversationRecordKind, ConversationSession, ConversationTurn,
-    NormalizedConversationTurn,
+    derive_part_id, derive_part_id_key, derive_turn_id, ConversationPart, ConversationRecordKind,
+    ConversationSession, ConversationTurn, NormalizedConversationTurn,
 };
 use crate::backend::store::{StoreError, StoreResult};
 
-use super::conversation_repo::part_index::part_index_text;
-use super::subagent::{
-    annotate_subagent_anchors, collect_referenced_child_session_ids,
-    reconcile_orphan_subagent_sessions_sqlx_tx, SUBAGENT_EXECUTION_ORIGIN,
-};
+use super::subagent::{annotate_subagent_anchors, SUBAGENT_EXECUTION_ORIGIN};
 
 /// 两族记录在物理表名、零件列结构与主键前缀上的唯一映射。
 ///
@@ -198,9 +197,9 @@ pub(crate) fn prepare_session_snapshot(
 
 /// 在单事务内完成一个会话的整包替换。
 ///
-/// 顺序固定为：清该会话全文索引 → 清内容事实 → 清交互轮次 → 批量写新快照 →
-/// 直接复用内存中的轮次与内容事实投影索引行 → 对账本次快照不再引用的孤儿子代理会话。
-/// 调用方负责先 `UPSERT` 会话主表行。
+/// 顺序固定为：清内容事实 → 清交互轮次 → 批量写新快照。派生索引与子会话清理不在此边界内：
+/// 前者由事实提交后的消费者异步推进，后者属于冷路径的显式对账。
+/// 调用方负责先 `UPSERT` 会话主表行与成功版本凭据。
 pub(crate) async fn replace_session_snapshot_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
@@ -209,13 +208,6 @@ pub(crate) async fn replace_session_snapshot_sqlx_tx(
     prepared: &[PreparedTurn],
 ) -> StoreResult<()> {
     let tables = kind.record_tables();
-
-    sqlx::query("DELETE FROM conversation_part_fts WHERE tenant_id = ?1 AND session_id = ?2")
-        .bind(tenant_id)
-        .bind(&session.id)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
 
     let delete_parts = format!(
         "DELETE FROM {parts} WHERE tenant_id = ?1 AND turn_id IN \
@@ -246,35 +238,34 @@ pub(crate) async fn replace_session_snapshot_sqlx_tx(
         insert_parts_sqlx_tx(tx, tenant_id, tables, &entry.turn.id, &entry.parts).await?;
     }
 
-    let card_kinds = load_adapter_card_kinds_sqlx_tx(tx, tenant_id, &session.adapter_id).await?;
-    for entry in prepared {
-        project_turn_part_index_sqlx_tx(
-            tx,
-            tenant_id,
-            tables,
-            &session.id,
-            &session.adapter_id,
-            &entry.turn,
-            &entry.parts,
-            &card_kinds,
-        )
-        .await?;
-    }
-
-    if matches!(kind, ConversationRecordKind::Session) {
-        // 父会话在宿主侧回滚后，被抹掉的派发不会再有文件来源；这里按"本快照引用集合"
-        // 对账，避免回滚分支留下点进去 404 的幽灵子会话。
-        let referenced = collect_referenced_child_session_ids(prepared);
-        reconcile_orphan_subagent_sessions_sqlx_tx(
-            tx,
-            tenant_id,
-            &session.source_id,
-            &session.id,
-            &referenced,
-        )
-        .await?;
-    }
     Ok(())
+}
+
+/// 把某一轮次当前的提交事实还原成完整 Part 序列（供检索语料抽取使用）。
+///
+/// 事实表只存三段式与中间零件，命令语义标签与文件路径散落在 `process` / `attrs_json` 里，
+/// 因此语料抽取必须复用这套还原逻辑，而不是另写一份读法。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn restore_turn_parts(
+    adapter_id: &str,
+    part_id_prefix: &str,
+    turn_id: &str,
+    prompt: &str,
+    process_json: Option<&str>,
+    response: Option<&str>,
+    parts: &[TriadPart],
+) -> Vec<ConversationPart> {
+    let process: Option<TurnProcess> =
+        process_json.and_then(|json| serde_json::from_str(json).ok());
+    merge_turn_triad(
+        adapter_id,
+        part_id_prefix,
+        turn_id,
+        prompt,
+        process.as_ref(),
+        response,
+        parts,
+    )
 }
 
 async fn insert_turn_sqlx_tx(
@@ -357,83 +348,6 @@ async fn insert_parts_sqlx_tx(
                 .map_err(StoreError::external)?;
         }
     }
-    Ok(())
-}
-
-async fn load_adapter_card_kinds_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    adapter_id: &str,
-) -> StoreResult<Vec<ConversationCardKindDefinition>> {
-    let card_kinds_json: Option<String> = sqlx::query_scalar(
-        "SELECT card_kinds_json FROM conversation_adapters WHERE tenant_id = ?1 AND id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(adapter_id)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
-    match card_kinds_json {
-        Some(json) => Ok(serde_json::from_str(&json).map_err(StoreError::external)?),
-        None => Ok(Vec::new()),
-    }
-}
-
-/// 复用内存中的轮次与内容事实直接投影索引正文，不再按轮次回读数据库。
-#[allow(clippy::too_many_arguments)]
-async fn project_turn_part_index_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    tables: RecordTables,
-    session_id: &str,
-    adapter_id: &str,
-    turn: &ConversationTurn,
-    parts: &[TriadPart],
-    card_kinds: &[ConversationCardKindDefinition],
-) -> StoreResult<()> {
-    let process: Option<TurnProcess> = turn
-        .process
-        .as_deref()
-        .and_then(|json| serde_json::from_str(json).ok());
-    let restored = merge_turn_triad(
-        adapter_id,
-        tables.part_id_prefix,
-        &turn.id,
-        &turn.prompt,
-        process.as_ref(),
-        turn.response.as_deref(),
-        parts,
-    );
-    for part in restored {
-        let Some(text) = part_index_text(&part, adapter_id, card_kinds)? else {
-            continue;
-        };
-        insert_part_index_row_sqlx_tx(tx, tenant_id, &part, session_id, &text).await?;
-    }
-    Ok(())
-}
-
-async fn insert_part_index_row_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    part: &ConversationPart,
-    session_id: &str,
-    text: &str,
-) -> StoreResult<()> {
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_part_fts (tenant_id, part_id, session_id, turn_id, text)
-        VALUES (?1, ?2, ?3, ?4, ?5)
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(&part.id)
-    .bind(session_id)
-    .bind(&part.turn_id)
-    .bind(text)
-    .execute(&mut **tx)
-    .await
-    .map_err(StoreError::external)?;
     Ok(())
 }
 

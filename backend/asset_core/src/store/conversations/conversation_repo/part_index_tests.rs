@@ -27,13 +27,16 @@ async fn fixture() -> Fixture {
     Fixture { pool, db_path }
 }
 
-/// 直接写入会话 / 轮次 / 零件三表，绕开适配器：零件索引只依赖零件本身。
+fn table_names(record_kind: ConversationRecordKind) -> (&'static str, &'static str) {
+    match record_kind {
+        ConversationRecordKind::Session => ("conversation_sessions", "conversation_turns"),
+        ConversationRecordKind::Web => ("web_record_sessions", "web_record_turns"),
+    }
+}
+
 async fn seed_session(pool: &SqlitePool, record_kind: ConversationRecordKind, session_id: &str) {
-    let sessions = match record_kind {
-        ConversationRecordKind::Session => "conversation_sessions",
-        ConversationRecordKind::Web => "web_record_sessions",
-    };
-    let session_sql = format!(
+    let (sessions, _) = table_names(record_kind);
+    let sql = format!(
         r#"
         INSERT INTO {sessions} (
             tenant_id, id, source_id, adapter_id, external_id, title,
@@ -45,7 +48,7 @@ async fn seed_session(pool: &SqlitePool, record_kind: ConversationRecordKind, se
         )
         "#
     );
-    sqlx::query(AssertSqlSafe(session_sql))
+    sqlx::query(AssertSqlSafe(sql))
         .bind(TENANT_ID)
         .bind(session_id)
         .bind(format!("{session_id}-external"))
@@ -54,88 +57,59 @@ async fn seed_session(pool: &SqlitePool, record_kind: ConversationRecordKind, se
         .expect("seed session");
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn seed_turn(
     pool: &SqlitePool,
     record_kind: ConversationRecordKind,
     session_id: &str,
     turn_id: &str,
     turn_index: i64,
+    prompt: &str,
+    response: Option<&str>,
+    process: Option<&str>,
 ) {
-    let turns = match record_kind {
-        ConversationRecordKind::Session => "conversation_turns",
-        ConversationRecordKind::Web => "web_record_turns",
-    };
-    let turn_sql = format!(
+    let (_, turns) = table_names(record_kind);
+    let sql = format!(
         r#"
         INSERT INTO {turns} (
-            tenant_id, id, session_id, turn_index, prompt, started_at, ended_at, imported_at
-        ) VALUES (?1, ?2, ?3, ?4, 'how does indexing work', '2026-10-23T00:00:00Z', NULL,
+            tenant_id, id, session_id, turn_index, prompt, process, response,
+            started_at, ended_at, imported_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '2026-10-23T00:00:00Z', NULL,
                   '2026-10-23T00:00:00Z')
         "#
     );
-    sqlx::query(AssertSqlSafe(turn_sql))
+    sqlx::query(AssertSqlSafe(sql))
         .bind(TENANT_ID)
         .bind(turn_id)
         .bind(session_id)
         .bind(turn_index)
+        .bind(prompt)
+        .bind(process)
+        .bind(response)
         .execute(pool)
         .await
         .expect("seed turn");
 }
 
-struct SeedPart<'a> {
-    card_kind: &'a str,
-    text: Option<&'a str>,
-    command: Option<&'a str>,
-    role: &'a str,
-    kind: &'a str,
-}
-
-impl<'a> SeedPart<'a> {
-    fn card(card_kind: &'a str, text: &'a str) -> Self {
-        Self {
-            card_kind,
-            text: Some(text),
-            command: None,
-            role: "tool",
-            kind: "text",
-        }
-    }
-
-    fn command(command: &'a str) -> Self {
-        Self {
-            card_kind: "command",
-            text: None,
-            command: Some(command),
-            role: "tool",
-            kind: "command",
-        }
-    }
-}
-
+#[allow(clippy::too_many_arguments)]
 async fn seed_part(
     pool: &SqlitePool,
     record_kind: ConversationRecordKind,
     turn_id: &str,
     index: i64,
-    part: SeedPart<'_>,
-) -> String {
-    let part_prefix = match record_kind {
-        ConversationRecordKind::Session => "conversation-part",
-        ConversationRecordKind::Web => "web-record-part",
-    };
-    let part_id = derive_part_id(part_prefix, turn_id, index);
+    kind: &str,
+    content: Option<&str>,
+    attrs_json: Option<&str>,
+) {
     match record_kind {
         ConversationRecordKind::Session => {
+            let part_id = derive_part_id("conversation-part", turn_id, index);
             let id_key = derive_part_id_key(&part_id).expect("derive id_key");
-            let content = part.text.or(part.command);
-            let kind = part.card_kind;
             sqlx::query(
                 r#"
                 INSERT INTO conversation_parts (
-                    tenant_id, turn_id, part_index, id_key, kind, content,
-                    attrs_json, translated_text
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL)
+                    tenant_id, turn_id, part_index, id_key, kind, content, attrs_json, translated_text
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)
                 "#,
             )
             .bind(TENANT_ID)
@@ -144,16 +118,14 @@ async fn seed_part(
             .bind(id_key.as_slice())
             .bind(kind)
             .bind(content)
+            .bind(attrs_json)
             .execute(pool)
             .await
             .expect("seed part");
         }
         ConversationRecordKind::Web => {
+            let part_id = derive_part_id("web-record-part", turn_id, index);
             let id_key = derive_part_id_key(&part_id).unwrap_or([0u8; 8]);
-            let is_answer =
-                part.kind == "text" || part.kind == "code_block" || part.role == "assistant";
-            let kind = if is_answer { "answer" } else { "process" };
-            let content = part.text.or(part.command).unwrap_or_default();
             sqlx::query(
                 r#"
                 INSERT INTO web_record_parts (
@@ -172,7 +144,6 @@ async fn seed_part(
             .expect("seed part");
         }
     }
-    part_id
 }
 
 async fn indexed_texts(pool: &SqlitePool, session_id: &str) -> Vec<String> {
@@ -187,361 +158,331 @@ async fn indexed_texts(pool: &SqlitePool, session_id: &str) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn every_card_body_is_indexed_without_role_classification() {
+async fn corpus_keeps_only_prompt_and_final_answer() {
     let fixture = fixture().await;
-    let session_id = "conversation-session-tools";
+    let session_id = "conversation-session-signal";
     seed_session(&fixture.pool, ConversationRecordKind::Session, session_id).await;
     seed_turn(
         &fixture.pool,
         ConversationRecordKind::Session,
         session_id,
-        "conversation-turn-tools",
+        "conversation-turn-signal",
         0,
+        "如何把会话同步从 29 分钟降到 2 秒？",
+        Some("把搜索索引移出事实事务即可。"),
+        None,
     )
     .await;
-    for (index, (card_kind, text)) in [
-        ("answer", "the answer body"),
-        ("tool_result", "connection refused by upstream"),
-        ("file_change", "patched src/main.rs and added retry"),
-        ("subagent_text", "sub agent finished the migration"),
-        ("execution_result", "exit code 1 with stack trace"),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        seed_part(
+    seed_part(
+        &fixture.pool,
+        ConversationRecordKind::Session,
+        "conversation-turn-signal",
+        10,
+        "tool",
+        Some("connection refused by upstream"),
+        None,
+    )
+    .await;
+    seed_part(
+        &fixture.pool,
+        ConversationRecordKind::Session,
+        "conversation-turn-signal",
+        11,
+        "code",
+        Some("diff --git a/x b/x\n@@ -1 +1 @@"),
+        None,
+    )
+    .await;
+
+    let indexed = replace_session_search_corpus_sqlx(&fixture.pool, TENANT_ID, session_id)
+        .await
+        .expect("replace corpus");
+
+    assert_eq!(indexed, 2, "只有提问与最终回答允许进入语料");
+    let texts = indexed_texts(&fixture.pool, session_id).await;
+    assert!(texts.iter().any(|text| text.contains("29 分钟")));
+    assert!(texts.iter().any(|text| text.contains("移出事实事务")));
+    assert!(!texts.iter().any(|text| text.contains("connection refused")));
+    assert!(!texts.iter().any(|text| text.contains("diff --git")));
+
+    fixture.cleanup();
+}
+
+#[tokio::test]
+async fn corpus_collects_changed_paths_and_command_labels() {
+    let fixture = fixture().await;
+    let session_id = "conversation-session-exec";
+    seed_session(&fixture.pool, ConversationRecordKind::Session, session_id).await;
+    seed_turn(
+        &fixture.pool,
+        ConversationRecordKind::Session,
+        session_id,
+        "conversation-turn-exec",
+        0,
+        "重建索引",
+        None,
+        Some(r#"{"items":[{"seq":0,"kind":"command","label":"编译构建","content":"pnpm build"}]}"#),
+    )
+    .await;
+    seed_part(
+        &fixture.pool,
+        ConversationRecordKind::Session,
+        "conversation-turn-exec",
+        10,
+        "tool",
+        Some("patched 42 lines"),
+        Some(r#"{"file_path":"~/project/src/snapshot.rs","command_label":"Edit"}"#),
+    )
+    .await;
+
+    replace_session_search_corpus_sqlx(&fixture.pool, TENANT_ID, session_id)
+        .await
+        .expect("replace corpus");
+
+    let texts = indexed_texts(&fixture.pool, session_id).await;
+    assert!(
+        texts.iter().any(|text| text == "~/project/src/snapshot.rs"),
+        "变更文件路径必须进入语料: {texts:?}"
+    );
+    assert!(
+        texts.iter().any(|text| text.contains("编译构建")),
+        "命令语义标签必须进入语料: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|text| text.contains("pnpm build")),
+        "原始命令不得进入语料"
+    );
+
+    fixture.cleanup();
+}
+
+#[tokio::test]
+async fn replacement_is_idempotent() {
+    let fixture = fixture().await;
+    let session_id = "conversation-session-idempotent";
+    seed_session(&fixture.pool, ConversationRecordKind::Session, session_id).await;
+    seed_turn(
+        &fixture.pool,
+        ConversationRecordKind::Session,
+        session_id,
+        "conversation-turn-idempotent",
+        0,
+        "提问",
+        Some("回答"),
+        None,
+    )
+    .await;
+
+    let first = replace_session_search_corpus_sqlx(&fixture.pool, TENANT_ID, session_id)
+        .await
+        .expect("first replace");
+    let second = replace_session_search_corpus_sqlx(&fixture.pool, TENANT_ID, session_id)
+        .await
+        .expect("second replace");
+
+    assert_eq!(first, second);
+    assert_eq!(indexed_texts(&fixture.pool, session_id).await.len(), second);
+
+    fixture.cleanup();
+}
+
+#[tokio::test]
+async fn replaced_snapshot_drops_withdrawn_corpus_rows() {
+    let fixture = fixture().await;
+    let session_id = "conversation-session-withdraw";
+    seed_session(&fixture.pool, ConversationRecordKind::Session, session_id).await;
+    seed_turn(
+        &fixture.pool,
+        ConversationRecordKind::Session,
+        session_id,
+        "conversation-turn-withdraw",
+        0,
+        "第一版提问",
+        Some("第一版回答"),
+        None,
+    )
+    .await;
+
+    replace_session_search_corpus_sqlx(&fixture.pool, TENANT_ID, session_id)
+        .await
+        .expect("replace corpus");
+
+    // 模拟宿主侧回滚：同一会话被整包替换为新快照，旧轮次不再存在。
+    sqlx::query("DELETE FROM conversation_turns WHERE tenant_id = ?1 AND session_id = ?2")
+        .bind(TENANT_ID)
+        .bind(session_id)
+        .execute(&fixture.pool)
+        .await
+        .expect("drop turns");
+    seed_turn(
+        &fixture.pool,
+        ConversationRecordKind::Session,
+        session_id,
+        "conversation-turn-withdraw-2",
+        0,
+        "第二版提问",
+        Some("第二版回答"),
+        None,
+    )
+    .await;
+
+    replace_session_search_corpus_sqlx(&fixture.pool, TENANT_ID, session_id)
+        .await
+        .expect("replace corpus again");
+
+    let texts = indexed_texts(&fixture.pool, session_id).await;
+    assert_eq!(texts.len(), 2);
+    assert!(!texts.iter().any(|text| text.contains("第一版")));
+
+    fixture.cleanup();
+}
+
+#[tokio::test]
+async fn web_record_sessions_use_the_same_corpus_policy() {
+    let fixture = fixture().await;
+    let session_id = "web-record-session-corpus";
+    seed_session(&fixture.pool, ConversationRecordKind::Web, session_id).await;
+    seed_turn(
+        &fixture.pool,
+        ConversationRecordKind::Web,
+        session_id,
+        "web-record-turn-corpus",
+        0,
+        "网页提问",
+        Some("网页回答"),
+        None,
+    )
+    .await;
+    seed_part(
+        &fixture.pool,
+        ConversationRecordKind::Web,
+        "web-record-turn-corpus",
+        5,
+        "process",
+        Some("搜索了 12 个页面"),
+        None,
+    )
+    .await;
+
+    let indexed = replace_session_search_corpus_sqlx(&fixture.pool, TENANT_ID, session_id)
+        .await
+        .expect("replace web corpus");
+
+    assert_eq!(indexed, 2);
+    let texts = indexed_texts(&fixture.pool, session_id).await;
+    assert!(!texts.iter().any(|text| text.contains("搜索了 12 个页面")));
+
+    fixture.cleanup();
+}
+
+#[tokio::test]
+async fn tenant_rebuild_reports_row_count_and_optimizes() {
+    let fixture = fixture().await;
+    for (session_id, turn_id) in [
+        ("conversation-session-a", "conversation-turn-a"),
+        ("conversation-session-b", "conversation-turn-b"),
+    ] {
+        seed_session(&fixture.pool, ConversationRecordKind::Session, session_id).await;
+        seed_turn(
             &fixture.pool,
             ConversationRecordKind::Session,
-            "conversation-turn-tools",
-            index as i64,
-            SeedPart::card(card_kind, text),
+            session_id,
+            turn_id,
+            0,
+            "提问",
+            None,
+            None,
         )
         .await;
     }
 
-    let mut tx = fixture.pool.begin().await.expect("begin transaction");
-    let indexed = replace_turn_part_index_sqlx_tx(
-        &mut tx,
-        TENANT_ID,
-        "conversation-turn-tools",
-        ConversationRecordKind::Session,
-    )
-    .await
-    .expect("index turn parts");
-    tx.commit().await.expect("commit transaction");
-
-    assert_eq!(indexed, 5);
-    let texts = indexed_texts(&fixture.pool, session_id).await;
-    assert_eq!(texts.len(), 5);
-    for expected in [
-        "the answer body",
-        "connection refused by upstream",
-        "patched src/main.rs and added retry",
-        "sub agent finished the migration",
-        "exit code 1 with stack trace",
-    ] {
-        assert!(
-            texts.iter().any(|text| text == expected),
-            "missing indexed body: {expected}"
-        );
-    }
-
-    fixture.cleanup();
-}
-
-#[tokio::test]
-async fn raw_shell_command_part_stays_searchable() {
-    let fixture = fixture().await;
-    let session_id = "conversation-session-shell";
-    seed_session(&fixture.pool, ConversationRecordKind::Session, session_id).await;
-    seed_turn(
-        &fixture.pool,
-        ConversationRecordKind::Session,
-        session_id,
-        "conversation-turn-shell",
-        0,
-    )
-    .await;
-    seed_part(
-        &fixture.pool,
-        ConversationRecordKind::Session,
-        "conversation-turn-shell",
-        0,
-        SeedPart::command("raw shell command"),
-    )
-    .await;
-
-    let mut tx = fixture.pool.begin().await.expect("begin transaction");
-    replace_turn_part_index_sqlx_tx(
-        &mut tx,
-        TENANT_ID,
-        "conversation-turn-shell",
-        ConversationRecordKind::Session,
-    )
-    .await
-    .expect("index command part");
-    tx.commit().await.expect("commit transaction");
-
-    let texts = indexed_texts(&fixture.pool, session_id).await;
-    assert_eq!(texts.len(), 1);
-    assert!(
-        texts[0].contains("raw shell command"),
-        "command body must stay searchable, got {:?}",
-        texts[0]
-    );
-
-    fixture.cleanup();
-}
-
-#[tokio::test]
-async fn reindexing_one_turn_leaves_other_turns_and_drops_stale_rows() {
-    let fixture = fixture().await;
-    let session_id = "conversation-session-turns";
-    seed_session(&fixture.pool, ConversationRecordKind::Session, session_id).await;
-    seed_turn(
-        &fixture.pool,
-        ConversationRecordKind::Session,
-        session_id,
-        "conversation-turn-first",
-        0,
-    )
-    .await;
-    seed_turn(
-        &fixture.pool,
-        ConversationRecordKind::Session,
-        session_id,
-        "conversation-turn-second",
-        1,
-    )
-    .await;
-    let first_part_id = seed_part(
-        &fixture.pool,
-        ConversationRecordKind::Session,
-        "conversation-turn-first",
-        0,
-        SeedPart::card("answer", "first turn body"),
-    )
-    .await;
-    seed_part(
-        &fixture.pool,
-        ConversationRecordKind::Session,
-        "conversation-turn-second",
-        0,
-        SeedPart::card("answer", "second turn body"),
-    )
-    .await;
-
-    for turn_id in ["conversation-turn-first", "conversation-turn-second"] {
-        let mut tx = fixture.pool.begin().await.expect("begin transaction");
-        replace_turn_part_index_sqlx_tx(
-            &mut tx,
-            TENANT_ID,
-            turn_id,
-            ConversationRecordKind::Session,
-        )
-        .await
-        .expect("index turn");
-        tx.commit().await.expect("commit transaction");
-    }
-
-    // 只改第一轮并重建该轮索引：第二轮索引行必须原样保留，第一轮不得留重复行。
-    let first_part_key = derive_part_id_key(&first_part_id).expect("derive id_key");
-    sqlx::query(
-        "UPDATE conversation_parts SET content = 'first turn rewritten' WHERE tenant_id = ?1 AND id_key = ?2",
-    )
-    .bind(TENANT_ID)
-    .bind(first_part_key.as_slice())
-    .execute(&fixture.pool)
-    .await
-    .expect("rewrite part body");
-    let mut tx = fixture.pool.begin().await.expect("begin transaction");
-    replace_turn_part_index_sqlx_tx(
-        &mut tx,
-        TENANT_ID,
-        "conversation-turn-first",
-        ConversationRecordKind::Session,
-    )
-    .await
-    .expect("reindex turn");
-    tx.commit().await.expect("commit transaction");
-
-    let texts = indexed_texts(&fixture.pool, session_id).await;
-    assert_eq!(
-        texts,
-        vec![
-            "first turn rewritten".to_string(),
-            "second turn body".to_string()
-        ]
-    );
-
-    fixture.cleanup();
-}
-
-#[tokio::test]
-async fn skips_parts_without_projected_body() {
-    let fixture = fixture().await;
-    let session_id = "conversation-session-empty";
-    seed_session(&fixture.pool, ConversationRecordKind::Session, session_id).await;
-    seed_turn(
-        &fixture.pool,
-        ConversationRecordKind::Session,
-        session_id,
-        "conversation-turn-empty",
-        0,
-    )
-    .await;
-    seed_part(
-        &fixture.pool,
-        ConversationRecordKind::Session,
-        "conversation-turn-empty",
-        0,
-        SeedPart::card("answer", "   "),
-    )
-    .await;
-
-    let mut tx = fixture.pool.begin().await.expect("begin transaction");
-    let indexed = replace_turn_part_index_sqlx_tx(
-        &mut tx,
-        TENANT_ID,
-        "conversation-turn-empty",
-        ConversationRecordKind::Session,
-    )
-    .await
-    .expect("index blank part");
-    tx.commit().await.expect("commit transaction");
-
-    assert_eq!(indexed, 0);
-    assert!(indexed_texts(&fixture.pool, session_id).await.is_empty());
-
-    fixture.cleanup();
-}
-
-#[tokio::test]
-async fn rebuild_covers_both_record_families_in_one_index() {
-    let fixture = fixture().await;
-    seed_session(
-        &fixture.pool,
-        ConversationRecordKind::Session,
-        "conversation-session-rebuild",
-    )
-    .await;
-    seed_turn(
-        &fixture.pool,
-        ConversationRecordKind::Session,
-        "conversation-session-rebuild",
-        "conversation-turn-rebuild",
-        0,
-    )
-    .await;
-    seed_session(
-        &fixture.pool,
-        ConversationRecordKind::Web,
-        "web-record-session-rebuild",
-    )
-    .await;
-    seed_turn(
-        &fixture.pool,
-        ConversationRecordKind::Web,
-        "web-record-session-rebuild",
-        "web-record-turn-rebuild",
-        0,
-    )
-    .await;
-    seed_part(
-        &fixture.pool,
-        ConversationRecordKind::Session,
-        "conversation-turn-rebuild",
-        0,
-        SeedPart::card("answer", "session body"),
-    )
-    .await;
-    seed_part(
-        &fixture.pool,
-        ConversationRecordKind::Web,
-        "web-record-turn-rebuild",
-        0,
-        SeedPart::card("tool_result", "web tool output"),
-    )
-    .await;
-
-    sqlx::query("DELETE FROM conversation_part_fts")
-        .execute(&fixture.pool)
-        .await
-        .expect("wipe index");
-
-    let mut reported = Vec::new();
+    let mut progress = Vec::new();
     let count = rebuild_tenant_part_index_sqlx(&fixture.pool, TENANT_ID, |done, total| {
-        reported.push((done, total));
+        progress.push((done, total));
     })
     .await
-    .expect("rebuild tenant part index");
+    .expect("rebuild tenant corpus");
 
     assert_eq!(count, 2);
-    assert_eq!(reported.first(), Some(&(0, 2)));
-    assert_eq!(reported.last(), Some(&(2, 2)));
-    assert_eq!(
-        indexed_texts(&fixture.pool, "conversation-session-rebuild").await,
-        vec!["session body".to_string()]
+    assert_eq!(progress.first(), Some(&(0, 2)));
+    assert_eq!(progress.last(), Some(&(2, 2)));
+
+    fixture.cleanup();
+}
+
+#[tokio::test]
+async fn corpus_drift_is_closed_by_a_controlled_rebuild() {
+    let fixture = fixture().await;
+    let session_id = "conversation-session-drift";
+    seed_session(&fixture.pool, ConversationRecordKind::Session, session_id).await;
+    seed_turn(
+        &fixture.pool,
+        ConversationRecordKind::Session,
+        session_id,
+        "conversation-turn-drift",
+        0,
+        "提问",
+        Some("回答"),
+        None,
+    )
+    .await;
+    // 模拟迁移留下的旧版索引：状态就绪但语料口径落后。
+    set_conversation_part_index_status_sqlx(&fixture.pool, TENANT_ID, PART_INDEX_STALE, 0, None)
+        .await
+        .expect("mark stale");
+
+    assert!(
+        !conversation_part_index_ready_sqlx(&fixture.pool, TENANT_ID)
+            .await
+            .expect("read ready flag")
     );
-    assert_eq!(
-        indexed_texts(&fixture.pool, "web-record-session-rebuild").await,
-        vec!["web tool output".to_string()]
+
+    let rebuilt = ensure_conversation_search_corpus_current_sqlx(&fixture.pool, TENANT_ID)
+        .await
+        .expect("ensure corpus current");
+
+    assert!(rebuilt);
+    assert!(conversation_part_index_ready_sqlx(&fixture.pool, TENANT_ID)
+        .await
+        .expect("read ready flag"));
+    assert_eq!(indexed_texts(&fixture.pool, session_id).await.len(), 2);
+
+    // 口径已对齐后再次调用不重复重建。
+    assert!(
+        !ensure_conversation_search_corpus_current_sqlx(&fixture.pool, TENANT_ID)
+            .await
+            .expect("ensure corpus current")
     );
 
     fixture.cleanup();
 }
 
 #[tokio::test]
-async fn state_without_row_is_ready_and_rebuild_marks_readiness() {
+async fn source_scoped_replacement_covers_every_session() {
     let fixture = fixture().await;
+    for (session_id, turn_id) in [
+        ("conversation-session-s1", "conversation-turn-s1"),
+        ("conversation-session-s2", "conversation-turn-s2"),
+    ] {
+        seed_session(&fixture.pool, ConversationRecordKind::Session, session_id).await;
+        seed_turn(
+            &fixture.pool,
+            ConversationRecordKind::Session,
+            session_id,
+            turn_id,
+            0,
+            "提问",
+            Some("回答"),
+            None,
+        )
+        .await;
+    }
 
-    assert!(
-        conversation_part_index_ready_sqlx(&fixture.pool, TENANT_ID)
-            .await
-            .expect("read readiness"),
-        "missing state row must not degrade search"
-    );
+    let indexed = replace_source_search_corpus_sqlx(&fixture.pool, TENANT_ID, "fixture-source")
+        .await
+        .expect("replace source corpus");
 
-    set_conversation_part_index_status_sqlx(&fixture.pool, TENANT_ID, PART_INDEX_BUILDING, 0, None)
-        .await
-        .expect("mark building");
-    assert!(
-        !conversation_part_index_ready_sqlx(&fixture.pool, TENANT_ID)
-            .await
-            .expect("read readiness while building")
-    );
-
-    set_conversation_part_index_status_sqlx(
-        &fixture.pool,
-        TENANT_ID,
-        PART_INDEX_STALE,
-        0,
-        Some("boom"),
-    )
-    .await
-    .expect("mark stale");
-    let stale = load_conversation_part_index_state_sqlx(&fixture.pool, TENANT_ID)
-        .await
-        .expect("load state")
-        .expect("state row");
-    assert_eq!(stale.status, PART_INDEX_STALE);
-    assert_eq!(stale.last_error.as_deref(), Some("boom"));
-    assert!(
-        !conversation_part_index_ready_sqlx(&fixture.pool, TENANT_ID)
-            .await
-            .expect("read readiness while stale")
-    );
-
-    set_conversation_part_index_status_sqlx(&fixture.pool, TENANT_ID, PART_INDEX_READY, 7, None)
-        .await
-        .expect("mark ready");
-    let ready = load_conversation_part_index_state_sqlx(&fixture.pool, TENANT_ID)
-        .await
-        .expect("load state")
-        .expect("state row");
-    assert!(ready.is_ready());
-    assert_eq!(ready.part_count, 7);
-    assert!(ready.rebuilt_at.is_some());
+    assert_eq!(indexed, 4);
 
     fixture.cleanup();
 }

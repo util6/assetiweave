@@ -266,7 +266,7 @@ pub async fn hydrate_conversation_search_matches_sqlx(
         .cloned()
         .map(|item| (item.id.clone(), item))
         .collect::<BTreeMap<_, _>>();
-    let parts = load_search_parts_sqlx(
+    let parts_by_turn = load_search_parts_sqlx(
         pool,
         tenant_id,
         tables,
@@ -274,11 +274,13 @@ pub async fn hydrate_conversation_search_matches_sqlx(
         source_id,
         Some(&session_ids_json),
     )
-    .await?
-    .into_values()
-    .flatten()
-    .map(|item| (item.id.clone(), item))
-    .collect::<BTreeMap<_, _>>();
+    .await?;
+    let parts = parts_by_turn
+        .values()
+        .flatten()
+        .cloned()
+        .map(|item| (item.id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
     let needle = normalize_query(Some(query))
         .ok_or_else(|| StoreError::external("conversation search query is required".to_string()))?;
     let id_fragment = crate::backend::domain::conversation_id_search_term(query)
@@ -328,6 +330,51 @@ pub async fn hydrate_conversation_search_matches_sqlx(
                 )
             })?;
             (None, turn.prompt.clone())
+        } else if let Some(signal) = corpus_signal_from_document_id(&matched.document_id) {
+            // 高信号语料文档：正文由策略从已提交事实重新生成，不再回读展示卡片，
+            // 因此索引与展示契约解耦，也不会把过程噪音当成命中片段。
+            let turn = turns.get(&matched.turn_id).ok_or_else(|| {
+                StoreError::external(
+                    "conversation search index hydration missed a turn".to_string(),
+                )
+            })?;
+            let empty = Vec::new();
+            let turn_parts = parts_by_turn.get(&matched.turn_id).unwrap_or(&empty);
+            let documents =
+                crate::backend::domain::conversations::search_corpus::current_search_corpus_policy(
+                )
+                .extract(
+                    &crate::backend::domain::conversations::search_corpus::CorpusTurnFacts {
+                        turn_id: &turn.id,
+                        prompt: &turn.prompt,
+                        response: turn.response.as_deref(),
+                        parts: turn_parts,
+                    },
+                );
+            let document = documents
+                .into_iter()
+                .find(|document| document.signal == signal)
+                .ok_or_else(|| {
+                    StoreError::external(
+                        "conversation search index hydration missed a corpus document".to_string(),
+                    )
+                })?;
+            // 最终回答仍指向承载它的零件，命中可以原样深链到具体内容节点。
+            let answer_part_id = (signal
+                == crate::backend::domain::conversations::search_corpus::SearchCorpusSignal::Answer)
+                .then(|| {
+                    turn_parts
+                        .iter()
+                        .find(|part| {
+                            part.text
+                                .as_deref()
+                                .map(str::trim)
+                                .is_some_and(|text| text == document.text.trim())
+                        })
+                        .map(|part| part.id.clone())
+                })
+                .flatten();
+            (answer_part_id, document.text)
         } else {
             let part = parts.get(&matched.part_id).ok_or_else(|| {
                 StoreError::external(
@@ -397,4 +444,19 @@ pub async fn hydrate_conversation_search_matches_sqlx(
         total_count: matches.total_count,
         hits,
     })
+}
+
+/// 从索引文档标识里还原高信号语料信号。
+///
+/// 语料文档的标识形如 `<turn_id>:<signal>`；解析失败说明是历史卡片代际的文档，
+/// 继续走原先的卡片投影水合路径。
+fn corpus_signal_from_document_id(
+    document_id: &str,
+) -> Option<crate::backend::domain::conversations::search_corpus::SearchCorpusSignal> {
+    use crate::backend::domain::conversations::search_corpus::SearchCorpusSignal;
+
+    let (_, suffix) = document_id.rsplit_once(':')?;
+    SearchCorpusSignal::ALL
+        .into_iter()
+        .find(|signal| signal.as_str() == suffix)
 }

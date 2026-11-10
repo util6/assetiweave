@@ -398,6 +398,10 @@ export interface ConversationPartIndexStatus {
   status: "ready" | "building" | "stale";
   is_ready: boolean;
   part_count: number;
+  /** 该代索引落盘时使用的检索语料策略版本。 */
+  corpus_policy_version: number;
+  /** 当前代码生效的检索语料策略版本；与上者不一致说明需要一次受控重建。 */
+  current_corpus_policy_version: number;
   last_error: string | null;
   rebuilt_at: string | null;
   updated_at: string | null;
@@ -1396,6 +1400,8 @@ export async function getConversationPartIndexStatus(): Promise<ConversationPart
       status: "ready",
       is_ready: true,
       part_count: 0,
+      corpus_policy_version: 0,
+      current_corpus_policy_version: 0,
       last_error: null,
       rebuilt_at: null,
       updated_at: null,

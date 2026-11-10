@@ -31,19 +31,6 @@ fn anchor_meta_requires_child_external_id() {
 }
 
 #[test]
-fn inline_locator_detection_treats_virtual_paths_as_inline() {
-    assert!(is_inline_subagent_locator(None));
-    assert!(is_inline_subagent_locator(Some("  ")));
-    assert!(is_inline_subagent_locator(Some(
-        "/tmp/projects/session.jsonl#subagent:agent-1"
-    )));
-    assert!(is_inline_subagent_locator(Some("inline:agent-1")));
-    assert!(!is_inline_subagent_locator(Some(
-        "/tmp/projects/session/subagents/agent-1.jsonl"
-    )));
-}
-
-#[test]
 fn annotate_anchors_precomputes_child_session_id_and_process_item() {
     let source_id = "claude-code-live";
     let child_external_id = "parent-1:subagent:agent-1";
@@ -196,7 +183,7 @@ async fn parent_anchor_resolves_child_session_id_regardless_of_import_order() {
 }
 
 #[tokio::test]
-async fn rewind_drops_inline_orphan_and_unbinds_live_file_orphan() {
+async fn rewind_keeps_subagent_assets_and_marks_them_missing() {
     let (database, source) = fixture_database("rewind").await;
     let pool = database.pool();
     let inline_child = "parent-1:subagent:agent-inline";
@@ -250,6 +237,8 @@ async fn rewind_drops_inline_orphan_and_unbinds_live_file_orphan() {
     assert!(session_row_exists(pool, &file_child_id).await);
 
     // 2. 宿主 /rewind：父会话抹掉全部派发，子代理文件也不再出现在扫描集合里。
+    //    本地资产遵循保险箱语义（ADR-0023）：父快照替换不承担子会话的物理清理，
+    //    源端消失只表达为 missing 状态，绝不会把已入库的事实顺手删掉。
     let rewound = parent_session("parent-1", None, "fp-2");
     let parent_only = discovered_ids(&["parent-1"]);
     import_conversation_sessions_with_control_sqlx(
@@ -265,35 +254,25 @@ async fn rewind_drops_inline_orphan_and_unbinds_live_file_orphan() {
     .await
     .unwrap();
 
-    assert!(
-        !session_row_exists(pool, &inline_child_id).await,
-        "内联孤儿子会话没有磁盘源文件，必须随父快照级联清理"
-    );
-    assert!(
-        session_row_exists(pool, &file_child_id).await,
-        "独立磁盘文件仍在的子会话只解除父轮次绑定，保留为隐藏会话"
-    );
-    let file_session_row: (i64, Option<String>) = sqlx::query_as(
-        "SELECT user_visible, execution_purpose FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2",
-    )
-    .bind(TEST_TENANT_ID)
-    .bind(&file_child_id)
-    .fetch_one(pool)
-    .await
-    .unwrap();
-    assert_eq!(file_session_row.0, 0);
-    let purpose: serde_json::Value =
-        serde_json::from_str(file_session_row.1.as_deref().unwrap()).unwrap();
-    assert!(
-        purpose.get("parent_turn_index").is_none(),
-        "回滚后不再派发的子会话必须解除父轮次绑定"
-    );
-    assert!(
-        purpose.get("parent_session_id").is_some(),
-        "父会话主键保留，源文件稍后被清理时才能继续对账"
-    );
+    for child_id in [&inline_child_id, &file_child_id] {
+        let row: (i64, Option<String>) = sqlx::query_as(
+            "SELECT missing, execution_purpose FROM conversation_sessions \
+             WHERE tenant_id = ?1 AND id = ?2",
+        )
+        .bind(TEST_TENANT_ID)
+        .bind(child_id)
+        .fetch_one(pool)
+        .await
+        .expect("subagent session must survive the parent rewind");
+        assert_eq!(row.0, 1, "源端消失只标记 missing，不做物理删除");
+        let purpose: serde_json::Value = serde_json::from_str(row.1.as_deref().unwrap()).unwrap();
+        assert!(
+            purpose.get("parent_session_id").is_some(),
+            "父子溯源必须保留，子会话重新出现时才能自愈"
+        );
+    }
 
-    // 3. 子代理文件在宿主侧被清理后（missing = 1），下一轮父快照替换把它彻底清掉。
+    // 3. 再次整包替换父快照也不会级联删除子会话事实。
     let mut rewound_twice = rewound;
     rewound_twice.source_fingerprint = Some("fp-3".to_string());
     import_conversation_sessions_with_control_sqlx(
@@ -308,10 +287,12 @@ async fn rewind_drops_inline_orphan_and_unbinds_live_file_orphan() {
     )
     .await
     .unwrap();
-    assert!(
-        !session_row_exists(pool, &file_child_id).await,
-        "源文件已消失的孤儿子会话在下一轮对账中被级联清理"
-    );
+    for child_id in [&inline_child_id, &file_child_id] {
+        assert!(
+            session_row_exists(pool, child_id).await,
+            "父快照替换不得把子代理会话当成隐式垃圾回收"
+        );
+    }
     assert!(parent_session_exists(pool, "parent-1").await);
 }
 

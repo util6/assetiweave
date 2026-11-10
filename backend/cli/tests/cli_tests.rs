@@ -1368,7 +1368,9 @@ fn test_conversation_outline_exposes_subagent_semantics() {
                     asset_core::domain::NormalizedConversationPart {
                         role: asset_core::domain::ConversationPartRole::Assistant,
                         kind: asset_core::domain::ConversationPartKind::Text,
-                        text: Some("审阅结论：发现两处越权写库。".to_string()),
+                        text: Some(
+                            "审阅结论：发现两处越权写库 CLI_SUBAGENT_TOKEN_4471".to_string(),
+                        ),
                         language: None,
                         command: None,
                         cwd: None,

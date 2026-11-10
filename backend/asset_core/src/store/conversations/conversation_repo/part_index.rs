@@ -1,205 +1,91 @@
-use super::*;
-use sqlx::Row;
+//! 会话零件的派生检索索引（FTS5）。
+//!
+//! 这是**只读派生产物**，永远不参与事实事务：事实落库成功后由派生索引消费者按会话替换，
+//! 因此索引维护失败不会回滚或阻塞会话同步（ADR-0023）。
+//!
+//! 索引正文由 [`crate::backend::domain::conversations::search_corpus`] 的版本化策略统一生成，
+//! 只放行提问、最终回答、变更文件路径与命令语义标签；终端输出、diff 正文、推理日志与委派
+//! 明细一概不入库。独立搜索索引消费同一份文档，两个后端因此共享同一套信号口径。
 
-/// 把一张零件投影成它的索引正文。
-///
-/// 只取投影出来的正文，不对语义角色做任何判断——工具输出、执行结果、文件变更、子代理
-/// 正文与答复、代码、命令走同一条路径。
-///
-/// 子代理委派锚点额外拼上 `attrs_json` 里的角色 / 标题 / 汇报摘要：这些词只存在于结构化
-/// 属性里，不落正文，漏掉就会让"搜角色名找不到父会话"。
-pub(crate) fn part_index_text(
-    part: &ConversationPart,
-    adapter_id: &str,
-    card_kinds: &[ConversationCardKindDefinition],
-) -> StoreResult<Option<String>> {
-    let cards =
-        crate::backend::domain::conversations::projection::project_conversation_content_cards(
-            part, adapter_id, card_kinds,
-        )?;
-    let body = cards
-        .into_iter()
-        .map(|card| card.body)
-        .filter(|body| !body.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let anchor_attrs = (part.kind == crate::backend::domain::ConversationPartKind::Subagent)
-        .then(|| {
-            crate::backend::domain::conversations::subagent_anchor_index_text(
-                part.metadata_json.as_deref(),
-            )
-        })
-        .flatten();
-    let text = match (body.trim().is_empty(), anchor_attrs) {
-        (true, None) => return Ok(None),
-        (true, Some(anchor)) => anchor,
-        (false, None) => body,
-        (false, Some(anchor)) => format!("{body}\n\n{anchor}"),
-    };
-    Ok((!text.trim().is_empty()).then_some(text))
+use super::*;
+use crate::backend::domain::conversations::search_corpus::{
+    current_search_corpus_policy, CorpusTurnFacts, SearchCorpusDocument, SearchCorpusPolicy,
+};
+use crate::backend::domain::conversations::triad::TriadPart;
+use crate::backend::store::conversations::snapshot::restore_turn_parts;
+
+/// 一个轮次已提交的事实投影，供语料抽取复用。
+pub(crate) struct SessionCorpusTurn {
+    pub turn_id: String,
+    pub prompt: String,
+    pub response: Option<String>,
+    pub parts: Vec<crate::backend::domain::ConversationPart>,
 }
 
-async fn load_turn_session_id_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
+impl SessionCorpusTurn {
+    fn facts(&self) -> CorpusTurnFacts<'_> {
+        CorpusTurnFacts {
+            turn_id: &self.turn_id,
+            prompt: &self.prompt,
+            response: self.response.as_deref(),
+            parts: &self.parts,
+        }
+    }
+}
+
+async fn load_session_adapter_id_sqlx(
+    pool: &SqlitePool,
     tenant_id: &str,
-    turn_id: &str,
+    session_id: &str,
     record_kind: ConversationRecordKind,
-) -> StoreResult<String> {
+) -> StoreResult<Option<String>> {
     let query = format!(
-        "SELECT session_id FROM {} WHERE tenant_id = ?1 AND id = ?2",
-        record_kind.tables().turns,
+        "SELECT adapter_id FROM {sessions} WHERE tenant_id = ?1 AND id = ?2",
+        sessions = record_kind.tables().sessions,
     );
     sqlx::query_scalar::<_, String>(AssertSqlSafe(query))
         .bind(tenant_id)
-        .bind(turn_id)
-        .fetch_one(&mut **tx)
+        .bind(session_id)
+        .fetch_optional(pool)
         .await
         .map_err(StoreError::external)
 }
 
-async fn load_session_adapter_card_kinds_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
+/// 读取一个会话已提交的轮次与零件事实，并还原成完整 Part 序列。
+pub(crate) async fn load_session_corpus_turns_sqlx(
+    pool: &SqlitePool,
     tenant_id: &str,
     session_id: &str,
     record_kind: ConversationRecordKind,
-) -> StoreResult<(String, Vec<ConversationCardKindDefinition>)> {
-    let query = format!(
-        r#"
-        SELECT s.adapter_id, COALESCE(a.card_kinds_json, '[]') AS card_kinds_json
-        FROM {sessions} s
-        LEFT JOIN conversation_adapters a
-          ON a.tenant_id = s.tenant_id AND a.id = s.adapter_id
-        WHERE s.tenant_id = ?1 AND s.id = ?2
-        "#,
-        sessions = record_kind.tables().sessions,
-    );
-    let Some(row) = sqlx::query(AssertSqlSafe(query))
-        .bind(tenant_id)
-        .bind(session_id)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(StoreError::external)?
+) -> StoreResult<Vec<SessionCorpusTurn>> {
+    let Some(adapter_id) =
+        load_session_adapter_id_sqlx(pool, tenant_id, session_id, record_kind).await?
     else {
-        // 会话行缺失的孤儿轮次没有适配器上下文可投影，按"无卡片契约"降级而不是让整轮重建中断。
-        return Ok((String::new(), Vec::new()));
+        return Ok(Vec::new());
     };
-    let adapter_id: String = row.try_get("adapter_id").map_err(StoreError::external)?;
-    let card_kinds_json: String = row
-        .try_get("card_kinds_json")
-        .map_err(StoreError::external)?;
-    let card_kinds: Vec<ConversationCardKindDefinition> = decode_json(card_kinds_json)?;
-    Ok((adapter_id, card_kinds))
-}
-
-async fn load_turn_parts_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    turn_id: &str,
-    record_kind: ConversationRecordKind,
-) -> StoreResult<Vec<ConversationPart>> {
     let tables = record_kind.tables();
-    let turn_row = sqlx::query_as::<_, (String, Option<String>, Option<String>, String)>(
+    let turn_rows = sqlx::query_as::<_, (String, String, Option<String>, Option<String>)>(
         AssertSqlSafe(format!(
-            "SELECT t.prompt, t.process, t.response, s.adapter_id \
-             FROM {turns} t \
-             JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id \
-             WHERE t.tenant_id = ?1 AND t.id = ?2",
+            "SELECT id, prompt, process, response FROM {turns} \
+             WHERE tenant_id = ?1 AND session_id = ?2 \
+             ORDER BY turn_index ASC, id ASC",
             turns = tables.turns,
-            sessions = tables.sessions,
         )),
     )
     .bind(tenant_id)
-    .bind(turn_id)
-    .fetch_optional(&mut **tx)
+    .bind(session_id)
+    .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
 
-    let Some((prompt, process_json, response, adapter_id)) = turn_row else {
-        return Ok(Vec::new());
-    };
-
     let part_columns = match record_kind {
         ConversationRecordKind::Session => {
-            "p.part_index, p.kind, p.content, p.attrs_json, p.translated_text"
+            "p.turn_id, p.part_index, p.kind, p.content, p.attrs_json, p.translated_text"
         }
         ConversationRecordKind::Web => {
-            "p.part_index, p.kind, p.content, NULL AS attrs_json, p.translated_text"
+            "p.turn_id, p.part_index, p.kind, p.content, NULL AS attrs_json, p.translated_text"
         }
     };
-
-    let part_rows: Vec<(i64, String, Option<String>, Option<String>, Option<String>)> =
-        sqlx::query_as(AssertSqlSafe(format!(
-            "SELECT {part_columns} \
-             FROM {parts} p \
-             WHERE p.tenant_id = ?1 AND p.turn_id = ?2 \
-             ORDER BY p.part_index ASC",
-            parts = tables.parts,
-            part_columns = part_columns,
-        )))
-        .bind(tenant_id)
-        .bind(turn_id)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-
-    let triad_parts: Vec<crate::backend::domain::conversations::triad::TriadPart> = part_rows
-        .into_iter()
-        .map(|(part_index, kind, content, attrs_json, translated_text)| {
-            crate::backend::domain::conversations::triad::TriadPart {
-                part_index,
-                kind,
-                content,
-                attrs_json,
-                translated_text,
-            }
-        })
-        .collect();
-
-    let process: Option<crate::backend::domain::conversations::triad::TurnProcess> = process_json
-        .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok());
-
-    let prefix = match record_kind {
-        ConversationRecordKind::Session => "conversation-part",
-        ConversationRecordKind::Web => "web-record-part",
-    };
-
-    Ok(
-        crate::backend::domain::conversations::triad::merge_turn_triad(
-            &adapter_id,
-            prefix,
-            turn_id,
-            &prompt,
-            process.as_ref(),
-            response.as_deref(),
-            &triad_parts,
-        ),
-    )
-}
-
-async fn load_session_parts_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-    record_kind: ConversationRecordKind,
-) -> StoreResult<Vec<ConversationPart>> {
-    let tables = record_kind.tables();
-    let turn_rows: Vec<(String, String, Option<String>, Option<String>, String)> =
-        sqlx::query_as(AssertSqlSafe(format!(
-            "SELECT t.id, t.prompt, t.process, t.response, s.adapter_id \
-             FROM {turns} t \
-             JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id \
-             WHERE t.tenant_id = ?1 AND t.session_id = ?2 \
-             ORDER BY t.turn_index ASC, t.id ASC",
-            turns = tables.turns,
-            sessions = tables.sessions,
-        )))
-        .bind(tenant_id)
-        .bind(session_id)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-
     let part_rows: Vec<(
         String,
         i64,
@@ -209,69 +95,75 @@ async fn load_session_parts_sqlx_tx(
         Option<String>,
     )> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT {part_columns} \
-             FROM {parts} p \
-             JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
-             WHERE p.tenant_id = ?1 AND t.session_id = ?2 \
-             ORDER BY p.turn_id ASC, p.part_index ASC",
+         FROM {parts} p \
+         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
+         WHERE p.tenant_id = ?1 AND t.session_id = ?2 \
+         ORDER BY p.turn_id ASC, p.part_index ASC",
         parts = tables.parts,
         turns = tables.turns,
-        part_columns = tables.part_columns,
+        part_columns = part_columns,
     )))
     .bind(tenant_id)
     .bind(session_id)
-    .fetch_all(&mut **tx)
+    .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;
 
-    let mut triad_parts_by_turn: BTreeMap<
-        String,
-        Vec<crate::backend::domain::conversations::triad::TriadPart>,
-    > = BTreeMap::new();
+    let mut parts_by_turn = BTreeMap::<String, Vec<TriadPart>>::new();
     for (turn_id, part_index, kind, content, attrs_json, translated_text) in part_rows {
-        triad_parts_by_turn.entry(turn_id).or_default().push(
-            crate::backend::domain::conversations::triad::TriadPart {
-                part_index,
-                kind,
-                content,
-                attrs_json,
-                translated_text,
-            },
-        );
+        parts_by_turn.entry(turn_id).or_default().push(TriadPart {
+            part_index,
+            kind,
+            content,
+            attrs_json,
+            translated_text,
+        });
     }
 
     let prefix = match record_kind {
         ConversationRecordKind::Session => "conversation-part",
         ConversationRecordKind::Web => "web-record-part",
     };
-
-    let mut all_parts = Vec::new();
-    for (turn_id, prompt, process_json, response, adapter_id) in turn_rows {
-        let empty = Vec::new();
-        let turn_parts = triad_parts_by_turn.get(&turn_id).unwrap_or(&empty);
-        let process: Option<crate::backend::domain::conversations::triad::TurnProcess> =
-            process_json
-                .as_deref()
-                .and_then(|s| serde_json::from_str(s).ok());
-        let restored = crate::backend::domain::conversations::triad::merge_turn_triad(
-            &adapter_id,
-            prefix,
-            &turn_id,
-            &prompt,
-            process.as_ref(),
-            response.as_deref(),
-            turn_parts,
-        );
-        all_parts.extend(restored);
-    }
-    Ok(all_parts)
+    Ok(turn_rows
+        .into_iter()
+        .map(|(turn_id, prompt, process, response)| {
+            let raw_parts = parts_by_turn.remove(&turn_id).unwrap_or_default();
+            let parts = restore_turn_parts(
+                &adapter_id,
+                prefix,
+                &turn_id,
+                &prompt,
+                process.as_deref(),
+                response.as_deref(),
+                &raw_parts,
+            );
+            SessionCorpusTurn {
+                turn_id,
+                prompt,
+                response,
+                parts,
+            }
+        })
+        .collect())
 }
 
-async fn insert_part_index_row_sqlx_tx(
+/// 按策略把一个会话的事实压成后端中立文档。
+pub(crate) fn build_session_corpus_documents(
+    policy: &dyn SearchCorpusPolicy,
+    turns: &[SessionCorpusTurn],
+) -> Vec<SearchCorpusDocument> {
+    let mut documents = Vec::new();
+    for turn in turns {
+        documents.extend(policy.extract(&turn.facts()));
+    }
+    documents
+}
+
+async fn insert_corpus_row_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
-    part: &ConversationPart,
     session_id: &str,
-    text: &str,
+    document: &SearchCorpusDocument,
 ) -> StoreResult<()> {
     sqlx::query(
         r#"
@@ -280,28 +172,67 @@ async fn insert_part_index_row_sqlx_tx(
         "#,
     )
     .bind(tenant_id)
-    .bind(&part.id)
+    .bind(document.anchor_id())
     .bind(session_id)
-    .bind(&part.turn_id)
-    .bind(text)
+    .bind(&document.turn_id)
+    .bind(&document.text)
     .execute(&mut **tx)
     .await
     .map_err(StoreError::external)?;
     Ok(())
 }
 
-pub(crate) async fn delete_turn_part_index_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
+/// 按会话幂等替换派生索引行：只写当前已提交快照的最新语料。
+///
+/// 小事务、按会话粒度、重复执行结果一致，因此失败重试不需要重导事实。
+pub async fn replace_session_search_corpus_sqlx(
+    pool: &SqlitePool,
     tenant_id: &str,
-    turn_id: &str,
-) -> StoreResult<()> {
-    sqlx::query("DELETE FROM conversation_part_fts WHERE tenant_id = ?1 AND turn_id = ?2")
+    session_id: &str,
+) -> StoreResult<usize> {
+    let record_kind = resolve_record_kind_sqlx(pool, tenant_id, session_id)
+        .await?
+        .unwrap_or(ConversationRecordKind::Session);
+    let turns = load_session_corpus_turns_sqlx(pool, tenant_id, session_id, record_kind).await?;
+    let documents = build_session_corpus_documents(current_search_corpus_policy(), &turns);
+
+    let mut tx = pool.begin().await.map_err(StoreError::external)?;
+    sqlx::query("DELETE FROM conversation_part_fts WHERE tenant_id = ?1 AND session_id = ?2")
         .bind(tenant_id)
-        .bind(turn_id)
-        .execute(&mut **tx)
+        .bind(session_id)
+        .execute(&mut *tx)
         .await
         .map_err(StoreError::external)?;
-    Ok(())
+    for document in &documents {
+        insert_corpus_row_sqlx_tx(&mut tx, tenant_id, session_id, document).await?;
+    }
+    tx.commit().await.map_err(StoreError::external)?;
+    Ok(documents.len())
+}
+
+/// 按源替换派生索引行。事件载荷未携带会话清单时用它兜底（超过 256 个会话的情形）。
+pub async fn replace_source_search_corpus_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    source_id: &str,
+) -> StoreResult<usize> {
+    let mut indexed = 0usize;
+    for record_kind in [ConversationRecordKind::Session, ConversationRecordKind::Web] {
+        let query = format!(
+            "SELECT id FROM {sessions} WHERE tenant_id = ?1 AND source_id = ?2 ORDER BY id ASC",
+            sessions = record_kind.tables().sessions,
+        );
+        let session_ids = sqlx::query_scalar::<_, String>(AssertSqlSafe(query))
+            .bind(tenant_id)
+            .bind(source_id)
+            .fetch_all(pool)
+            .await
+            .map_err(StoreError::external)?;
+        for session_id in session_ids {
+            indexed += replace_session_search_corpus_sqlx(pool, tenant_id, &session_id).await?;
+        }
+    }
+    Ok(indexed)
 }
 
 pub(crate) async fn delete_session_part_index_sqlx_tx(
@@ -346,52 +277,6 @@ pub(crate) async fn delete_source_part_index_sqlx_tx(
     Ok(())
 }
 
-/// 随零件写入增量维护索引：一个轮次的零件整体替换时，只重建该轮次的索引行。
-///
-/// 索引只依赖零件本身（正文、命令、投影契约），与问题分组无关，因此合并 / 拆分、
-/// 问题聚合重建都不需要触碰索引。
-pub(crate) async fn replace_turn_part_index_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    turn_id: &str,
-    record_kind: ConversationRecordKind,
-) -> StoreResult<usize> {
-    let session_id = load_turn_session_id_sqlx_tx(tx, tenant_id, turn_id, record_kind).await?;
-    delete_turn_part_index_sqlx_tx(tx, tenant_id, turn_id).await?;
-    let (adapter_id, card_kinds) =
-        load_session_adapter_card_kinds_sqlx_tx(tx, tenant_id, &session_id, record_kind).await?;
-    let mut indexed = 0usize;
-    for part in load_turn_parts_sqlx_tx(tx, tenant_id, turn_id, record_kind).await? {
-        let Some(text) = part_index_text(&part, &adapter_id, &card_kinds)? else {
-            continue;
-        };
-        insert_part_index_row_sqlx_tx(tx, tenant_id, &part, &session_id, &text).await?;
-        indexed += 1;
-    }
-    Ok(indexed)
-}
-
-/// 按会话重建零件索引行：先清掉该会话的旧行，再按当前零件逐行写入。
-pub(crate) async fn replace_session_part_index_sqlx_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    tenant_id: &str,
-    session_id: &str,
-    record_kind: ConversationRecordKind,
-) -> StoreResult<usize> {
-    delete_session_part_index_sqlx_tx(tx, tenant_id, session_id).await?;
-    let (adapter_id, card_kinds) =
-        load_session_adapter_card_kinds_sqlx_tx(tx, tenant_id, session_id, record_kind).await?;
-    let mut indexed = 0usize;
-    for part in load_session_parts_sqlx_tx(tx, tenant_id, session_id, record_kind).await? {
-        let Some(text) = part_index_text(&part, &adapter_id, &card_kinds)? else {
-            continue;
-        };
-        insert_part_index_row_sqlx_tx(tx, tenant_id, &part, session_id, &text).await?;
-        indexed += 1;
-    }
-    Ok(indexed)
-}
-
 pub(crate) async fn count_part_index_rows_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -401,6 +286,21 @@ pub(crate) async fn count_part_index_rows_sqlx(
         .fetch_one(pool)
         .await
         .map_err(StoreError::external)
+}
+
+/// FTS5 段合并。只在整代重建成功后执行一次，避免增量同步承担整理成本。
+pub(crate) async fn optimize_part_index_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> StoreResult<()> {
+    // FTS5 'optimize' 是整表操作，没有按租户切分的能力；多租户库里的成本仍然远低于
+    // 每次增量同步的代价，且它只在本代重建收尾时触发。
+    let _ = tenant_id;
+    sqlx::query("INSERT INTO conversation_part_fts(conversation_part_fts) VALUES('optimize')")
+        .execute(pool)
+        .await
+        .map_err(StoreError::external)?;
+    Ok(())
 }
 
 async fn load_tenant_session_ids_sqlx(
@@ -419,7 +319,10 @@ async fn load_tenant_session_ids_sqlx(
         .map_err(StoreError::external)
 }
 
-/// 全量重建某租户的零件索引：按会话分事务推进，单会话失败不牵连整个重建。
+/// 全量重建某租户的派生语料索引：按会话分事务推进，单会话失败不牵连整个重建。
+///
+/// 这就是语料策略升级后的受控重建入口：可中断、可重跑、可观测，且只在全部会话成功后
+/// 才做一次段合并。
 pub(crate) async fn rebuild_tenant_part_index_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -432,14 +335,10 @@ pub(crate) async fn rebuild_tenant_part_index_sqlx(
     let total = session_ids.len();
     on_progress(0, total);
     for (index, session_id) in session_ids.iter().enumerate() {
-        let record_kind = resolve_record_kind_sqlx(pool, tenant_id, session_id)
-            .await?
-            .unwrap_or(ConversationRecordKind::Session);
-        let mut tx = pool.begin().await.map_err(StoreError::external)?;
-        replace_session_part_index_sqlx_tx(&mut tx, tenant_id, session_id, record_kind).await?;
-        tx.commit().await.map_err(StoreError::external)?;
+        replace_session_search_corpus_sqlx(pool, tenant_id, session_id).await?;
         on_progress(index + 1, total);
     }
+    optimize_part_index_sqlx(pool, tenant_id).await?;
     count_part_index_rows_sqlx(pool, tenant_id).await
 }
 
@@ -471,6 +370,37 @@ pub(crate) async fn resolve_record_kind_sqlx(
         "web" => Some(ConversationRecordKind::Web),
         _ => None,
     }))
+}
+
+/// 语料策略升级后的自动收敛闸门。
+///
+/// 存量索引是按旧口径生成的，必须整体重建成新一代才能继续对外提供正文匹配。这里只在
+/// "口径落后且没有正在进行的构建 / 没有待排查的失败"时出手，避免与显式重建流水线打架，
+/// 也避免把一次失败的重建变成事件派发热循环。返回 `true` 表示本租户已整体重建过。
+pub async fn ensure_conversation_search_corpus_current_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> StoreResult<bool> {
+    let Some(state) = load_conversation_part_index_state_sqlx(pool, tenant_id).await? else {
+        // 没有状态行 = 该租户从未建过索引；用当前口径建一代，后续增量只需按会话推进。
+        let part_count = rebuild_tenant_part_index_sqlx(pool, tenant_id, |_, _| {}).await?;
+        set_conversation_part_index_status_sqlx(
+            pool,
+            tenant_id,
+            PART_INDEX_READY,
+            part_count,
+            None,
+        )
+        .await?;
+        return Ok(true);
+    };
+    if state.is_ready() || state.status == PART_INDEX_BUILDING || state.last_error.is_some() {
+        return Ok(false);
+    }
+    let part_count = rebuild_tenant_part_index_sqlx(pool, tenant_id, |_, _| {}).await?;
+    set_conversation_part_index_status_sqlx(pool, tenant_id, PART_INDEX_READY, part_count, None)
+        .await?;
+    Ok(true)
 }
 
 #[cfg(test)]

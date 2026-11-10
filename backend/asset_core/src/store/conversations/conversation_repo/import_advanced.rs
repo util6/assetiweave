@@ -1,37 +1,18 @@
 use super::*;
 
-/// 会话版本指纹优先取适配器归一化结果；当适配器显式声明「没有独立文件指纹」
-/// （例如内联子代理会话，其内容寄生在父会话文件里）时，退回本轮发现阶段给出的
-/// 描述符令牌，使该会话在下一轮增量差集中仍可被判定为未变更，
-/// 而不是每轮都因为「指纹为空」被重复解析。
-fn session_with_descriptor_fingerprint(
-    source: &ConversationSource,
-    normalized: &NormalizedConversationSession,
-    now: &str,
-    descriptor_versions: Option<&BTreeMap<String, String>>,
-) -> ConversationSession {
-    let mut session = conversation_session_from_normalized(source, normalized, now);
-    if session.source_fingerprint.is_none() {
-        session.source_fingerprint = descriptor_versions
-            .and_then(|versions| versions.get(&session.external_id))
-            .cloned();
-    }
-    session
-}
-
 pub async fn import_conversation_sessions_advanced_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     source: &ConversationSource,
     sessions: &[NormalizedConversationSession],
     discovered_external_ids: Option<&BTreeSet<String>>,
-    descriptor_versions: Option<&BTreeMap<String, String>>,
     mut session_failures: Vec<crate::backend::domain::SessionSyncFailure>,
     session_warnings: Vec<crate::backend::domain::SessionSyncWarning>,
     adapter_content_hash: Option<&str>,
     card_contract_version: Option<u32>,
     payload_policy_version: u32,
     projection_version: Option<u32>,
+    sync_mode: crate::backend::domain::ConversationSyncMode,
     dry_run: bool,
     cancellation: Option<&tokio_util::sync::CancellationToken>,
     on_progress: &mut impl FnMut(usize, usize),
@@ -141,12 +122,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
             let mut chunk_ok = true;
 
             for normalized in chunk {
-                let session = session_with_descriptor_fingerprint(
-                    source,
-                    normalized,
-                    &now,
-                    descriptor_versions,
-                );
+                let session = conversation_session_from_normalized(source, normalized, &now);
                 if is_droppable_internal_session(normalized, &session) {
                     chunk_skipped += 1;
                     continue;
@@ -194,12 +170,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
         if !batch_success {
             for normalized in chunk {
                 ensure_sync_import_active(cancellation)?;
-                let session = session_with_descriptor_fingerprint(
-                    source,
-                    normalized,
-                    &now,
-                    descriptor_versions,
-                );
+                let session = conversation_session_from_normalized(source, normalized, &now);
                 if is_droppable_internal_session(normalized, &session) {
                     skipped_session_count += 1;
                     succeeded_external_ids.push(normalized.external_id.clone());
@@ -296,23 +267,25 @@ pub async fn import_conversation_sessions_advanced_sqlx(
 
     let is_cancelled = cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled);
 
-    // Missing 对账（仅在非主动取消时进行，防止取消时误将未处理会话当成 missing）
-    let missing_or_restored_session_ids = if !is_cancelled {
-        let mut tx = crate::backend::store::begin_immediate(pool).await?;
-        let missing_ids = mark_missing_conversation_sessions_sqlx_tx(
-            &mut tx,
-            tenant_id,
-            &source.id,
-            &incoming_session_ids,
-            &sync_run_id,
-            &now,
-        )
-        .await?;
-        tx.commit().await.map_err(StoreError::external)?;
-        missing_ids
-    } else {
-        Vec::new()
-    };
+    // 冷热分离（ADR-0023）：缺失 / 复活对账是显式全量同步与完整性体检才做的低频维护，
+    // 日常增量严禁为"揪出谁被删了"去枚举全盘。取消时同样不执行，避免把未处理会话误判为 missing。
+    let missing_or_restored_session_ids =
+        if !is_cancelled && sync_mode.reconciles_missing_sessions() {
+            let mut tx = crate::backend::store::begin_immediate(pool).await?;
+            let missing_ids = mark_missing_conversation_sessions_sqlx_tx(
+                &mut tx,
+                tenant_id,
+                &source.id,
+                &incoming_session_ids,
+                &sync_run_id,
+                &now,
+            )
+            .await?;
+            tx.commit().await.map_err(StoreError::external)?;
+            missing_ids
+        } else {
+            Vec::new()
+        };
 
     let total_failed = session_failures.len();
     let status = if is_cancelled {

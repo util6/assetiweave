@@ -217,6 +217,12 @@ pub fn run() {
         }
     };
     let consumers: Vec<std::sync::Arc<dyn backend::infrastructure::events::DomainEventConsumer>> = vec![
+        // 事实提交后先推进 FTS5 派生语料索引，再重建独立搜索索引。
+        std::sync::Arc::new(
+            backend::application::conversations::ConversationCorpusAdvanceConsumer::new(
+                runtime.db().clone(),
+            ),
+        ),
         std::sync::Arc::new(
             backend::application::conversations::SearchIndexAdvanceConsumer::new(
                 runtime.db().clone(),

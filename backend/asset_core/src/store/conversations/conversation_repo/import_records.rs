@@ -158,29 +158,24 @@ impl RecentConversationSessionRecordRow {
     }
 }
 
+/// 会话是否未发生变化。
+///
+/// 版本凭据是**不透明**的：只比较"本轮发现到的业务版本令牌"与"上次成功导入时落库的令牌"，
+/// 相等即未变化、不等即需要整包重扫。这里刻意不看标题、路径、起止时间等展示属性，
+/// 也不做全局单调时间戳比较——只要宿主业务记录没给出新令牌，就说明会话内容没有变化。
+///
+/// 没有落库令牌（首次导入、或上次失败未推进水线）一律视为已变化，保证失败可重试。
 pub(super) async fn conversation_session_is_unchanged_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session: &ConversationSession,
 ) -> StoreResult<bool> {
-    let Some(source_fingerprint) = session.source_fingerprint.as_deref() else {
+    let Some(discovered) = session.source_fingerprint.as_deref() else {
         return Ok(false);
     };
-    #[derive(Debug, FromRow)]
-    struct ConversationSessionUnchangedCheckRow {
-        title: String,
-        project_path: Option<String>,
-        started_at: Option<String>,
-        updated_at: Option<String>,
-        source_locator: Option<String>,
-        source_fingerprint: Option<String>,
-        missing: i64,
-    }
-
-    let Some(row) = sqlx::query_as::<_, ConversationSessionUnchangedCheckRow>(
+    let stored: Option<Option<String>> = sqlx::query_scalar(
         r#"
-        SELECT title, project_path, started_at, updated_at, source_locator,
-               source_fingerprint, missing
+        SELECT source_fingerprint
         FROM conversation_sessions
         WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = ?3
         "#,
@@ -190,18 +185,9 @@ pub(super) async fn conversation_session_is_unchanged_sqlx_tx(
     .bind(&session.external_id)
     .fetch_optional(&mut **tx)
     .await
-    .map_err(StoreError::external)?
-    else {
-        return Ok(false);
-    };
+    .map_err(StoreError::external)?;
 
-    Ok(row.title == session.title
-        && row.project_path == session.project_path
-        && row.started_at == session.started_at
-        && row.updated_at == session.updated_at
-        && row.source_locator == session.source_locator
-        && row.source_fingerprint.as_deref() == Some(source_fingerprint)
-        && row.missing == 0)
+    Ok(stored.flatten().as_deref() == Some(discovered))
 }
 
 pub(crate) async fn upsert_conversation_session_sqlx_tx(

@@ -559,6 +559,7 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
             false,
         )
         .await?;
+        advance_web_corpus(&database, TEST_TENANT_ID, &source.id).await?;
         let imported_at = sqlx::query_scalar::<_, String>(
             "SELECT imported_at FROM web_record_sessions WHERE source_id = ?1",
         )
@@ -610,12 +611,13 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
     assert_ne!(imported_at, "preserved");
     assert_eq!(refreshed_content, "refreshed body");
     let (fts_row_count, fts_texts) = indexed_rows;
-    assert_eq!(fts_row_count, 1, "轮次级重建不应留下重复或过期索引行");
-    assert_eq!(fts_texts.len(), 1);
+    assert_eq!(fts_row_count, 2, "同一会话只保留当前快照生成的高信号语料行");
+    assert_eq!(fts_texts.len(), 2);
     assert!(
-        !fts_texts[0].contains("stale body"),
-        "重新导入后索引正文必须来自当前零件投影"
+        !fts_texts.iter().any(|text| text.contains("stale body")),
+        "重新导入后索引正文必须来自当前快照事实"
     );
+    assert!(fts_texts.iter().any(|text| text.contains("refreshed body")));
 
     drop(database);
     cleanup_database(&db_path);
@@ -655,6 +657,7 @@ async fn sqlx_web_record_reads_filter_detail() {
         )
         .await
         .map_err(StoreError::external)?;
+        advance_web_corpus(&database, TEST_TENANT_ID, &source.id).await?;
         let sessions = list_web_record_sessions_sqlx(
             database.pool(),
             TEST_TENANT_ID,
@@ -902,6 +905,8 @@ async fn sqlx_web_records_are_isolated_by_tenant() {
             false,
         )
         .await?;
+        advance_web_corpus(&database, tenant_alpha, &source.id).await?;
+        advance_web_corpus(&database, tenant_beta, &source.id).await?;
 
         let alpha_sessions = list_web_record_sessions_sqlx(
             database.pool(),
@@ -1261,6 +1266,12 @@ async fn sqlx_web_record_unchanged_session_keeps_part_index_rows() {
             false,
         )
         .await?;
+        crate::backend::store::replace_source_search_corpus_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source.id,
+        )
+        .await?;
         let result = import_web_record_sessions_sqlx(
             database.pool(),
             TEST_TENANT_ID,
@@ -1284,7 +1295,7 @@ async fn sqlx_web_record_unchanged_session_keeps_part_index_rows() {
     assert_eq!(skipped_session_count, 1);
     assert_eq!(
         indexed_texts,
-        vec!["Web answer".to_string()],
+        vec!["Hello from the web".to_string(), "Web answer".to_string()],
         "跳过未变化的会话时不得丢失既有索引行"
     );
 
@@ -1293,7 +1304,7 @@ async fn sqlx_web_record_unchanged_session_keeps_part_index_rows() {
 }
 
 #[tokio::test]
-async fn sqlx_web_record_search_hits_tool_output_bodies() {
+async fn sqlx_web_record_search_follows_the_high_signal_corpus() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-web-record-part-search-sqlx-{}.sqlite",
         Uuid::new_v4()
@@ -1332,6 +1343,7 @@ async fn sqlx_web_record_search_hits_tool_output_bodies() {
             false,
         )
         .await?;
+        advance_web_corpus(&database, TEST_TENANT_ID, &source.id).await?;
         let mut results = Vec::new();
         for needle in [
             "SIGSEGV",
@@ -1361,11 +1373,14 @@ async fn sqlx_web_record_search_hits_tool_output_bodies() {
         ))
     }
     .await
-    .expect("search web records by part bodies through SQLx");
+    .expect("search web records through the high-signal corpus");
 
-    assert_eq!(tool_hits.len(), 1, "web 记录表族同样命中工具输出正文");
-    assert_eq!(answer_hits.len(), 1);
-    assert_eq!(prompt_hits.len(), 1);
+    assert!(
+        tool_hits.is_empty(),
+        "工具输出正文属于过程噪音，不得进入检索语料"
+    );
+    assert_eq!(answer_hits.len(), 1, "最终回答必须可搜");
+    assert_eq!(prompt_hits.len(), 1, "用户提问必须可搜");
     assert!(missing_hits.is_empty());
 
     drop(database);
@@ -1395,6 +1410,13 @@ async fn sqlx_web_record_search_degrades_to_title_while_part_index_rebuilds() {
             &source,
             &[fixture_session()],
             false,
+        )
+        .await?;
+        // 派生索引不再随事实事务同步写入，这里显式推进一次消费者应做的工作。
+        crate::backend::store::replace_source_search_corpus_sqlx(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source.id,
         )
         .await?;
         let ready_body_hits = list_web_record_sessions_sqlx(
@@ -1447,6 +1469,16 @@ async fn sqlx_web_record_search_degrades_to_title_while_part_index_rebuilds() {
 
     drop(database);
     cleanup_database(&db_path);
+}
+
+/// 模拟派生索引消费者：事实提交后按源推进一次高信号语料索引。
+async fn advance_web_corpus(
+    database: &Database,
+    tenant_id: &str,
+    source_id: &str,
+) -> StoreResult<usize> {
+    crate::backend::store::replace_source_search_corpus_sqlx(database.pool(), tenant_id, source_id)
+        .await
 }
 
 fn cleanup_database(db_path: &std::path::Path) {
