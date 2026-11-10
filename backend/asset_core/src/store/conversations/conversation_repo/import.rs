@@ -221,10 +221,20 @@ pub async fn import_conversation_sessions_with_control_sqlx(
     ensure_sync_import_active(cancellation)?;
     tx.commit().await.map_err(StoreError::external)?;
 
-    // 一次性导入便捷路径（测试与一次性工具）在返回前就把派生语料索引推进到位：
+    // 一次性导入便捷路径（测试与一次性工具）在返回前顺带推进派生语料索引：
     // 生产增量同步走 advanced 入径 + 事件消费者，绝不在事实事务里做索引工作。
+    // 索引失败只记日志——事实已经提交成功，派生索引落后不应把导入判成失败。
     for session_id in &indexed_session_ids {
-        super::replace_session_search_corpus_sqlx(pool, tenant_id, session_id).await?;
+        if let Err(error) =
+            super::replace_session_search_corpus_sqlx(pool, tenant_id, session_id).await
+        {
+            tracing::warn!(
+                action = "conversation.corpus_advance",
+                session_id = %session_id,
+                error = %error,
+                "failed to advance conversation search corpus after a one-shot import"
+            );
+        }
     }
 
     Ok(ConversationImportResult {

@@ -83,28 +83,30 @@ pub async fn import_conversation_sessions_advanced_sqlx(
         .await;
     }
 
-    let incoming_session_ids = discovered_external_ids
+    // 本轮"发现到"的会话集合 = 发现阶段的描述符 + 本批真正读回来的会话。
+    //
+    // 内联子代理会话只会随父会话的定向读取返回，从不单独出现在描述符里；只看描述符
+    // 会把它们全部误判为源端消失。两者取并集才能表达"这一轮确实见过它"。
+    let mut incoming_session_ids = discovered_external_ids
         .map(|external_ids| {
             external_ids
                 .iter()
                 .map(|external_id| stable_id("conversation-session", &[&source.id, external_id]))
                 .collect::<BTreeSet<_>>()
         })
-        .unwrap_or_else(|| {
-            let mut ids = sessions
-                .iter()
-                .map(|session| {
-                    stable_id("conversation-session", &[&source.id, &session.external_id])
-                })
-                .collect::<BTreeSet<_>>();
-            for failure in &session_failures {
-                ids.insert(stable_id(
-                    "conversation-session",
-                    &[&source.id, &failure.session_external_id],
-                ));
-            }
-            ids
-        });
+        .unwrap_or_default();
+    for session in sessions {
+        incoming_session_ids.insert(stable_id(
+            "conversation-session",
+            &[&source.id, &session.external_id],
+        ));
+    }
+    for failure in &session_failures {
+        incoming_session_ids.insert(stable_id(
+            "conversation-session",
+            &[&source.id, &failure.session_external_id],
+        ));
+    }
 
     let mut completed_session_count = 0;
     let mut all_changed_session_ids = Vec::new();

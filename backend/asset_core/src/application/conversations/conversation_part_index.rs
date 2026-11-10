@@ -120,6 +120,20 @@ impl AppService {
         })
     }
 
+    /// 语料口径落后时自动触发一次受控重建（可中断、可观测、走阶段化流水线）。
+    ///
+    /// 只在索引代际与生效策略不一致时出手；重建本身由
+    /// [`Self::rebuild_conversation_part_index`] 纳管的流水线完成，绝不在这里同步跑全表。
+    pub async fn ensure_search_corpus_current(&self) -> AppResult<bool> {
+        if !store::conversation_search_corpus_needs_rebuild_sqlx(self.pool(), self.tenant_id())
+            .await?
+        {
+            return Ok(false);
+        }
+        self.start_conversation_part_index_rebuild().await?;
+        Ok(true)
+    }
+
     /// 启动零件级索引重建并立即返回任务快照（流水线在后台继续推进）。
     pub async fn start_conversation_part_index_rebuild(
         &self,

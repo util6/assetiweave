@@ -237,6 +237,26 @@ pub fn run() {
             "failed to start EventDispatcher in resident AppRuntime"
         );
     }
+    {
+        // 语料口径升级后，派生索引必须整体换代才能继续对外提供正文匹配。
+        // 这里只做判定并启动既有阶段化流水线，绝不在启动路径里同步跑全表重建。
+        let corpus_runtime = runtime.clone();
+        tauri::async_runtime::spawn(async move {
+            let service = AppService::from_runtime(&corpus_runtime);
+            match service.ensure_search_corpus_current().await {
+                Ok(true) => tracing::info!(
+                    action = "app.startup.search_corpus",
+                    "started a controlled conversation search corpus rebuild"
+                ),
+                Ok(false) => {}
+                Err(error) => tracing::warn!(
+                    action = "app.startup.search_corpus",
+                    error = %error,
+                    "failed to schedule conversation search corpus rebuild"
+                ),
+            }
+        });
+    }
     crate::backend::application::memory::session_coordinator::start_session_memory_coordinator(
         &runtime,
     );

@@ -130,18 +130,3 @@ fn activity_summary_dedupes_and_folds_many_anchors() {
         Some("Subagent x4(Explore -> 11111111, Review -> 22222222, Plan -> 33333333, ...)")
     );
 }
-
-#[test]
-fn anchor_index_text_collects_searchable_fields() {
-    let metadata = r#"{"child_session_id":"conversation-session-x","agent_role":"Review","title":"审阅差异","report_summary":"发现两处越权写库"}"#;
-    let text = subagent_anchor_index_text(Some(metadata)).expect("index text");
-    assert!(text.contains("Review"));
-    assert!(text.contains("审阅差异"));
-    assert!(text.contains("发现两处越权写库"));
-
-    assert_eq!(
-        subagent_anchor_index_text(Some(r#"{"child_session_id":"x"}"#)),
-        None
-    );
-    assert_eq!(subagent_anchor_index_text(Some("")), None);
-}

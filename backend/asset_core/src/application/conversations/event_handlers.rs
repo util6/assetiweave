@@ -145,17 +145,13 @@ async fn advance_tenant_corpus(
 ) -> crate::backend::store::StoreResult<()> {
     use crate::backend::store;
 
-    if store::ensure_conversation_search_corpus_current_sqlx(pool, tenant_id).await? {
-        // 语料口径已整体重建过一轮，本批次的变更已被覆盖。
-        return Ok(());
-    }
+    let started = std::time::Instant::now();
     for source_id in &plan.source_ids {
         store::replace_source_search_corpus_sqlx(pool, tenant_id, source_id).await?;
     }
     for session_id in &plan.session_ids {
         store::replace_session_search_corpus_sqlx(pool, tenant_id, session_id).await?;
     }
-    let started = std::time::Instant::now();
     tracing::debug!(
         action = "conversation.corpus_advance",
         tenant_id = %tenant_id,

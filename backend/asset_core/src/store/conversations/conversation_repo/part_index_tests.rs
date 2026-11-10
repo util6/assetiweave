@@ -437,21 +437,34 @@ async fn corpus_drift_is_closed_by_a_controlled_rebuild() {
             .expect("read ready flag")
     );
 
-    let rebuilt = ensure_conversation_search_corpus_current_sqlx(&fixture.pool, TENANT_ID)
-        .await
-        .expect("ensure corpus current");
+    assert!(
+        conversation_search_corpus_needs_rebuild_sqlx(&fixture.pool, TENANT_ID)
+            .await
+            .expect("detect corpus drift")
+    );
 
-    assert!(rebuilt);
+    // 受控重建：按会话分批推进，收尾统一发布就绪状态。
+    let part_count = rebuild_tenant_part_index_sqlx(&fixture.pool, TENANT_ID, |_, _| {})
+        .await
+        .expect("rebuild tenant corpus");
+    set_conversation_part_index_status_sqlx(
+        &fixture.pool,
+        TENANT_ID,
+        PART_INDEX_READY,
+        part_count,
+        None,
+    )
+    .await
+    .expect("publish index generation");
+
     assert!(conversation_part_index_ready_sqlx(&fixture.pool, TENANT_ID)
         .await
         .expect("read ready flag"));
     assert_eq!(indexed_texts(&fixture.pool, session_id).await.len(), 2);
-
-    // 口径已对齐后再次调用不重复重建。
     assert!(
-        !ensure_conversation_search_corpus_current_sqlx(&fixture.pool, TENANT_ID)
+        !conversation_search_corpus_needs_rebuild_sqlx(&fixture.pool, TENANT_ID)
             .await
-            .expect("ensure corpus current")
+            .expect("detect corpus drift")
     );
 
     fixture.cleanup();

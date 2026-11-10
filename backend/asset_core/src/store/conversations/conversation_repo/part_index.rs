@@ -288,21 +288,6 @@ pub(crate) async fn count_part_index_rows_sqlx(
         .map_err(StoreError::external)
 }
 
-/// FTS5 段合并。只在整代重建成功后执行一次，避免增量同步承担整理成本。
-pub(crate) async fn optimize_part_index_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-) -> StoreResult<()> {
-    // FTS5 'optimize' 是整表操作，没有按租户切分的能力；多租户库里的成本仍然远低于
-    // 每次增量同步的代价，且它只在本代重建收尾时触发。
-    let _ = tenant_id;
-    sqlx::query("INSERT INTO conversation_part_fts(conversation_part_fts) VALUES('optimize')")
-        .execute(pool)
-        .await
-        .map_err(StoreError::external)?;
-    Ok(())
-}
-
 async fn load_tenant_session_ids_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -338,7 +323,7 @@ pub(crate) async fn rebuild_tenant_part_index_sqlx(
         replace_session_search_corpus_sqlx(pool, tenant_id, session_id).await?;
         on_progress(index + 1, total);
     }
-    optimize_part_index_sqlx(pool, tenant_id).await?;
+    optimize_part_index_sqlx(pool).await?;
     count_part_index_rows_sqlx(pool, tenant_id).await
 }
 
@@ -372,35 +357,30 @@ pub(crate) async fn resolve_record_kind_sqlx(
     }))
 }
 
-/// 语料策略升级后的自动收敛闸门。
+/// 当前索引代际是否落后于生效的语料策略。
 ///
-/// 存量索引是按旧口径生成的，必须整体重建成新一代才能继续对外提供正文匹配。这里只在
-/// "口径落后且没有正在进行的构建 / 没有待排查的失败"时出手，避免与显式重建流水线打架，
-/// 也避免把一次失败的重建变成事件派发热循环。返回 `true` 表示本租户已整体重建过。
-pub async fn ensure_conversation_search_corpus_current_sqlx(
+/// 只做判定，不在这里重建：整体重建必须走受阶段化的后台流水线（ADR-0017），
+/// 否则一次失败的自动收敛会把索引永久钉在旧代际上，并与显式重建互相打架。
+pub async fn conversation_search_corpus_needs_rebuild_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> StoreResult<bool> {
-    let Some(state) = load_conversation_part_index_state_sqlx(pool, tenant_id).await? else {
-        // 没有状态行 = 该租户从未建过索引；用当前口径建一代，后续增量只需按会话推进。
-        let part_count = rebuild_tenant_part_index_sqlx(pool, tenant_id, |_, _| {}).await?;
-        set_conversation_part_index_status_sqlx(
-            pool,
-            tenant_id,
-            PART_INDEX_READY,
-            part_count,
-            None,
-        )
-        .await?;
-        return Ok(true);
-    };
-    if state.is_ready() || state.status == PART_INDEX_BUILDING || state.last_error.is_some() {
-        return Ok(false);
-    }
-    let part_count = rebuild_tenant_part_index_sqlx(pool, tenant_id, |_, _| {}).await?;
-    set_conversation_part_index_status_sqlx(pool, tenant_id, PART_INDEX_READY, part_count, None)
-        .await?;
-    Ok(true)
+    Ok(load_conversation_part_index_state_sqlx(pool, tenant_id)
+        .await?
+        .map(|state| !state.is_ready())
+        .unwrap_or(false))
+}
+
+/// FTS5 段合并。
+///
+/// FTS5 的 `optimize` 是整表操作，没有按租户切分的能力；因此它只在整代重建收尾时
+/// 触发一次，日常增量永不承担整理成本。
+pub(crate) async fn optimize_part_index_sqlx(pool: &SqlitePool) -> StoreResult<()> {
+    sqlx::query("INSERT INTO conversation_part_fts(conversation_part_fts) VALUES('optimize')")
+        .execute(pool)
+        .await
+        .map_err(StoreError::external)?;
+    Ok(())
 }
 
 #[cfg(test)]

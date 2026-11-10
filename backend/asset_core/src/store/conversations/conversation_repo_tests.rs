@@ -2999,6 +2999,57 @@ async fn sqlx_incremental_sync_skips_missing_reconciliation() {
     cleanup_database(&db_path);
 }
 
+/// 内联子代理会话只随父会话的定向读取返回，从不单独出现在发现描述符里；
+/// 全量对账必须把它们算进"本轮见过"，否则会被整批误标为源端缺失。
+#[tokio::test]
+async fn sqlx_full_sync_does_not_mark_inline_children_missing() {
+    let (database, db_path, source) =
+        open_conversation_reparse_fixture("inline-child-missing").await;
+    let pool = database.pool();
+    let policy_version =
+        crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION;
+    let mut parent = fixture_session("v1");
+    parent.external_id = "parent-session".to_string();
+    parent.source_fingerprint = Some("parent-fp-1".to_string());
+    let mut child = fixture_session("v1");
+    child.external_id = "parent-session:subagent:agent-1".to_string();
+    child.source_fingerprint = Some("parent-fp-1:subagent:agent-1".to_string());
+    child.execution_origin = Some("subagent".to_string());
+    let discovered = std::collections::BTreeSet::from(["parent-session".to_string()]);
+
+    import_conversation_sessions_advanced_sqlx(
+        pool,
+        TEST_TENANT_ID,
+        &source,
+        &[parent, child],
+        Some(&discovered),
+        Vec::new(),
+        Vec::new(),
+        None,
+        None,
+        policy_version,
+        None,
+        crate::backend::domain::ConversationSyncMode::Full,
+        false,
+        None,
+        &mut |_, _| {},
+    )
+    .await
+    .expect("full import with an inline child");
+
+    let missing: i64 = sqlx::query_scalar(
+        "SELECT missing FROM conversation_sessions WHERE tenant_id = ?1 AND external_id = 'parent-session:subagent:agent-1'",
+    )
+    .bind(TEST_TENANT_ID)
+    .fetch_one(pool)
+    .await
+    .expect("read child missing flag");
+    assert_eq!(missing, 0, "内联子会话并没有在源端消失");
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
 #[tokio::test]
 async fn sqlx_repeated_sync_keeps_turn_identity_without_duplicating_turns() {
     let (database, db_path, source) = open_conversation_reparse_fixture("reparse-idempotent").await;

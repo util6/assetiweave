@@ -57,6 +57,7 @@ SET source_fingerprint = (
       AND parent.id = json_extract(conversation_sessions.execution_purpose, '$.parent_session_id')
       AND parent.source_fingerprint IS NOT NULL
       AND trim(parent.source_fingerprint) <> ''
+      AND parent.missing = 0
 )
 WHERE source_fingerprint IS NULL
   AND execution_origin = 'subagent'
@@ -69,4 +70,5 @@ WHERE source_fingerprint IS NULL
         AND parent.id = json_extract(conversation_sessions.execution_purpose, '$.parent_session_id')
         AND parent.source_fingerprint IS NOT NULL
         AND trim(parent.source_fingerprint) <> ''
+        AND parent.missing = 0
   );

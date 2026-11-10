@@ -130,19 +130,6 @@ pub fn subagent_activity_summary(anchors: &[SubagentDispatchAnchor]) -> Option<S
     }
 }
 
-/// 锚点的索引正文：角色 / 标题 / 汇报摘要都要能被父会话的全文检索命中。
-pub fn subagent_anchor_index_text(metadata_json: Option<&str>) -> Option<String> {
-    let metadata = parse_object(metadata_json?)?;
-    let object = metadata.as_object()?;
-    let parts = ["agent_role", "title", "report_summary"]
-        .into_iter()
-        .filter_map(|key| object.get(key).and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    (!parts.is_empty()).then(|| parts.join("\n"))
-}
-
 fn pair_label(role: &str, short_id: &str) -> String {
     if role.is_empty() {
         format!("-> {short_id}")
