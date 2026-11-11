@@ -159,6 +159,7 @@ const rendererIcons: Record<ConversationCardRenderer, LucideIcon> = {
   diff: GitCompareArrows,
   compact_action: Eye,
   subagent_tree: GitFork,
+  subagent_portal: GitFork,
   accordion: ListCollapse,
 };
 

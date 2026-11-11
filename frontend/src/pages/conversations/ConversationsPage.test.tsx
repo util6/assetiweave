@@ -268,11 +268,13 @@ describe("MarkdownContent", () => {
     expect(html).toContain("assetiweave-cli conversation sync --dry-run");
   });
 
-  it("shows subagent branches expanded by default and collapsible", () => {
-    const question = subagentTreeFixture();
+  it("renders one human turn with portal cards per dispatched subagent", () => {
+    const question = subagentPortalFixture();
+    const onOpenSubagent = vi.fn();
     const { container } = render(
       <QuestionPreview
         onExport={async () => undefined}
+        onOpenSubagent={onOpenSubagent}
         onPickOutputRoot={async () => null}
         outputRoot="/tmp/conversation-export"
         question={question}
@@ -282,39 +284,79 @@ describe("MarkdownContent", () => {
       />,
     );
 
-    // 默认全部展开：子代理的正文与下一层子代理都直接可见。
+    // 一问一轮：伪轮次不再作为独立 Turn 平铺。
     expect(
-      container.querySelector('[data-conversation-turn-id="turn-child"]'),
-    ).toBeTruthy();
+      container.querySelectorAll("[data-conversation-turn-id]"),
+    ).toHaveLength(1);
     expect(
-      container.querySelector(
-        '[data-conversation-card-id="part-child-node-0"]',
-      ),
+      container.querySelector('[data-conversation-turn-id="turn-root"]'),
     ).toBeTruthy();
-    expect(
-      container.querySelector('[data-conversation-turn-id="turn-grandchild"]'),
-    ).toBeTruthy();
-    // 子代理已在左栏分层列出，正文不再重复 Tier 分组头。
-    expect(container.querySelector("[data-conversation-tier]")).toBeNull();
+    expect(container.textContent).not.toContain(
+      "Continue following subagent execution",
+    );
 
-    fireEvent.click(screen.getAllByRole("button", { name: "收起子代理" })[0]!);
+    // 每个派发锚点就地渲染为一张紧凑传送门卡片。
+    const portals = container.querySelectorAll("[data-subagent-portal]");
+    expect(portals).toHaveLength(2);
+    expect(container.textContent).toContain("Explore");
+    expect(container.textContent).toContain("梳理同步入口");
+    expect(container.textContent).toContain("定位到三处同步入口");
+    // 长篇委派 Prompt 不得平铺进父轮次正文。
+    expect(container.textContent).not.toContain("请梳理同步入口，不要只列文件");
+    expect(
+      screen.getAllByRole("button", { name: /查看子会话/ }),
+    ).toHaveLength(2);
 
-    expect(
-      container.querySelector(
-        '[data-conversation-card-id="part-child-node-0"]',
-      ),
-    ).toBeNull();
-    expect(
-      container.querySelector('[data-conversation-turn-id="turn-grandchild"]'),
-    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "查看子会话：梳理同步入口" }),
+    );
+    expect(onOpenSubagent).toHaveBeenCalledWith(
+      expect.objectContaining({ childSessionId: "child-1" }),
+      expect.objectContaining({ id: "turn-root" }),
+    );
   });
 
-  it("auto-expands collapsed ancestors when navigating to a deep subagent card", async () => {
-    const question = subagentTreeFixture();
+  it("renders the parent breadcrumb and returns with the parent turn context", () => {
+    const question = subagentPortalFixture();
+    const onReturnToParentSession = vi.fn();
+    render(
+      <QuestionPreview
+        onExport={async () => undefined}
+        onPickOutputRoot={async () => null}
+        onReturnToParentSession={onReturnToParentSession}
+        outputRoot="/tmp/conversation-export"
+        parentBreadcrumb={{
+          agentRole: "Explore",
+          parentSessionId: "conversation-session-parent",
+          parentShortId: "abcdef12",
+          parentTurnIndex: 0,
+          parentTurnNumber: 1,
+        }}
+        question={question}
+        session={{ ...sessionDetail, questions: [question] }}
+        setOutputRoot={vi.fn()}
+        t={t}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "返回父会话 abcdef12 · #1" }),
+    );
+
+    expect(onReturnToParentSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parentSessionId: "conversation-session-parent",
+        parentTurnIndex: 0,
+      }),
+    );
+  });
+
+  it("keeps deep links to subagent anchors scrollable inside the parent turn", async () => {
+    const question = subagentPortalFixture();
     const { container } = render(
       <QuestionPreview
         activeSearchTarget={{
-          blockId: "part-grandchild-node-0",
+          blockId: "part-anchor-node-1",
           cardType: "answer",
           questionId: question.question.id,
           sessionId: sessionDetail.session.id,
@@ -332,7 +374,7 @@ describe("MarkdownContent", () => {
     await waitFor(() =>
       expect(
         container.querySelector(
-          '[data-conversation-card-id="part-grandchild-node-0"]',
+          '[data-conversation-card-id="part-anchor-node-1"]',
         ),
       ).toBeTruthy(),
     );
@@ -1550,7 +1592,7 @@ describe("MarkdownContent", () => {
     expect(html).toContain("#2");
   });
 
-  it("lists turns in the left rail and renders only the selected turn on the right", () => {
+  it("shows the subagent pill on a single-turn question and drills into chips", () => {
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -1559,11 +1601,13 @@ describe("MarkdownContent", () => {
         unobserve() {}
       },
     );
-    const question = subagentTreeFixture();
+    const question = subagentPortalFixture();
+    const onOpenSubagentSession = vi.fn();
     const { container } = render(
       <SessionQuestionWorkspace
         contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
         onExport={vi.fn()}
+        onOpenSubagentSession={onOpenSubagentSession}
         onPickOutputRoot={async () => null}
         onQuestionSelect={vi.fn()}
         onQuestionSelectionChange={vi.fn()}
@@ -1585,31 +1629,32 @@ describe("MarkdownContent", () => {
       />,
     );
 
-    // 左栏一个问题下逐行列 Turn，而不是把子代理塞进右侧正文。
-    fireEvent.click(screen.getByRole("button", { name: "3 个 Turn" }));
-    expect(
-      container.querySelector('[data-turn-rail-id="turn-root"]'),
-    ).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "展开 2 个子代理" }));
-    expect(
-      container.querySelector('[data-turn-rail-id="turn-child"]'),
-    ).toBeTruthy();
-    expect(
-      container.querySelector('[data-turn-rail-id="turn-grandchild"]'),
-    ).toBeTruthy();
-
-    // 点左栏某一行后，右侧只渲染这一个 Turn。
-    fireEvent.click(
-      container.querySelector('[data-turn-rail-id="turn-child"]')!,
+    // 一问一轮：单轮问题的子代理胶囊直接挂在问题卡片上，不再出现伪轮次行。
+    expect(container.querySelector("[data-turn-rail-id]")).toBeNull();
+    expect(container.textContent).not.toContain(
+      "Continue following subagent execution",
     );
-    const renderedTurnIds = [
-      ...container.querySelectorAll("[data-conversation-turn-id]"),
-    ].map((node) => node.getAttribute("data-conversation-turn-id"));
-    expect(renderedTurnIds).toEqual(["turn-child"]);
+
+    // 胶囊展开后是该轮派发的子代理芯片。
+    fireEvent.click(screen.getByRole("button", { name: "展开 2 个子代理" }));
+    expect(screen.getByRole("button", { name: "打开子代理会话：Explore 梳理同步入口" }))
+      .toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "打开子代理会话：Explore 梳理同步入口" }),
+    );
+    expect(onOpenSubagentSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        childSessionId: "child-1",
+        parentQuestionId: question.question.id,
+        parentSessionId: sessionDetail.session.id,
+        parentTurnId: "turn-root",
+        parentTurnIndex: 0,
+      }),
+    );
   });
 
-  it("keeps subagents out of the main turn view because the rail already lists them", () => {
+  it("returns to the parent turn after a subagent drill-down", () => {
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -1618,13 +1663,17 @@ describe("MarkdownContent", () => {
         unobserve() {}
       },
     );
-    const question = subagentTreeFixture();
+    const question = subagentPortalFixture();
+    const onQuestionSelect = vi.fn();
+    const onFocusTurnConsumed = vi.fn();
     const { container } = render(
       <SessionQuestionWorkspace
         contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
+        focusTurn={{ sessionId: sessionDetail.session.id, turnIndex: 0 }}
         onExport={vi.fn()}
+        onFocusTurnConsumed={onFocusTurnConsumed}
         onPickOutputRoot={async () => null}
-        onQuestionSelect={vi.fn()}
+        onQuestionSelect={onQuestionSelect}
         onQuestionSelectionChange={vi.fn()}
         outputRoot="/tmp/conversation-export"
         question={question}
@@ -1644,6 +1693,8 @@ describe("MarkdownContent", () => {
       />,
     );
 
+    expect(onQuestionSelect).toHaveBeenCalledWith(question.question.id);
+    expect(onFocusTurnConsumed).toHaveBeenCalled();
     const renderedTurnIds = [
       ...container.querySelectorAll("[data-conversation-turn-id]"),
     ].map((node) => node.getAttribute("data-conversation-turn-id"));
@@ -2055,77 +2106,143 @@ describe("conversation navigation compatibility", () => {
   });
 });
 
-function subagentTreeFixture(): ConversationQuestionDetail {
-  type TurnRecord = ConversationQuestionDetail["turns"][number];
-  const turn = (
-    id: string,
-    overrides: Partial<TurnRecord> = {},
-  ): TurnRecord => ({
-    id,
+/**
+ * ADR-0022 形态的父会话：1 个人类轮次 + 2 个内联子代理委派锚点。
+ * 锚点元数据全部内联在父会话详情里，渲染时不需要任何子会话请求。
+ */
+function subagentPortalFixture(): ConversationQuestionDetail {
+  const anchors = [
+    {
+      agentRole: "Explore",
+      childSessionId: "child-1",
+      nodeId: "part-anchor-node-1",
+      partId: "part-anchor-1",
+      summary: "定位到三处同步入口",
+      title: "梳理同步入口",
+    },
+    {
+      agentRole: "Coder",
+      childSessionId: "child-2",
+      nodeId: "part-anchor-node-2",
+      partId: "part-anchor-2",
+      summary: "补充了缺失索引",
+      title: "补齐索引",
+    },
+  ];
+
+  const turn = {
+    id: "turn-root",
     session_id: "session-1",
     turn_index: 0,
-    prompt: `Prompt for ${id}`,
+    prompt: "帮我梳理同步链路",
     started_at: now,
     imported_at: now,
-    ...overrides,
-  });
-  const turns: TurnRecord[] = [
-    turn("turn-root", { prompt: "主问题", turn_index: 0 }),
-    turn("turn-child", {
-      agent_role: "Teamwork Orchestrator",
-      ended_at: now,
-      model: "gemini-1.5-pro",
-      parent_turn_id: "turn-root",
-      prompt: "协调发布计划",
-      started_at: now,
-      title: "teamwork_preview_orchestrator",
-      turn_index: 1,
-      turn_kind: "subagent",
+    process: JSON.stringify({
+      items: anchors.map((anchor, index) => ({
+        content: anchor.childSessionId,
+        kind: "subagent",
+        label: anchor.title,
+        seq: index + 1,
+        status: "completed",
+        summary: anchor.summary,
+      })),
     }),
-    turn("turn-grandchild", {
-      agent_role: "Project Orchestrator",
-      ended_at: null,
-      parent_turn_id: "turn-child",
-      prompt: "拆解发布步骤",
-      started_at: now,
-      turn_index: 2,
-      turn_kind: "subagent",
-    }),
-  ];
+  };
 
   return {
     question: {
       id: "question-tree",
       session_id: "session-1",
-      title: "子代理树",
+      title: "子代理委派",
       created_at: now,
       updated_at: now,
     },
-    turns,
-    parts: [],
-    question_turns: turns.map((record, turn_order) => ({
-      question_id: "question-tree",
-      turn_id: record.id,
-      turn_order,
-      assignment_origin: "auto_merged" as const,
-      assigned_at: now,
-      updated_at: now,
-    })),
+    turns: [
+      turn,
+      // 存量伪轮次：即便后端还留着 subagent / continuation 行，左栏也只按人类轮次计数。
+      {
+        ...turn,
+        id: "turn-legacy-subagent",
+        parent_turn_id: "turn-root",
+        prompt: "Continue following subagent execution",
+        turn_index: 1,
+        turn_kind: "subagent" as const,
+      },
+      {
+        ...turn,
+        id: "turn-legacy-continuation",
+        prompt: "Continue following subagent execution",
+        turn_index: 2,
+        turn_kind: "continuation" as const,
+      },
+    ],
+    parts: [
+      {
+        id: "part-root-answer",
+        turn_id: "turn-root",
+        part_index: 0,
+        role: "assistant",
+        kind: "text",
+        text: "同步链路已梳理完毕。",
+        content_card: {
+          kind: "answer",
+          renderer: "markdown",
+          schema_version: 1,
+          semantic_role: "answer",
+        },
+      },
+      ...anchors.map((anchor, index) => ({
+        id: anchor.partId,
+        turn_id: "turn-root",
+        part_index: index + 1,
+        role: "assistant" as const,
+        kind: "subagent" as const,
+        // 委派 Prompt 很长，但传送门卡片绝不展开它。
+        text: `请梳理同步入口，不要只列文件。${"补充上下文。".repeat(40)}`,
+        metadata_json: JSON.stringify({
+          agent_role: anchor.agentRole,
+          child_session_id: anchor.childSessionId,
+          status: "completed",
+          step_count: 12,
+          title: anchor.title,
+        }),
+        content_card: {
+          kind: "claude-code.subagent",
+          renderer: "subagent_tree" as const,
+          schema_version: 1,
+          semantic_role: "subagent",
+        },
+      })),
+    ],
+    question_turns: [
+      {
+        question_id: "question-tree",
+        turn_id: "turn-root",
+        turn_order: 0,
+        assignment_origin: "imported",
+        assigned_at: now,
+        updated_at: now,
+      },
+    ],
     projected_content_nodes: [
       createProjectedNode({
-        content: "子代理内部记录",
+        content: "同步链路已梳理完毕。",
         nodeType: "answer",
-        partId: "part-child",
+        partId: "part-root-answer",
         semanticRole: "answer",
-        turnId: "turn-child",
+        turnId: "turn-root",
       }),
-      createProjectedNode({
-        content: "最深层结论",
-        nodeType: "answer",
-        partId: "part-grandchild",
-        semanticRole: "answer",
-        turnId: "turn-grandchild",
-      }),
+      ...anchors.map((anchor) => ({
+        ...createProjectedNode({
+          content: "",
+          nodeType: "claude-code.subagent",
+          partId: anchor.partId,
+          semanticRole: "subagent",
+          turnId: "turn-root",
+        }),
+        node_id: anchor.nodeId,
+        renderer: "subagent_tree" as const,
+      })),
     ],
   };
 }

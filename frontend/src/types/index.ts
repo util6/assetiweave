@@ -445,7 +445,11 @@ export interface ConversationPart {
   exit_code?: number | null;
   command_label?: string | null;
   content_card?: ConversationContentCardDescriptor | null;
-  /** Raw event archive only. Not used for UI presentation or card rendering. */
+  /**
+   * 原始事件归档。普通零件不参与 UI 呈现；唯一例外是 `kind = "subagent"`
+   * 的委派锚点——子会话主键、角色、标题、状态与汇报摘要只存在于这里
+   * （ADR-0022：锚点语义存 `attrs_json`，后端读取时回填本字段）。
+   */
   metadata_json?: string | null;
   translated_text?: string | null;
   source_execution_id?: string | null;
@@ -472,6 +476,7 @@ export type ConversationCardRenderer =
   | "diff"
   | "compact_action"
   | "subagent_tree"
+  | "subagent_portal"
   | "accordion";
 
 export interface ConversationContentNodeLocator {

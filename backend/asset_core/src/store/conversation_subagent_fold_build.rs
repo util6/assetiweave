@@ -91,6 +91,11 @@ impl Accumulator {
         }
     }
 
+    /// 锚点以「正文 Part + 过程链 Item」成对写入，二者各占一个序号。
+    ///
+    /// `flush` 用同一个自增下标给两类条目编号，所以折算产物里
+    /// `part_index` 与 `process.seq` **天然差 1**（part@21 / item@22）。
+    /// 消费方只能按 `child_session_id` 对齐，不得假设两者相等。
     fn append_anchor(&mut self, part: TriadPart, item: TurnProcessItem) {
         self.entries.push(Entry::Part(part));
         self.entries.push(Entry::Item(item));

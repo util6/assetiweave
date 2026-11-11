@@ -444,30 +444,6 @@
     box-shadow: inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.12);
   }
 
-  /*
-   * 子代理 Turn 的树形缩进只认 depth 数据属性，组件侧不再内联重算 margin。
-   * 适配器的子代理树深度上限为 4 层，可见 Turn 的最大 depth 为 5。
-   */
-  .conversation-turn[data-conversation-turn-depth="1"] {
-    margin-left: 0.75rem;
-  }
-
-  .conversation-turn[data-conversation-turn-depth="2"] {
-    margin-left: 1.5rem;
-  }
-
-  .conversation-turn[data-conversation-turn-depth="3"] {
-    margin-left: 2.25rem;
-  }
-
-  .conversation-turn[data-conversation-turn-depth="4"] {
-    margin-left: 3rem;
-  }
-
-  .conversation-turn[data-conversation-turn-depth="5"] {
-    margin-left: 3.75rem;
-  }
-
   .conversation-row {
     position: relative;
     border: 1px solid transparent;

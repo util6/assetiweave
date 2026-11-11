@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Copy, GitFork } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
@@ -8,7 +8,6 @@ import type {
 } from "../../types";
 import type { Translator } from "../../i18n/I18nProvider";
 import { Badge } from "../foundation/Badge";
-import { Button } from "../ui/button";
 import type {
   ConversationContentBlock,
   ConversationContentVisibility,
@@ -28,24 +27,31 @@ import type {
 import { conversationIdFragment } from "../../utils/conversationIds";
 import { MarkdownContent } from "./ConversationMarkdown";
 import type { ConversationCommandProjection } from "../../services/conversationCommandProjection";
-
+import {
+  collectSubagentPortals,
+  mainConversationTurns,
+  SUBAGENT_PORTAL_RENDERER,
+  type SubagentDispatchPortal,
+  type SubagentDispatchPortalViewModel,
+} from "./conversationSubagents";
 export interface ConversationTurnPresentation {
   blocks: ConversationContentBlock[];
-  childCount: number;
-  depth: number;
   displayNodes?: ConversationDisplayNode[];
   hasContent: boolean;
-  isSubagent: boolean;
-  parentTurnId: string | null;
   promptBlockId: string;
-  /**
-   * 该节点是某一 Tier 的首个可见节点时，携带分组头信息。
-   * Tier 即子代理层级深度（Tier 1 = 主代理直接派发）。
-   */
-  tierHeader?: { count: number; tier: number } | null;
   turn: ConversationTurnRecord;
 }
 
+/**
+ * 一问一轮：只把真实人类提问轮次整理成正文呈现。
+ *
+ * ADR-0022 之后子代理是独立从属会话，父轮次里只留轻量委派锚点；
+ * 锚点在正文原位改写为传送门卡片，不再伪装成独立 Turn 平铺进来。
+ *
+ * 注意锚点 Part 在后端**不挂 `content_card`**（见 `merge_anchor_attrs`），
+ * 因此它不会产出投影节点；这里必须从 Part 侧补一张合成卡片，
+ * 否则真实数据下正文里根本不会出现传送门。
+ */
 export function buildConversationTurnPresentations(
   question: ConversationQuestionDetail,
   commandProjections: readonly ConversationCommandProjection[] = [],
@@ -53,212 +59,149 @@ export function buildConversationTurnPresentations(
   const projectionByPartId = new Map(
     commandProjections.map((projection) => [projection.part_id, projection]),
   );
-  const presentations = question.turns.map((turn) => {
-    const displayNodes = applyConversationCommandProjections(
+  const portals = collectSubagentPortals(question);
+  const portalByPartId = new Map(
+    portals.map((portal) => [portal.partId, portal]),
+  );
+  const partOrderById = new Map(
+    (question.parts ?? []).map((part) => [part.id, part.part_index]),
+  );
+
+  return mainConversationTurns(question).map((turn) => {
+    const projectedNodes = applyConversationCommandProjections(
       buildConversationDisplayNodesFromNodes(
         question.projected_content_nodes.filter(
           (node) => node.turn_id === turn.id,
         ),
       ),
       projectionByPartId,
-    ).filter(isRenderableConversationDisplayNode);
+    ).flatMap((node) => applySubagentPortal(node, portalByPartId));
+    const displayNodes = mergeAnchoredPortals({
+      nodes: projectedNodes,
+      partOrderById,
+      portals: portals.filter((portal) => portal.turnId === turn.id),
+      turnId: turn.id,
+    });
 
     return {
       blocks: [],
-      childCount: 0,
-      depth: 0,
       displayNodes,
       hasContent: displayNodes.length > 0,
-      isSubagent: turn.turn_kind === "subagent" || turn.turn_kind === "agent",
-      parentTurnId: null,
       promptBlockId: `${turn.id}-question`,
       turn,
     } satisfies ConversationTurnPresentation;
   });
-
-  linkTurnParents(presentations);
-  const ordered = orderTurnTree(presentations);
-  assignTierHeaders(ordered);
-  return ordered;
 }
 
 /**
- * 给每一层（Tier）的首个节点标注分组头，供列表渲染分层标题。
- * 子代理层级即 Tier：主代理直接派发的是 Tier 1。
+ * 把父轮次里的子代理锚点原地改写为传送门卡片节点。
+ *
+ * 定位不到子会话的锚点不再丢弃：`collectSubagentPortals` 会为它产出
+ * `unresolved` 卡片，保证"这一轮派过子代理"始终可见，而不是凭空消失。
  */
-function assignTierHeaders(presentations: ConversationTurnPresentation[]) {
-  const countByTier = new Map<number, number>();
-  for (const presentation of presentations) {
-    if (presentation.depth === 0) continue;
-    countByTier.set(
-      presentation.depth,
-      (countByTier.get(presentation.depth) ?? 0) + 1,
-    );
-  }
-  const emittedTiers = new Set<number>();
-  for (const presentation of presentations) {
-    presentation.tierHeader = null;
-    if (presentation.depth === 0 || emittedTiers.has(presentation.depth))
-      continue;
-    emittedTiers.add(presentation.depth);
-    presentation.tierHeader = {
-      count: countByTier.get(presentation.depth) ?? 1,
-      tier: presentation.depth,
-    };
-  }
-}
-
-/**
- * 子代理已作为独立 Turn 呈现，早期适配器写入的 *.subagent JSON 卡片属于存量遗留，
- * 继续渲染会让同一批委派内容在正文里重复出现，这里在展示层直接丢弃。
- */
-function isRenderableConversationDisplayNode(
+function applySubagentPortal(
   node: ConversationDisplayNode,
-): boolean {
-  if (node.type !== "card") return true;
-  const kind = (node.block.kind ?? "").trim().toLowerCase();
-  const presentation = (node.block.type ?? "").trim().toLowerCase();
-  const renderer = (node.block.renderer ?? "").trim().toLowerCase();
-  // 子代理卡片的实际形态：renderer=subagent_tree（codex/antigravity 把语义放在工具卡上），
-  // 或 codebuddy.subagent 这类直接写在 kind 里。三者都拦，避免正文重复渲染子代理。
-  return (
-    presentation !== "subagent" &&
-    renderer !== "subagent_tree" &&
-    !kind.includes("subagent")
-  );
-}
-
-function linkTurnParents(presentations: ConversationTurnPresentation[]) {
-  const byId = new Map(
-    presentations.map((presentation) => [presentation.turn.id, presentation]),
-  );
-  for (const presentation of presentations) {
-    const parentId = presentation.turn.parent_turn_id ?? null;
-    presentation.parentTurnId =
-      parentId && parentId !== presentation.turn.id && byId.has(parentId)
-        ? parentId
-        : null;
-  }
-  detachTurnCycles(presentations, byId);
-}
-
-function detachTurnCycles(
-  presentations: ConversationTurnPresentation[],
-  byId: ReadonlyMap<string, ConversationTurnPresentation>,
-) {
-  for (const presentation of presentations) {
-    const path: ConversationTurnPresentation[] = [];
-    const indexById = new Map<string, number>();
-    let current: ConversationTurnPresentation | undefined = presentation;
-    while (current) {
-      const cycleStart = indexById.get(current.turn.id);
-      if (cycleStart !== undefined) {
-        for (let index = cycleStart; index < path.length; index += 1)
-          path[index]!.parentTurnId = null;
-        break;
-      }
-      indexById.set(current.turn.id, path.length);
-      path.push(current);
-      current = current.parentTurnId
-        ? byId.get(current.parentTurnId)
-        : undefined;
-    }
-  }
-}
-
-function orderTurnTree(
-  presentations: ConversationTurnPresentation[],
-): ConversationTurnPresentation[] {
-  const childrenByParent = new Map<string, ConversationTurnPresentation[]>();
-  const roots: ConversationTurnPresentation[] = [];
-  for (const presentation of presentations) {
-    if (!presentation.parentTurnId) {
-      roots.push(presentation);
-      continue;
-    }
-    const siblings = childrenByParent.get(presentation.parentTurnId) ?? [];
-    siblings.push(presentation);
-    childrenByParent.set(presentation.parentTurnId, siblings);
-  }
-
-  const ordered: ConversationTurnPresentation[] = [];
-  // 根层排序：主 Turn 在前，没有父节点的孤儿子代理压到最后，避免打断主代理与 Tier 分组的连续性。
-  roots.sort(
-    (left, right) => Number(left.isSubagent) - Number(right.isSubagent),
-  );
-  // 按 Tier 分层遍历：同一层的节点连续排列，先 Tier 1 全部，再 Tier 2 全部。
-  // 这样列表呈现的是「层级分组」，而不是把深层子节点插在父节点后面打断分组。
-  let level = roots;
-  let depth = 0;
-  while (level.length > 0) {
-    for (const presentation of level) {
-      presentation.depth = depth;
-      presentation.childCount =
-        childrenByParent.get(presentation.turn.id)?.length ?? 0;
-      ordered.push(presentation);
-    }
-    const next: ConversationTurnPresentation[] = [];
-    for (const presentation of level)
-      next.push(...(childrenByParent.get(presentation.turn.id) ?? []));
-    level = next;
-    depth += 1;
-  }
-  return ordered;
-}
-
-/** 一次构建的 Turn 索引：可见性计算与祖先链解析共用同一份 byId。 */
-export function buildConversationTurnIndex(
-  models: readonly ConversationTurnPresentation[],
-): Map<string, ConversationTurnPresentation> {
-  return new Map(models.map((model) => [model.turn.id, model]));
+  portalByPartId: ReadonlyMap<string, SubagentDispatchPortal>,
+): ConversationDisplayNode[] {
+  if (node.type !== "card") return [node];
+  const partId = node.block.partId ?? node.block.id;
+  const portal = portalByPartId.get(partId);
+  if (!portal) return [node];
+  return [
+    {
+      ...node,
+      block: {
+        ...node.block,
+        format: "plain",
+        portal,
+        renderer: SUBAGENT_PORTAL_RENDERER,
+        text: "",
+      },
+    },
+  ];
 }
 
 /**
- * Flattens the tree into the virtual list order. 默认全部展开：只有被显式收起的
- * 子代理分支会隐藏其后代，因此进入会话即可看到每一层（每个 Tier）的全部子代理。
+ * 把没有投影节点的委派锚点补成传送门卡片，并按 Part 顺序插回正文。
+ *
+ * 后端锚点不带 `content_card`，历史投影数据也不一定有锚点节点；
+ * 缺少合成这一步就会出现「左栏有胶囊、正文没有卡片」的断层。
  */
-export function visibleConversationTurnPresentations(
-  models: readonly ConversationTurnPresentation[],
-  collapsedTurnIds: ReadonlySet<string>,
-  turnIndex: ReadonlyMap<
-    string,
-    ConversationTurnPresentation
-  > = buildConversationTurnIndex(models),
-): ConversationTurnPresentation[] {
-  const byId = turnIndex;
-  const visibleIds = new Set<string>();
-  const visible: ConversationTurnPresentation[] = [];
-  for (const model of models) {
-    if (model.parentTurnId) {
-      if (!visibleIds.has(model.parentTurnId)) continue;
-      const parent = byId.get(model.parentTurnId);
-      if (parent?.isSubagent && collapsedTurnIds.has(model.parentTurnId))
-        continue;
-    }
-    visibleIds.add(model.turn.id);
-    visible.push(model);
-  }
-  return visible;
+function mergeAnchoredPortals({
+  nodes,
+  partOrderById,
+  portals,
+  turnId,
+}: {
+  nodes: ConversationDisplayNode[];
+  partOrderById: ReadonlyMap<string, number>;
+  portals: readonly SubagentDispatchPortal[];
+  turnId: string;
+}): ConversationDisplayNode[] {
+  if (portals.length === 0) return nodes;
+  const representedPartIds = new Set<string>();
+  for (const node of nodes)
+    for (const block of displayNodeBlocks(node))
+      representedPartIds.add(block.partId ?? block.id);
+
+  const synthesized = portals
+    .filter((portal) => !representedPartIds.has(portal.partId))
+    .map((portal, offset) => ({
+      index: nodes.length + offset,
+      node: synthesizePortalNode(portal, turnId),
+      order: partOrderById.get(portal.partId) ?? Number.MAX_SAFE_INTEGER,
+    }));
+  if (synthesized.length === 0) return nodes;
+
+  const ordered = nodes.map((node, index) => ({
+    index,
+    node,
+    order: displayNodePartOrder(node, partOrderById),
+  }));
+  return [...ordered, ...synthesized]
+    .sort((left, right) => left.order - right.order || left.index - right.index)
+    .map((item) => item.node);
 }
 
-export function conversationTurnAncestorIds(
-  models: readonly ConversationTurnPresentation[],
+function synthesizePortalNode(
+  portal: SubagentDispatchPortal,
   turnId: string,
-  turnIndex: ReadonlyMap<
-    string,
-    ConversationTurnPresentation
-  > = buildConversationTurnIndex(models),
-): string[] {
-  const byId = turnIndex;
-  const seen = new Set<string>([turnId]);
-  const ancestors: string[] = [];
-  let current = byId.get(turnId)?.parentTurnId ?? null;
-  while (current && !seen.has(current)) {
-    ancestors.push(current);
-    seen.add(current);
-    current = byId.get(current)?.parentTurnId ?? null;
+): ConversationDisplayNode {
+  return {
+    block: {
+      format: "plain",
+      id: portal.partId,
+      kind: "subagent",
+      partId: portal.partId,
+      portal,
+      renderer: SUBAGENT_PORTAL_RENDERER,
+      role: "assistant",
+      text: "",
+      type: "subagent",
+    },
+    turnId,
+    type: "card",
+  };
+}
+
+function displayNodeBlocks(
+  node: ConversationDisplayNode,
+): ConversationContentBlock[] {
+  return node.type === "card"
+    ? [node.block]
+    : [...node.commands, ...node.results];
+}
+
+function displayNodePartOrder(
+  node: ConversationDisplayNode,
+  partOrderById: ReadonlyMap<string, number>,
+): number {
+  let order = Number.MAX_SAFE_INTEGER;
+  for (const block of displayNodeBlocks(node)) {
+    const candidate = partOrderById.get(block.partId ?? block.id);
+    if (candidate !== undefined && candidate < order) order = candidate;
   }
-  return ancestors;
+  return order;
 }
 
 function applyConversationCommandProjections(
@@ -366,11 +309,10 @@ export const ConversationTurn = memo(function ConversationTurn({
   activeBlockId,
   colors,
   controller,
-  expanded: expandedProp = true,
   index,
   onCopyError,
   onCommandPartsVisible,
-  onToggleExpanded,
+  onOpenSubagent,
   recordKind,
   resultPreviewLineLimit,
   t,
@@ -381,12 +323,14 @@ export const ConversationTurn = memo(function ConversationTurn({
   activeBlockId?: string | null;
   colors?: ConversationContentCardColorSettings;
   controller: ConversationContentController;
-  expanded?: boolean;
   index: number;
   model: ConversationTurnPresentation;
   onCopyError?: (message: string) => void;
   onCommandPartsVisible?: (partIds: string[]) => void;
-  onToggleExpanded?: (turnId: string) => void;
+  onOpenSubagent?: (
+    portal: SubagentDispatchPortalViewModel,
+    turn: ConversationTurnRecord,
+  ) => void;
   recordKind: ConversationRecordKind;
   resultPreviewLineLimit?: number;
   t: Translator;
@@ -396,13 +340,10 @@ export const ConversationTurn = memo(function ConversationTurn({
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<number | null>(null);
   const promptHighlighted = activeBlockId === model.promptBlockId;
-  const isSubagent = model.isSubagent;
-  const isContinuation = model.turn.turn_kind === "continuation";
-  const expanded = isSubagent ? expandedProp : true;
-  const promptSummary = firstPromptLine(model.turn.prompt);
-  const toggleLabel = expanded
-    ? t("conversation.turn.collapseSubagent")
-    : t("conversation.turn.expandSubagent");
+  const openSubagent = onOpenSubagent
+    ? (portal: SubagentDispatchPortalViewModel) =>
+        onOpenSubagent(portal, model.turn)
+    : undefined;
 
   useEffect(
     () => () => {
@@ -433,19 +374,12 @@ export const ConversationTurn = memo(function ConversationTurn({
 
   return (
     <section
-      className={`conversation-turn mb-6 ${
-        isSubagent ? "border-l-2 border-primary/20 pl-3" : ""
-      }`}
-      data-conversation-turn-depth={model.depth}
-      data-conversation-turn-expanded={isSubagent ? expanded : undefined}
+      className="conversation-turn mb-6"
       data-conversation-turn-id={model.turn.id}
+      data-conversation-turn-index={index}
     >
       <div
-        className={`conversation-prompt-block scroll-mt-32 rounded-xl border px-4 py-3 transition-shadow ${
-          isSubagent
-            ? "border-primary/20 bg-primary/[0.035]"
-            : "border-primary/30 bg-primary/[0.055]"
-        } ${
+        className={`conversation-prompt-block scroll-mt-32 rounded-xl border border-primary/30 bg-primary/[0.055] px-4 py-3 transition-shadow ${
           promptHighlighted
             ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]"
             : ""
@@ -454,193 +388,85 @@ export const ConversationTurn = memo(function ConversationTurn({
         id={conversationCardDomId(model.promptBlockId)}
       >
         <div className="mb-2 flex items-center justify-between gap-3">
-          <div
-            className={`flex items-center gap-2.5 min-w-0 ${
-              isSubagent ? "flex-wrap" : ""
-            }`}
-          >
-            {isSubagent ? (
-              <Button
-                aria-expanded={expanded}
-                aria-label={toggleLabel}
-                className="shrink-0 rounded-full border border-primary/30 bg-theme-card/60 text-primary hover:bg-primary/10"
-                onClick={() => onToggleExpanded?.(model.turn.id)}
-                size="icon-sm"
-                title={toggleLabel}
-                type="button"
-                variant="ghost"
-              >
-                <ChevronRight
-                  className={`size-3.5 transition-transform ${
-                    expanded ? "rotate-90" : ""
-                  }`}
-                />
-              </Button>
-            ) : null}
-            {isSubagent ? (
-              <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
-                <GitFork size={13} className="text-primary/90" />
-                {t("conversation.question.subagentTask")}
-              </h3>
-            ) : isContinuation ? (
-              <h3 className="flex items-center gap-2 text-label-caps text-on-surface-variant shrink-0">
-                <span className="size-2 rounded-full bg-status-info" />
-                {t("conversation.question.continuationPrompt")}
-              </h3>
-            ) : (
-              <h3 className="flex items-center gap-2 text-label-caps text-primary shrink-0">
-                <span className="size-2 rounded-full bg-primary" />
-                {t("conversation.question.userPrompt")}
-              </h3>
-            )}
+          <div className="flex min-w-0 items-center gap-2.5">
+            <h3 className="flex shrink-0 items-center gap-2 text-label-caps text-primary">
+              <span className="size-2 rounded-full bg-primary" />
+              {t("conversation.question.userPrompt")}
+            </h3>
             {model.turn.agent_role ? (
               <Badge
-                tone="neutral"
-                className="rounded-full font-medium text-xs px-2.5 py-0.5 truncate max-w-xs"
+                className="max-w-xs truncate rounded-full px-2.5 py-0.5 text-xs font-medium"
                 title={model.turn.agent_role}
+                tone="neutral"
               >
                 {model.turn.agent_role}
               </Badge>
             ) : null}
-            {isSubagent && model.turn.title ? (
-              <span
-                className="truncate text-body-sm text-on-surface-variant"
-                title={model.turn.title}
-              >
-                {model.turn.title}
-              </span>
-            ) : null}
             {model.turn.model ? (
               <Badge
-                tone="neutral"
-                className="rounded-full font-mono text-xs normal-case tracking-normal px-2.5 py-0.5 truncate max-w-xs"
+                className="max-w-xs truncate rounded-full px-2.5 py-0.5 font-mono text-xs normal-case tracking-normal"
                 title={model.turn.model}
+                tone="neutral"
               >
                 {model.turn.model}
               </Badge>
             ) : null}
-            {isSubagent && model.childCount > 0 ? (
-              <Badge
-                tone="neutral"
-                className="shrink-0 rounded-full text-xs normal-case tracking-normal px-2.5 py-0.5"
-              >
-                {t("conversation.turn.childCount", {
-                  count: model.childCount,
-                })}
-              </Badge>
-            ) : null}
-            {isSubagent ? <SubagentStatus turn={model.turn} t={t} /> : null}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex shrink-0 items-center gap-2">
             <span
-              className="select-text rounded-md border border-primary/25 bg-theme-card/45 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
+              className="select-text rounded-xl border border-primary/25 bg-theme-card/45 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
               title={model.promptBlockId}
             >
               {conversationIdFragment(model.promptBlockId)}
             </span>
             <PromptCopyButton
               copied={copied}
-              isSubagent={isSubagent}
               onClick={() => void copyPrompt()}
               t={t}
             />
           </div>
         </div>
-        {isSubagent && !expanded ? (
-          <p
-            className="truncate text-body-sm text-on-surface-variant"
-            title={model.turn.prompt}
-          >
-            {promptSummary}
-          </p>
+        <MarkdownContent value={model.turn.prompt} />
+      </div>
+      <div className="mt-3 pl-3">
+        <h3 className="mb-3 text-label-caps text-on-surface-muted">
+          {t("conversation.question.parts")}
+        </h3>
+        {!model.hasContent ? (
+          <EmptyPanel>{t("conversation.markdown.empty")}</EmptyPanel>
         ) : (
-          <MarkdownContent value={model.turn.prompt} />
+          <ConversationContentCards
+            activeBlockId={activeBlockId}
+            colors={colors}
+            controller={controller}
+            nodes={model.displayNodes ?? []}
+            onCopyError={onCopyError}
+            onCommandPartsVisible={onCommandPartsVisible}
+            onOpenSubagent={openSubagent}
+            recordKind={recordKind}
+            resultPreviewLineLimit={resultPreviewLineLimit}
+            t={t}
+            translationSettings={translationSettings}
+            visibility={visibility}
+          />
         )}
       </div>
-      {expanded ? (
-        <div className="mt-3 pl-3">
-          <h3 className="mb-3 text-label-caps text-on-surface-muted">
-            {t("conversation.question.parts")}
-          </h3>
-          {!model.hasContent ? (
-            isSubagent ? (
-              <p className="px-2 py-4 text-body-sm text-on-surface-variant">
-                {t("conversation.turn.subagentNoRecords")}
-              </p>
-            ) : (
-              <EmptyPanel>{t("conversation.markdown.empty")}</EmptyPanel>
-            )
-          ) : (
-            <ConversationContentCards
-              activeBlockId={activeBlockId}
-              colors={colors}
-              controller={controller}
-              nodes={model.displayNodes ?? []}
-              onCopyError={onCopyError}
-              onCommandPartsVisible={onCommandPartsVisible}
-              recordKind={recordKind}
-              resultPreviewLineLimit={resultPreviewLineLimit}
-              t={t}
-              translationSettings={translationSettings}
-              visibility={visibility}
-            />
-          )}
-        </div>
-      ) : null}
     </section>
   );
 });
 
-function SubagentStatus({
-  turn,
-  t,
-}: {
-  turn: ConversationTurnRecord;
-  t: Translator;
-}) {
-  const running = Boolean(turn.started_at) && !turn.ended_at;
-  return (
-    <Badge
-      tone={running ? "update" : "neutral"}
-      className="shrink-0 gap-1.5 rounded-full text-xs normal-case tracking-normal px-2.5 py-0.5"
-    >
-      <span
-        className={`size-1.5 rounded-full ${
-          running ? "bg-status-update" : "bg-status-create"
-        }`}
-      />
-      {running
-        ? t("conversation.turn.status.running")
-        : t("conversation.turn.status.completed")}
-    </Badge>
-  );
-}
-
-function firstPromptLine(prompt: string) {
-  return (
-    prompt
-      .split(/\r?\n/)
-      .find((line) => line.trim())
-      ?.trim() ?? ""
-  );
-}
-
 function PromptCopyButton({
   copied,
-  isSubagent,
   onClick,
   t,
 }: {
   copied: boolean;
-  isSubagent?: boolean;
   onClick: () => void;
   t: Translator;
 }) {
   const label = copied
     ? t("conversation.content.copied")
-    : isSubagent
-      ? t("conversation.question.copySubagentPrompt")
-      : t("conversation.question.copyPrompt");
+    : t("conversation.question.copyPrompt");
   return (
     <button
       aria-label={label}
@@ -654,29 +480,6 @@ function PromptCopyButton({
       ) : (
         <Copy className="size-[1em]" />
       )}
-    </button>
-  );
-}
-
-function ToolbarTextButton({
-  icon,
-  label,
-  onClick,
-}: {
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      aria-label={label}
-      className="inline-flex items-center gap-1 rounded-md border border-theme-control-border bg-theme-control/80 px-2 py-1 text-code-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
-      onClick={onClick}
-      title={label}
-      type="button"
-    >
-      {icon}
-      <span>{label}</span>
     </button>
   );
 }

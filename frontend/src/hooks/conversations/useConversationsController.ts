@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
 import { useSearchIndex } from "../../app/backgroundTasks/SearchIndexProvider";
@@ -63,6 +63,15 @@ export function useConversationsController({
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
+  /**
+   * 子代理会话（`execution_origin = "subagent"`）默认是 `user_visible = 0`，
+   * 不会出现在会话目录里。它只能通过父轮次锚点或检索命中按需打开，
+   * 因此需要一个显式的“游离会话”标记，避免被目录对账立即清空选择。
+   */
+  const [detachedSessionId, setDetachedSessionId] = useState<string | null>(
+    null,
+  );
+  const detachedSessionIdRef = useRef<string | null>(null);
   const [selectedQuestionId, setSelectedQuestionId] = useState<string | null>(
     null,
   );
@@ -119,21 +128,42 @@ export function useConversationsController({
     setSelectedQuestionIds(new Set());
   }, []);
 
+  const markDetached = useCallback((sessionId: string | null) => {
+    detachedSessionIdRef.current = sessionId;
+    setDetachedSessionId(sessionId);
+  }, []);
+
   const closeSession = useCallback(() => {
     clearSessionDetail();
     setActiveSearchTarget(null);
+    markDetached(null);
     setSelectedSessionId(null);
     setSessionView("browser");
-  }, [clearSessionDetail]);
+  }, [clearSessionDetail, markDetached]);
 
   const openSession = useCallback(
     (sessionId: string) => {
       clearSessionDetail();
+      markDetached(null);
       setSelectedSessionId(sessionId);
       setActiveSearchTarget(null);
       setSessionView("detail");
     },
-    [clearSessionDetail],
+    [clearSessionDetail, markDetached],
+  );
+
+  /**
+   * 打开不在会话目录里的子代理会话：保留选择，不参与目录对账清理。
+   */
+  const openDetachedSession = useCallback(
+    (sessionId: string) => {
+      clearSessionDetail();
+      markDetached(sessionId);
+      setSelectedSessionId(sessionId);
+      setActiveSearchTarget(null);
+      setSessionView("detail");
+    },
+    [clearSessionDetail, markDetached],
   );
 
   const selectApp = useCallback((appId: string) => {
@@ -173,9 +203,12 @@ export function useConversationsController({
 
   const reconcileSessionSelection = useCallback(
     (sessionIds: readonly string[]) => {
-      setSelectedSessionId((current) =>
-        current && sessionIds.includes(current) ? current : null,
-      );
+      setSelectedSessionId((current) => {
+        if (current && sessionIds.includes(current)) return current;
+        // 按需打开的子代理会话本来就不在目录里，保留它直到用户显式返回。
+        if (current && current === detachedSessionIdRef.current) return current;
+        return null;
+      });
     },
     [],
   );
@@ -202,6 +235,7 @@ export function useConversationsController({
   const openConversationTarget = useCallback(
     (target: ConversationOpenTarget) => {
       clearSessionDetail();
+      markDetached(null);
       setActiveSearchTarget(target.searchTarget ?? null);
       setSelectedAppId(target.appId);
       setSelectedProjectKey(target.projectKey);
@@ -209,7 +243,7 @@ export function useConversationsController({
       setSelectedSessionId(target.sessionId);
       setSessionView("detail");
     },
-    [clearSessionDetail],
+    [clearSessionDetail, markDetached],
   );
 
   const focusSearchTarget = useCallback(
@@ -281,6 +315,8 @@ export function useConversationsController({
     setSelectedAppId(null);
     setSelectedProjectKey(null);
     setSelectedSessionId(null);
+    detachedSessionIdRef.current = null;
+    setDetachedSessionId(null);
     clearSessionDetail();
     setSessionView("browser");
     setContentVisibility({ ...DEFAULT_CONVERSATION_CONTENT_VISIBILITY });
@@ -317,6 +353,7 @@ export function useConversationsController({
     contentSearchSemanticRoles,
     contentVisibility,
     conversationSync,
+    detachedSessionId,
     ensureContentVisibility,
     exportDialog,
     exportVisibility,
@@ -324,6 +361,7 @@ export function useConversationsController({
     importDialogOpen,
     focusSearchTarget,
     openConversationTarget,
+    openDetachedSession,
     openSession,
     outputRoot,
     query,

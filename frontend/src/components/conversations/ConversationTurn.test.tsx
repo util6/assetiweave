@@ -7,18 +7,16 @@ import {
   buildConversationBlockTurnIndex,
   buildConversationTurnPresentations,
   collectConversationTurnBlocks,
-  conversationTurnAncestorIds,
   ConversationTurn,
   type ConversationTurnPresentation,
-  visibleConversationTurnPresentations,
 } from "./ConversationTurn";
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
 import type { ConversationContentController } from "./useConversationContentController";
 import type {
   ConversationContentNode,
+  ConversationPart,
   ConversationQuestionDetail,
-  ConversationTurn as ConversationTurnRecord,
 } from "../../types";
 
 const now = "2026-08-16T00:00:00Z";
@@ -135,33 +133,15 @@ describe("ConversationTurn", () => {
   it("keeps prompt, split, empty, and content card presentation inside one memoized turn", () => {
     const model: ConversationTurnPresentation =
       buildConversationTurnPresentations(question)[0]!;
-    const controller: ConversationContentController = {
-      cancelTranslation: async () => undefined,
-      copyBlock: async () => undefined,
-      expandedBlockIds: new Set(),
-      getTranslatedText: () => undefined,
-      getTranslationPhase: () => undefined,
-      isCopied: () => false,
-      isTranslating: () => false,
-      toggleExpanded: () => undefined,
-      translateBlock: async () => undefined,
-      translationAvailability: "unavailable",
-    };
 
     const html = renderToStaticMarkup(
       <ConversationTurn
-        controller={controller}
+        controller={contentController()}
         index={0}
         model={model}
         recordKind="session"
         t={t}
-        visibility={{
-          answer: true,
-          code: true,
-          command: true,
-          result: true,
-          tool: true,
-        }}
+        visibility={allVisible}
       />,
     );
     expect(html).toContain('data-conversation-turn-id="turn-1"');
@@ -182,94 +162,18 @@ describe("ConversationTurn", () => {
       question_turns: [question.question_turns[0]!],
     };
     const [model] = buildConversationTurnPresentations(questionWithModel);
-    const controller: ConversationContentController = {
-      cancelTranslation: async () => undefined,
-      copyBlock: async () => undefined,
-      expandedBlockIds: new Set(),
-      getTranslatedText: () => undefined,
-      getTranslationPhase: () => undefined,
-      isCopied: () => false,
-      isTranslating: () => false,
-      toggleExpanded: () => undefined,
-      translateBlock: async () => undefined,
-      translationAvailability: "unavailable",
-    };
 
     const html = renderToStaticMarkup(
       <ConversationTurn
-        controller={controller}
+        controller={contentController()}
         index={0}
         model={model!}
         recordKind="session"
         t={t}
-        visibility={{
-          answer: true,
-          code: true,
-          command: true,
-          result: true,
-          tool: true,
-        }}
+        visibility={allVisible}
       />,
     );
     expect(html).toContain("claude-3-7-sonnet");
-  });
-
-  it("renders a specialized subagent turn with subagent task header, agent role badge, and model badge", () => {
-    const subagentTurnQuestion: ConversationQuestionDetail = {
-      ...question,
-      turns: [
-        {
-          ...question.turns[0]!,
-          turn_kind: "subagent",
-          agent_role: "Code Reviewer",
-          model: "gemini-1.5-pro",
-          prompt: "Please review the diff between branch A and branch B",
-        },
-      ],
-      projected_content_nodes: [
-        projectedNode(
-          "part-ans-1",
-          "turn-1",
-          "answer",
-          "Review complete. All good.",
-        ),
-      ],
-    };
-
-    const [model] = buildConversationTurnPresentations(subagentTurnQuestion);
-    const controller: ConversationContentController = {
-      cancelTranslation: async () => undefined,
-      copyBlock: async () => undefined,
-      expandedBlockIds: new Set(),
-      getTranslatedText: () => undefined,
-      getTranslationPhase: () => undefined,
-      isCopied: () => false,
-      isTranslating: () => false,
-      toggleExpanded: () => undefined,
-      translateBlock: async () => undefined,
-      translationAvailability: "unavailable",
-    };
-    const html = renderToStaticMarkup(
-      <ConversationTurn
-        controller={controller}
-        index={0}
-        model={model!}
-        recordKind="session"
-        t={t}
-        visibility={{
-          answer: true,
-          code: true,
-          command: true,
-          result: true,
-          tool: true,
-        }}
-      />,
-    );
-    expect(html).toContain("子代理任务");
-    expect(html).toContain("Code Reviewer");
-    expect(html).toContain("gemini-1.5-pro");
-    expect(html).toContain("Please review the diff");
-    expect(html).toContain("复制子代理提示词");
   });
 
   it("projects one raw command Part into ephemeral display nodes with one shared Part ID", () => {
@@ -324,301 +228,137 @@ describe("ConversationTurn", () => {
   });
 });
 
-describe("ConversationTurn subagent tree", () => {
-  it("nests turns by parent_turn_id with depth and direct child counts", () => {
-    const models = buildConversationTurnPresentations(subagentTreeQuestion());
-
-    expect(models.map((model) => model.turn.id)).toEqual([
-      "turn-root",
-      "turn-orphan",
-      "turn-child",
-      "turn-grandchild",
-      "turn-great-grandchild",
-    ]);
-    const byId = new Map(models.map((model) => [model.turn.id, model]));
-    expect(byId.get("turn-root")).toMatchObject({
-      childCount: 1,
-      depth: 0,
-      parentTurnId: null,
-    });
-    expect(byId.get("turn-child")).toMatchObject({
-      childCount: 1,
-      depth: 1,
-      isSubagent: true,
-      parentTurnId: "turn-root",
-    });
-    expect(byId.get("turn-grandchild")).toMatchObject({
-      childCount: 1,
-      depth: 2,
-      parentTurnId: "turn-child",
-    });
-    expect(byId.get("turn-great-grandchild")).toMatchObject({
-      childCount: 0,
-      depth: 3,
-      parentTurnId: "turn-grandchild",
-    });
-  });
-
-  it("degrades orphans of an out-of-question parent to flat roots", () => {
-    const models = buildConversationTurnPresentations(subagentTreeQuestion());
-    const orphan = models.find((model) => model.turn.id === "turn-orphan");
-
-    expect(orphan).toMatchObject({ depth: 0, parentTurnId: null });
-    expect(
-      visibleConversationTurnPresentations(models, new Set()).map(
-        (model) => model.turn.id,
-      ),
-    ).toContain("turn-orphan");
-  });
-
-  it("keeps mutually-parented turns from vanishing or looping", () => {
-    const question = subagentTreeQuestion();
-    const cyclic: ConversationQuestionDetail = {
-      ...question,
-      turns: [
-        conversationTurnRecord("turn-a", {
-          parent_turn_id: "turn-b",
-          turn_kind: "subagent",
-        }),
-        conversationTurnRecord("turn-b", {
-          parent_turn_id: "turn-a",
-          turn_kind: "subagent",
-        }),
-      ],
-      question_turns: [],
-      projected_content_nodes: [],
-    };
-
-    const models = buildConversationTurnPresentations(cyclic);
-
-    expect(models.map((model) => model.turn.id).sort()).toEqual([
-      "turn-a",
-      "turn-b",
-    ]);
-    expect(models.every((model) => model.depth === 0)).toBe(true);
-    expect(models.every((model) => model.parentTurnId === null)).toBe(true);
-  });
-
-  it("expands every tier by default and only hides a branch the user collapses", () => {
-    const models = buildConversationTurnPresentations(subagentTreeQuestion());
-
-    expect(
-      visibleConversationTurnPresentations(models, new Set()).map(
-        (model) => model.turn.id,
-      ),
-    ).toEqual([
-      "turn-root",
-      "turn-orphan",
-      "turn-child",
-      "turn-grandchild",
-      "turn-great-grandchild",
-    ]);
-    expect(
-      visibleConversationTurnPresentations(models, new Set(["turn-child"])).map(
-        (model) => model.turn.id,
-      ),
-    ).toEqual(["turn-root", "turn-orphan", "turn-child"]);
-    expect(
-      visibleConversationTurnPresentations(
-        models,
-        new Set(["turn-grandchild"]),
-      ).map((model) => model.turn.id),
-    ).toEqual(["turn-root", "turn-orphan", "turn-child", "turn-grandchild"]);
-  });
-
-  it("labels each tier once at its first visible node", () => {
-    const models = buildConversationTurnPresentations(subagentTreeQuestion());
-    const byId = new Map(models.map((model) => [model.turn.id, model]));
-
-    expect(byId.get("turn-root")?.tierHeader).toBeNull();
-    expect(byId.get("turn-child")?.tierHeader).toEqual({
-      count: 1,
-      tier: 1,
-    });
-    expect(byId.get("turn-grandchild")?.tierHeader).toEqual({
-      count: 1,
-      tier: 2,
-    });
-    expect(byId.get("turn-great-grandchild")?.tierHeader).toEqual({
-      count: 1,
-      tier: 3,
-    });
-  });
-
-  it("collects blocks only from the visible presentation models", () => {
-    const turns: ConversationTurnRecord[] = [
-      conversationTurnRecord("turn-visible-root", { turn_index: 0 }),
-      conversationTurnRecord("turn-visible-child", {
-        parent_turn_id: "turn-visible-root",
-        turn_index: 1,
-        turn_kind: "subagent",
-      }),
-      conversationTurnRecord("turn-hidden-grandchild", {
-        parent_turn_id: "turn-visible-child",
+describe("ConversationTurn subagent dispatch anchors", () => {
+  it("keeps exactly one human turn per question and drops legacy pseudo turns", () => {
+    const portalQuestion = questionWithAnchors();
+    portalQuestion.turns = [
+      ...portalQuestion.turns,
+      {
+        ...portalQuestion.turns[0]!,
+        id: "turn-subagent",
+        parent_turn_id: "turn-1",
+        prompt: "Continue following subagent...",
         turn_index: 2,
         turn_kind: "subagent",
-      }),
-    ];
-    const question: ConversationQuestionDetail = {
-      question: {
-        id: "question-visible",
-        session_id: "session-1",
-        title: "Visible blocks",
-        created_at: now,
-        updated_at: now,
       },
-      turns,
-      parts: [],
-      question_turns: [],
-      projected_content_nodes: [
-        projectedNode(
-          "part-visible-root",
-          "turn-visible-root",
-          "answer",
-          "Root",
-        ),
-        projectedNode(
-          "part-visible-child",
-          "turn-visible-child",
-          "answer",
-          "Child",
-        ),
-        projectedNode(
-          "part-hidden-grandchild",
-          "turn-hidden-grandchild",
-          "answer",
-          "Grandchild",
-        ),
-      ],
-    };
+      {
+        ...portalQuestion.turns[0]!,
+        id: "turn-continuation",
+        prompt: "Continue following subagent execution",
+        turn_index: 3,
+        turn_kind: "continuation",
+      },
+    ];
 
-    const models = buildConversationTurnPresentations(question);
-    // 默认全部展开：三层 Turn 的 block 都在索引里。
-    const expandedBlocks = collectConversationTurnBlocks(
-      visibleConversationTurnPresentations(models, new Set()),
-    );
-    expect(expandedBlocks.map((block) => block.id)).toEqual([
-      "part-visible-root",
-      "part-visible-child",
-      "part-hidden-grandchild",
-    ]);
+    const models = buildConversationTurnPresentations(portalQuestion);
 
-    // 收起中间层后，其后代的 block 必须从索引里消失。
-    const collapsedBlocks = collectConversationTurnBlocks(
-      visibleConversationTurnPresentations(
-        models,
-        new Set(["turn-visible-child"]),
+    expect(models.map((model) => model.turn.id)).toEqual(["turn-1"]);
+  });
+
+  it("synthesizes a portal card for anchors that carry no projected node", () => {
+    // 真实锚点不挂 content_card，后端不会为它产出投影节点。
+    const [model] = buildConversationTurnPresentations(questionWithAnchors());
+    const portalNode = model?.displayNodes?.[1];
+
+    expect(portalNode).toMatchObject({
+      type: "card",
+      block: {
+        id: "part-anchor",
+        partId: "part-anchor",
+        renderer: "subagent_portal",
+      },
+    });
+    if (portalNode?.type !== "card") throw new Error("expected portal card");
+    expect(portalNode.block.portal).toMatchObject({
+      childSessionId: "child-1",
+      reportSummary: "定位到三处同步入口",
+      title: "梳理同步入口",
+    });
+    // 锚点节点不再平铺原始委派 Prompt。
+    expect(portalNode.block.text).toBe("");
+  });
+
+  it("rewrites an existing anchor node in place without duplicating the card", () => {
+    const questionWithNode = questionWithAnchors();
+    questionWithNode.projected_content_nodes = [
+      projectedNode("part-1", "turn-1", "answer", "First answer"),
+      {
+        ...projectedNode("part-anchor", "turn-1", "tool", ""),
+        node_id: "part-anchor-node",
+        node_type: "claude-code.subagent",
+        renderer: "subagent_tree",
+        semantic_role: "subagent",
+      },
+    ];
+
+    const [model] = buildConversationTurnPresentations(questionWithNode);
+
+    expect(
+      model?.displayNodes?.filter(
+        (node) => node.type === "card" && node.block.partId === "part-anchor",
       ),
+    ).toHaveLength(1);
+    expect(model?.displayNodes?.[1]).toMatchObject({
+      type: "card",
+      block: { id: "part-anchor-node", renderer: "subagent_portal" },
+    });
+  });
+
+  it("keeps anchors with no child session as read-only portal cards", () => {
+    const legacyQuestion = questionWithAnchors();
+    legacyQuestion.parts = legacyQuestion.parts.map((part) =>
+      part.id === "part-anchor"
+        ? { ...part, metadata_json: null, text: "long delegation prompt" }
+        : part,
     );
-    expect(collapsedBlocks.map((block) => block.id)).toEqual([
-      "part-visible-root",
-      "part-visible-child",
-    ]);
-    expect(
-      collapsedBlocks.some((block) => block.id === "part-hidden-grandchild"),
-    ).toBe(false);
-  });
+    legacyQuestion.turns = legacyQuestion.turns.map((turn) => ({
+      ...turn,
+      process: null,
+    }));
 
-  it("resolves the ancestor chain of a deep turn for deep-link expansion", () => {
-    const models = buildConversationTurnPresentations(subagentTreeQuestion());
-
-    expect(
-      conversationTurnAncestorIds(models, "turn-great-grandchild"),
-    ).toEqual(["turn-grandchild", "turn-child", "turn-root"]);
-    expect(conversationTurnAncestorIds(models, "turn-root")).toEqual([]);
-  });
-
-  it("renders a collapsed subagent header with role, type, model, child count, and status", () => {
-    const models = buildConversationTurnPresentations(subagentTreeQuestion());
-    const child = models.find((model) => model.turn.id === "turn-child")!;
-
-    const html = renderToStaticMarkup(
-      <ConversationTurn
-        controller={contentController()}
-        expanded={false}
-        index={0}
-        model={child}
-        recordKind="session"
-        t={t}
-        visibility={allVisible}
-      />,
+    const [model] = buildConversationTurnPresentations(legacyQuestion);
+    const node = model?.displayNodes?.find(
+      (item) => item.type === "card" && item.block.partId === "part-anchor",
     );
 
-    expect(html).toContain('data-conversation-turn-depth="1"');
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain("Teamwork Orchestrator");
-    expect(html).toContain("teamwork_preview_orchestrator");
-    expect(html).toContain("gemini-1.5-pro");
-    expect(html).toContain("1 个子代理");
-    expect(html).toContain("进行中");
-    expect(html).toContain("Coordinate the rollout plan");
-    expect(html).not.toContain("Nested worker answer");
+    expect(node).toMatchObject({
+      type: "card",
+      block: { renderer: "subagent_portal" },
+    });
+    if (node?.type !== "card") throw new Error("expected portal card");
+    expect(node.block.portal).toMatchObject({
+      childSessionId: "",
+      unresolved: true,
+    });
+    // 降级卡片同样不回灌原始委派 Prompt。
+    expect(node.block.text).toBe("");
   });
 
-  it("renders the reused content cards once the subagent is expanded", () => {
-    const models = buildConversationTurnPresentations(subagentTreeQuestion());
-    const child = models.find((model) => model.turn.id === "turn-child")!;
-
-    const html = renderToStaticMarkup(
-      <ConversationTurn
-        controller={contentController()}
-        expanded
-        index={0}
-        model={child}
-        recordKind="session"
-        t={t}
-        visibility={allVisible}
-      />,
-    );
-
-    expect(html).toContain('aria-expanded="true"');
-    expect(html).toContain("Nested worker answer");
-    expect(html).toContain('data-conversation-card-id="part-child"');
-  });
-
-  it("shows the explicit empty record notice for subagents without parts", () => {
-    const models = buildConversationTurnPresentations(subagentTreeQuestion());
-    const grandchild = models.find(
-      (model) => model.turn.id === "turn-grandchild",
-    )!;
-
-    const html = renderToStaticMarkup(
-      <ConversationTurn
-        controller={contentController()}
-        expanded
-        index={0}
-        model={grandchild}
-        recordKind="session"
-        t={t}
-        visibility={allVisible}
-      />,
-    );
-
-    expect(html).toContain("无执行记录");
-    expect(html).not.toContain("conversation-empty-state");
-  });
-
-  it("toggles a subagent branch through the collapse control", () => {
-    const models = buildConversationTurnPresentations(subagentTreeQuestion());
-    const child = models.find((model) => model.turn.id === "turn-child")!;
-    const onToggleExpanded = vi.fn();
+  it("opens the child session from the portal card without extra fetches", () => {
+    const questionWithPortal = questionWithAnchors();
+    const [model] = buildConversationTurnPresentations(questionWithPortal);
+    const onOpenSubagent = vi.fn();
 
     render(
       <ConversationTurn
         controller={contentController()}
-        expanded={false}
         index={0}
-        model={child}
-        onToggleExpanded={onToggleExpanded}
+        model={model!}
+        onOpenSubagent={onOpenSubagent}
         recordKind="session"
         t={t}
         visibility={allVisible}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "展开子代理" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "查看子会话：梳理同步入口" }),
+    );
 
-    expect(onToggleExpanded).toHaveBeenCalledWith("turn-child");
+    expect(onOpenSubagent).toHaveBeenCalledWith(
+      expect.objectContaining({ childSessionId: "child-1" }),
+      expect.objectContaining({ id: "turn-1" }),
+    );
   });
 });
 
@@ -645,93 +385,48 @@ function contentController(): ConversationContentController {
   };
 }
 
-function conversationTurnRecord(
-  id: string,
-  overrides: Partial<ConversationTurnRecord> = {},
-): ConversationTurnRecord {
-  return {
-    id,
-    session_id: "session-1",
-    turn_index: 0,
-    prompt: `Prompt for ${id}`,
-    started_at: now,
-    imported_at: now,
-    ...overrides,
-  };
-}
-
-function subagentTreeQuestion(): ConversationQuestionDetail {
-  const turns: ConversationTurnRecord[] = [
-    conversationTurnRecord("turn-root", {
-      prompt: "Ship the feature",
-      turn_index: 0,
-    }),
-    conversationTurnRecord("turn-child", {
-      agent_role: "Teamwork Orchestrator",
-      ended_at: null,
-      model: "gemini-1.5-pro",
-      parent_turn_id: "turn-root",
-      prompt: "Coordinate the rollout plan",
-      started_at: now,
-      title: "teamwork_preview_orchestrator",
-      turn_index: 1,
-      turn_kind: "subagent",
-    }),
-    conversationTurnRecord("turn-grandchild", {
-      agent_role: "Project Orchestrator",
-      ended_at: now,
-      parent_turn_id: "turn-child",
-      prompt: "Break down the rollout",
-      started_at: now,
-      turn_index: 2,
-      turn_kind: "subagent",
-    }),
-    conversationTurnRecord("turn-great-grandchild", {
-      agent_role: "Rust Core Reviewer 2",
-      ended_at: now,
-      parent_turn_id: "turn-grandchild",
-      prompt: "Review the patch",
-      started_at: now,
-      turn_index: 3,
-      turn_kind: "subagent",
-    }),
-    conversationTurnRecord("turn-orphan", {
-      agent_role: "Auditor",
-      ended_at: now,
-      parent_turn_id: "turn-missing",
-      prompt: "Audit leftovers",
-      started_at: now,
-      turn_index: 4,
-      turn_kind: "subagent",
-    }),
-  ];
-
-  return {
-    question: {
-      id: "question-tree",
-      session_id: "session-1",
-      title: "Subagent tree",
-      created_at: now,
-      updated_at: now,
+function questionWithAnchors(): ConversationQuestionDetail {
+  const turns = [
+    {
+      ...question.turns[0]!,
+      process: JSON.stringify({
+        items: [
+          {
+            content: "child-1",
+            kind: "subagent",
+            label: "梳理同步入口",
+            seq: 1,
+            status: "completed",
+            summary: "定位到三处同步入口",
+          },
+        ],
+      }),
     },
+  ];
+  const anchorPart: ConversationPart = {
+    id: "part-anchor",
+    turn_id: "turn-1",
+    part_index: 1,
+    role: "assistant",
+    kind: "subagent",
+    text: "请梳理同步入口，不要只列文件……".repeat(40),
+    // 真实锚点只有 metadata_json，不挂 content_card。
+    metadata_json: JSON.stringify({
+      agent_role: "Explore",
+      child_external_id: "child-1-external",
+      child_session_id: "child-1",
+      status: "completed",
+      title: "梳理同步入口",
+    }),
+  };
+
+  return {
+    ...question,
     turns,
-    parts: [],
-    question_turns: turns.map((turn, turn_order) => ({
-      question_id: "question-tree",
-      turn_id: turn.id,
-      turn_order,
-      assignment_origin: "auto_merged",
-      assigned_at: now,
-      updated_at: now,
-    })),
+    question_turns: [question.question_turns[0]!],
+    parts: [question.parts[0]!, anchorPart],
     projected_content_nodes: [
-      projectedNode("part-root", "turn-root", "answer", "Root answer"),
-      projectedNode(
-        "part-child",
-        "turn-child",
-        "answer",
-        "Nested worker answer",
-      ),
+      projectedNode("part-1", "turn-1", "answer", "First answer"),
     ],
   };
 }

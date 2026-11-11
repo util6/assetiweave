@@ -58,6 +58,8 @@ import {
   conversationCardPresentationKind,
   useConversationCardKindRegistry,
 } from "./ConversationCardKindRegistry";
+import type { SubagentDispatchPortalViewModel } from "./conversationSubagents";
+import { SubagentPortalCard } from "./SubagentPortalCard";
 import {
   ConversationDiff,
   summarizeConversationDiff,
@@ -101,6 +103,8 @@ export interface ConversationContentBlock {
   signal?: "ambient" | "focus" | string | null;
   filePath?: string | null;
   toolName?: string | null;
+  /** 子代理锚点卡片的内联视图模型；仅 `subagent_portal` 渲染器使用。 */
+  portal?: SubagentDispatchPortalViewModel | null;
 }
 
 export type ConversationContentBlockSeed = {
@@ -506,6 +510,7 @@ export function ConversationContentCards({
   controller,
   onCopyError,
   onCommandPartsVisible,
+  onOpenSubagent,
   onTranslationError,
   nodes,
   recordKind = "session",
@@ -523,6 +528,7 @@ export function ConversationContentCards({
   controller?: ConversationContentController;
   onCopyError?: (message: string) => void;
   onCommandPartsVisible?: (partIds: string[]) => void;
+  onOpenSubagent?: (portal: SubagentDispatchPortalViewModel) => void;
   onTranslationError?: (message: string) => void;
   nodes: ConversationDisplayNode[];
   recordKind?: ConversationRecordKind;
@@ -700,6 +706,22 @@ export function ConversationContentCards({
 
   function renderDisplayNode(node: ConversationDisplayNode) {
     if (node.type === "card") {
+      if (node.block.renderer === "subagent_portal" && node.block.portal) {
+        return (
+          <div
+            className="scroll-mt-32"
+            data-conversation-card-id={node.block.id}
+            id={conversationCardDomId(node.block.id)}
+            key={node.block.id}
+          >
+            <SubagentPortalCard
+              onOpen={onOpenSubagent}
+              portal={node.block.portal}
+              t={t}
+            />
+          </div>
+        );
+      }
       if (isAmbientBlock(node.block)) {
         return (
           <CompactActionCard

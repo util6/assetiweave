@@ -56,17 +56,23 @@ import {
 } from "../../components/conversations/ConversationContentCards";
 import {
   buildConversationBlockTurnIndex,
-  buildConversationTurnIndex,
   buildConversationTurnPresentations,
   collectConversationTurnBlocks,
-  conversationTurnAncestorIds,
   ConversationTurn,
-  visibleConversationTurnPresentations,
 } from "../../components/conversations/ConversationTurn";
 import {
   buildQuestionTurnRail,
   QuestionTurnRail,
+  SubagentChipList,
 } from "../../components/conversations/ConversationTurnRail";
+import {
+  parentSessionBreadcrumb,
+  SUBAGENT_EXECUTION_ORIGIN,
+  type ParentSessionBreadcrumb,
+  type SubagentDispatchPortal,
+  type SubagentDispatchPortalViewModel,
+  type SubagentSessionTarget,
+} from "../../components/conversations/conversationSubagents";
 import {
   DEFAULT_TRANSLATION_SETTINGS,
   useConversationContentController,
@@ -87,6 +93,8 @@ import {
   ConversationTurnSkeleton,
 } from "../../components/conversations/ConversationSkeleton";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
+import { Badge } from "../../components/foundation/Badge";
+import { Button } from "../../components/ui/button";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import {
@@ -99,7 +107,6 @@ import { useQueryScope } from "../../app/query/QueryScopeProvider";
 import {
   conversationAdaptersQueryOptions,
   conversationKeys,
-  conversationPartIndexQueryOptions,
   conversationSessionsQueryOptions,
   isWebRecordAdapter,
   loadAllConversationSessionPages,
@@ -127,7 +134,6 @@ import {
   listConversationSessions,
   listWebRecordSessions,
   searchConversationRecords,
-  startConversationPartIndexRebuild,
 } from "../../services/conversations";
 import { selectTargetDirectory } from "../../services/catalog";
 import {
@@ -155,6 +161,7 @@ import type {
   ConversationRecordKind,
   ConversationSessionDetail,
   ConversationSessionListItem,
+  ConversationTurn as ConversationTurnRecord,
 } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
 import { conversationIdFragment } from "../../utils/conversationIds";
@@ -230,6 +237,7 @@ export function ConversationsPage({
     contentSearchSemanticRoles,
     contentVisibility,
     conversationSync,
+    detachedSessionId,
     ensureContentVisibility,
     exportDialog,
     exportVisibility,
@@ -237,6 +245,7 @@ export function ConversationsPage({
     focusSearchTarget,
     importDialogOpen,
     openConversationTarget,
+    openDetachedSession,
     openSession,
     outputRoot,
     query,
@@ -299,17 +308,19 @@ export function ConversationsPage({
   const sessionsQuery = useQuery(
     conversationSessionsQueryOptions(activeScope, currentRecordKind, query),
   );
-  const partIndexQuery = useQuery(
-    conversationPartIndexQueryOptions(activeScope),
-  );
-  const partIndexDegraded = partIndexQuery.data?.is_ready === false;
-  const [partIndexRebuildStarting, setPartIndexRebuildStarting] =
-    useState(false);
-
   const adapters = adaptersQuery.data ?? [];
   const sessions = sessionsQuery.data ?? [];
   const [sessionDetail, setSessionDetail] =
     useState<ConversationSessionDetail | null>(null);
+  /** 从父轮次锚点下钻时保留的溯源上下文；搜索命中打开子会话时依赖会话元数据兜底。 */
+  const [subagentNavigation, setSubagentNavigation] =
+    useState<SubagentSessionTarget | null>(null);
+  /** 返回父会话后要定位的轮次；父会话详情到达后由工作区消费一次。 */
+  const [pendingParentFocus, setPendingParentFocus] = useState<{
+    sessionId: string;
+    turnId?: string | null;
+    turnIndex?: number | null;
+  } | null>(null);
   const [contentSearchDialogOpen, setContentSearchDialogOpen] = useState(false);
   const handledSyncTaskIdRef = useRef<string | null>(null);
   const syncedAdapterIdsRef = useRef<Set<string>>(new Set());
@@ -320,20 +331,6 @@ export function ConversationsPage({
   const sessionDetailRequestIdRef = useRef(0);
   const sessionSearchLoading = sessionsQuery.isFetching;
 
-  async function handleRebuildPartIndex() {
-    if (partIndexRebuildStarting) return;
-    setPartIndexRebuildStarting(true);
-    try {
-      await startConversationPartIndexRebuild();
-      await queryClient.invalidateQueries({
-        queryKey: conversationKeys.partIndex(activeScope),
-      });
-    } catch (error) {
-      onNotifyError(formatErrorMessage(error));
-    } finally {
-      setPartIndexRebuildStarting(false);
-    }
-  }
   const sessionCatalogReady = sessionsQuery.data !== undefined;
 
   useEffect(() => {
@@ -640,6 +637,8 @@ export function ConversationsPage({
 
   useEffect(() => {
     if (!selectedAppGroup || !selectedSessionId) return;
+    // 按需打开的子代理会话不在会话目录里，不能被「不在当前分组」误判关闭。
+    if (selectedSessionId === detachedSessionId) return;
     if (
       !selectedAppGroup.sessions.some(
         (session) => session.id === selectedSessionId,
@@ -647,7 +646,7 @@ export function ConversationsPage({
     ) {
       closeSession();
     }
-  }, [closeSession, selectedAppGroup, selectedSessionId]);
+  }, [closeSession, detachedSessionId, selectedAppGroup, selectedSessionId]);
 
   useEffect(() => {
     if (!selectedAppGroup) {
@@ -1049,6 +1048,7 @@ export function ConversationsPage({
 
   const handleOpenSession = useCallback(
     (sessionId: string) => {
+      setSubagentNavigation(null);
       openSession(sessionId);
       if (sessionId === selectedSessionId) {
         void loadSession(sessionId);
@@ -1057,23 +1057,112 @@ export function ConversationsPage({
     [openSession, selectedSessionId],
   );
 
+  /**
+   * 从父轮次锚点下钻到子代理会话：只按需拉取这一个子会话详情。
+   */
+  const handleOpenSubagentSession = useCallback(
+    (target: SubagentSessionTarget) => {
+      setSubagentNavigation(target);
+      setPendingParentFocus(null);
+      openDetachedSession(target.childSessionId);
+      if (target.childSessionId === selectedSessionId) {
+        void loadSession(target.childSessionId);
+      }
+    },
+    [openDetachedSession, selectedSessionId],
+  );
+
+  /**
+   * 子会话顶栏面包屑回跳父会话，并把父轮次作为一次性定位目标。
+   */
+  const handleReturnToParentSession = useCallback(
+    (breadcrumb: ParentSessionBreadcrumb) => {
+      setSubagentNavigation(null);
+      // 从检索命中的子代理会话返回时，当前 App/项目分组可能还停在别处：
+      // 父会话若在目录里，顺手把分组切回它自己的位置，否则会被目录对账立刻关闭。
+      const parentSession = sessions.find(
+        (session) => session.id === breadcrumb.parentSessionId,
+      );
+      if (parentSession) {
+        openConversationTarget({
+          appId: parentSession.adapter_id,
+          projectKey:
+            currentRecordKind === "web"
+              ? null
+              : (normalizedProjectPath(parentSession) ?? NO_PROJECT_GROUP_KEY),
+          questionId: null,
+          searchTarget: null,
+          sessionId: parentSession.id,
+        });
+      } else {
+        openSession(breadcrumb.parentSessionId);
+      }
+      setPendingParentFocus({
+        sessionId: breadcrumb.parentSessionId,
+        turnIndex: breadcrumb.parentTurnIndex ?? null,
+      });
+      if (breadcrumb.parentSessionId === selectedSessionId) {
+        void loadSession(breadcrumb.parentSessionId);
+      }
+    },
+    [
+      currentRecordKind,
+      openConversationTarget,
+      openSession,
+      selectedSessionId,
+      sessions,
+    ],
+  );
+
+  const handleConsumeParentFocus = useCallback(() => {
+    setPendingParentFocus(null);
+  }, []);
+
+  const activeParentBreadcrumb = useMemo<ParentSessionBreadcrumb | null>(() => {
+    const current = sessionDetail?.session;
+    if (!current) return null;
+    if (subagentNavigation?.childSessionId === current.id) {
+      return {
+        agentRole: subagentNavigation.agentRole ?? undefined,
+        parentSessionId: subagentNavigation.parentSessionId,
+        parentShortId: conversationIdFragment(
+          subagentNavigation.parentSessionId,
+        ),
+        parentTurnIndex: subagentNavigation.parentTurnIndex,
+        parentTurnNumber: subagentNavigation.parentTurnIndex + 1,
+      };
+    }
+    return parentSessionBreadcrumb(current);
+  }, [sessionDetail?.session, subagentNavigation]);
+
+  const activeParentFocus =
+    pendingParentFocus?.sessionId === sessionDetail?.session.id
+      ? pendingParentFocus
+      : null;
+
   const handleOpenSearchHit = useCallback(
     (hit: ConversationSearchHit) => {
-      openConversationTarget({
-        appId: hit.session.adapter_id,
-        projectKey:
-          currentRecordKind === "web"
-            ? null
-            : (normalizedProjectPath(hit.session) ?? NO_PROJECT_GROUP_KEY),
-        questionId: hit.question_id,
-        searchTarget: {
-          blockId: hit.block_id,
-          cardType: hit.card_type,
+      // 子代理会话默认 user_visible = 0，不在会话目录里，必须走游离会话通道。
+      if (hit.session.execution_origin === SUBAGENT_EXECUTION_ORIGIN) {
+        setSubagentNavigation(null);
+        openDetachedSession(hit.session.id);
+      } else {
+        openConversationTarget({
+          appId: hit.session.adapter_id,
+          projectKey:
+            currentRecordKind === "web"
+              ? null
+              : (normalizedProjectPath(hit.session) ?? NO_PROJECT_GROUP_KEY),
           questionId: hit.question_id,
+          searchTarget: {
+            blockId: hit.block_id,
+            cardType: hit.card_type,
+            questionId: hit.question_id,
+            sessionId: hit.session.id,
+          },
           sessionId: hit.session.id,
-        },
-        sessionId: hit.session.id,
-      });
+        });
+      }
       if (hit.card_type !== "question") {
         updateContentVisibility(hit.card_type, true);
       }
@@ -1084,6 +1173,7 @@ export function ConversationsPage({
     [
       currentRecordKind,
       openConversationTarget,
+      openDetachedSession,
       selectedSessionId,
       updateContentVisibility,
     ],
@@ -1393,21 +1483,6 @@ export function ConversationsPage({
         />
       ) : null}
 
-      {partIndexDegraded ? (
-        <div
-          className="flex flex-wrap items-center gap-3 px-[var(--app-page-x)] py-2 text-[12px] text-theme-muted"
-          role="status"
-        >
-          <span>{t("conversation.partIndex.degraded")}</span>
-          <ToolbarTextButton
-            disabled={partIndexRebuildStarting}
-            icon={<RefreshCw size={14} />}
-            label={t("conversation.partIndex.rebuild")}
-            onClick={() => void handleRebuildPartIndex()}
-          />
-        </div>
-      ) : null}
-
       {sessionView === "browser" ? (
         <AppSessionBrowser
           appShortcuts={appShortcuts}
@@ -1436,13 +1511,18 @@ export function ConversationsPage({
           }
           activeSearchTarget={activeSearchTarget}
           contentCardColors={appSettings.conversations.contentCardColors}
+          focusTurn={activeParentFocus}
+          onFocusTurnConsumed={handleConsumeParentFocus}
           onExport={() => openExportDialog("session")}
           onCopyError={onNotifyError}
+          onOpenSubagentSession={handleOpenSubagentSession}
           onPickOutputRoot={() =>
             selectTargetDirectory(t("conversation.export.pickOutputRoot"))
           }
           onQuestionSelect={selectQuestion}
           onQuestionSelectionChange={handleQuestionSelectionChange}
+          onReturnToParentSession={handleReturnToParentSession}
+          parentBreadcrumb={activeParentBreadcrumb}
           columnMinWidth={appSettings.columnMinWidth}
           outputRoot={outputRoot}
           question={selectedQuestion}
@@ -1493,7 +1573,10 @@ export function resolveConversationNavigationTarget(
 
   for (const question of candidateQuestions) {
     const turnBlockMatch = question.turns.some((turn) => {
-      if (`${turn.id}-question` === target.blockId || turn.id === target.blockId) {
+      if (
+        `${turn.id}-question` === target.blockId ||
+        turn.id === target.blockId
+      ) {
         return true;
       }
       if (target.blockId != null) {
@@ -2549,10 +2632,15 @@ export function SessionQuestionWorkspace({
   contentCardColors,
   onExport,
   onCopyError,
+  onOpenSubagentSession,
   onPickOutputRoot,
   onQuestionSelect,
   onQuestionSelectionChange,
+  onReturnToParentSession,
+  focusTurn,
+  onFocusTurnConsumed,
   outputRoot,
+  parentBreadcrumb,
   question,
   questions,
   recordKind = "session",
@@ -2569,12 +2657,21 @@ export function SessionQuestionWorkspace({
   adapterVersion?: string;
   columnMinWidth?: number;
   contentCardColors: ConversationContentCardColorSettings;
+  focusTurn?: {
+    sessionId: string;
+    turnId?: string | null;
+    turnIndex?: number | null;
+  } | null;
   onExport: () => void;
   onCopyError?: (message: string) => void;
+  onFocusTurnConsumed?: () => void;
+  onOpenSubagentSession?: (target: SubagentSessionTarget) => void;
   onPickOutputRoot: () => Promise<string | null>;
   onQuestionSelect: (questionId: string) => void;
   onQuestionSelectionChange: (questionId: string, checked: boolean) => void;
+  onReturnToParentSession?: (breadcrumb: ParentSessionBreadcrumb) => void;
   outputRoot: string;
+  parentBreadcrumb?: ParentSessionBreadcrumb | null;
   question: ConversationQuestionDetail | null;
   questions: ConversationQuestionDetail[];
   recordKind?: ConversationRecordKind;
@@ -2609,37 +2706,55 @@ export function SessionQuestionWorkspace({
   >(null);
   const focusedQuestion = useMemo(() => {
     if (!question) return question;
-    if (selectedTurnId) {
-      const turn = question.turns.find((item) => item.id === selectedTurnId);
-      if (turn) {
-        return {
-          ...question,
-          turns: [turn],
-          projected_content_nodes: question.projected_content_nodes.filter(
-            (node) => node.turn_id === turn.id,
-          ),
-        };
-      }
-    }
-    // 子代理已在左栏独立成行，右侧默认视图只保留主 Turn，避免同一批内容在两处出现。
-    // 早期数据里部分子代理的 turn_kind 为空、只有 parent_turn_id，这里一并按子代理处理。
-    const turnIds = new Set(question.turns.map((item) => item.id));
-    const isSubagentTurn = (item: (typeof question.turns)[number]) =>
-      item.turn_kind === "subagent" ||
-      item.turn_kind === "agent" ||
-      Boolean(item.parent_turn_id && turnIds.has(item.parent_turn_id));
-    const mainTurns = question.turns.filter((item) => !isSubagentTurn(item));
-    if (mainTurns.length === 0 || mainTurns.length === question.turns.length)
-      return question;
-    const mainTurnIds = new Set(mainTurns.map((item) => item.id));
+    if (!selectedTurnId) return question;
+    const turn = question.turns.find((item) => item.id === selectedTurnId);
+    if (!turn) return question;
     return {
       ...question,
-      turns: mainTurns,
-      projected_content_nodes: question.projected_content_nodes.filter((node) =>
-        mainTurnIds.has(node.turn_id),
+      turns: [turn],
+      projected_content_nodes: question.projected_content_nodes.filter(
+        (node) => node.turn_id === turn.id,
       ),
     };
   }, [question, selectedTurnId]);
+
+  // 从子会话返回父会话时，一次性定位到派发该子代理的父轮次。
+  useEffect(() => {
+    if (!focusTurn) return;
+    const matcher = (turn: ConversationTurnRecord) =>
+      focusTurn.turnId
+        ? turn.id === focusTurn.turnId
+        : focusTurn.turnIndex != null &&
+          turn.turn_index === focusTurn.turnIndex;
+    const targetQuestion = questions.find((item) => item.turns.some(matcher));
+    if (targetQuestion) {
+      const targetTurn = targetQuestion.turns.find(matcher);
+      onQuestionSelect(targetQuestion.question.id);
+      setRailExpandedQuestionId(targetQuestion.question.id);
+      setSelectedTurnId(targetTurn?.id ?? null);
+    }
+    onFocusTurnConsumed?.();
+  }, [focusTurn, onFocusTurnConsumed, onQuestionSelect, questions]);
+
+  const handleRailSubagentOpen = useCallback(
+    (
+      portal: SubagentDispatchPortalViewModel,
+      turn: ConversationTurnRecord,
+      questionId: string,
+    ) => {
+      // 历史锚点可能只有 external_id，没有可用子会话主键：保持可见但不可跳转。
+      if (portal.unresolved || !portal.childSessionId) return;
+      onOpenSubagentSession?.({
+        agentRole: portal.agentRole ?? null,
+        childSessionId: portal.childSessionId,
+        parentQuestionId: questionId,
+        parentSessionId: session?.session.id ?? "",
+        parentTurnId: turn.id,
+        parentTurnIndex: turn.turn_index ?? 0,
+      });
+    },
+    [onOpenSubagentSession, session?.session.id],
+  );
 
   const previewPanel = (
     <section className="h-full min-h-0 min-w-0">
@@ -2651,8 +2766,13 @@ export function SessionQuestionWorkspace({
           contentCardColors={contentCardColors}
           onExport={onExport}
           onCopyError={onCopyError}
+          onOpenSubagent={(portal, turn) =>
+            handleRailSubagentOpen(portal, turn, question.question.id)
+          }
           onPickOutputRoot={onPickOutputRoot}
+          onReturnToParentSession={onReturnToParentSession}
           outputRoot={outputRoot}
+          parentBreadcrumb={parentBreadcrumb}
           question={focusedQuestion ?? question}
           questionListToggle={
             questionListCollapsed ? questionListToggle : undefined
@@ -2749,6 +2869,9 @@ export function SessionQuestionWorkspace({
               renderItem={(item, index) => (
                 <QuestionListItem
                   index={index + 1}
+                  onOpenSubagent={(portal, turn) =>
+                    handleRailSubagentOpen(portal, turn, item.question.id)
+                  }
                   onSelect={() => {
                     onQuestionSelect(item.question.id);
                     setRailExpandedQuestionId(item.question.id);
@@ -2848,6 +2971,7 @@ function QuestionListToggleButton({
 
 function QuestionListItem({
   index,
+  onOpenSubagent,
   onSelect,
   onSelectTurn,
   onSelectionChange,
@@ -2860,6 +2984,10 @@ function QuestionListItem({
   t,
 }: {
   index?: number;
+  onOpenSubagent: (
+    portal: SubagentDispatchPortal,
+    turn: ConversationTurnRecord,
+  ) => void;
   onSelect: () => void;
   onSelectTurn: (turnId: string) => void;
   onSelectionChange: (checked: boolean) => void;
@@ -2880,6 +3008,18 @@ function QuestionListItem({
     () => buildQuestionTurnRail(question),
     [question],
   );
+  // 1 问 1 轮时直接把子代理胶囊挂在问题卡片上，不再多一层 Turn 列表。
+  const directRailEntry = railEntries.length === 1 ? railEntries[0]! : null;
+  const directSubagents = directRailEntry?.subagents ?? [];
+  const showDirectSubagents = directSubagents.length > 0;
+  const railToggleLabel = showDirectSubagents
+    ? t("conversation.turn.childCount", { count: directSubagents.length })
+    : t("conversation.question.turnCount", { count: railEntries.length });
+  const railToggleAriaLabel = showDirectSubagents
+    ? t("conversation.turn.railToggleSubagents", {
+        count: directSubagents.length,
+      })
+    : t("conversation.question.turnCount", { count: railEntries.length });
   const [expandedRailRootIds, setExpandedRailRootIds] = useState<
     ReadonlySet<string>
   >(() => new Set<string>());
@@ -2925,9 +3065,7 @@ function QuestionListItem({
             </h3>
             <span
               aria-expanded={railExpanded}
-              aria-label={t("conversation.question.turnCount", {
-                count: question.turns.length,
-              })}
+              aria-label={railToggleAriaLabel}
               className="inline-flex shrink-0 items-center gap-1 rounded-full bg-theme-control px-2 py-1 text-code-sm text-on-surface-muted"
               onClick={(event) => {
                 event.stopPropagation();
@@ -2936,9 +3074,7 @@ function QuestionListItem({
               role="button"
               tabIndex={0}
             >
-              {t("conversation.question.turnCount", {
-                count: question.turns.length,
-              })}
+              {railToggleLabel}
               <ChevronRight
                 className={`size-3 transition-transform ${
                   railExpanded ? "rotate-90" : ""
@@ -2956,14 +3092,24 @@ function QuestionListItem({
       </div>
       {railExpanded ? (
         <div className="px-4 pb-3 pl-11">
-          <QuestionTurnRail
-            entries={railEntries}
-            expandedRootIds={expandedRailRootIds}
-            onSelectTurn={onSelectTurn}
-            onToggleRoot={toggleRailRoot}
-            selectedTurnId={selectedTurnId}
-            t={t}
-          />
+          {showDirectSubagents ? (
+            <SubagentChipList
+              className=""
+              onOpen={(portal) => onOpenSubagent(portal, directRailEntry!.turn)}
+              portals={directSubagents}
+              t={t}
+            />
+          ) : (
+            <QuestionTurnRail
+              entries={railEntries}
+              expandedRootIds={expandedRailRootIds}
+              onOpenSubagent={onOpenSubagent}
+              onSelectTurn={onSelectTurn}
+              onToggleRoot={toggleRailRoot}
+              selectedTurnId={selectedTurnId}
+              t={t}
+            />
+          )}
         </div>
       ) : null}
     </article>
@@ -2976,8 +3122,11 @@ export function QuestionPreview({
   contentCardColors,
   onExport,
   onCopyError,
+  onOpenSubagent,
   onPickOutputRoot,
+  onReturnToParentSession,
   outputRoot,
+  parentBreadcrumb,
   question,
   questionListToggle,
   recordKind = "session",
@@ -2993,8 +3142,14 @@ export function QuestionPreview({
   contentCardColors?: ConversationContentCardColorSettings;
   onExport?: () => void;
   onCopyError?: (message: string) => void;
+  onOpenSubagent?: (
+    portal: SubagentDispatchPortalViewModel,
+    turn: ConversationTurnRecord,
+  ) => void;
   onPickOutputRoot?: () => Promise<string | null>;
+  onReturnToParentSession?: (breadcrumb: ParentSessionBreadcrumb) => void;
   outputRoot?: string;
+  parentBreadcrumb?: ParentSessionBreadcrumb | null;
   question: ConversationQuestionDetail;
   questionListToggle?: ReactNode;
   recordKind?: ConversationRecordKind;
@@ -3031,34 +3186,8 @@ export function QuestionPreview({
     () => buildConversationTurnPresentations(question, commandProjections),
     [commandProjections, question],
   );
-  // 默认全部展开：按 Tier 分层全部可见，collapsedTurnIds 只记录用户主动收起的分支。
-  const [collapsedTurnIds, setCollapsedTurnIds] = useState<ReadonlySet<string>>(
-    () => new Set<string>(),
-  );
-  const turnIndex = useMemo(
-    () => buildConversationTurnIndex(turnModels),
-    [turnModels],
-  );
-  const visibleTurnModels = useMemo(
-    () =>
-      visibleConversationTurnPresentations(
-        turnModels,
-        collapsedTurnIds,
-        turnIndex,
-      ),
-    [collapsedTurnIds, turnIndex, turnModels],
-  );
-  const toggleTurnCollapsed = useCallback((turnId: string) => {
-    setCollapsedTurnIds((current) => {
-      const next = new Set(current);
-      if (next.has(turnId)) next.delete(turnId);
-      else next.add(turnId);
-      return next;
-    });
-  }, []);
   const contentController = useConversationContentController({
-    // 只收集可见 Turn 的 block：折叠隐藏的子 Turn 不得进入 block 索引
-    blocks: collectConversationTurnBlocks(visibleTurnModels),
+    blocks: collectConversationTurnBlocks(turnModels),
     onCopyError,
     onTranslationError: onCopyError,
     recordKind,
@@ -3135,21 +3264,6 @@ export function QuestionPreview({
     ],
   );
 
-  useEffect(() => {
-    if (!activeTurnId) return;
-    const branch = [
-      activeTurnId,
-      ...conversationTurnAncestorIds(turnModels, activeTurnId, turnIndex),
-    ];
-    // 深链定位时把沿途分支从「已收起」集合里移除，保证目标 Turn 可见。
-    setCollapsedTurnIds((current) => {
-      if (!branch.some((turnId) => current.has(turnId))) return current;
-      const next = new Set(current);
-      branch.forEach((turnId) => next.delete(turnId));
-      return next;
-    });
-  }, [activeTurnId, turnIndex, turnModels]);
-
   const scrolledTurnIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!activeTurnId) {
@@ -3157,14 +3271,13 @@ export function QuestionPreview({
       return;
     }
     if (scrolledTurnIdRef.current === activeTurnId) return;
-    if (!visibleTurnModels.some((model) => model.turn.id === activeTurnId))
-      return;
+    if (!turnModels.some((model) => model.turn.id === activeTurnId)) return;
     scrolledTurnIdRef.current = activeTurnId;
     virtualizedCollectionRef.current?.scrollToKey(activeTurnId, {
       align: "center",
       behavior: "auto",
     });
-  }, [activeTurnId, visibleTurnModels]);
+  }, [activeTurnId, turnModels]);
 
   const handleTurnReady = useCallback(
     (turnId: string) => {
@@ -3193,6 +3306,46 @@ export function QuestionPreview({
       <header className="conversation-section-header flex shrink-0 items-center justify-between gap-3 px-4 py-2.5">
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
           {questionListToggle}
+          {parentBreadcrumb && onReturnToParentSession ? (
+            <Button
+              aria-label={
+                parentBreadcrumb.parentTurnNumber === undefined
+                  ? t("conversation.subagent.backToParent", {
+                      id: parentBreadcrumb.parentShortId,
+                    })
+                  : t("conversation.subagent.backToParentTurn", {
+                      id: parentBreadcrumb.parentShortId,
+                      turn: parentBreadcrumb.parentTurnNumber,
+                    })
+              }
+              className="h-8 shrink-0 gap-1.5 rounded-full border border-primary/30 bg-theme-control/70 px-3 text-code-sm text-primary hover:bg-primary/10"
+              onClick={() => onReturnToParentSession(parentBreadcrumb)}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              <ArrowLeft aria-hidden="true" className="size-3.5" />
+              <span>
+                {parentBreadcrumb.parentTurnNumber === undefined
+                  ? t("conversation.subagent.backToParent", {
+                      id: parentBreadcrumb.parentShortId,
+                    })
+                  : t("conversation.subagent.backToParentTurn", {
+                      id: parentBreadcrumb.parentShortId,
+                      turn: parentBreadcrumb.parentTurnNumber,
+                    })}
+              </span>
+            </Button>
+          ) : null}
+          {parentBreadcrumb?.agentRole ? (
+            <Badge
+              className="shrink-0 px-2.5 py-0.5 text-xs normal-case tracking-normal"
+              title={parentBreadcrumb.agentRole}
+              tone="primary"
+            >
+              {parentBreadcrumb.agentRole}
+            </Badge>
+          ) : null}
           <div className="flex min-w-0 items-center gap-2">
             <h2
               className="truncate text-body-sm font-semibold text-on-surface"
@@ -3235,7 +3388,7 @@ export function QuestionPreview({
               }
               deferredRenderingEnabled={
                 renderingFlags.deferredSkeletonRendering &&
-                visibleTurnModels.length >= 12
+                turnModels.length >= 12
               }
               eagerKeys={eagerKeys}
               enabled={renderingFlags.conversationTurnVirtualization}
@@ -3243,7 +3396,7 @@ export function QuestionPreview({
               fallback={() => <ConversationTurnSkeleton />}
               getItemKey={(model) => model.turn.id}
               gap={0}
-              items={visibleTurnModels}
+              items={turnModels}
               minItems={12}
               onItemReady={handleTurnReady}
               pinnedKeys={pinnedKeys}
@@ -3253,12 +3406,11 @@ export function QuestionPreview({
                   activeBlockId={activeBlockId}
                   colors={contentCardColors}
                   controller={contentController}
-                  expanded={!collapsedTurnIds.has(model.turn.id)}
                   index={index}
                   model={model}
                   onCopyError={onCopyError}
                   onCommandPartsVisible={handleCommandPartsVisible}
-                  onToggleExpanded={toggleTurnCollapsed}
+                  onOpenSubagent={onOpenSubagent}
                   recordKind={recordKind}
                   resultPreviewLineLimit={resultPreviewLineLimit}
                   t={t}
