@@ -105,7 +105,7 @@ impl AppService {
                 });
                 stages.push(TaskStage {
                     id: format!("adapter:{adapter_id}:persist"),
-                    name: format!("{prefix}数据入库与索引"),
+                    name: format!("{prefix}会话事实入库"),
                     status: StageStatus::Pending,
                     started_at: None,
                     finished_at: None,
@@ -427,7 +427,7 @@ impl AppService {
                             &persist_stage_id,
                             1,
                             Some(1),
-                            Some("会话记录已安全入库，搜索索引更新完毕".to_string()),
+                            Some("会话事实已安全入库；搜索索引由后台异步追平".to_string()),
                         );
                         let persist_status = if total_failures == 0 {
                             StageStatus::Succeeded

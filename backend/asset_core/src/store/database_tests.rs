@@ -1865,6 +1865,7 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         "conversation_part_index_state",
         "conversation_parts",
         "conversation_payload_policy_state",
+        "conversation_search_doc_row",
         "conversation_search_index_state",
         "conversation_sessions",
         "conversation_sources",
@@ -1882,7 +1883,7 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>(),
-        "4 大前缀表清单必须与收敛核心白名单（22 表）完全一致，杜绝任何僵尸表残留"
+        "4 大前缀表清单必须与收敛核心白名单（23 表）完全一致，杜绝任何僵尸表残留"
     );
 
     let market_index_count: i64 = conn
@@ -3668,6 +3669,7 @@ async fn adversarial_challenge_3_zero_zombie_tables_oracle_failure_injection() {
         "conversation_part_index_state",
         "conversation_parts",
         "conversation_payload_policy_state",
+        "conversation_search_doc_row",
         "conversation_search_index_state",
         "conversation_sessions",
         "conversation_sources",
@@ -3684,7 +3686,7 @@ async fn adversarial_challenge_3_zero_zombie_tables_oracle_failure_injection() {
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>(),
-        "baseline clean database must match exactly 21 core tables"
+        "baseline clean database must match exactly 23 core tables"
     );
 
     // Helper to test oracle rejection
@@ -3740,6 +3742,7 @@ async fn adversarial_challenge_3_zero_zombie_tables_oracle_failure_injection() {
             "conversation_part_index_state",
             "conversation_parts",
             "conversation_payload_policy_state",
+            "conversation_search_doc_row",
             "conversation_search_index_state",
             "conversation_sessions",
             "conversation_sources",

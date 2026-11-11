@@ -86,6 +86,11 @@ pub(crate) async fn load_session_corpus_turns_sqlx(
             "p.turn_id, p.part_index, p.kind, p.content, NULL AS attrs_json, p.translated_text"
         }
     };
+    // 必须以轮次驱动、并用 CROSS JOIN 固定连接顺序。
+    //
+    // 反过来写（零件驱动 + ORDER BY p.turn_id）会让规划器为了省一次排序而选择
+    // "按 tenant_id 扫描全部零件"，单会话就要数秒；固定成 turns → parts 后走
+    // (tenant_id, session_id) 与 (tenant_id, turn_id) 两个索引，实测快 60 倍。
     let part_rows: Vec<(
         String,
         i64,
@@ -95,9 +100,9 @@ pub(crate) async fn load_session_corpus_turns_sqlx(
         Option<String>,
     )> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT {part_columns} \
-         FROM {parts} p \
-         JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
-         WHERE p.tenant_id = ?1 AND t.session_id = ?2 \
+         FROM {turns} t \
+         CROSS JOIN {parts} p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id \
+         WHERE t.tenant_id = ?1 AND t.session_id = ?2 \
          ORDER BY p.turn_id ASC, p.part_index ASC",
         parts = tables.parts,
         turns = tables.turns,
@@ -165,7 +170,7 @@ async fn insert_corpus_row_sqlx_tx(
     session_id: &str,
     document: &SearchCorpusDocument,
 ) -> StoreResult<()> {
-    sqlx::query(
+    let inserted = sqlx::query(
         r#"
         INSERT INTO conversation_part_fts (tenant_id, part_id, session_id, turn_id, text)
         VALUES (?1, ?2, ?3, ?4, ?5)
@@ -179,6 +184,56 @@ async fn insert_corpus_row_sqlx_tx(
     .execute(&mut **tx)
     .await
     .map_err(StoreError::external)?;
+    // FTS5 的元数据列是 UNINDEXED：按 session_id 删除会退化成"扫描全部正文"，
+    // 单会话就要十秒级。落一行 rowid 映射，删除才能保持点查。
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_search_doc_row (fts_rowid, tenant_id, session_id)
+        VALUES (?1, ?2, ?3)
+        "#,
+    )
+    .bind(inserted.last_insert_rowid())
+    .bind(tenant_id)
+    .bind(session_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+    Ok(())
+}
+
+/// 按会话精确删除派生索引行。
+///
+/// 只能走 rowid 映射：FTS5 的 `tenant_id` / `session_id` 是 UNINDEXED 列，
+/// 直接按它们过滤会扫描全部正文（实测单次 8~19 秒），这正是增量同步被拖慢的根因。
+async fn delete_session_search_corpus_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    session_id: &str,
+) -> StoreResult<()> {
+    let rowids = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT fts_rowid FROM conversation_search_doc_row
+        WHERE tenant_id = ?1 AND session_id = ?2
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(StoreError::external)?;
+    for rowid in rowids {
+        sqlx::query("DELETE FROM conversation_part_fts WHERE rowid = ?1")
+            .bind(rowid)
+            .execute(&mut **tx)
+            .await
+            .map_err(StoreError::external)?;
+    }
+    sqlx::query("DELETE FROM conversation_search_doc_row WHERE tenant_id = ?1 AND session_id = ?2")
+        .bind(tenant_id)
+        .bind(session_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(StoreError::external)?;
     Ok(())
 }
 
@@ -197,12 +252,7 @@ pub async fn replace_session_search_corpus_sqlx(
     let documents = build_session_corpus_documents(current_search_corpus_policy(), &turns);
 
     let mut tx = pool.begin().await.map_err(StoreError::external)?;
-    sqlx::query("DELETE FROM conversation_part_fts WHERE tenant_id = ?1 AND session_id = ?2")
-        .bind(tenant_id)
-        .bind(session_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(StoreError::external)?;
+    delete_session_search_corpus_sqlx_tx(&mut tx, tenant_id, session_id).await?;
     for document in &documents {
         insert_corpus_row_sqlx_tx(&mut tx, tenant_id, session_id, document).await?;
     }
@@ -240,13 +290,7 @@ pub(crate) async fn delete_session_part_index_sqlx_tx(
     tenant_id: &str,
     session_id: &str,
 ) -> StoreResult<()> {
-    sqlx::query("DELETE FROM conversation_part_fts WHERE tenant_id = ?1 AND session_id = ?2")
-        .bind(tenant_id)
-        .bind(session_id)
-        .execute(&mut **tx)
-        .await
-        .map_err(StoreError::external)?;
-    Ok(())
+    delete_session_search_corpus_sqlx_tx(tx, tenant_id, session_id).await
 }
 
 /// 按源清理某个表族的索引行（源下线 / 该表族记录被重建时使用）。
@@ -259,21 +303,18 @@ pub(crate) async fn delete_source_part_index_sqlx_tx(
     record_kind: ConversationRecordKind,
 ) -> StoreResult<()> {
     let query = format!(
-        r#"
-        DELETE FROM conversation_part_fts
-        WHERE tenant_id = ?1
-          AND session_id IN (
-              SELECT id FROM {sessions} WHERE tenant_id = ?1 AND source_id = ?2
-          )
-        "#,
+        "SELECT id FROM {sessions} WHERE tenant_id = ?1 AND source_id = ?2",
         sessions = record_kind.tables().sessions,
     );
-    sqlx::query(AssertSqlSafe(query))
+    let session_ids = sqlx::query_scalar::<_, String>(AssertSqlSafe(query))
         .bind(tenant_id)
         .bind(source_id)
-        .execute(&mut **tx)
+        .fetch_all(&mut **tx)
         .await
         .map_err(StoreError::external)?;
+    for session_id in session_ids {
+        delete_session_search_corpus_sqlx_tx(tx, tenant_id, &session_id).await?;
+    }
     Ok(())
 }
 
@@ -319,12 +360,106 @@ pub(crate) async fn rebuild_tenant_part_index_sqlx(
     }
     let total = session_ids.len();
     on_progress(0, total);
+
+    // 整代重建一次性清空本租户，而不是逐会话删除：逐会话删除会把旧代噪音反复扫一遍，
+    // 2500 个会话就是 2500 次全表正文扫描。
+    //
+    // 清理前先补齐 rowid 映射：历史版本可能写过没有映射的索引行，映射缺行会让这些行
+    // 既删不掉也搜不到，变成永久垃圾。补齐是一次平查，成本可忽略。
+    reconcile_search_doc_row_map_sqlx(pool).await?;
+    delete_tenant_search_corpus_sqlx(pool, tenant_id).await?;
+
     for (index, session_id) in session_ids.iter().enumerate() {
-        replace_session_search_corpus_sqlx(pool, tenant_id, session_id).await?;
+        insert_session_search_corpus_sqlx(pool, tenant_id, session_id).await?;
         on_progress(index + 1, total);
     }
-    optimize_part_index_sqlx(pool).await?;
+    // 段合并只是体积优化，失败不应让一整代已经正确的索引判定为重建失败。
+    if let Err(error) = optimize_part_index_sqlx(pool).await {
+        tracing::warn!(
+            action = "conversation.corpus_optimize",
+            error = %error,
+            "FTS segment optimization failed; the rebuilt generation is still valid"
+        );
+    }
     count_part_index_rows_sqlx(pool, tenant_id).await
+}
+
+/// 为缺少映射的索引行补登 rowid，保证按映射删除能覆盖全部历史行。
+async fn reconcile_search_doc_row_map_sqlx(pool: &SqlitePool) -> StoreResult<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_search_doc_row (fts_rowid, tenant_id, session_id)
+        SELECT f.rowid, f.tenant_id, f.session_id
+        FROM conversation_part_fts f
+        WHERE NOT EXISTS (
+            SELECT 1 FROM conversation_search_doc_row m WHERE m.fts_rowid = f.rowid
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(StoreError::external)?;
+    Ok(())
+}
+
+/// 分批清空本租户的派生索引行。
+///
+/// 一次性 `DELETE ... WHERE tenant_id = ?` 会在单个事务里持有写锁近十秒（实测 26 万行 9.5 秒），
+/// 期间任何同步写入都会撞上 `database is locked`。这里按 rowid 分块提交，
+/// 把写锁占用压到毫秒级，整代重建因此可以与其他任务共存。
+async fn delete_tenant_search_corpus_sqlx(pool: &SqlitePool, tenant_id: &str) -> StoreResult<()> {
+    const CHUNK: i64 = 2000;
+    loop {
+        // 不要在这里 ORDER BY：按 (tenant_id, session_id) 索引前缀取一批就行了，
+        // 排序会把每批都变成对全表的一次全量排序。
+        let rowids = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT fts_rowid FROM conversation_search_doc_row
+            WHERE tenant_id = ?1 LIMIT ?2
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(CHUNK)
+        .fetch_all(pool)
+        .await
+        .map_err(StoreError::external)?;
+        if rowids.is_empty() {
+            return Ok(());
+        }
+        let mut tx = pool.begin().await.map_err(StoreError::external)?;
+        for rowid in &rowids {
+            sqlx::query("DELETE FROM conversation_part_fts WHERE rowid = ?1")
+                .bind(rowid)
+                .execute(&mut *tx)
+                .await
+                .map_err(StoreError::external)?;
+            sqlx::query("DELETE FROM conversation_search_doc_row WHERE fts_rowid = ?1")
+                .bind(rowid)
+                .execute(&mut *tx)
+                .await
+                .map_err(StoreError::external)?;
+        }
+        tx.commit().await.map_err(StoreError::external)?;
+    }
+}
+
+/// 只写入（不删除）某个会话的当前语料，供整代重建使用。
+async fn insert_session_search_corpus_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    session_id: &str,
+) -> StoreResult<usize> {
+    let record_kind = resolve_record_kind_sqlx(pool, tenant_id, session_id)
+        .await?
+        .unwrap_or(ConversationRecordKind::Session);
+    let turns = load_session_corpus_turns_sqlx(pool, tenant_id, session_id, record_kind).await?;
+    let documents = build_session_corpus_documents(current_search_corpus_policy(), &turns);
+    let mut tx = pool.begin().await.map_err(StoreError::external)?;
+    for document in &documents {
+        insert_corpus_row_sqlx_tx(&mut tx, tenant_id, session_id, document).await?;
+    }
+    tx.commit().await.map_err(StoreError::external)?;
+    Ok(documents.len())
 }
 
 /// 判断一个会话属于哪个表族：两族 id 前缀不同，但历史数据以落表为准。

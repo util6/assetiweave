@@ -99,8 +99,10 @@
 ## 五、 实施状态 (Implementation Status)
 
 - **事实事务边界**：`replace_session_snapshot_sqlx_tx` 只写业务事实。FTS5 维护由事件消费者 `conversation.corpus_advance` 在事实提交后按"租户 + 会话"合并推进，单会话小事务、幂等替换、失败重试不反噬事实。
+- **删除通道（对"弃用方案 A"的修订）**：`conversation_part_fts` 的 `tenant_id` / `session_id` 是 UNINDEXED 列，按它们删除会扫描全部正文——实测单次 8~19 秒，且在整个事务期间独占 SQLite 写锁，正是同步被拖成分钟级、并撞出 `database is locked` 的根因。因此新增只存 rowid 的窄映射表 `conversation_search_doc_row`：写入时登记 FTS 行号，按会话删除退化为点查（实测 3 毫秒）。它不承载检索语义，只解决删除通道；语料口径仍由版本化策略单点决定。整代重建则按 rowid 分块清空租户，避免一次性长事务。
 - **共享语料**：`SearchCorpusPolicy` 是唯一口径来源，`SearchCorpusDocument` 为后端中立文档；FTS5 与 Tantivy 的文档集合同源，独立索引的水合路径直接从已提交事实重算文档正文，不再回读展示卡片。
 - **冷热分离**：`ConversationSyncMode::Incremental` 不做 missing / resurrect 对账；`Full` 只做标记，绝不物理删除。
+- **读取路径的连接顺序**：`conversation_parts` / `web_record_parts` 已有 `UNIQUE (tenant_id, turn_id, part_index)`，索引本身充足；但 `FROM parts JOIN turns ORDER BY p.turn_id` 会让规划器为了省一次排序而选择"按 tenant_id 扫描全部零件"，单会话 2.5~8.7 秒。读取路径必须写成 `FROM turns CROSS JOIN parts` 固定成轮次驱动，才能命中已有唯一索引（实测 200 个会话 61 毫秒，快约 130 倍，无需新增索引）。整代重建（1892+637 会话、26 万行存量索引）因此从"跑不完"降到 48 秒，索引规模 262,903 → 22,903 行（−91%）。
 - **保险箱语义**：父快照替换与子代理会话之间不存在隐式级联删除，源端消失只表达为 `missing = 1`。
 - **存量升级**：`20261111000001` 只落"需要重建"的标记与可无歧义推导的子代理指纹；真正的索引重建由后台流水线按会话分批推进并在收尾时做一次 `OPTIMIZE`。
 

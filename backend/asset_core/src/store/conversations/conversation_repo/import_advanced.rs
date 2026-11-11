@@ -273,7 +273,7 @@ pub async fn import_conversation_sessions_advanced_sqlx(
     // 日常增量严禁为"揪出谁被删了"去枚举全盘。取消时同样不执行，避免把未处理会话误判为 missing。
     let missing_or_restored_session_ids =
         if !is_cancelled && sync_mode.reconciles_missing_sessions() {
-            let mut tx = crate::backend::store::begin_immediate(pool).await?;
+            let mut tx = begin_immediate_with_retry(pool, 8).await?;
             let missing_ids = mark_missing_conversation_sessions_sqlx_tx(
                 &mut tx,
                 tenant_id,
@@ -316,7 +316,9 @@ pub async fn import_conversation_sessions_advanced_sqlx(
         None
     };
 
-    let mut final_tx = crate::backend::store::begin_immediate(pool).await?;
+    // 收尾事务同样要抗锁竞争：派生索引维护是并发的旁路写入，不能让它把一次已经
+    // 成功入库的同步判成失败。
+    let mut final_tx = begin_immediate_with_retry(pool, 8).await?;
     sqlx::query(
         r#"
         UPDATE conversation_sources

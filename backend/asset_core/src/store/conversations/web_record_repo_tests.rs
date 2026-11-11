@@ -531,7 +531,9 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
         .fetch_one(database.pool())
         .await
         .map_err(StoreError::external)?;
-        sqlx::query(
+        // 模拟旧快照留下的过期索引行：连同 rowid 映射一起写入，
+        // 这才是迁移后真实存量行的形态，按会话语料替换时才能被精确删掉。
+        let stale_row = sqlx::query(
             r#"
                     INSERT INTO conversation_part_fts (
                         tenant_id, part_id, session_id, turn_id, text
@@ -541,6 +543,18 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
         .bind(TEST_TENANT_ID)
         .bind(&session_id)
         .bind(&turn_id)
+        .execute(database.pool())
+        .await
+        .map_err(StoreError::external)?;
+        sqlx::query(
+            r#"
+                    INSERT INTO conversation_search_doc_row (fts_rowid, tenant_id, session_id)
+                    VALUES (?1, ?2, ?3)
+                    "#,
+        )
+        .bind(stale_row.last_insert_rowid())
+        .bind(TEST_TENANT_ID)
+        .bind(&session_id)
         .execute(database.pool())
         .await
         .map_err(StoreError::external)?;

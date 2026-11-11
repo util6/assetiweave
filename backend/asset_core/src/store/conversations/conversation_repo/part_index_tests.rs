@@ -146,6 +146,26 @@ async fn seed_part(
     }
 }
 
+async fn corpus_row_map_count(pool: &SqlitePool, session_id: Option<&str>) -> i64 {
+    match session_id {
+        Some(session_id) => sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM conversation_search_doc_row WHERE tenant_id = ?1 AND session_id = ?2",
+        )
+        .bind(TENANT_ID)
+        .bind(session_id)
+        .fetch_one(pool)
+        .await
+        .expect("count row map for session"),
+        None => sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM conversation_search_doc_row WHERE tenant_id = ?1",
+        )
+        .bind(TENANT_ID)
+        .fetch_one(pool)
+        .await
+        .expect("count row map for tenant"),
+    }
+}
+
 async fn indexed_texts(pool: &SqlitePool, session_id: &str) -> Vec<String> {
     sqlx::query_scalar::<_, String>(
         "SELECT text FROM conversation_part_fts WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY text ASC",
@@ -282,6 +302,11 @@ async fn replacement_is_idempotent() {
 
     assert_eq!(first, second);
     assert_eq!(indexed_texts(&fixture.pool, session_id).await.len(), second);
+    assert_eq!(
+        corpus_row_map_count(&fixture.pool, Some(session_id)).await,
+        second as i64,
+        "每个索引行都必须有一条 rowid 映射，删除才能保持点查"
+    );
 
     fixture.cleanup();
 }
@@ -465,6 +490,57 @@ async fn corpus_drift_is_closed_by_a_controlled_rebuild() {
         !conversation_search_corpus_needs_rebuild_sqlx(&fixture.pool, TENANT_ID)
             .await
             .expect("detect corpus drift")
+    );
+
+    fixture.cleanup();
+}
+
+/// 逐会话替换只能精确删掉自己的行，不能留下孤儿 FTS 行或孤儿映射。
+#[tokio::test]
+async fn per_session_replacement_keeps_rowid_map_consistent() {
+    let fixture = fixture().await;
+    let kept = "conversation-session-kept";
+    let dropped = "conversation-session-dropped";
+    for (session_id, turn_id) in [
+        (kept, "conversation-turn-kept"),
+        (dropped, "conversation-turn-dropped"),
+    ] {
+        seed_session(&fixture.pool, ConversationRecordKind::Session, session_id).await;
+        seed_turn(
+            &fixture.pool,
+            ConversationRecordKind::Session,
+            session_id,
+            turn_id,
+            0,
+            "提问",
+            Some("回答"),
+            None,
+        )
+        .await;
+        replace_session_search_corpus_sqlx(&fixture.pool, TENANT_ID, session_id)
+            .await
+            .expect("index session");
+    }
+    assert_eq!(corpus_row_map_count(&fixture.pool, None).await, 4);
+
+    // 抹掉一个会话的轮次后再次替换：该会话的旧行必须全部消失。
+    sqlx::query("DELETE FROM conversation_turns WHERE tenant_id = ?1 AND session_id = ?2")
+        .bind(TENANT_ID)
+        .bind(dropped)
+        .execute(&fixture.pool)
+        .await
+        .expect("drop turns");
+    let indexed = replace_session_search_corpus_sqlx(&fixture.pool, TENANT_ID, dropped)
+        .await
+        .expect("reindex empty session");
+
+    assert_eq!(indexed, 0);
+    assert!(indexed_texts(&fixture.pool, dropped).await.is_empty());
+    assert_eq!(corpus_row_map_count(&fixture.pool, Some(dropped)).await, 0);
+    assert_eq!(
+        corpus_row_map_count(&fixture.pool, None).await,
+        2,
+        "另一个会话的行不得被牵连"
     );
 
     fixture.cleanup();

@@ -251,13 +251,15 @@ pub(super) async fn load_search_parts_sqlx(
         "conversation-part"
     };
 
+    // 会话 → 轮次 → 零件定向驱动：零件表只有 (tenant_id, turn_id) 索引，
+    // 零件驱动会退化成"扫描本租户全部零件"，一次搜索水合就要数秒。
     let part_query = format!(
         r#"
         SELECT p.turn_id, p.part_index, p.kind, p.content, {attrs_expr} AS attrs_json, p.translated_text
-        FROM {parts} p
-        JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
-        JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
-        WHERE p.tenant_id = ?1
+        FROM {sessions} s
+        CROSS JOIN {turns} t ON t.tenant_id = s.tenant_id AND t.session_id = s.id
+        CROSS JOIN {parts} p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
+        WHERE s.tenant_id = ?1
           AND (?2 IS NULL OR s.adapter_id = ?2)
           AND (?3 IS NULL OR s.source_id = ?3)
           AND (?4 IS NULL OR s.id IN (SELECT value FROM json_each(?4)))

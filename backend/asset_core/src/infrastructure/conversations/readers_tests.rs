@@ -161,17 +161,37 @@ fn read_result_rejects_unrelated_sessions() {
 }
 
 #[test]
-fn read_result_rejects_unexpected_child_version_tokens() {
+fn read_result_accepts_child_with_its_own_native_version() {
+    // 子代理自己有落盘文件时，适配器给出的原生业务令牌属于另一个物理来源的水线，
+    // 不可能等于父文件令牌；采信它并原样落库，绝不因此拒绝整条读取结果。
     let descriptor = descriptor("parent", "version-1");
     let read = vec![
         session("parent", Some("version-1")),
-        inline_child("parent:subagent:a", Some("some-other-token")),
+        inline_child("parent:subagent:a", Some("own-file-token")),
     ];
 
-    let failure =
-        resolve_read_result("codex", &descriptor, read).expect_err("child drift must fail");
+    let resolved = resolve_read_result("codex", &descriptor, read).expect("native child version");
 
-    assert_eq!(failure.error_code, "session_child_version_drift");
+    assert_eq!(resolved.len(), 2);
+    assert_eq!(
+        resolved[1].source_fingerprint.as_deref(),
+        Some("own-file-token")
+    );
+}
+
+#[test]
+fn read_result_derives_token_for_blank_child_fingerprint() {
+    let descriptor = descriptor("parent", "version-1");
+    let mut child = inline_child("parent:subagent:a", None);
+    child.source_fingerprint = Some("   ".to_string());
+    let read = vec![session("parent", Some("version-1")), child];
+
+    let resolved = resolve_read_result("codex", &descriptor, read).expect("blank child version");
+
+    assert_eq!(
+        resolved[1].source_fingerprint.as_deref(),
+        Some("version-1:subagent:parent:subagent:a")
+    );
 }
 
 #[test]

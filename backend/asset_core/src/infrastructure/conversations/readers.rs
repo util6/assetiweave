@@ -327,21 +327,16 @@ fn resolve_read_result(
             ));
         }
         let child_token = format!("{derived_prefix}{}", resolved[index].external_id);
-        match resolved[index].source_fingerprint.as_deref() {
+        let has_native_version = resolved[index]
+            .source_fingerprint
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        if !has_native_version {
             // 内联子会话没有独立指纹：确定性继承父水线，杜绝"每轮必重导"的僵尸变动。
-            None => resolved[index].source_fingerprint = Some(child_token),
-            // 独立文件指纹与父文件指纹都是合法来源；其它值说明读取期间发生了漂移。
-            Some(existing) if existing == descriptor.version_token || existing == child_token => {}
-            Some(existing) => {
-                return Err(validation_failure(
-                    descriptor,
-                    "session_child_version_drift",
-                    format!(
-                        "inline subagent session {} reported an unexpected version token (expected {}, got {})",
-                        resolved[index].external_id, child_token, existing
-                    ),
-                ));
-            }
+            // 有独立业务版本（例如子代理自己有落盘文件）时一律采信适配器给的原生令牌：
+            // 那是另一个物理来源的水线，不可能也不应该等于父文件令牌。
+            resolved[index].source_fingerprint = Some(child_token);
         }
     }
     Ok(resolved)

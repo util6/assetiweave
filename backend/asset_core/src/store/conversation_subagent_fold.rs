@@ -462,9 +462,9 @@ async fn load_turns(
         Option<String>,
     )> = sqlx::query_as(
         "SELECT p.turn_id, p.part_index, p.kind, p.content, p.attrs_json, p.translated_text \
-             FROM conversation_parts p \
-             JOIN conversation_turns t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id \
-             WHERE p.tenant_id = ?1 AND t.session_id = ?2 \
+             FROM conversation_turns t \
+             CROSS JOIN conversation_parts p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id \
+             WHERE t.tenant_id = ?1 AND t.session_id = ?2 \
              ORDER BY p.turn_id ASC, p.part_index ASC",
     )
     .bind(tenant_id)

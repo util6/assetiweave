@@ -64,10 +64,10 @@ pub async fn load_conversation_search_index_documents_sqlx(
         let part_sql = format!(
             r#"
             SELECT p.turn_id, p.part_index, p.kind, p.content, {attrs_expr} AS attrs_json, p.translated_text
-            FROM {parts} p
-            JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
-            JOIN {sessions} s ON s.tenant_id = t.tenant_id AND s.id = t.session_id
-            WHERE p.tenant_id = ?1 AND s.missing = 0
+            FROM {sessions} s
+            CROSS JOIN {turns} t ON t.tenant_id = s.tenant_id AND t.session_id = s.id
+            CROSS JOIN {parts} p ON p.tenant_id = t.tenant_id AND p.turn_id = t.id
+            WHERE s.tenant_id = ?1 AND s.missing = 0
             ORDER BY p.turn_id, p.part_index
             "#,
             parts = tables.parts,
