@@ -130,26 +130,10 @@ pub async fn list_conversation_sessions_filtered_sqlx(
               OR instr(lower(COALESCE(s.project_path, '')), ?4) > 0
               OR instr(lower(s.external_id), ?4) > 0
               OR (?5 IS NOT NULL AND instr(lower(s.id), ?5) > 0)
-              OR (
-                  ?11 IS NOT NULL
-                  AND ?4 IS NOT NULL
-                  AND (
-                      -- 会话自己的正文命中。
-                      s.id IN (SELECT value FROM json_each(?11))
-                      -- 只有默认可见列表才把子代理会话的命中向上归集；
-                      -- `--parent` 模式列的是子会话本身，不做二次归集。
-                      OR (
-                          ?12 IS NULL
-                          AND s.id IN (
-                              SELECT json_extract(c.execution_purpose, '$.parent_session_id')
-                                FROM conversation_sessions c
-                                WHERE c.tenant_id = ?1
-                                  AND c.execution_origin = 'subagent'
-                                  AND c.id IN (SELECT value FROM json_each(?11))
-                          )
-                      )
-                  )
-              )
+              -- 正文命中由检索层给出会话集合；子代理命中向上归集也在检索层完成
+              -- （索引与事实回退各一次），SQL 只做集合判定，避免出现第二套归集规则。
+              OR (?11 IS NOT NULL AND ?4 IS NOT NULL
+                  AND s.id IN (SELECT value FROM json_each(?11)))
           )
           AND (
               ?10 IS NULL

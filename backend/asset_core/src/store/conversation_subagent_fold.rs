@@ -333,6 +333,12 @@ async fn fold_one_session(
         &folded.parent_turns,
     )
     .await?;
+    // 折算改写了父会话与全部子会话的事实，但这条路径不经过同步导入、也不会发
+    // Outbox 事件。不推进修订号的话，派生索引会一直停留在折算前的快照上，且没人
+    // 知道它已经过期。这里只做"标记落后"：检索立刻切到事实回退，孤儿文档由下一次
+    // 重建清理——绝不在事实事务里写索引（ADR-0023）。
+    super::conversations::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id)
+        .await?;
     tx.commit().await.map_err(StoreError::external)?;
 
     Ok(Some(FoldOutcome {

@@ -167,7 +167,7 @@ fn document_from_row(
         &row.turn_id,
         &row.part_id,
     )
-    .with_session_scope(&row.session_title, parent.as_deref(), row.user_visible)
+    .with_session_scope(&row.session_title, parent.as_deref())
 }
 
 /// 一次增量推进最多处理的会话数。
@@ -291,6 +291,7 @@ pub async fn search_conversation_session_ids(
     adapter_id: Option<&str>,
     source_id: Option<&str>,
     project_path: Option<&str>,
+    aggregate_to_parent: bool,
 ) -> AppResult<Option<Vec<String>>> {
     let state =
         crate::backend::store::load_or_create_conversation_search_index_state_sqlx(pool, tenant_id)
@@ -326,9 +327,15 @@ pub async fn search_conversation_session_ids(
         adapter_id: adapter_id.map(str::to_string),
         source_id: source_id.map(str::to_string),
         project_path: project_path.map(str::to_string),
+        aggregate_to_parent,
     };
     match search_generation_session_ids(&path, &request) {
         Ok(session_ids) => Ok(Some(session_ids)),
+        // 查询本身不合法（空词、超长）不是索引故障：把它当成索引损坏会让一次
+        // 糟糕的输入直接废掉整代索引。校验错误原样上抛。
+        Err(crate::backend::infrastructure::InfraError::Validation(message)) => {
+            Err(AppError::Validation(message))
+        }
         Err(error) => {
             mark_index_unusable(
                 pool,
@@ -401,6 +408,9 @@ pub async fn search_ready_conversation_index(
     };
     match search_generation_index(&path, &card_query) {
         Ok(matches) => Ok(Some(matches)),
+        Err(crate::backend::infrastructure::InfraError::Validation(message)) => {
+            Err(AppError::Validation(message))
+        }
         Err(error) => {
             mark_index_unusable(
                 pool,
@@ -452,6 +462,65 @@ impl AppService {
         Ok(status_from_state(state))
     }
 
+    /// 受控整代重建，走统一后台任务流水线（ADR-0017）。
+    ///
+    /// 启动期修复与用户显式重建共用它：整代重建要装载全租户语料并写一代新索引，
+    /// 属于秒级长任务，不能裸跑在请求或裸 async 里。
+    pub fn start_conversation_search_index_rebuild_task(
+        &self,
+    ) -> AppResult<
+        crate::backend::infrastructure::tasks::TaskHandle<ConversationSearchIndexRebuildReport>,
+    > {
+        use crate::backend::infrastructure::tasks;
+
+        let pipeline = tasks::PipelineDescriptor::builder()
+            .stage(tasks::stages::PREPARE, "检查索引代际与写者租约")
+            .stage(tasks::stages::PERSIST_INDEX, "装载并发布索引代际")
+            .stage(tasks::stages::VERIFY, "校验索引可用性")
+            .build();
+        let spec = tasks::TaskSpec::new(
+            tasks::TaskKind::SearchIndexRebuild,
+            Some(format!("conversation-search-index:{}", self.tenant_id())),
+        )
+        .with_pipeline(pipeline)
+        .with_title("重建会话搜索索引");
+
+        let service = self.clone();
+        self.spawn_pipeline_task(spec, move |cx| async move {
+            {
+                let stage = cx.enter_stage(tasks::stages::PREPARE);
+                stage.progress(0, None, Some("检查索引代际与租约".to_string()));
+            }
+            let report = rebuild_conversation_search_index(
+                service.pool(),
+                &service.db_path,
+                service.tenant_id(),
+            )
+            .await
+            .map_err(|error| {
+                crate::backend::infrastructure::error::InfraError::external(error.to_string())
+            })?;
+            let summary = format!("会话搜索索引重建完成，共 {} 份文档", report.document_count);
+            {
+                let mut stage = cx.enter_stage(tasks::stages::PERSIST_INDEX);
+                stage.record_metric(
+                    "documents",
+                    u64::try_from(report.document_count).unwrap_or(0),
+                );
+                stage.progress(1, Some(1), Some(summary.clone()));
+            }
+            {
+                let mut stage = cx.enter_stage(tasks::stages::VERIFY);
+                stage.record_metric(
+                    "indexed_revision",
+                    u64::try_from(report.indexed_revision).unwrap_or(0),
+                );
+                stage.progress(1, Some(1), Some("索引可用性已校验".to_string()));
+            }
+            Ok(tasks::TaskOutput::with_summary(report, summary))
+        })
+    }
+
     /// 索引代际或语料口径落后时做一次受控整代重建。
     ///
     /// 判据只看"这一代索引是否还能对外服务"：模式代际/分词器/语料策略任一不一致，
@@ -469,7 +538,7 @@ impl AppService {
         if usable {
             return Ok(false);
         }
-        rebuild_conversation_search_index(self.pool(), &self.db_path, self.tenant_id()).await?;
+        self.start_conversation_search_index_rebuild_task()?;
         Ok(true)
     }
 }

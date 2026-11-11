@@ -65,6 +65,7 @@ impl AppService {
                 query.as_deref(),
                 adapter_id.as_deref(),
                 source_id.as_deref(),
+                parent_session_id.is_none(),
             )
             .await?;
             let filter = crate::backend::store::ConversationSessionListFilter {
@@ -207,6 +208,7 @@ impl AppService {
                 query.as_deref(),
                 adapter_id.as_deref(),
                 source_id.as_deref(),
+                true,
             )
             .await?;
             Ok(
@@ -357,6 +359,7 @@ async fn resolve_body_match_session_ids(
     query: Option<&str>,
     adapter_id: Option<&str>,
     source_id: Option<&str>,
+    aggregate_to_parent: bool,
 ) -> AppResult<Option<Vec<String>>> {
     let Some(query) = query.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
@@ -375,6 +378,7 @@ async fn resolve_body_match_session_ids(
         adapter_id,
         source_id,
         None,
+        aggregate_to_parent,
     )
     .await?
     {
@@ -386,6 +390,7 @@ async fn resolve_body_match_session_ids(
             service.tenant_id(),
             record_kind,
             query,
+            aggregate_to_parent,
         )
         .await?,
     ))

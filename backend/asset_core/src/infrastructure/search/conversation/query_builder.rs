@@ -203,19 +203,19 @@ fn text_branch(
     )
 }
 
-/// Session 列表检索的查询：只在 Session 文档上匹配，返回会话身份。
+/// Session 列表检索的查询：返回会话身份。
 ///
-/// 与卡片检索共用分词与 ngram 分支，保证同一个关键词在两种入口给出同口径命中。
+/// 刻意不限制 `document_kind`：Session 文档承载会话级聚合正文，Turn 级文档承载
+/// 逐条正文；只要任一处命中，会话就应该出现在列表里。这条口径必须与事实回退
+/// 完全一致（回退也是逐条文档比对），否则同一句话会在索引态与回退态给出不同结果。
 pub(super) fn build_session_query(
     index: &Index,
     fields: &ConversationSearchSchema,
     query: &str,
     request: &super::engine::ConversationSessionQuery,
 ) -> InfraResult<BooleanQuery> {
-    let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![
-        exact_clause(fields.record_kind, &request.record_kind),
-        exact_clause(fields.document_kind, "session"),
-    ];
+    let mut clauses: Vec<(Occur, Box<dyn Query>)> =
+        vec![exact_clause(fields.record_kind, &request.record_kind)];
     if let Some(adapter_id) = request.adapter_id.as_deref() {
         clauses.push(exact_clause(fields.adapter_id, adapter_id));
     }

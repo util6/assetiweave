@@ -4303,6 +4303,7 @@ async fn list_sessions_with_corpus_body_matches(
         tenant_id,
         crate::backend::domain::ConversationRecordKind::Session,
         needle,
+        true,
     )
     .await?;
     list_conversation_sessions_filtered_sqlx(

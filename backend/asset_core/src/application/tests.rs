@@ -6030,6 +6030,7 @@ async fn conversation_search_incremental_advance_is_scoped_and_idempotent() {
         service.tenant_id(),
         crate::backend::domain::ConversationRecordKind::Session,
         "Rust fallback",
+        true,
     )
     .await
     .expect("resolve changed session ids");

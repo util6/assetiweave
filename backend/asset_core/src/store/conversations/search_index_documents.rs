@@ -24,7 +24,6 @@ pub struct ConversationSearchIndexDocumentRow {
     pub project_path: String,
     /// 子代理会话的可见父会话 ID；根会话为空。
     pub parent_session_id: String,
-    pub user_visible: bool,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -49,7 +48,6 @@ struct SearchIndexSessionRow {
     source_id: String,
     project_path: String,
     parent_session_id: String,
-    user_visible: i64,
 }
 
 /// 整库装载（受控整代重建使用）。
@@ -169,7 +167,6 @@ async fn load_conversation_search_index_documents_inner(
                             source_id: turn.source_id.clone(),
                             project_path: turn.project_path.clone().unwrap_or_default(),
                             parent_session_id: session.parent_session_id.clone(),
-                            user_visible: session.user_visible != 0,
                         });
                     }
                 }
@@ -233,7 +230,6 @@ fn session_document_row(
         source_id: session.source_id.clone(),
         project_path: session.project_path.clone(),
         parent_session_id: session.parent_session_id.clone(),
-        user_visible: session.user_visible != 0,
     }
 }
 
@@ -262,8 +258,7 @@ async fn load_sessions_sqlx(
         SELECT s.id AS session_id, s.title AS title, s.external_id AS external_id,
                s.adapter_id AS adapter_id, s.source_id AS source_id,
                {project_path} AS project_path,
-               {parent_session_id} AS parent_session_id,
-               {user_visible} AS user_visible
+               {parent_session_id} AS parent_session_id
         FROM {sessions} s
         WHERE s.tenant_id = ?1 AND s.missing = 0
           AND (?2 IS NULL OR s.id IN (SELECT value FROM json_each(?2)))
@@ -272,7 +267,6 @@ async fn load_sessions_sqlx(
         sessions = tables.sessions,
         project_path = tables.project_path,
         parent_session_id = tables.parent_session_id,
-        user_visible = tables.user_visible,
     );
     Ok(
         sqlx::query_as::<_, SearchIndexSessionRow>(AssertSqlSafe(sql))
@@ -374,6 +368,7 @@ pub async fn search_session_ids_by_corpus_sqlx(
     tenant_id: &str,
     record_kind: crate::backend::domain::ConversationRecordKind,
     needle: &str,
+    aggregate_to_parent: bool,
 ) -> StoreResult<Vec<String>> {
     let needle = needle.trim().to_lowercase();
     if needle.is_empty() {
@@ -398,6 +393,31 @@ pub async fn search_session_ids_by_corpus_sqlx(
         {
             matched.insert(document.session_id);
         }
+    }
+    if aggregate_to_parent && !matched.is_empty() {
+        // 与索引侧的归集规则保持一致：子代理会话的命中归到它的可见父会话。
+        let child_ids = serde_json::Value::Array(
+            matched
+                .iter()
+                .map(|id| serde_json::Value::String(id.clone()))
+                .collect(),
+        )
+        .to_string();
+        let parents: Vec<String> = sqlx::query_scalar(
+            r#"
+            SELECT json_extract(execution_purpose, '$.parent_session_id')
+            FROM conversation_sessions
+            WHERE tenant_id = ?1
+              AND id IN (SELECT value FROM json_each(?2))
+              AND execution_origin = 'subagent'
+              AND json_extract(execution_purpose, '$.parent_session_id') IS NOT NULL
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(child_ids)
+        .fetch_all(pool)
+        .await?;
+        matched.extend(parents);
     }
     Ok(matched.into_iter().collect())
 }
@@ -494,7 +514,6 @@ struct SearchDocumentTables {
     project_path: &'static str,
     attrs_expr: &'static str,
     parent_session_id: &'static str,
-    user_visible: &'static str,
 }
 
 impl SearchDocumentTables {
@@ -511,7 +530,6 @@ impl SearchDocumentTables {
             parent_session_id: "CASE WHEN s.execution_origin = 'subagent' \
                 THEN COALESCE(json_extract(s.execution_purpose, '$.parent_session_id'), '') \
                 ELSE '' END",
-            user_visible: "s.user_visible",
         }
     }
 
@@ -526,7 +544,6 @@ impl SearchDocumentTables {
             project_path: "''",
             attrs_expr: "NULL",
             parent_session_id: "''",
-            user_visible: "1",
         }
     }
 }

@@ -1378,6 +1378,7 @@ async fn list_web_sessions_with_corpus_body_matches(
         tenant_id,
         ConversationRecordKind::Web,
         needle,
+        true,
     )
     .await?;
     list_web_record_sessions_with_body_matches_sqlx(

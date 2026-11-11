@@ -20,8 +20,6 @@ pub(super) struct ConversationSearchSchema {
     /// 索引显式承载父子身份，列表检索才能在索引侧完成"子命中归集到父"，
     /// 而不是每次查询回表展开。
     pub(super) parent_session_id: Field,
-    /// 默认列表可见性（`"1"` / `"0"`）。
-    pub(super) user_visible: Field,
     pub(super) question_id: Field,
     pub(super) turn_id: Field,
     pub(super) part_id: Field,
@@ -51,7 +49,6 @@ pub(super) fn build_conversation_schema() -> ConversationSearchSchema {
     let record_kind = builder.add_text_field("record_kind", STRING | STORED);
     let session_id = builder.add_text_field("session_id", STRING | STORED);
     let parent_session_id = builder.add_text_field("parent_session_id", STRING | STORED);
-    let user_visible = builder.add_text_field("user_visible", STRING | STORED);
     let question_id = builder.add_text_field("question_id", STRING | STORED);
     let turn_id = builder.add_text_field("turn_id", STRING | STORED);
     let part_id = builder.add_text_field("part_id", STRING | STORED);
@@ -83,7 +80,6 @@ pub(super) fn build_conversation_schema() -> ConversationSearchSchema {
         record_kind,
         session_id,
         parent_session_id,
-        user_visible,
         question_id,
         turn_id,
         part_id,

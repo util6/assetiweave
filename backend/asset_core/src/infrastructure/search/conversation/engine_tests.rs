@@ -340,3 +340,66 @@ fn empty_and_non_empty_indexes_consistently_reject_unsearchable_queries() {
         (err1, err2) => panic!("expected Validation error for both, got ({err1:?}, {err2:?})"),
     }
 }
+
+/// 子代理会话的正文命中必须在检索层归集到可见父会话，且只归集一次。
+#[test]
+fn session_search_aggregates_child_hits_to_the_visible_parent() {
+    let index = InMemoryConversationIndex::new().expect("create in-memory index");
+    let child = ConversationSearchDocument::scoped_card(
+        "session",
+        "child-session",
+        "",
+        "child-session:answer",
+        "answer",
+        "",
+        "nested execution conclusion",
+        "",
+        "",
+        "",
+        "",
+        "",
+    )
+    .with_session_scope("Child", Some("parent-session"));
+    let parent = ConversationSearchDocument::scoped_card(
+        "session",
+        "parent-session",
+        "",
+        "parent-session:answer",
+        "answer",
+        "",
+        "parent conclusion",
+        "",
+        "",
+        "",
+        "",
+        "",
+    )
+    .with_session_scope("Parent", None);
+    index
+        .replace_documents(&[child, parent])
+        .expect("index documents");
+
+    let aggregated = index
+        .search_session_ids(&ConversationSessionQuery {
+            query: "nested execution".to_string(),
+            record_kind: "session".to_string(),
+            adapter_id: None,
+            source_id: None,
+            project_path: None,
+            aggregate_to_parent: true,
+        })
+        .expect("search sessions with aggregation");
+    assert_eq!(aggregated, vec!["parent-session".to_string()]);
+
+    let direct = index
+        .search_session_ids(&ConversationSessionQuery {
+            query: "nested execution".to_string(),
+            record_kind: "session".to_string(),
+            adapter_id: None,
+            source_id: None,
+            project_path: None,
+            aggregate_to_parent: false,
+        })
+        .expect("search sessions without aggregation");
+    assert_eq!(direct, vec!["child-session".to_string()]);
+}

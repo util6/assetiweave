@@ -33,8 +33,6 @@ pub struct ConversationSearchDocument {
     session_title: String,
     /// 子代理会话的可见父会话 ID；根会话为空。
     parent_session_id: String,
-    /// 默认列表可见性。
-    user_visible: bool,
     content: String,
     adapter_id: String,
     source_id: String,
@@ -78,7 +76,6 @@ impl ConversationSearchDocument {
             question_title: question_title.to_string(),
             session_title: String::new(),
             parent_session_id: String::new(),
-            user_visible: true,
             content: content.to_string(),
             adapter_id: adapter_id.to_string(),
             source_id: source_id.to_string(),
@@ -94,11 +91,9 @@ impl ConversationSearchDocument {
         mut self,
         session_title: &str,
         parent_session_id: Option<&str>,
-        user_visible: bool,
     ) -> Self {
         self.session_title = session_title.to_string();
         self.parent_session_id = parent_session_id.unwrap_or_default().to_string();
-        self.user_visible = user_visible;
         self
     }
 
@@ -130,6 +125,10 @@ pub struct ConversationSessionQuery {
     pub adapter_id: Option<String>,
     pub source_id: Option<String>,
     pub project_path: Option<String>,
+    /// 是否把子代理会话的命中归集到它的可见父会话。
+    ///
+    /// 默认列表需要归集；列出某父会话名下的子会话时不需要。
+    pub aggregate_to_parent: bool,
 }
 
 #[cfg(test)]
@@ -283,7 +282,6 @@ fn build_document(
             fields.record_kind => item.record_kind.as_str(),
             fields.session_id => item.session_id.as_str(),
             fields.parent_session_id => item.parent_session_id.as_str(),
-            fields.user_visible => if item.user_visible { "1" } else { "0" },
             fields.question_id => item.question_id.as_str(),
             fields.turn_id => item.turn_id.as_str(),
             fields.part_id => item.part_id.as_str(),
@@ -368,7 +366,17 @@ fn search_session_ids(
         let document = searcher
             .doc::<TantivyDocument>(address)
             .map_err(InfraError::external)?;
-        session_ids.insert(stored_text(&document, fields.session_id)?);
+        let session_id = stored_text(&document, fields.session_id)?;
+        if request.aggregate_to_parent {
+            // 子代理会话的命中归集到可见父会话：归集口径只在这里与事实回退里各实现
+            // 一次，SQL 不再重复展开，避免两处判断分叉。
+            let parent_session_id = stored_text(&document, fields.parent_session_id)?;
+            if !parent_session_id.is_empty() {
+                session_ids.insert(parent_session_id);
+                continue;
+            }
+        }
+        session_ids.insert(session_id);
     }
     Ok(session_ids.into_iter().collect())
 }

@@ -136,6 +136,13 @@
   `document_from_row` 构造函数，避免两条路径产出不同形状。
 - **增量推进**：`advance_conversation_search_index` 按会话 `delete_term + add + commit`，
   单批上限 512 个会话；超过上限或索引代际不可用时自动退回受控整代重建。
+- **父子归集只有一个权威**：Session 文档携带 `parent_session_id`；检索层（索引与
+  事实回退各一处）在返回会话集合时把子会话命中归集到可见父会话。列表 SQL 只做
+  `id IN (...)` 集合判定，不再自己展开父子关系，因此两种后端不会给出不同页集合。
+  默认可见性仍由关系层（`user_visible` / `missing`）判定，不复制进索引。
+- **重建走统一流水线**：`start_conversation_search_index_rebuild_task` 以
+  `TaskKind::SearchIndexRebuild` 纳管三段阶段（PREPARE / PERSIST_INDEX / VERIFY），
+  启动期修复与用户显式重建共用同一条路径，不在启动或请求里裸跑全表重建。
 - **事实回退**：`search_session_ids_by_corpus_sqlx` 用事实列做超集筛选，再用语料策略
   确认；索引不可用时列表与卡片检索都走它，不再有"仅标题匹配"的分支。
 - **状态收敛**：会话搜索只有一套状态与一套维护入口（`conversation.search.index.*`）；

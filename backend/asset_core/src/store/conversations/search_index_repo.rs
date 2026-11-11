@@ -309,17 +309,21 @@ pub async fn complete_conversation_search_index_advance_sqlx(
         .fetch_optional(&mut *tx)
         .await?
         .is_some_and(|value| value == 1);
-    if let Some((consumer_id, last_seq)) = consumer_offset {
-        sqlx::query(
-            "INSERT INTO domain_event_consumer_offsets (consumer_id, tenant_id, last_seq, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (consumer_id, tenant_id) DO UPDATE SET last_seq = MAX(last_seq, excluded.last_seq), updated_at = excluded.updated_at",
-        )
-        .bind(consumer_id)
-        .bind(tenant_id)
-        .bind(last_seq)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await?;
+    if result.rows_affected() == 1 {
+        if let Some((consumer_id, last_seq)) = consumer_offset {
+            sqlx::query(
+                "INSERT INTO domain_event_consumer_offsets (consumer_id, tenant_id, last_seq, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (consumer_id, tenant_id) DO UPDATE SET last_seq = MAX(last_seq, excluded.last_seq), updated_at = excluded.updated_at",
+            )
+            .bind(consumer_id)
+            .bind(tenant_id)
+            .bind(last_seq)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+        }
     }
+    // 代际已被换掉时不推进 offset：那一批会话的写入落到了旧代际上，
+    // 让消费者重放一遍是幂等且安全的；反过来推进 offset 才会真的丢更新。
     tx.commit().await?;
     Ok(caught_up)
 }
