@@ -32,14 +32,31 @@ impl DomainEventConsumer for SearchIndexAdvanceConsumer {
     }
 
     fn handle<'a>(&'a self, batch: &'a [SequencedEvent], cx: &'a ConsumerCx) -> ConsumerFuture<'a> {
-        let tenants = batch
-            .iter()
-            .filter_map(|item| match &item.event {
-                DomainEvent::ConversationSourceCommitted { tenant_id, .. } => {
-                    Some(tenant_id.clone())
-                }
-            })
-            .collect::<BTreeSet<_>>();
+        struct TenantAdvance {
+            session_ids: BTreeSet<String>,
+            requires_rebuild: bool,
+        }
+        let mut tenants = std::collections::BTreeMap::<String, TenantAdvance>::new();
+        for item in batch {
+            let DomainEvent::ConversationSourceCommitted {
+                tenant_id,
+                changed_session_ids,
+                ..
+            } = &item.event
+            else {
+                continue;
+            };
+            let plan = tenants.entry(tenant_id.clone()).or_insert(TenantAdvance {
+                session_ids: BTreeSet::new(),
+                requires_rebuild: false,
+            });
+            match changed_session_ids {
+                Some(session_ids) => plan.session_ids.extend(session_ids.iter().cloned()),
+                // 事件载荷没有携带会话清单（变更超出可可靠承载的边界）：不能猜，
+                // 只能请求一次受控整代重建，否则会静默漏掉更新。
+                None => plan.requires_rebuild = true,
+            }
+        }
         let database = self.database.clone();
         let db_path = cx.db_path.clone();
         let consumer_id = cx.consumer_id.clone();
@@ -48,13 +65,26 @@ impl DomainEventConsumer for SearchIndexAdvanceConsumer {
             let Some(database) = database else {
                 return Ok(());
             };
-            for tenant_id in tenants {
-                super::conversation_search::rebuild_conversation_search_index_with_offset(
+            for (tenant_id, plan) in tenants {
+                let session_ids = plan.session_ids.into_iter().collect::<Vec<_>>();
+                if plan.requires_rebuild || session_ids.is_empty() {
+                    super::conversation_search::rebuild_conversation_search_index_with_offset(
+                        database.pool(),
+                        &db_path,
+                        &tenant_id,
+                        &consumer_id,
+                        batch_last_seq,
+                    )
+                    .await
+                    .map_err(InfraError::external)?;
+                    continue;
+                }
+                super::conversation_search::advance_conversation_search_index(
                     database.pool(),
                     &db_path,
                     &tenant_id,
-                    &consumer_id,
-                    batch_last_seq,
+                    &session_ids,
+                    Some((&consumer_id, batch_last_seq)),
                 )
                 .await
                 .map_err(InfraError::external)?;
@@ -62,105 +92,6 @@ impl DomainEventConsumer for SearchIndexAdvanceConsumer {
             Ok(())
         })
     }
-}
-
-/// 事实提交后推进 FTS5 派生语料索引（ADR-0023）。
-///
-/// 与事实事务彻底解耦：事实写成功即代表同步成功，这里只负责让派生索引用最新快照收敛。
-/// 同一批次内按「租户 + 会话」合并，重复变更只写最后一次已提交快照；每个会话一次小事务，
-/// 因此失败重试是幂等的，也不会反噬事实同步。
-pub struct ConversationCorpusAdvanceConsumer {
-    pub database: Option<Database>,
-}
-
-impl ConversationCorpusAdvanceConsumer {
-    pub fn new(database: Database) -> Self {
-        Self {
-            database: Some(database),
-        }
-    }
-}
-
-/// 一个租户在本批次内需要推进的派生索引范围。
-#[derive(Default)]
-struct CorpusAdvancePlan {
-    session_ids: BTreeSet<String>,
-    /// 事件载荷未携带会话清单（变更超过 256 个）时按源整体刷新。
-    source_ids: BTreeSet<String>,
-}
-
-impl DomainEventConsumer for ConversationCorpusAdvanceConsumer {
-    fn id(&self) -> &'static str {
-        "conversation.corpus_advance"
-    }
-
-    fn initial_position(&self) -> InitialPosition {
-        InitialPosition::GenesisZero
-    }
-
-    fn interested(&self, event: &DomainEvent) -> bool {
-        matches!(event, DomainEvent::ConversationSourceCommitted { .. })
-    }
-
-    fn handle<'a>(
-        &'a self,
-        batch: &'a [SequencedEvent],
-        _cx: &'a ConsumerCx,
-    ) -> ConsumerFuture<'a> {
-        let mut plans = std::collections::BTreeMap::<String, CorpusAdvancePlan>::new();
-        for item in batch {
-            let DomainEvent::ConversationSourceCommitted {
-                tenant_id,
-                source_id,
-                changed_session_ids,
-                ..
-            } = &item.event;
-            let plan = plans.entry(tenant_id.clone()).or_default();
-            match changed_session_ids {
-                Some(session_ids) => plan.session_ids.extend(session_ids.iter().cloned()),
-                None => {
-                    plan.source_ids.insert(source_id.clone());
-                }
-            }
-        }
-        let database = self.database.clone();
-        Box::pin(async move {
-            let Some(database) = database else {
-                return Ok(());
-            };
-            for (tenant_id, plan) in plans {
-                advance_tenant_corpus(database.pool(), &tenant_id, plan)
-                    .await
-                    .map_err(InfraError::external)?;
-            }
-            Ok(())
-        })
-    }
-}
-
-async fn advance_tenant_corpus(
-    pool: &sqlx::SqlitePool,
-    tenant_id: &str,
-    plan: CorpusAdvancePlan,
-) -> crate::backend::store::StoreResult<()> {
-    use crate::backend::store;
-
-    let started = std::time::Instant::now();
-    for source_id in &plan.source_ids {
-        store::replace_source_search_corpus_sqlx(pool, tenant_id, source_id).await?;
-    }
-    for session_id in &plan.session_ids {
-        store::replace_session_search_corpus_sqlx(pool, tenant_id, session_id).await?;
-    }
-    tracing::debug!(
-        action = "conversation.corpus_advance",
-        tenant_id = %tenant_id,
-        session_count = plan.session_ids.len(),
-        source_count = plan.source_ids.len(),
-        elapsed_ms = %started.elapsed().as_millis(),
-        "advanced conversation search corpus"
-    );
-    Ok(())
 }
 
 pub struct SessionMemoryConsumer;

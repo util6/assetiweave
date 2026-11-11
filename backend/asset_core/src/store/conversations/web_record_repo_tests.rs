@@ -505,7 +505,7 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
     refreshed_session.source_fingerprint = Some("changed-source".to_string());
     refreshed_session.turns[0].parts[0].text = Some("refreshed body".to_string());
 
-    let (result, imported_at, refreshed_content, indexed_rows) = async {
+    let (result, imported_at, refreshed_content) = async {
         super::super::conversation_repo::upsert_conversation_source_sqlx(
             database.pool(),
             TEST_TENANT_ID,
@@ -523,41 +523,6 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
         .await
         .map_err(StoreError::external)?;
         let session_id = stable_id("web-record-session", &[&source.id, "web-session-1"]);
-        let turn_id: String = sqlx::query_scalar(
-            "SELECT id FROM web_record_turns WHERE tenant_id = ?1 AND session_id = ?2 LIMIT 1",
-        )
-        .bind(TEST_TENANT_ID)
-        .bind(&session_id)
-        .fetch_one(database.pool())
-        .await
-        .map_err(StoreError::external)?;
-        // 模拟旧快照留下的过期索引行：连同 rowid 映射一起写入，
-        // 这才是迁移后真实存量行的形态，按会话语料替换时才能被精确删掉。
-        let stale_row = sqlx::query(
-            r#"
-                    INSERT INTO conversation_part_fts (
-                        tenant_id, part_id, session_id, turn_id, text
-                    ) VALUES (?1, 'web-record-part-stale', ?2, ?3, 'stale body')
-                    "#,
-        )
-        .bind(TEST_TENANT_ID)
-        .bind(&session_id)
-        .bind(&turn_id)
-        .execute(database.pool())
-        .await
-        .map_err(StoreError::external)?;
-        sqlx::query(
-            r#"
-                    INSERT INTO conversation_search_doc_row (fts_rowid, tenant_id, session_id)
-                    VALUES (?1, ?2, ?3)
-                    "#,
-        )
-        .bind(stale_row.last_insert_rowid())
-        .bind(TEST_TENANT_ID)
-        .bind(&session_id)
-        .execute(database.pool())
-        .await
-        .map_err(StoreError::external)?;
         sqlx::query(
             "UPDATE web_record_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
         )
@@ -573,7 +538,6 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
             false,
         )
         .await?;
-        advance_web_corpus(&database, TEST_TENANT_ID, &source.id).await?;
         let imported_at = sqlx::query_scalar::<_, String>(
             "SELECT imported_at FROM web_record_sessions WHERE source_id = ?1",
         )
@@ -595,28 +559,7 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
         .fetch_one(database.pool())
         .await
         .map_err(StoreError::external)?;
-        let fts_row_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM conversation_part_fts WHERE tenant_id = ?1 AND session_id = ?2",
-        )
-        .bind(TEST_TENANT_ID)
-        .bind(&session_id)
-        .fetch_one(database.pool())
-        .await
-        .map_err(StoreError::external)?;
-        let fts_texts = sqlx::query_scalar::<_, String>(
-            "SELECT text FROM conversation_part_fts WHERE tenant_id = ?1 AND session_id = ?2",
-        )
-        .bind(TEST_TENANT_ID)
-        .bind(&session_id)
-        .fetch_all(database.pool())
-        .await
-        .map_err(StoreError::external)?;
-        StoreResult::Ok((
-            result,
-            imported_at,
-            refreshed_content,
-            (fts_row_count, fts_texts),
-        ))
+        StoreResult::Ok((result, imported_at, refreshed_content))
     }
     .await
     .expect("refresh normalized web parts through SQLx");
@@ -624,15 +567,6 @@ async fn sqlx_web_record_import_rewrites_when_normalized_parts_change() {
     assert_eq!(result.skipped_session_count, 0);
     assert_ne!(imported_at, "preserved");
     assert_eq!(refreshed_content, "refreshed body");
-    let (fts_row_count, fts_texts) = indexed_rows;
-    assert_eq!(fts_row_count, 2, "同一会话只保留当前快照生成的高信号语料行");
-    assert_eq!(fts_texts.len(), 2);
-    assert!(
-        !fts_texts.iter().any(|text| text.contains("stale body")),
-        "重新导入后索引正文必须来自当前快照事实"
-    );
-    assert!(fts_texts.iter().any(|text| text.contains("refreshed body")));
-
     drop(database);
     cleanup_database(&db_path);
 }
@@ -671,15 +605,11 @@ async fn sqlx_web_record_reads_filter_detail() {
         )
         .await
         .map_err(StoreError::external)?;
-        advance_web_corpus(&database, TEST_TENANT_ID, &source.id).await?;
-        let sessions = list_web_record_sessions_sqlx(
+        let sessions = list_web_sessions_with_corpus_body_matches(
             database.pool(),
             TEST_TENANT_ID,
-            None,
-            Some(&source.id),
-            Some("sqlx answer"),
-            20,
-            0,
+            &source.id,
+            "sqlx answer",
         )
         .await?;
         let detail = load_web_record_session_detail_sqlx(
@@ -738,14 +668,11 @@ async fn sqlx_web_record_lists_sessions_by_display_id_fragment() {
         .map_err(StoreError::external)?;
         let session_id = stable_id("web-record-session", &[&source.id, "web-session-1"]);
         let fragment = crate::backend::domain::conversation_id_fragment(&session_id);
-        let fragment_matches = list_web_record_sessions_sqlx(
+        let fragment_matches = list_web_sessions_with_corpus_body_matches(
             database.pool(),
             TEST_TENANT_ID,
-            None,
-            Some(&source.id),
-            Some(&fragment),
-            20,
-            0,
+            &source.id,
+            &fragment,
         )
         .await?;
         let direct_fragment_matches =
@@ -761,14 +688,11 @@ async fn sqlx_web_record_lists_sessions_by_display_id_fragment() {
             )
             .await
             .map_err(StoreError::external)?;
-        let full_matches = list_web_record_sessions_sqlx(
+        let full_matches = list_web_sessions_with_corpus_body_matches(
             database.pool(),
             TEST_TENANT_ID,
-            None,
-            Some(&source.id),
-            Some(&session_id),
-            20,
-            0,
+            &source.id,
+            &session_id,
         )
         .await?;
         StoreResult::Ok((fragment_matches, direct_fragment_matches, full_matches))
@@ -919,27 +843,19 @@ async fn sqlx_web_records_are_isolated_by_tenant() {
             false,
         )
         .await?;
-        advance_web_corpus(&database, tenant_alpha, &source.id).await?;
-        advance_web_corpus(&database, tenant_beta, &source.id).await?;
 
-        let alpha_sessions = list_web_record_sessions_sqlx(
+        let alpha_sessions = list_web_sessions_with_corpus_body_matches(
             database.pool(),
             tenant_alpha,
-            None,
-            Some(&source.id),
-            Some("alpha web"),
-            20,
-            0,
+            &source.id,
+            "alpha web",
         )
         .await?;
-        let beta_sessions = list_web_record_sessions_sqlx(
+        let beta_sessions = list_web_sessions_with_corpus_body_matches(
             database.pool(),
             tenant_beta,
-            None,
-            Some(&source.id),
-            Some("beta web"),
-            20,
-            0,
+            &source.id,
+            "beta web",
         )
         .await?;
         let session_id = alpha_sessions[0].session.id.clone();
@@ -1264,7 +1180,7 @@ async fn sqlx_web_record_unchanged_session_keeps_part_index_rows() {
     let mut session = fixture_session();
     session.source_fingerprint = Some("same-source".to_string());
 
-    let (skipped_session_count, indexed_texts) = async {
+    let (skipped_session_count, stored_prompt) = async {
         super::super::conversation_repo::upsert_conversation_source_sqlx(
             database.pool(),
             TEST_TENANT_ID,
@@ -1280,12 +1196,6 @@ async fn sqlx_web_record_unchanged_session_keeps_part_index_rows() {
             false,
         )
         .await?;
-        crate::backend::store::replace_source_search_corpus_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            &source.id,
-        )
-        .await?;
         let result = import_web_record_sessions_sqlx(
             database.pool(),
             TEST_TENANT_ID,
@@ -1294,23 +1204,22 @@ async fn sqlx_web_record_unchanged_session_keeps_part_index_rows() {
             false,
         )
         .await?;
-        let indexed_texts = sqlx::query_scalar::<_, String>(
-            "SELECT text FROM conversation_part_fts WHERE tenant_id = ?1 ORDER BY text ASC",
+        let stored_prompt = sqlx::query_scalar::<_, String>(
+            "SELECT prompt FROM web_record_turns WHERE tenant_id = ?1 ORDER BY turn_index ASC LIMIT 1",
         )
         .bind(TEST_TENANT_ID)
-        .fetch_all(database.pool())
+        .fetch_one(database.pool())
         .await
         .map_err(StoreError::external)?;
-        StoreResult::Ok((result.skipped_session_count, indexed_texts))
+        StoreResult::Ok((result.skipped_session_count, stored_prompt))
     }
     .await
     .expect("re-import an unchanged web record");
 
     assert_eq!(skipped_session_count, 1);
     assert_eq!(
-        indexed_texts,
-        vec!["Hello from the web".to_string(), "Web answer".to_string()],
-        "跳过未变化的会话时不得丢失既有索引行"
+        stored_prompt, "Hello from the web",
+        "跳过未变化的会话时既不得重写事实，也不得丢事实"
     );
 
     drop(database);
@@ -1357,7 +1266,6 @@ async fn sqlx_web_record_search_follows_the_high_signal_corpus() {
             false,
         )
         .await?;
-        advance_web_corpus(&database, TEST_TENANT_ID, &source.id).await?;
         let mut results = Vec::new();
         for needle in [
             "SIGSEGV",
@@ -1366,14 +1274,11 @@ async fn sqlx_web_record_search_follows_the_high_signal_corpus() {
             "nothing-matches-this-needle",
         ] {
             results.push(
-                list_web_record_sessions_sqlx(
+                list_web_sessions_with_corpus_body_matches(
                     database.pool(),
                     TEST_TENANT_ID,
-                    None,
-                    Some(&source.id),
-                    Some(needle),
-                    20,
-                    0,
+                    &source.id,
+                    needle,
                 )
                 .await?,
             );
@@ -1402,15 +1307,15 @@ async fn sqlx_web_record_search_follows_the_high_signal_corpus() {
 }
 
 #[tokio::test]
-async fn sqlx_web_record_search_degrades_to_title_while_part_index_rebuilds() {
+async fn sqlx_web_record_search_falls_back_to_committed_facts_without_any_index() {
     let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-web-record-part-search-degraded-sqlx-{}.sqlite",
+        "assetiweave-web-record-part-search-fallback-sqlx-{}.sqlite",
         Uuid::new_v4()
     ));
     let database = Database::open_async(&db_path).await.expect("open database");
     let source = fixture_source();
 
-    let (ready_body_hits, rebuilding_body_hits, rebuilding_title_hits) = async {
+    let (body_hits, title_hits, missing_hits) = async {
         super::super::conversation_repo::upsert_conversation_source_sqlx(
             database.pool(),
             TEST_TENANT_ID,
@@ -1426,73 +1331,66 @@ async fn sqlx_web_record_search_degrades_to_title_while_part_index_rebuilds() {
             false,
         )
         .await?;
-        // 派生索引不再随事实事务同步写入，这里显式推进一次消费者应做的工作。
-        crate::backend::store::replace_source_search_corpus_sqlx(
+        // 刻意不写任何派生索引：回退直接读已提交事实。
+        let body_hits = list_web_sessions_with_corpus_body_matches(
             database.pool(),
             TEST_TENANT_ID,
             &source.id,
+            "Web answer",
         )
         .await?;
-        let ready_body_hits = list_web_record_sessions_sqlx(
+        let title_hits = list_web_sessions_with_corpus_body_matches(
             database.pool(),
             TEST_TENANT_ID,
-            None,
-            Some(&source.id),
-            Some("Web answer"),
-            20,
-            0,
+            &source.id,
+            "Web session",
         )
         .await?;
-        super::super::conversation_repo::set_conversation_part_index_status_sqlx(
+        let missing_hits = list_web_sessions_with_corpus_body_matches(
             database.pool(),
             TEST_TENANT_ID,
-            "building",
-            0,
-            None,
-        )
-        .await
-        .map_err(StoreError::external)?;
-        let rebuilding_body_hits = list_web_record_sessions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            None,
-            Some(&source.id),
-            Some("Web answer"),
-            20,
-            0,
+            &source.id,
+            "nothing-matches-this-needle",
         )
         .await?;
-        let rebuilding_title_hits = list_web_record_sessions_sqlx(
-            database.pool(),
-            TEST_TENANT_ID,
-            None,
-            Some(&source.id),
-            Some("Web session"),
-            20,
-            0,
-        )
-        .await?;
-        StoreResult::Ok((ready_body_hits, rebuilding_body_hits, rebuilding_title_hits))
+        StoreResult::Ok((body_hits, title_hits, missing_hits))
     }
     .await
-    .expect("search web records while the part index rebuilds");
+    .expect("search web records without any derived index");
 
-    assert_eq!(ready_body_hits.len(), 1);
-    assert!(rebuilding_body_hits.is_empty());
-    assert_eq!(rebuilding_title_hits.len(), 1);
+    assert_eq!(body_hits.len(), 1, "回退必须能命中已提交的最终回答正文");
+    assert_eq!(title_hits.len(), 1, "标题匹配独立于正文集合");
+    assert!(missing_hits.is_empty());
 
     drop(database);
     cleanup_database(&db_path);
 }
 
-/// 模拟派生索引消费者：事实提交后按源推进一次高信号语料索引。
-async fn advance_web_corpus(
-    database: &Database,
+/// 按"回退检索给出的正文命中集合"查 web 列表：不依赖任何派生索引。
+async fn list_web_sessions_with_corpus_body_matches(
+    pool: &sqlx::SqlitePool,
     tenant_id: &str,
     source_id: &str,
-) -> StoreResult<usize> {
-    crate::backend::store::replace_source_search_corpus_sqlx(database.pool(), tenant_id, source_id)
-        .await
+    needle: &str,
+) -> StoreResult<Vec<ConversationSessionListItem>> {
+    let body_match_session_ids = crate::backend::store::search_session_ids_by_corpus_sqlx(
+        pool,
+        tenant_id,
+        ConversationRecordKind::Web,
+        needle,
+    )
+    .await?;
+    list_web_record_sessions_with_body_matches_sqlx(
+        pool,
+        tenant_id,
+        None,
+        Some(source_id),
+        Some(needle),
+        Some(&body_match_session_ids),
+        20,
+        0,
+    )
+    .await
 }
 
 fn cleanup_database(db_path: &std::path::Path) {

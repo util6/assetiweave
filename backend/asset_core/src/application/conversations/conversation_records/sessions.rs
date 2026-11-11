@@ -59,6 +59,14 @@ impl AppService {
                 params.until.as_deref(),
                 params.range.as_deref(),
             )?;
+            let body_match_session_ids = resolve_body_match_session_ids(
+                self,
+                ConversationRecordKind::Session,
+                query.as_deref(),
+                adapter_id.as_deref(),
+                source_id.as_deref(),
+            )
+            .await?;
             let filter = crate::backend::store::ConversationSessionListFilter {
                 adapter_id: adapter_id.as_deref(),
                 source_id: source_id.as_deref(),
@@ -67,6 +75,7 @@ impl AppService {
                 since: since.as_deref(),
                 until: until.as_deref(),
                 parent_session_id: parent_session_id.as_deref(),
+                body_match_session_ids: body_match_session_ids.as_deref(),
                 limit,
                 offset,
             };
@@ -192,16 +201,27 @@ impl AppService {
                 .await?,
             )
         } else {
-            Ok(crate::backend::store::list_web_record_sessions_sqlx(
-                pool,
-                tenant_id,
+            let body_match_session_ids = resolve_body_match_session_ids(
+                self,
+                ConversationRecordKind::Web,
+                query.as_deref(),
                 adapter_id.as_deref(),
                 source_id.as_deref(),
-                query.as_deref(),
-                limit,
-                offset,
             )
-            .await?)
+            .await?;
+            Ok(
+                crate::backend::store::list_web_record_sessions_with_body_matches_sqlx(
+                    pool,
+                    tenant_id,
+                    adapter_id.as_deref(),
+                    source_id.as_deref(),
+                    query.as_deref(),
+                    body_match_session_ids.as_deref(),
+                    limit,
+                    offset,
+                )
+                .await?,
+            )
         }
     }
 
@@ -325,6 +345,50 @@ impl AppService {
             .await
             .map_err(AppError::external)
     }
+}
+
+/// 解析正文命中会话集合。
+///
+/// 索引就绪时用 Tantivy；缺失/过期/构建中/损坏时退回 SQLite 事实上的完整高信号扫描。
+/// 两条路径共用同一份语料策略，因此命中口径一致，`None` 只在没有关键字时出现。
+async fn resolve_body_match_session_ids(
+    service: &AppService,
+    record_kind: ConversationRecordKind,
+    query: Option<&str>,
+    adapter_id: Option<&str>,
+    source_id: Option<&str>,
+) -> AppResult<Option<Vec<String>>> {
+    let Some(query) = query.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let index_kind = match record_kind {
+        ConversationRecordKind::Session => "session",
+        ConversationRecordKind::Web => "web",
+    };
+    // project_path 在 SQL 里是子串语义，交给外层的唯一筛选权威处理，索引侧不预先收窄。
+    if let Some(session_ids) = super::super::conversation_search::search_conversation_session_ids(
+        service.pool(),
+        &service.db_path,
+        service.tenant_id(),
+        query,
+        index_kind,
+        adapter_id,
+        source_id,
+        None,
+    )
+    .await?
+    {
+        return Ok(Some(session_ids));
+    }
+    Ok(Some(
+        crate::backend::store::search_session_ids_by_corpus_sqlx(
+            service.pool(),
+            service.tenant_id(),
+            record_kind,
+            query,
+        )
+        .await?,
+    ))
 }
 
 #[cfg(test)]

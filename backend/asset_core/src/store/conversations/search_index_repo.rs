@@ -6,7 +6,7 @@ use chrono::Utc;
 use sqlx::{AssertSqlSafe, SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
-const CONVERSATION_SEARCH_SCHEMA_VERSION: i64 = 4;
+const CONVERSATION_SEARCH_SCHEMA_VERSION: i64 = 5;
 const CONVERSATION_SEARCH_TOKENIZER_VERSION: &str = "tantivy-jieba-0.20.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,6 +258,70 @@ pub async fn complete_conversation_search_index_rebuild_with_offset_sqlx(
     }
     tx.commit().await?;
     Ok(result.rows_affected() == 1)
+}
+
+/// 记录一次按会话增量推进的结果。
+///
+/// 索引写入在租约内完成，因此这里无条件释放租约；但 `indexed_revision` 只有在
+/// 推进期间 `source_revision` 没有前进时才追平，否则保持 `stale` 交给后续事件收敛。
+pub async fn complete_conversation_search_index_advance_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    expected_revision: i64,
+    generation: &str,
+    document_count: i64,
+    size_bytes: i64,
+    consumer_offset: Option<(&str, i64)>,
+) -> StoreResult<bool> {
+    let now = Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query(
+        r#"
+        UPDATE conversation_search_index_state
+        SET indexed_revision = CASE WHEN source_revision = ?1 THEN ?1 ELSE indexed_revision END,
+            health = CASE WHEN source_revision = ?1 THEN 'ready' ELSE 'stale' END,
+            document_count = ?2, size_bytes = ?3, last_built_at = ?4,
+            last_error = NULL, lease_owner = NULL, lease_expires_at = NULL,
+            schema_version = ?5, tokenizer_version = ?6, corpus_policy_version = ?7,
+            updated_at = ?4
+        WHERE tenant_id = ?8 AND active_generation = ?9
+        "#,
+    )
+    .bind(expected_revision)
+    .bind(document_count)
+    .bind(size_bytes)
+    .bind(&now)
+    .bind(CONVERSATION_SEARCH_SCHEMA_VERSION)
+    .bind(CONVERSATION_SEARCH_TOKENIZER_VERSION)
+    .bind(i64::from(
+        crate::backend::domain::conversations::search_corpus::search_corpus_policy_version(),
+    ))
+    .bind(tenant_id)
+    .bind(generation)
+    .execute(&mut *tx)
+    .await?;
+    let caught_up = result.rows_affected() == 1
+        && sqlx::query_scalar::<_, i64>(
+            "SELECT CASE WHEN indexed_revision = source_revision THEN 1 ELSE 0 END \
+             FROM conversation_search_index_state WHERE tenant_id = ?1",
+        )
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_some_and(|value| value == 1);
+    if let Some((consumer_id, last_seq)) = consumer_offset {
+        sqlx::query(
+            "INSERT INTO domain_event_consumer_offsets (consumer_id, tenant_id, last_seq, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (consumer_id, tenant_id) DO UPDATE SET last_seq = MAX(last_seq, excluded.last_seq), updated_at = excluded.updated_at",
+        )
+        .bind(consumer_id)
+        .bind(tenant_id)
+        .bind(last_seq)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(caught_up)
 }
 
 pub async fn fail_conversation_search_index_rebuild_sqlx(

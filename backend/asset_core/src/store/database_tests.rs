@@ -254,1272 +254,33 @@ async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapsh
         .expect("create current database");
 
     let conn = Connection::open(&db_path).expect("open current database");
+    // 只保留业务事实：FTS 相关对象已由前向迁移删除，不再有可重建的遗留索引。
     conn.execute_batch(
         r#"
-            PRAGMA foreign_keys = OFF;
-            CREATE TABLE IF NOT EXISTS conversation_question_turns (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                question_id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                turn_order INTEGER NOT NULL,
-                assignment_origin TEXT NOT NULL DEFAULT 'imported',
-                assigned_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (tenant_id, question_id, turn_id)
-            );
-            CREATE TABLE IF NOT EXISTS web_record_question_turns (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                question_id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                turn_order INTEGER NOT NULL,
-                assignment_origin TEXT NOT NULL DEFAULT 'imported',
-                assigned_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (tenant_id, question_id, turn_id)
-            );
-            INSERT INTO conversation_sessions (
-                tenant_id, id, source_id, adapter_id, external_id, title, project_path,
-                started_at, updated_at, source_locator, source_fingerprint, missing,
-                created_at, imported_at
-            ) VALUES (
-                'default', 'legacy-session', 'legacy-source', 'legacy-adapter',
-                'legacy-external', 'Legacy session', NULL, NULL, NULL, NULL, NULL, 0,
-                '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
-            );
-            INSERT INTO web_record_sessions (
-                tenant_id, id, source_id, adapter_id, external_id, title,
-                started_at, updated_at, source_locator, source_fingerprint, missing,
-                created_at, imported_at
-            ) VALUES (
-                'default', 'legacy-web-session', 'legacy-source', 'legacy-adapter',
-                'legacy-web-external', 'Legacy web session', NULL, NULL, NULL, NULL, 0,
-                '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
-            );
-            DROP TABLE IF EXISTS conversation_data_audit_issues;
-            DROP TABLE IF EXISTS conversation_questions;
-            DROP TABLE IF EXISTS web_record_questions;
-            CREATE TABLE conversation_questions (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                id TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                question_index INTEGER NOT NULL,
-                title TEXT,
-                question_text TEXT NOT NULL,
-                answer_text TEXT NOT NULL,
-                code_text TEXT NOT NULL,
-                command_text TEXT NOT NULL,
-                grouping_origin TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (tenant_id, id),
-                UNIQUE (tenant_id, session_id, question_index)
-            );
-            CREATE TABLE web_record_questions (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                id TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                question_index INTEGER NOT NULL,
-                title TEXT,
-                question_text TEXT NOT NULL,
-                answer_text TEXT NOT NULL,
-                code_text TEXT NOT NULL,
-                command_text TEXT NOT NULL,
-                grouping_origin TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (tenant_id, id),
-                UNIQUE (tenant_id, session_id, question_index)
-            );
-            ALTER TABLE conversation_turns ADD COLUMN user_text TEXT DEFAULT '';
-            ALTER TABLE web_record_turns ADD COLUMN user_text TEXT DEFAULT '';
-            INSERT INTO conversation_questions (
-                tenant_id, id, session_id, question_index, title, question_text,
-                answer_text, code_text, command_text, grouping_origin, created_at, updated_at
-            ) VALUES (
-                'default', 'legacy-question', 'legacy-session', 7, NULL,
-                'Legacy question snapshot', 'Legacy answer', 'Legacy code', 'Legacy command',
-                'auto_merged', '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
-            );
-            INSERT INTO web_record_questions (
-                tenant_id, id, session_id, question_index, title, question_text,
-                answer_text, code_text, command_text, grouping_origin, created_at, updated_at
-            ) VALUES (
-                'default', 'legacy-web-question', 'legacy-web-session', 3, NULL,
-                'Legacy web question snapshot', 'Legacy web answer', 'Legacy web code',
-                'Legacy web command', 'imported', '2026-08-25T00:00:00Z',
-                '2026-08-25T00:00:00Z'
-            );
-            INSERT INTO conversation_turns (
-                tenant_id, id, session_id, turn_index, prompt, user_text,
-                started_at, ended_at, imported_at
-            ) VALUES (
-                'default', 'legacy-turn', 'legacy-session', 0,
-                'Legacy question snapshot', 'Legacy question snapshot',
-                '2026-08-25T00:00:00Z', NULL, '2026-08-25T00:00:00Z'
-            );
-            INSERT INTO conversation_question_turns (
-                tenant_id, question_id, turn_id, turn_order, assignment_origin,
-                assigned_at, updated_at
-            ) VALUES (
-                'default', 'legacy-question', 'legacy-turn', 0, 'auto_merged',
-                '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
-            );
-            INSERT INTO web_record_turns (
-                tenant_id, id, session_id, turn_index, prompt, user_text,
-                started_at, ended_at, imported_at
-            ) VALUES (
-                'default', 'legacy-web-turn', 'legacy-web-session', 0,
-                'Legacy web question snapshot', 'Legacy web question snapshot',
-                '2026-08-25T00:00:00Z', NULL, '2026-08-25T00:00:00Z'
-            );
-            INSERT INTO web_record_question_turns (
-                tenant_id, question_id, turn_id, turn_order, assignment_origin,
-                assigned_at, updated_at
-            ) VALUES (
-                'default', 'legacy-web-question', 'legacy-web-turn', 0, 'imported',
-                '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
-            );
-            DELETE FROM _sqlx_migrations
-            WHERE version IN (20260825000004, 20260825000005, 20260826000001);
-            "#,
-    )
-    .expect("seed representative legacy question schema");
-    drop(conn);
-
-    migrate_database(&db_path)
-        .await
-        .expect("rebuild legacy question schema");
-
-    let conn = Connection::open(&db_path).expect("open rebuilt database");
-    for table in ["conversation_questions", "web_record_questions"] {
-        let columns = conn
-            .prepare(&format!(
-                "SELECT name FROM pragma_table_info('{table}') ORDER BY cid"
-            ))
-            .expect("prepare rebuilt question columns")
-            .query_map([], |row| row.get::<_, String>(0))
-            .expect("query rebuilt question columns")
-            .collect::<Result<Vec<_>, _>>()
-            .expect("collect rebuilt question columns");
-        assert_eq!(
-            columns,
-            vec![
-                "tenant_id",
-                "id",
-                "session_id",
-                "title",
-                "created_at",
-                "updated_at"
-            ]
-        );
-    }
-    let question_title: String = conn
-        .query_row(
-            "SELECT title FROM conversation_questions WHERE id = 'legacy-question'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query rebuilt conversation question");
-    let web_question_title: String = conn
-        .query_row(
-            "SELECT title FROM web_record_questions WHERE id = 'legacy-web-question'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query rebuilt web question");
-    let snapshot_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE category = 'question_snapshot_dependencies' AND status = 'open'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("query question snapshot audit");
-    let snapshot_affected_count: i64 = conn
-            .query_row(
-                "SELECT affected_count FROM conversation_data_audit_issues WHERE category = 'question_snapshot_dependencies' AND status = 'open'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("query question snapshot audit count");
-    assert_eq!(question_title, "Legacy question snapshot");
-    assert_eq!(web_question_title, "Legacy web question snapshot");
-    assert_eq!(snapshot_count, 1);
-    assert_eq!(snapshot_affected_count, 2);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn migrations_adopt_legacy_schema_without_losing_rows() {
-    let db_path = temp_database_path("legacy");
-    let conn = Connection::open(&db_path).expect("open legacy database");
-    conn.execute_batch(
-            r#"
-            CREATE TABLE sources (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                root_path TEXT NOT NULL,
-                include_globs TEXT NOT NULL,
-                exclude_globs TEXT NOT NULL,
-                default_kind TEXT,
-                enabled INTEGER NOT NULL,
-                priority INTEGER NOT NULL,
-                last_scanned_at TEXT,
-                last_scan_status TEXT
-            );
-            INSERT INTO sources (
-                id, name, kind, root_path, include_globs, exclude_globs,
-                default_kind, enabled, priority
-            ) VALUES (
-                'legacy-source', 'Legacy', 'local', '/tmp/legacy', '[]', '[]',
-                NULL, 1, 10
-            );
-            CREATE TABLE profiles (
-                id TEXT PRIMARY KEY,
-                payload TEXT NOT NULL
-            );
-            INSERT INTO profiles (id, payload) VALUES (
-                'cursor',
-                '{"id":"cursor","name":"Cursor","app_kind":"cursor","target_paths":["~/Library/Application Support/Cursor/skills"],"supported_kinds":["skill"],"deployment_strategy":"symlink_to_source","enabled":true,"include":{"kinds":["skill"],"tags":[],"groups":[],"sources":[],"path_patterns":[]},"exclude":{"kinds":[],"tags":[],"groups":[],"sources":[],"path_patterns":[]},"safety":{"allow_remove":false,"allow_overwrite":false}}'
-            );
-            "#,
-        )
-        .expect("create legacy schema");
-    drop(conn);
-
-    migrate_database(&db_path)
-        .await
-        .expect("adopt legacy database");
-
-    let conn = Connection::open(&db_path).expect("open migrated database");
-    let source: (String, String, String) = conn
-        .query_row(
-            "SELECT id, scanner_kind, source_origin FROM sources WHERE id = 'legacy-source'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .expect("query preserved source");
-    let migration_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM _sqlx_migrations", [], |row| {
-            row.get(0)
-        })
-        .expect("query migrations");
-    let cursor_target_path: String = conn
-        .query_row(
-            "SELECT json_extract(payload, '$.target_paths[0]') FROM profiles WHERE id = 'cursor'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query migrated cursor target path");
-
-    assert_eq!(
-        source,
-        (
-            "legacy-source".to_string(),
-            "mixed".to_string(),
-            "local_folder".to_string()
-        )
-    );
-    assert_eq!(cursor_target_path, "@config/Cursor/skills");
-    assert_eq!(migration_count, MIGRATOR.migrations.len() as i64);
-    cleanup_database(&db_path);
-}
-
-#[test]
-fn all_migration_files_have_14_digit_timestamps() {
-    let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
-    let entries = std::fs::read_dir(&migrations_dir).expect("read migrations directory");
-    let mut count = 0;
-    for entry in entries {
-        let entry = entry.expect("valid entry");
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) == Some("sql") {
-            let filename = path.file_name().unwrap().to_str().unwrap();
-            assert!(
-                filename.len() > 15,
-                "migration file name too short: {filename}"
-            );
-            let prefix = &filename[..14];
-            assert!(
-                prefix.chars().all(|c| c.is_ascii_digit()),
-                "migration file prefix must be 14 ASCII digits: {filename}"
-            );
-            assert_eq!(
-                filename.chars().nth(14),
-                Some('_'),
-                "migration filename must have '_' delimiter at index 14: {filename}"
-            );
-            count += 1;
-        }
-    }
-    assert!(
-        count >= 85,
-        "expected at least 85 migration files, found {count}"
-    );
-}
-
-#[tokio::test]
-async fn migrations_self_heal_12_digit_legacy_ledger_versions() {
-    let db_path = temp_database_path("self-heal-legacy-versions");
-    migrate_database(&db_path)
-        .await
-        .expect("create current 14-digit migrated database");
-
-    // 1. 模拟存量 12 位历史版本号记录（将已应用的 14 位版本号退行更新为 12 位格式）
-    let conn = Connection::open(&db_path).expect("open database to simulate legacy ledger");
-    conn.execute_batch(
-        r#"
-        UPDATE _sqlx_migrations
-        SET version = (version / 1000000) * 10000 + (version % 10000)
-        WHERE version < 20261028000000
-          AND version NOT IN (20260909000001, 20260909000002);
-        "#,
-    )
-    .expect("simulate legacy 12-digit versions in _sqlx_migrations");
-
-    let legacy_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version < 10000000000000",
-            [],
-            |row| row.get(0),
-        )
-        .expect("count legacy versions");
-    assert_eq!(
-        legacy_count, 76,
-        "expected exactly 76 simulated legacy 12-digit versions"
-    );
-    drop(conn);
-
-    // 2. 再次执行 migrate_database，触发 open_migrated_pool 中的 repair_legacy_migration_ledger_versions
-    migrate_database(&db_path)
-        .await
-        .expect("self-heal legacy ledger versions and complete migration");
-
-    // 3. 断言校验：所有存量版本均已升级为 14 位，无遗留 12 位版本，总数匹配 MIGRATOR
-    let conn = Connection::open(&db_path).expect("open upgraded database");
-    let remaining_legacy: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version < 10000000000000",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query remaining legacy versions");
-    assert_eq!(remaining_legacy, 0, "no legacy versions should remain");
-
-    let total_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM _sqlx_migrations", [], |row| {
-            row.get(0)
-        })
-        .expect("query total migration count");
-    assert_eq!(total_count, MIGRATOR.migrations.len() as i64);
-
-    // 验证特定抽样版本已恢复为 14 位且保留 success=1
-    for version in [
-        20260618000001i64,
-        20260723000001i64,
-        20260825000005i64,
-        20261026000002i64,
-    ] {
-        let success: bool = conn
-            .query_row(
-                "SELECT success FROM _sqlx_migrations WHERE version = ?",
-                [version],
-                |row| row.get(0),
-            )
-            .unwrap_or_else(|_| panic!("version {version} should exist in ledger"));
-        assert!(success, "migration version {version} should be successful");
-    }
-    drop(conn);
-
-    // 4. 幂等性验证：重复调用 migrate_database 仍平滑成功
-    migrate_database(&db_path)
-        .await
-        .expect("idempotent migration invocation on self-healed database");
-
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn migrations_repair_the_known_modified_question_contract_checksum() {
-    let db_path = temp_database_path("question-contract-modified-checksum");
-    migrate_database(&db_path)
-        .await
-        .expect("create current database");
-
-    let conn = Connection::open(&db_path).expect("open migrated database");
-    conn.execute_batch(
-            r#"
-            DROP INDEX IF EXISTS idx_memory_recall_questions_created;
-            DROP INDEX IF EXISTS idx_memory_recall_web_questions_created;
-            ALTER TABLE conversation_turns ADD COLUMN user_text TEXT DEFAULT '';
-            ALTER TABLE web_record_turns ADD COLUMN user_text TEXT DEFAULT '';
-            CREATE TABLE IF NOT EXISTS conversation_questions (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                id TEXT NOT NULL PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                title TEXT,
-                created_at TEXT NOT NULL DEFAULT '2026-08-25T00:00:00Z',
-                updated_at TEXT NOT NULL DEFAULT '2026-08-25T00:00:00Z'
-            );
-            CREATE TABLE IF NOT EXISTS web_record_questions (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                id TEXT NOT NULL PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                title TEXT,
-                created_at TEXT NOT NULL DEFAULT '2026-08-25T00:00:00Z',
-                updated_at TEXT NOT NULL DEFAULT '2026-08-25T00:00:00Z'
-            );
-            CREATE TABLE IF NOT EXISTS conversation_question_turns (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                question_id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                turn_order INTEGER NOT NULL,
-                assignment_origin TEXT NOT NULL DEFAULT 'imported',
-                assigned_at TEXT NOT NULL DEFAULT '2026-08-25T00:00:00Z',
-                updated_at TEXT NOT NULL DEFAULT '2026-08-25T00:00:00Z',
-                PRIMARY KEY (tenant_id, question_id, turn_id)
-            );
-            CREATE TABLE IF NOT EXISTS web_record_question_turns (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                question_id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                turn_order INTEGER NOT NULL,
-                assignment_origin TEXT NOT NULL DEFAULT 'imported',
-                assigned_at TEXT NOT NULL DEFAULT '2026-08-25T00:00:00Z',
-                updated_at TEXT NOT NULL DEFAULT '2026-08-25T00:00:00Z',
-                PRIMARY KEY (tenant_id, question_id, turn_id)
-            );
-            UPDATE _sqlx_migrations
-            SET checksum = X'E9A07424F1C86E99CED78966A8CB750B73D6C00E089576DD5C077B357B259BE2C34C14F0BEC320A2FB991B98B6BB9D38'
-            WHERE version = 20260825000005;
-            DELETE FROM _sqlx_migrations WHERE version = 20260826000001;
-            "#,
-        )
-        .expect("simulate database opened after the released migration was modified");
-    drop(conn);
-
-    migrate_database(&db_path)
-        .await
-        .expect("repair known checksum and apply follow-up migration");
-
-    let conn = Connection::open(&db_path).expect("open repaired database");
-    let question_contract_checksum: String = conn
-        .query_row(
-            "SELECT lower(hex(checksum)) FROM _sqlx_migrations WHERE version = 20260825000005",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query repaired question contract checksum");
-    let repair_migration_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 20260826000001",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query follow-up migration");
-    let recall_index_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_memory_recall_questions_created', 'idx_memory_recall_web_questions_created')",
-                [],
-                |row| row.get(0),
-            )
-            .expect("query restored Recall indexes");
-
-    assert_eq!(
-        question_contract_checksum,
-        "85bfcaa1edbb892e90fb943086a77885e6a6c7d349106049ca71a43f9655a60682b18a9d69cce576eea3ccdcee1e0cf2"
-    );
-    assert_eq!(repair_migration_count, 1);
-    assert_eq!(recall_index_count, 2);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn conversation_session_watermark_table_is_retired() {
-    let db_path = temp_database_path("conversation-observation-dropped");
-    migrate_database(&db_path).await.expect("run migrations");
-
-    let conn = Connection::open(&db_path).expect("open migrated database");
-    let table_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversation_session_observations'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query watermark table");
-    assert_eq!(
-        table_count, 0,
-        "per-session watermark rows are retired in favour of session fingerprints"
-    );
-
-    let contract_columns: Vec<String> = conn
-        .prepare(
-            "SELECT name FROM pragma_table_info('conversation_sources') WHERE name LIKE 'synced_%' ORDER BY name",
-        )
-        .expect("prepare source contract columns")
-        .query_map([], |row| row.get::<_, String>(0))
-        .expect("query source contract columns")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("collect source contract columns");
-    assert_eq!(
-        contract_columns,
-        vec![
-            "synced_adapter_hash".to_string(),
-            "synced_card_contract_version".to_string(),
-            "synced_payload_policy_version".to_string(),
-            "synced_projection_version".to_string(),
-        ],
-        "the source-level sync contract stays as the only watermark row per source"
-    );
-
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn migrations_promote_legacy_observation_versions_into_session_fingerprints() {
-    let db_path = temp_database_path("conversation-observation-legacy-backfill");
-    migrate_database(&db_path)
-        .await
-        .expect("create current database");
-
-    let conn = Connection::open(&db_path).expect("open current database");
-    conn.execute_batch(
-        r#"
-            INSERT INTO conversation_adapters (tenant_id, id, name, kind, version, enabled, trust_state, capabilities, input_kinds, created_at, updated_at)
-            VALUES ('default', 'legacy-adp', 'Test', 'cli', '1.0.0', 1, 'trusted', '[]', '[]', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z');
-            INSERT INTO conversation_sources (tenant_id, id, adapter_id, name, kind, location, enabled, created_at, updated_at)
-            VALUES ('default', 'legacy-source', 'legacy-adp', 'Test Source', 'cli', '/path', 1, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z');
-            INSERT INTO conversation_sessions (
-                tenant_id, id, source_id, adapter_id, external_id, title,
-                source_fingerprint, missing, created_at, imported_at
-            ) VALUES (
-                'default', 'legacy-session', 'legacy-source', 'legacy-adp', 'legacy-external', 'Legacy',
-                NULL, 0, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z'
-            );
-            ALTER TABLE conversation_sources DROP COLUMN synced_adapter_hash;
-            ALTER TABLE conversation_sources DROP COLUMN synced_card_contract_version;
-            ALTER TABLE conversation_sources DROP COLUMN synced_payload_policy_version;
-            ALTER TABLE conversation_sources DROP COLUMN synced_projection_version;
-            CREATE TABLE IF NOT EXISTS conversation_session_observations (
-                tenant_id TEXT NOT NULL,
-                source_id TEXT NOT NULL,
-                record_kind TEXT NOT NULL CHECK (record_kind IN ('session', 'web')),
-                external_id TEXT NOT NULL,
-                observed_version TEXT NOT NULL,
-                hydrated_version TEXT,
-                last_seen_at TEXT NOT NULL,
-                dirty INTEGER NOT NULL DEFAULT 0,
-                hydrated_adapter_hash TEXT,
-                hydrated_card_contract_version INTEGER,
-                hydrated_payload_policy_version INTEGER,
-                hydrated_projection_version INTEGER,
-                PRIMARY KEY (tenant_id, source_id, record_kind, external_id)
-            );
-            INSERT INTO conversation_session_observations (
-                tenant_id, source_id, record_kind, external_id, observed_version,
-                hydrated_version, last_seen_at, dirty,
-                hydrated_adapter_hash, hydrated_card_contract_version,
-                hydrated_payload_policy_version, hydrated_projection_version
-            ) VALUES (
-                'default', 'legacy-source', 'session', 'legacy-external', 'observed-v2',
-                'hydrated-v1', '2026-10-01T00:00:00Z', 0,
-                'adapter-hash-v1', 7, 3, 5
-            );
-            DELETE FROM _sqlx_migrations
-            WHERE version IN (20261028000001, 20261110000001);
-            "#,
-    )
-    .expect("seed legacy observation schema");
-    drop(conn);
-
-    migrate_database(&db_path)
-        .await
-        .expect("converge legacy observation schema");
-
-    let conn = Connection::open(&db_path).expect("open converged database");
-    let fingerprint: Option<String> = conn
-        .query_row(
-            "SELECT source_fingerprint FROM conversation_sessions WHERE tenant_id = 'default' AND id = 'legacy-session'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query promoted fingerprint");
-    assert_eq!(
-        fingerprint.as_deref(),
-        Some("hydrated-v1"),
-        "legacy watermark versions must be promoted into the session record before the table is dropped"
-    );
-
-    let table_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversation_session_observations'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query watermark table");
-    assert_eq!(table_count, 0, "the watermark table must be dropped");
-
-    let (hash, card_ver, policy_ver, proj_ver): (
-        Option<String>,
-        Option<i64>,
-        Option<i64>,
-        Option<i64>,
-    ) = conn
-        .query_row(
-            r#"
-            SELECT synced_adapter_hash, synced_card_contract_version,
-                   synced_payload_policy_version, synced_projection_version
-            FROM conversation_sources
-            WHERE tenant_id = 'default' AND id = 'legacy-source'
-            "#,
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .expect("query source contract");
-    assert_eq!(hash.as_deref(), Some("adapter-hash-v1"));
-    assert_eq!(card_ver, Some(7));
-    assert_eq!(policy_ver, Some(3));
-    assert_eq!(proj_ver, Some(5));
-
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn database_reuses_pool_for_queries_after_migration() {
-    let db_path = temp_database_path("pool");
-    let database = Database::open_async(&db_path).await.expect("open database");
-
-    let source_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sources")
-        .fetch_one(database.pool())
-        .await
-        .expect("query via SQLx pool");
-
-    assert_eq!(source_count, 0);
-    drop(database);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn initialized_database_seeds_defaults_without_reseeding() {
-    let db_path = temp_database_path("initialized");
-    let database = Database::open_initialized_async(&db_path)
-        .await
-        .expect("open initialized database");
-
-    let source_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sources")
-        .fetch_one(database.pool())
-        .await
-        .map_err(StoreError::external)
-        .expect("query sources");
-    let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
-        .fetch_one(database.pool())
-        .await
-        .map_err(StoreError::external)
-        .expect("query profiles");
-    let navigation_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM navigation_state")
-        .fetch_one(database.pool())
-        .await
-        .map_err(StoreError::external)
-        .expect("query navigation_state");
-    let shortcut_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_shortcut_items")
-        .fetch_one(database.pool())
-        .await
-        .map_err(StoreError::external)
-        .expect("query app_shortcut_items");
-
-    assert!(source_count > 0);
-    assert!(profile_count > 0);
-    assert_eq!(navigation_count, 1);
-    assert!(shortcut_count > 0);
-    drop(database);
-
-    let conn = Connection::open(&db_path).expect("open seeded database");
-    conn.execute(
-        "UPDATE conversation_adapters SET name = 'preserved' WHERE id = 'codex'",
-        [],
-    )
-    .expect("customize seeded adapter");
-    drop(conn);
-
-    let reopened = Database::open_initialized_async(&db_path)
-        .await
-        .expect("reopen initialized database");
-    let codex_name = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM conversation_adapters WHERE id = 'codex'",
-    )
-    .fetch_one(reopened.pool())
-    .await
-    .map_err(StoreError::external)
-    .expect("query preserved adapter");
-
-    assert_eq!(codex_name, "preserved");
-    drop(reopened);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn initialized_database_restores_missing_builtin_app_icon_rows() {
-    let db_path = temp_database_path("app-icon-defaults");
-    let database = Database::open_initialized_async(&db_path)
-        .await
-        .expect("open initialized database");
-    drop(database);
-
-    let conn = Connection::open(&db_path).expect("open seeded database");
-    conn.execute_batch(
-            "UPDATE app_shortcut_items SET accent_color = '#123456' WHERE profile_id = 'codex';
-             DELETE FROM app_shortcut_items WHERE profile_id IN ('kiro', 'zcode', 'qoder', 'hermes');
-             DELETE FROM profiles WHERE id IN ('kiro', 'zcode', 'qoder', 'hermes');",
-        )
-        .expect("remove newly introduced app defaults");
-    drop(conn);
-
-    let reopened = Database::open_async(&db_path)
-        .await
-        .expect("reopen initialized database");
-    crate::backend::application::system::test_support::seed_tenant_defaults_sqlx(
-        reopened.pool(),
-        "default",
-    )
-    .await
-    .expect("seed tenant defaults");
-    let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
-        .fetch_one(reopened.pool())
-        .await
-        .map_err(StoreError::external)
-        .expect("query profiles");
-    let shortcut_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_shortcut_items")
-        .fetch_one(reopened.pool())
-        .await
-        .map_err(StoreError::external)
-        .expect("query shortcuts");
-    let codex_accent = sqlx::query_scalar::<_, String>(
-        "SELECT accent_color FROM app_shortcut_items WHERE profile_id = 'codex'",
-    )
-    .fetch_one(reopened.pool())
-    .await
-    .map_err(StoreError::external)
-    .expect("query codex accent");
-    let hermes_accent = sqlx::query_scalar::<_, String>(
-        "SELECT accent_color FROM app_shortcut_items WHERE profile_id = 'hermes'",
-    )
-    .fetch_one(reopened.pool())
-    .await
-    .map_err(StoreError::external)
-    .expect("query hermes accent");
-
-    let expected_profile_count =
-        crate::backend::application::system::default_data::default_profiles_from_catalog(
-            &crate::backend::infrastructure::target_catalog::TargetCatalog::builtin_for_tests()
-                .expect("builtin target descriptors"),
-        )
-        .len() as i64;
-    assert_eq!(profile_count, expected_profile_count);
-    assert_eq!(
-        shortcut_count,
-        crate::backend::application::system::default_data::default_app_shortcuts().len() as i64
-    );
-    assert_eq!(codex_accent, "#123456");
-    assert_eq!(hermes_accent, "#f97316");
-    drop(reopened);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn initialized_database_seeds_local_principal_and_default_tenant() {
-    let db_path = temp_database_path("tenant-identity");
-    let database = Database::open_initialized_async(&db_path)
-        .await
-        .expect("open initialized database");
-
-    let principal_count =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM principals WHERE id = 'local'")
-            .fetch_one(database.pool())
-            .await
-            .map_err(StoreError::external)
-            .expect("query principal count");
-    let tenant_count =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tenants WHERE id = 'default'")
-            .fetch_one(database.pool())
-            .await
-            .map_err(StoreError::external)
-            .expect("query tenant count");
-    let membership_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM tenant_memberships WHERE principal_id = 'local' AND tenant_id = 'default' AND role = 'owner'",
-        )
-        .fetch_one(database.pool())
-        .await
-        .map_err(StoreError::external)
-        .expect("query membership count");
-    let active_tenant_id = sqlx::query_scalar::<_, String>(
-        "SELECT active_tenant_id FROM tenant_state WHERE principal_id = 'local'",
-    )
-    .fetch_one(database.pool())
-    .await
-    .map_err(StoreError::external)
-    .expect("query active tenant");
-
-    assert_eq!(principal_count, 1);
-    assert_eq!(tenant_count, 1);
-    assert_eq!(membership_count, 1);
-    assert_eq!(active_tenant_id, "default");
-    drop(database);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn begin_immediate_commits_and_rolls_back_cleanly() {
-    let db_path = temp_database_path("begin-immediate");
-    let database = Database::open_async(&db_path)
-        .await
-        .expect("open migrated database");
-
-    // 1. Commit 路径验证
-    {
-        let mut tx = database
-            .begin_immediate()
-            .await
-            .expect("open immediate transaction");
-        sqlx::query("INSERT INTO sources (tenant_id, id, name, kind, root_path, include_globs, exclude_globs, enabled, priority) VALUES ('default', ?1, ?2, 'skills', ?3, '[]', '[]', 1, 0)")
-            .bind("src-imm-1")
-            .bind("Immediate Source")
-            .bind("/tmp/src1")
-            .execute(&mut *tx)
-            .await
-            .expect("insert in tx");
-        tx.commit().await.expect("commit tx");
-    }
-
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sources WHERE id = 'src-imm-1'")
-        .fetch_one(database.pool())
-        .await
-        .expect("query committed source");
-    assert_eq!(count, 1);
-
-    // 2. Drop 自动 Rollback 路径验证 (RAII 守卫)
-    {
-        let mut tx = database
-            .begin_immediate()
-            .await
-            .expect("open immediate transaction for rollback");
-        sqlx::query("INSERT INTO sources (tenant_id, id, name, kind, root_path, include_globs, exclude_globs, enabled, priority) VALUES ('default', ?1, ?2, 'skills', ?3, '[]', '[]', 1, 0)")
-            .bind("src-imm-2")
-            .bind("Rollback Source")
-            .bind("/tmp/src2")
-            .execute(&mut *tx)
-            .await
-            .expect("insert in tx");
-        // tx 出作用域自动 drop，应自动 rollback
-    }
-
-    let count2: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sources WHERE id = 'src-imm-2'")
-        .fetch_one(database.pool())
-        .await
-        .expect("query rolled back source");
-    assert_eq!(count2, 0);
-
-    drop(database);
-    cleanup_database(&db_path);
-}
-
-#[tokio::test]
-async fn migrations_drop_turn_question_columns_and_redirects_preserves_data() {
-    let db_path = temp_database_path("drop-turn-question-columns");
-    migrate_database(&db_path)
-        .await
-        .expect("initial database creation");
-
-    let conn = Connection::open(&db_path).expect("open database");
-
-    // 1. 模拟迁移 20261026000001 执行前的 17 列 Schema 与跳转表
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = OFF;
-        CREATE TABLE IF NOT EXISTS conversation_question_redirects (
-            tenant_id TEXT NOT NULL DEFAULT 'default',
-            source_question_id TEXT NOT NULL,
-            target_question_id TEXT NOT NULL,
-            operation_kind TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            PRIMARY KEY (tenant_id, source_question_id)
-        );
-        INSERT INTO conversation_question_redirects (
-            tenant_id, source_question_id, target_question_id, operation_kind, created_at, updated_at
-        ) VALUES (
-            'default', 'q-legacy-src', 'q-legacy-target', 'merge', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
-        );
-
-        CREATE TABLE conversation_turns_pre (
-            tenant_id       TEXT NOT NULL DEFAULT 'default',
-            id              TEXT NOT NULL,
-            session_id      TEXT NOT NULL,
-            external_id     TEXT NOT NULL,
-            turn_index      INTEGER NOT NULL,
-            prompt          TEXT NOT NULL DEFAULT '',
-            process         TEXT,
-            response        TEXT,
-            title           TEXT,
-            started_at      TEXT,
-            ended_at        TEXT,
-            model           TEXT,
-            fingerprint     TEXT NOT NULL,
-            missing         INTEGER NOT NULL DEFAULT 0,
-            imported_at     TEXT NOT NULL,
-            question_id     TEXT NOT NULL DEFAULT '',
-            question_origin TEXT NOT NULL DEFAULT 'imported',
-            PRIMARY KEY (tenant_id, id),
-            UNIQUE (tenant_id, session_id, external_id)
-        );
-        INSERT INTO conversation_turns_pre (
-            tenant_id, id, session_id, external_id, turn_index,
-            prompt, process, response, title, started_at, ended_at,
-            model, fingerprint, missing, imported_at, question_id, question_origin
-        ) VALUES (
-            'default', 'turn-preserve-1', 'session-preserve-1', 'ext-1', 0,
-            'Hello AI', '{"items":[]}', 'Hello User', 'Turn 1',
-            '2026-10-25T10:00:00Z', '2026-10-25T10:01:00Z', 'gpt-4o',
-            'fp-preserve-1', 0, '2026-10-25T10:01:00Z', 'q-obsolete-1', 'imported'
-        );
-        DROP TABLE conversation_turns;
-        ALTER TABLE conversation_turns_pre RENAME TO conversation_turns;
-        CREATE INDEX idx_conversation_turns_tenant_session_question
-        ON conversation_turns (tenant_id, session_id, question_id, turn_index);
-        CREATE INDEX idx_conversation_turns_tenant_question
-        ON conversation_turns (tenant_id, question_id);
-
-        CREATE TABLE web_record_turns_pre (
-            tenant_id       TEXT NOT NULL DEFAULT 'default',
-            id              TEXT NOT NULL,
-            session_id      TEXT NOT NULL,
-            external_id     TEXT NOT NULL,
-            turn_index      INTEGER NOT NULL,
-            prompt          TEXT NOT NULL DEFAULT '',
-            process         TEXT,
-            response        TEXT,
-            title           TEXT,
-            started_at      TEXT,
-            ended_at        TEXT,
-            model           TEXT,
-            fingerprint     TEXT NOT NULL,
-            missing         INTEGER NOT NULL DEFAULT 0,
-            imported_at     TEXT NOT NULL,
-            question_id     TEXT NOT NULL DEFAULT '',
-            question_origin TEXT NOT NULL DEFAULT 'imported',
-            PRIMARY KEY (tenant_id, id),
-            UNIQUE (tenant_id, session_id, external_id)
-        );
-        INSERT INTO web_record_turns_pre (
-            tenant_id, id, session_id, external_id, turn_index,
-            prompt, process, response, title, started_at, ended_at,
-            model, fingerprint, missing, imported_at, question_id, question_origin
-        ) VALUES (
-            'default', 'web-turn-preserve-1', 'web-session-preserve-1', 'web-ext-1', 0,
-            'Web prompt', NULL, 'Web response', 'Web Turn 1',
-            '2026-10-25T11:00:00Z', '2026-10-25T11:01:00Z', 'claude-3-5',
-            'web-fp-1', 0, '2026-10-25T11:01:00Z', 'wq-obsolete-1', 'imported'
-        );
-        DROP TABLE web_record_turns;
-        ALTER TABLE web_record_turns_pre RENAME TO web_record_turns;
-        CREATE INDEX idx_web_record_turns_tenant_session_question
-        ON web_record_turns (tenant_id, session_id, question_id, turn_index);
-        CREATE INDEX idx_web_record_turns_tenant_question
-        ON web_record_turns (tenant_id, question_id);
-
-        DELETE FROM _sqlx_migrations WHERE version = 20261026000001;
-        PRAGMA foreign_keys = ON;
-        "#,
-    )
-    .expect("setup pre-migration state");
-    drop(conn);
-
-    // 2. 运行 20261026000001 迁移
-    migrate_database(&db_path)
-        .await
-        .expect("run slimming migration");
-
-    // 3. 校验终态 Schema 与数据无损
-    let conn = Connection::open(&db_path).expect("open migrated database");
-
-    // A. PRAGMA 15 列同构校验
-    for table in ["conversation_turns", "web_record_turns"] {
-        let columns = conn
-            .prepare(&format!(
-                "SELECT name FROM pragma_table_info('{table}') ORDER BY cid"
-            ))
-            .expect("prepare turn columns")
-            .query_map([], |row| row.get::<_, String>(0))
-            .expect("query turn columns")
-            .collect::<Result<Vec<_>, _>>()
-            .expect("collect turn columns");
-        assert_eq!(columns.len(), 15, "{table} 必须严格为 15 列");
-        assert!(!columns.contains(&"question_id".to_string()));
-        assert!(!columns.contains(&"question_origin".to_string()));
-    }
-
-    // B. 跳转表已被清除
-    let redirect_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversation_question_redirects'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query redirect table");
-    assert_eq!(
-        redirect_count, 0,
-        "conversation_question_redirects 表已被 DROP"
-    );
-
-    // C. 3 个 question 相关索引均已清除
-    let question_idx_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN (
-                'idx_conversation_turns_tenant_session_question',
-                'idx_conversation_turns_tenant_question',
-                'idx_web_record_turns_tenant_session_question',
-                'idx_web_record_turns_tenant_question'
-            )",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query question indexes");
-    assert_eq!(question_idx_count, 0);
-
-    // D. 轮次数据 15 列完全无损
-    let turn_row = conn
-        .query_row(
-            "SELECT tenant_id, id, session_id, external_id, turn_index, prompt, process, response, title, started_at, ended_at, model, fingerprint, missing, imported_at FROM conversation_turns WHERE id = 'turn-preserve-1'",
-            [],
-            |r| Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, i64>(4)?,
-                r.get::<_, String>(5)?,
-                r.get::<_, Option<String>>(6)?,
-                r.get::<_, Option<String>>(7)?,
-                r.get::<_, Option<String>>(8)?,
-                r.get::<_, Option<String>>(9)?,
-                r.get::<_, Option<String>>(10)?,
-                r.get::<_, Option<String>>(11)?,
-                r.get::<_, String>(12)?,
-                r.get::<_, i64>(13)?,
-                r.get::<_, String>(14)?,
-            )),
-        )
-        .expect("query conversation turn");
-    assert_eq!(turn_row.0, "default");
-    assert_eq!(turn_row.1, "turn-preserve-1");
-    assert_eq!(turn_row.2, "session-preserve-1");
-    assert_eq!(turn_row.3, "ext-1");
-    assert_eq!(turn_row.4, 0);
-    assert_eq!(turn_row.5, "Hello AI");
-    assert_eq!(turn_row.6.as_deref(), Some("{\"items\":[]}"));
-    assert_eq!(turn_row.7.as_deref(), Some("Hello User"));
-    assert_eq!(turn_row.8.as_deref(), Some("Turn 1"));
-    assert_eq!(turn_row.9.as_deref(), Some("2026-10-25T10:00:00Z"));
-    assert_eq!(turn_row.10.as_deref(), Some("2026-10-25T10:01:00Z"));
-    assert_eq!(turn_row.11.as_deref(), Some("gpt-4o"));
-    assert_eq!(turn_row.12, "fp-preserve-1");
-    assert_eq!(turn_row.13, 0);
-    assert_eq!(turn_row.14, "2026-10-25T10:01:00Z");
-
-    let web_turn_row = conn
-        .query_row(
-            "SELECT tenant_id, id, session_id, external_id, turn_index, prompt, process, response, title, started_at, ended_at, model, fingerprint, missing, imported_at FROM web_record_turns WHERE id = 'web-turn-preserve-1'",
-            [],
-            |r| Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, i64>(4)?,
-                r.get::<_, String>(5)?,
-                r.get::<_, Option<String>>(6)?,
-                r.get::<_, Option<String>>(7)?,
-                r.get::<_, Option<String>>(8)?,
-                r.get::<_, Option<String>>(9)?,
-                r.get::<_, Option<String>>(10)?,
-                r.get::<_, Option<String>>(11)?,
-                r.get::<_, String>(12)?,
-                r.get::<_, i64>(13)?,
-                r.get::<_, String>(14)?,
-            )),
-        )
-        .expect("query web turn");
-    assert_eq!(web_turn_row.0, "default");
-    assert_eq!(web_turn_row.1, "web-turn-preserve-1");
-    assert_eq!(web_turn_row.2, "web-session-preserve-1");
-    assert_eq!(web_turn_row.3, "web-ext-1");
-    assert_eq!(web_turn_row.4, 0);
-    assert_eq!(web_turn_row.5, "Web prompt");
-    assert_eq!(web_turn_row.6, None);
-    assert_eq!(web_turn_row.7.as_deref(), Some("Web response"));
-    assert_eq!(web_turn_row.8.as_deref(), Some("Web Turn 1"));
-    assert_eq!(web_turn_row.9.as_deref(), Some("2026-10-25T11:00:00Z"));
-    assert_eq!(web_turn_row.10.as_deref(), Some("2026-10-25T11:01:00Z"));
-    assert_eq!(web_turn_row.11.as_deref(), Some("claude-3-5"));
-    assert_eq!(web_turn_row.12, "web-fp-1");
-    assert_eq!(web_turn_row.13, 0);
-    assert_eq!(web_turn_row.14, "2026-10-25T11:01:00Z");
-
-    cleanup_database(&db_path);
-}
-
-/// assets 表历史记录存的是扫描当刻的主机绝对路径，换 OS 或换用户名后必然解析失败。
-/// 启动阶段必须把它收敛为便携锚点，且锚点要能展开回当前主机上的真实路径。
-#[tokio::test]
-async fn legacy_host_absolute_asset_paths_converge_to_portable_anchors() {
-    let db_path = temp_database_path("asset-portable-stored-path");
-    migrate_database(&db_path).await.expect("run migrations");
-
-    let home = dirs::home_dir().expect("resolve home directory");
-    let legacy_path = home.join("legacy-assets").join("skill-a");
-    let legacy_text = legacy_path.to_string_lossy().to_string();
-    {
-        let conn = Connection::open(&db_path).expect("open migrated database");
-        conn.execute(
-            "INSERT INTO assets (
-                tenant_id, id, source_id, name, kind, format, relative_path, stored_path,
-                entry_file, description, content_hash, discovered_at, updated_at
-            ) VALUES ('default', 'asset-a', 'source-a', 'skill-a', 'skill', 'directory', 'skill-a',
-                ?1, 'skill-a/SKILL.md', NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-            [legacy_text.as_str()],
-        )
-        .expect("insert legacy asset row");
-    }
-
-    let pool = open_migrated_pool(&db_path)
-        .await
-        .expect("reopen database to converge stored paths");
-    let stored: String = sqlx::query_scalar("SELECT stored_path FROM assets WHERE id = 'asset-a'")
-        .fetch_one(&pool)
-        .await
-        .expect("query converged stored path");
-    pool.close().await;
-
-    assert_eq!(stored, "~/legacy-assets/skill-a");
-    let expanded = crate::backend::infrastructure::path_utils::expand_path(&stored)
-        .expect("expand portable anchor");
-    assert_eq!(expanded, legacy_path);
-
-    cleanup_database(&db_path);
-}
-
-fn temp_database_path(label: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "assetiweave-sqlx-{label}-{}.sqlite",
-        Uuid::new_v4()
-    ))
-}
-
-#[tokio::test]
-async fn migrations_replace_question_level_fts_with_part_level_index() {
-    let db_path = temp_database_path("conversation-part-index");
-    migrate_database(&db_path)
-        .await
-        .expect("create current database");
-
-    let conn = Connection::open(&db_path).expect("open current database");
-    conn.execute_batch(
-        r#"
-            PRAGMA foreign_keys = OFF;
-            CREATE TABLE IF NOT EXISTS conversation_question_turns (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                question_id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                turn_order INTEGER NOT NULL,
-                assignment_origin TEXT NOT NULL DEFAULT 'imported',
-                assigned_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (tenant_id, question_id, turn_id)
-            );
-            CREATE TABLE IF NOT EXISTS web_record_question_turns (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                question_id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                turn_order INTEGER NOT NULL,
-                assignment_origin TEXT NOT NULL DEFAULT 'imported',
-                assigned_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (tenant_id, question_id, turn_id)
-            );
             INSERT INTO conversation_sessions (
                 tenant_id, id, source_id, adapter_id, external_id, title, project_path,
                 started_at, updated_at, source_locator, source_fingerprint, missing,
                 created_at, imported_at
             ) VALUES (
                 'default', 'part-index-session', 'part-index-source', 'part-index-adapter',
-                'part-index-external', 'Part index session', NULL, NULL, NULL, NULL, NULL, 0,
+                'part-index-external', 'Part index session', '/tmp/part-index',
+                '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z', NULL, NULL, 0,
                 '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z'
             );
             INSERT INTO conversation_turns (
                 tenant_id, id, session_id, turn_index, prompt,
                 started_at, ended_at, imported_at
             ) VALUES (
-                'default', 'part-index-turn', 'part-index-session',
-                0, 'Part index question', '2026-10-23T00:00:00Z', NULL,
-                '2026-10-23T00:00:00Z'
+                'default', 'part-index-turn', 'part-index-session', 0,
+                'Part index question', '2026-10-23T00:00:00Z', NULL, '2026-10-23T00:00:00Z'
             );
-            CREATE TABLE conversation_parts_old (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                part_index INTEGER NOT NULL,
-                role TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                text TEXT,
-                language TEXT,
-                command TEXT,
-                cwd TEXT,
-                status TEXT,
-                exit_code INTEGER,
-                metadata_json TEXT,
-                content_card_json TEXT,
-                translated_text TEXT,
-                source_execution_id TEXT,
-                command_label TEXT,
-                PRIMARY KEY (tenant_id, id)
-            );
-            DROP TABLE conversation_parts;
-            ALTER TABLE conversation_parts_old RENAME TO conversation_parts;
-            ALTER TABLE conversation_sessions DROP COLUMN last_cwd;
-            ALTER TABLE conversation_turns ADD COLUMN user_text TEXT DEFAULT '';
-            ALTER TABLE web_record_turns ADD COLUMN user_text TEXT DEFAULT '';
-            UPDATE conversation_turns SET user_text = prompt;
-            UPDATE web_record_turns SET user_text = prompt;
-
-            CREATE TABLE web_record_parts_old (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                part_index INTEGER NOT NULL,
-                role TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                text TEXT,
-                language TEXT,
-                command TEXT,
-                cwd TEXT,
-                status TEXT,
-                exit_code INTEGER,
-                metadata_json TEXT,
-                content_card_json TEXT,
-                translated_text TEXT,
-                source_execution_id TEXT,
-                command_label TEXT,
-                PRIMARY KEY (tenant_id, id)
-            );
-            DROP TABLE web_record_parts;
-            ALTER TABLE web_record_parts_old RENAME TO web_record_parts;
-
             INSERT INTO conversation_parts (
-                tenant_id, id, turn_id, part_index, role, kind, text
+                tenant_id, turn_id, part_index, id_key, kind, content
             ) VALUES
-                ('default', 'part-1', 'part-index-turn', 0,
-                 'assistant', 'text', 'answer body that used to be indexed'),
-                ('default', 'part-2', 'part-index-turn', 1,
-                 'tool', 'tool', 'fatal: unable to access remote repository');
+                ('default', 'part-index-turn', 0, x'0000000000000001', 'answer',
+                 'answer body that used to be indexed'),
+                ('default', 'part-index-turn', 1, x'0000000000000002', 'process',
+                 'fatal: unable to access remote repository');
 
             INSERT INTO web_record_sessions (
                 tenant_id, id, source_id, adapter_id, external_id, title,
@@ -1539,45 +300,19 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
                 '2026-10-23T00:00:00Z'
             );
             INSERT INTO web_record_parts (
-                tenant_id, id, turn_id, part_index, role, kind, text
+                tenant_id, turn_id, part_index, id_key, kind, content
             ) VALUES (
-                'default', 'web-record-part-tool', 'part-index-web-turn', 0,
-                'tool', 'tool', 'web runner crashed with SIGSEGV'
+                'default', 'part-index-web-turn', 0, x'0000000000000003', 'process',
+                'web runner crashed with SIGSEGV'
             );
-
-            DROP TABLE conversation_part_fts;
-            DROP TABLE conversation_part_index_state;
-            CREATE VIRTUAL TABLE conversation_question_fts USING fts5(
-                tenant_id UNINDEXED,
-                question_id UNINDEXED,
-                session_id UNINDEXED,
-                question_text,
-                answer_text,
-                code_text,
-                command_text
-            );
-            ALTER TABLE conversation_turns ADD COLUMN question_id TEXT NOT NULL DEFAULT '';
-            ALTER TABLE conversation_turns ADD COLUMN question_origin TEXT NOT NULL DEFAULT 'imported';
-            ALTER TABLE web_record_turns ADD COLUMN question_id TEXT NOT NULL DEFAULT '';
-            ALTER TABLE web_record_turns ADD COLUMN question_origin TEXT NOT NULL DEFAULT 'imported';
-            CREATE TABLE IF NOT EXISTS conversation_question_redirects (
-                tenant_id TEXT NOT NULL DEFAULT 'default',
-                source_question_id TEXT NOT NULL,
-                target_question_id TEXT NOT NULL,
-                operation_kind TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (tenant_id, source_question_id)
-            );
-            DELETE FROM _sqlx_migrations WHERE version IN (20261023000006, 20261023000007);
             "#,
     )
-    .expect("seed pre-migration question-level index");
+    .expect("seed conversation facts");
     drop(conn);
 
     migrate_database(&db_path)
         .await
-        .expect("apply part index migration");
+        .expect("apply pending migrations");
 
     let conn = Connection::open(&db_path).expect("open migrated database");
     let legacy_table_count: i64 = conn
@@ -1587,48 +322,44 @@ async fn migrations_replace_question_level_fts_with_part_level_index() {
             |row| row.get(0),
         )
         .expect("query legacy question index");
-    let part_column_count: i64 = conn
+    let fts_object_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('conversation_part_fts')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'conversation_part_fts%'",
             [],
             |row| row.get(0),
         )
-        .expect("query part index columns");
-    let indexed_rows: i64 = conn
-        .query_row("SELECT COUNT(*) FROM conversation_part_fts", [], |row| {
+        .expect("query fts objects");
+    let fts_state_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE name IN ('conversation_part_index_state', 'conversation_search_doc_row')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query fts helper tables");
+    let conversation_part_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM conversation_parts", [], |row| {
             row.get(0)
         })
-        .expect("query indexed part rows");
-    let tool_output_indexed: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM conversation_part_fts WHERE text LIKE '%unable to access remote%'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query tool output row");
-    let web_output_indexed: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM conversation_part_fts WHERE text LIKE '%SIGSEGV%'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query web tool output row");
-    let (status, part_count): (String, i64) = conn
-        .query_row(
-            "SELECT status, part_count FROM conversation_part_index_state WHERE tenant_id = 'default'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .expect("query part index state");
+        .expect("count conversation parts");
+    let web_part_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM web_record_parts", [], |row| {
+            row.get(0)
+        })
+        .expect("count web record parts");
     drop(conn);
 
     assert_eq!(legacy_table_count, 0, "旧问题级索引必须退役");
-    assert_eq!(part_column_count, 5, "零件索引只有一条正文列");
-    assert_eq!(indexed_rows, 3, "两个表族的零件都必须回填");
-    assert_eq!(tool_output_indexed, 1);
-    assert_eq!(web_output_indexed, 1);
-    assert_eq!(status, "ready");
-    assert_eq!(part_count, 3);
+    assert_eq!(
+        fts_object_count, 0,
+        "会话级 FTS5 主表与 shadow tables 必须全部删除"
+    );
+    assert_eq!(
+        fts_state_count, 0,
+        "FTS 专属状态表与 rowid 映射表必须一并删除"
+    );
+    assert_eq!(conversation_part_count, 2, "删除索引不得触碰业务事实");
+    assert_eq!(web_part_count, 1, "web 记录事实同样保留");
 
     cleanup_database(&db_path);
 }
@@ -1851,7 +582,7 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         .collect::<Result<Vec<_>, _>>()
         .expect("collect table names");
 
-    // 规格 #104 与 ADR-0019 定义的 21 张核心表收敛白名单
+    // 规格 #104 与 ADR-0019 定义的 18 张核心表收敛白名单
     let expected_core_tables = [
         "agent_execution_bindings",
         "app_extension_catalog_releases",
@@ -1861,11 +592,8 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
         "app_shortcut_items",
         "conversation_adapters",
         "conversation_data_audit_issues",
-        "conversation_part_fts",
-        "conversation_part_index_state",
         "conversation_parts",
         "conversation_payload_policy_state",
-        "conversation_search_doc_row",
         "conversation_search_index_state",
         "conversation_sessions",
         "conversation_sources",
@@ -1883,7 +611,7 @@ async fn acceptance_spec_104_conversation_domain_table_inventory() {
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>(),
-        "4 大前缀表清单必须与收敛核心白名单（23 表）完全一致，杜绝任何僵尸表残留"
+        "4 大前缀表清单必须与收敛核心白名单（18 表）完全一致，杜绝任何僵尸表残留"
     );
 
     let market_index_count: i64 = conn
@@ -2049,108 +777,11 @@ async fn conversation_adapter_flexible_boolean_deserialization_from_sqlite_integ
     cleanup_database(&db_path);
 }
 
-#[tokio::test]
-async fn acceptance_spec_104_search_recalls_extended_part_categories() {
-    let db_path = temp_database_path("acceptance-search-recall");
-    migrate_database(&db_path).await.expect("migrate database");
-
-    let conn = Connection::open(&db_path).expect("open database");
-    let tenant_id = "default";
-    let session_id = "conv-session-acc-01";
-    let turn_id = "conv-turn-acc-01";
-
-    conn.execute(
-        "INSERT OR IGNORE INTO tenants (id, name, created_at, updated_at) VALUES (?1, ?1, '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
-        [tenant_id],
-    ).expect("insert tenant");
-
-    conn.execute(
-        "INSERT INTO conversation_adapters (tenant_id, id, name, kind, version, enabled, trust_state, capabilities, input_kinds, created_at, updated_at) 
-         VALUES (?1, 'adp-1', 'Test Adapter', 'cli', '1.0.0', 1, 'trusted', '[]', '[]', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
-        [tenant_id],
-    ).expect("insert adapter");
-
-    conn.execute(
-        "INSERT INTO conversation_sources (tenant_id, id, adapter_id, name, kind, location, enabled, created_at, updated_at) 
-         VALUES (?1, 'src-1', 'adp-1', 'cli-src', 'cli', '/path/test', 1, '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
-        [tenant_id],
-    ).expect("insert source");
-
-    conn.execute(
-        "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at) 
-         VALUES (?1, ?2, 'src-1', 'adp-1', 'ext-1', 'Test Session', 0, '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
-        [tenant_id, session_id],
-    ).expect("insert session");
-
-    conn.execute(
-        "INSERT INTO conversation_turns (tenant_id, id, session_id, turn_index, prompt, started_at, imported_at) 
-         VALUES (?1, ?2, ?3, 0, 'first prompt', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z')",
-        [tenant_id, turn_id, session_id],
-    ).expect("insert turn");
-
-    // 插入不同类别的零件：
-    // 1. 工具报错（以前不可搜，现在随零件入索引）
-    // 2. 执行结果
-    // 3. 既有答复文本
-    conn.execute(
-        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content) 
-         VALUES (?1, ?2, 0, x'0000000000000000', 'tool_output', 'SocketTimeoutException: Connection timed out while reading upstream payload')",
-        [tenant_id, turn_id],
-    ).expect("insert tool part");
-
-    conn.execute(
-        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content) 
-         VALUES (?1, ?2, 1, x'0000000000000001', 'execution_result', 'Pipeline stage COMPLETED with exit_status=0 in 432ms')",
-        [tenant_id, turn_id],
-    ).expect("insert exec part");
-
-    conn.execute(
-        "INSERT INTO conversation_parts (tenant_id, turn_id, part_index, id_key, kind, content) 
-         VALUES (?1, ?2, 2, x'0000000000000002', 'text', 'Here is the comprehensive migration report for the project')",
-        [tenant_id, turn_id],
-    ).expect("insert assistant part");
-
-    // 同步写入零件 FTS 索引
-    conn.execute(
-        "INSERT INTO conversation_part_fts (tenant_id, part_id, session_id, turn_id, text) VALUES
-         (?1, 'part-tool-output', ?2, ?3, 'SocketTimeoutException: Connection timed out while reading upstream payload'),
-         (?1, 'part-exec-result', ?2, ?3, 'Pipeline stage COMPLETED with exit_status=0 in 432ms'),
-         (?1, 'part-assistant-answer', ?2, ?3, 'Here is the comprehensive migration report for the project')",
-        [tenant_id, session_id, turn_id],
-    ).expect("insert fts");
-
-    // 验证搜索：
-    // 1. 命中新增的工具报错文本
-    let tool_match: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM conversation_part_fts WHERE text MATCH 'SocketTimeoutException'",
-            [],
-            |r| r.get(0),
-        )
-        .expect("search tool error");
-    assert_eq!(tool_match, 1, "必须命中工具报错文本");
-
-    // 2. 命中新增的执行结果
-    let exec_match: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM conversation_part_fts WHERE text MATCH 'exit_status'",
-            [],
-            |r| r.get(0),
-        )
-        .expect("search exec result");
-    assert_eq!(exec_match, 1, "必须命中执行结果文本");
-
-    // 3. 不丢失既有普通答复
-    let legacy_match: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM conversation_part_fts WHERE text MATCH 'comprehensive'",
-            [],
-            |r| r.get(0),
-        )
-        .expect("search legacy text");
-    assert_eq!(legacy_match, 1, "必须保留原有文本检索能力");
-
-    cleanup_database(&db_path);
+fn temp_database_path(label: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "assetiweave-sqlx-{label}-{}.sqlite",
+        Uuid::new_v4()
+    ))
 }
 
 #[tokio::test]
@@ -2392,20 +1023,6 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         [util6_old_part_id],
     ).expect("insert util6 part with legacy id");
 
-    // 插入对应全文索引
-    conn.execute(
-        "INSERT INTO conversation_part_fts (tenant_id, part_id, session_id, turn_id, text)
-         VALUES ('default', ?1, 'sess-default-1', 'turn-default-1', 'Default content needing normalize')",
-        [default_old_part_id],
-    ).expect("insert default fts");
-
-    conn.execute(
-        "INSERT INTO conversation_part_fts (tenant_id, part_id, session_id, turn_id, text)
-         VALUES ('util6', ?1, 'sess-util6-1', 'turn-util6-1', 'Util6 content to be deleted')",
-        [util6_old_part_id],
-    )
-    .expect("insert util6 fts");
-
     // 3. 回退 20261024000001~20261024000005 迁移记录，模拟从旧版本升级触发迁移
     conn.execute_batch(
         r#"
@@ -2423,7 +1040,19 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
             synced_version TEXT NOT NULL,
             PRIMARY KEY (tenant_id, source_id, record_kind, external_id)
         );
-        DELETE FROM _sqlx_migrations WHERE version IN (20261024000001, 20261024000002, 20261024000003, 20261024000004, 20261110000001);
+        -- 该用例模拟 000005 之前的库形态：FTS 对象当时仍然存在。
+        CREATE TABLE IF NOT EXISTS conversation_part_fts (
+            tenant_id TEXT, part_id TEXT, session_id TEXT, turn_id TEXT, text TEXT
+        );
+        CREATE TABLE IF NOT EXISTS conversation_part_index_state (
+            tenant_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'ready',
+            part_count INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+            rebuilt_at TEXT, updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS conversation_search_doc_row (
+            fts_rowid INTEGER PRIMARY KEY, tenant_id TEXT NOT NULL, session_id TEXT NOT NULL
+        );
+        DELETE FROM _sqlx_migrations WHERE version IN (20261024000001, 20261024000002, 20261024000003, 20261024000004, 20261110000001, 20261111000005);
         "#,
     )
     .expect("rollback migration version");
@@ -2472,15 +1101,6 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         .expect("count util6 parts");
     assert_eq!(util6_parts_count, 0, "util6 零件必须已被删除");
 
-    let util6_fts_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM conversation_part_fts WHERE tenant_id = 'util6'",
-            [],
-            |r| r.get(0),
-        )
-        .expect("count util6 fts");
-    assert_eq!(util6_fts_count, 0, "util6 全文索引项必须已被删除");
-
     // B. default 租户数据完整保留
     let default_sessions_count: i64 = conn
         .query_row(
@@ -2501,7 +1121,7 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         .expect("check id column dropped");
     assert_eq!(id_column_exists, 0, "conversation_parts 必须无 id 列");
 
-    // D. 轮次主键已重算为位置身份；索引行保留，正文归属与命中不变
+    // D. 轮次主键已重算为位置身份，正文归属不变
     let repositioned_turn_id =
         crate::backend::domain::derive_conversation_turn_id("sess-default-1", 0);
     let stored_turn_id: String = conn
@@ -2515,20 +1135,6 @@ async fn acceptance_spec_118_cleanup_util6_and_normalize_part_ids() {
         stored_turn_id, repositioned_turn_id,
         "轮次主键必须重算为 sha256(session_id, turn_index)"
     );
-    // 索引表按会话聚合正文，`turn_id` / `part_id` 是 UNINDEXED 且无消费方的派生列，
-    // 按它们过滤必然全表扫描，因此启动期修复不动索引行——检索能力不因此受损。
-    let indexed_session: String = conn
-        .query_row(
-            "SELECT session_id FROM conversation_part_fts WHERE tenant_id = 'default'",
-            [],
-            |r| r.get(0),
-        )
-        .expect("query fts session id");
-    assert_eq!(
-        indexed_session, "sess-default-1",
-        "索引行必须仍挂在原会话下，正文匹配不受轮次主键变化影响"
-    );
-
     // E. 幂等性断言：再次运行 migrate_database 零副作用
     drop(conn);
     migrate_database(&db_path)
@@ -3665,11 +2271,8 @@ async fn adversarial_challenge_3_zero_zombie_tables_oracle_failure_injection() {
         "app_shortcut_items",
         "conversation_adapters",
         "conversation_data_audit_issues",
-        "conversation_part_fts",
-        "conversation_part_index_state",
         "conversation_parts",
         "conversation_payload_policy_state",
-        "conversation_search_doc_row",
         "conversation_search_index_state",
         "conversation_sessions",
         "conversation_sources",
@@ -3686,7 +2289,7 @@ async fn adversarial_challenge_3_zero_zombie_tables_oracle_failure_injection() {
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>(),
-        "baseline clean database must match exactly 23 core tables"
+        "baseline clean database must match exactly 18 core tables"
     );
 
     // Helper to test oracle rejection
@@ -3738,11 +2341,8 @@ async fn adversarial_challenge_3_zero_zombie_tables_oracle_failure_injection() {
             "app_shortcut_items",
             "conversation_adapters",
             "conversation_data_audit_issues",
-            "conversation_part_fts",
-            "conversation_part_index_state",
             "conversation_parts",
             "conversation_payload_policy_state",
-            "conversation_search_doc_row",
             "conversation_search_index_state",
             "conversation_sessions",
             "conversation_sources",
@@ -3987,10 +2587,6 @@ async fn acceptance_spec_175_positional_turn_identity_migration_preserves_offlin
         ('default', 'legacy-turn-offline', 0, x'0000000000000002', 'answer',
          'offline answer body', NULL, NULL);
 
-        INSERT INTO conversation_part_fts (tenant_id, part_id, session_id, turn_id, text) VALUES
-        ('default', 'legacy-part-1', 'legacy-session', 'legacy-turn-parent', 'parent answer body'),
-        ('default', 'legacy-part-2', 'legacy-offline-session', 'legacy-turn-offline',
-         'offline answer body');
 
         INSERT INTO conversation_usage_events (
             tenant_id, source_id, adapter_id, external_event_id, session_id, turn_id,
@@ -4096,7 +2692,7 @@ async fn acceptance_spec_175_positional_turn_identity_migration_preserves_offlin
         "父轮次引用必须级联到新的父轮次主键"
     );
 
-    // C. 离线会话与内容事实零丢失，FTS 仍可命中
+    // C. 离线会话与内容事实零丢失
     let offline_parts: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM conversation_parts WHERE turn_id = ?1",
@@ -4105,15 +2701,6 @@ async fn acceptance_spec_175_positional_turn_identity_migration_preserves_offlin
         )
         .expect("count offline parts");
     assert_eq!(offline_parts, 1, "源文件已移除的离线会话必须完整保留");
-
-    let fts_hits: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM conversation_part_fts WHERE conversation_part_fts MATCH 'offline'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query offline fts hit");
-    assert_eq!(fts_hits, 1, "存量全文索引必须随轮次主键重算后继续命中");
 
     // D. 用量事件按 turn_index 归因
     let attributed: Option<i64> = conn

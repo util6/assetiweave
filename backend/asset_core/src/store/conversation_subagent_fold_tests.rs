@@ -426,37 +426,20 @@ async fn folds_legacy_pseudo_turns_into_anchors_and_subagent_sessions() {
     assert_eq!(sessions[0].session.id, "parent-session-id");
     assert_eq!(sessions[0].turn_count, 2);
 
-    // 5. 折算后两端都按高信号语料重建索引：
-    //    父会话留下真实人类提问，子会话留下自己的委派 Prompt；
-    //    委派锚点摘要与推理正文属于过程明细，不再下沉到检索语料（ADR-0023）。
-    let parent_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM conversation_part_fts \
-         WHERE tenant_id = ?1 AND session_id = 'parent-session-id' AND text LIKE '%第一次提问%'",
-    )
-    .bind(TENANT)
-    .fetch_one(pool)
-    .await
-    .expect("count parent fts rows");
-    assert!(parent_rows > 0, "父会话的人类提问必须仍然可搜");
+    // 5. 折算只改事实：父会话留下真实人类提问（turn_count == 2），
+    //    每个子会话保留自己的轮次与零件；派生索引由消费者按需重算，
+    //    折算本身不写任何索引（ADR-0023）。
     for child_id in &child_ids {
-        let child_rows: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM conversation_part_fts WHERE tenant_id = ?1 AND session_id = ?2",
+        let child_turns: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM conversation_turns WHERE tenant_id = ?1 AND session_id = ?2",
         )
         .bind(TENANT)
         .bind(child_id)
         .fetch_one(pool)
         .await
-        .expect("count child fts rows");
-        assert!(child_rows > 0, "子会话自己的语料必须被建立: {child_id}");
+        .expect("count child turns");
+        assert!(child_turns > 0, "子会话必须保留自己的轮次: {child_id}");
     }
-    let reasoning_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM conversation_part_fts WHERE tenant_id = ?1 AND text LIKE '%先读一下父工单%'",
-    )
-    .bind(TENANT)
-    .fetch_one(pool)
-    .await
-    .expect("count fts rows");
-    assert_eq!(reasoning_rows, 0, "推理正文不得进入检索语料");
 
     // 6. 幂等：抹掉一次性标记后重跑，轮次主键、子会话数量与零件数量完全不变。
     let snapshot = snapshot_shape(pool).await;

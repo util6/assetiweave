@@ -6,12 +6,8 @@
 //!
 //! 幂等：已符合 `sha256(session_id, turn_index)` 的轮次零写入跳过。
 //!
-//! 索引表刻意不动：`conversation_part_fts` 是 FTS5 虚拟表，`turn_id` / `part_id`
-//! 都是 UNINDEXED 列，任何按它们过滤的语句都要全表线性扫描（实测 26 万行上单次
-//! DELETE 3.4 秒），逐轮重建会让一次升级在启动阶段卡上几十分钟。而这两列在生产
-//! 读路径上没有任何消费方——检索只按 `session_id` 做存在性判断、按 `text` 匹配正文
-//! （`conversation_repo/sessions.rs`、`web_record_repo/list.rs`）。轮次主键变化不改变
-//! 任何一行的文本归属，索引行原样保留仍然正确；该会话下次整包替换时会整体重写。
+//! 派生索引不参与本修复：会话检索已收敛到 Tantivy 单一索引（ADR-0023），
+//! 轮次主键重算只改写事实表；索引由事实提交后的事件消费者按变化会话重算。
 
 use std::collections::HashMap;
 

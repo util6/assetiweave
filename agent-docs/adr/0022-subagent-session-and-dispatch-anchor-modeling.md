@@ -1,6 +1,6 @@
 # 0022: 子代理会话与父轮次委派锚点建模
 
-> **状态**：已接受（取代 #148 将子代理拆分为 `turn_kind = "subagent" | "continuation"` 伪轮次的约定，扩展 ADR-0006、ADR-0013 与 ADR-0021）
+> **状态**：已接受（取代 #148 将子代理拆分为 `turn_kind = "subagent" | "continuation"` 伪轮次的约定，扩展 ADR-0006、ADR-0013 与 ADR-0021；其"父快照替换顺带清理子会话/维护全文索引"的表述由 ADR-0023 收窄为单一索引与保险箱语义）
 > **决策日期**：2026-11-09
 
 此前我们将子代理（Subagent）建模为父会话内的特殊交互轮次（`turn_kind = "subagent"`）及紧随其后的续接伪轮次（`turn_kind = "continuation"`），导致一次真实的人类提问在派发 $K$ 个子代理时被物理切碎为 $2K + 1$ 行 `conversation_turns`（例如 1 次提问拆成 7 个物理 Turn），不仅使后续真实提问的物理轮次号发生严重偏移（`#2` 变成 `#T8`）、污染 Memory 水位计数，还使 `aiwc conversation outline` 顶层大纲被数千字的子代理委派 Prompt 刷屏。
@@ -20,3 +20,4 @@
 - **跨会话同步与确定性预锚定（兼容 ADR-0021）**：由于会话主键由 `stable_id("conversation-session", &[source_id, external_id])` 纯函数确定性生成，父会话锚点与子会话行无需等待对方先入库即可双向算出确定性 ID；五大宿主适配器（Claude Code、CodeBuddy、Antigravity、OpenCode、Codex）均支持单次解析产出一主多子 `NormalizedConversationSession`。父会话发生 `/rewind` 回滚并执行整包快照替换时，对账不再被引用的孤儿子会话（若磁盘源文件亦不存在则级联清理）。
 - **双层 FTS5 全文检索与溯源跳转**：父轮次委派锚点将 `[agent_role + 任务标题 + 汇报摘要]` 写入父会话 FTS5 索引；会话列表全文检索同时匹配主会话及其名下 `Subagent Session` 并向上归集浮现父会话；卡片级检索命中子会话内部时附带父会话上下文，支持 CLI 与前端带 `[← 返回父会话 #Tn]` 面包屑直跳。
 - **存量数据无损原地还原**：现有 SQLite 表结构无需任何 DDL 变更；存量库中被拆碎的 `subagent` / `continuation` 伪轮次与平铺的 Codex 子代理会话可通过纯数据层折算（抽离 `subagent` 轮次为子会话、生成父轮次锚点、将 `continuation` 轮次缝合回父轮次并重排 `0..N` 位置主键）无损恢复。
+- **锚点身份只认 `child_session_id`（2026-11-10 实现注记）**：同一锚点会同时写入 `conversation_parts`（正文）与 `TurnProcess.items`（过程链）。存量折算路径让二者**各占一个序号**（实测 `part_index = 21` / `seq = 22`，恒差 1），新扫描路径则恰好相等。因此任何渲染或检索消费方都必须按 `child_session_id` 对齐；一旦假设「`seq` 即 `part_index`」，在折算数据上会整体错位一格。

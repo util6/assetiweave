@@ -1,14 +1,10 @@
 use super::*;
-use crate::backend::store::conversations::conversation_repo::part_index::{
-    delete_session_part_index_sqlx_tx, delete_source_part_index_sqlx_tx,
-};
 
 pub async fn delete_web_record_session_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
 ) -> StoreResult<()> {
-    delete_session_part_index_sqlx_tx(tx, tenant_id, session_id).await?;
     sqlx::query(
         r#"
         DELETE FROM web_record_parts
@@ -36,6 +32,7 @@ pub async fn delete_web_record_session_sqlx_tx(
         .execute(&mut **tx)
         .await
         .map_err(StoreError::external)?;
+    mark_search_index_behind_sqlx_tx(tx, tenant_id).await?;
     Ok(())
 }
 
@@ -44,8 +41,6 @@ pub async fn clear_legacy_conversation_records_for_source_sqlx_tx(
     tenant_id: &str,
     source_id: &str,
 ) -> StoreResult<()> {
-    delete_source_part_index_sqlx_tx(tx, tenant_id, source_id, ConversationRecordKind::Session)
-        .await?;
     sqlx::query(
         r#"
         DELETE FROM conversation_parts
@@ -84,5 +79,21 @@ pub async fn clear_legacy_conversation_records_for_source_sqlx_tx(
         .execute(&mut **tx)
         .await
         .map_err(StoreError::external)?;
+    mark_search_index_behind_sqlx_tx(tx, tenant_id).await?;
+    Ok(())
+}
+
+/// 事实被删除后，派生索引必然落后。
+///
+/// 这里只把代际标记为落后：检索会立刻切换到"读已提交事实"的正确回退，
+/// 孤儿文档由下一次受控重建清理，绝不在事实事务里写索引。
+async fn mark_search_index_behind_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+) -> StoreResult<()> {
+    super::super::conversation_repo::bump_conversation_search_source_revision_sqlx_tx(
+        &mut **tx, tenant_id,
+    )
+    .await?;
     Ok(())
 }

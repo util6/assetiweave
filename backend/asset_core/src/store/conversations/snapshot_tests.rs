@@ -107,17 +107,6 @@ fn cleanup(db_path: &std::path::Path) {
     let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
 }
 
-async fn search_hits(pool: &SqlitePool, term: &str) -> i64 {
-    sqlx::query_scalar(
-        "SELECT COUNT(*) FROM conversation_part_fts WHERE tenant_id = ?1 AND conversation_part_fts MATCH ?2",
-    )
-    .bind(TENANT)
-    .bind(term)
-    .fetch_one(pool)
-    .await
-    .expect("query fts")
-}
-
 #[tokio::test]
 async fn snapshot_assigns_positional_identity_and_fills_started_at() {
     let (database, db_path) = open_pool("identity").await;
@@ -252,7 +241,6 @@ async fn snapshot_rewind_replaces_turns_parts_and_index_wholesale() {
         .flat_map(|question| question.turns.iter())
         .collect::<Vec<_>>();
     assert_eq!(before_turns.len(), 5);
-    assert_eq!(search_hits(pool, "ghost").await, 5);
     let first_part_id = before.questions[0].parts[0].id.clone();
     let first_turn_id = before_turns[0].id.clone();
 
@@ -308,17 +296,30 @@ async fn snapshot_rewind_replaces_turns_parts_and_index_wholesale() {
         after_parts[0].translated_text, None,
         "整包替换必须物理清空局部翻译"
     );
-    assert_eq!(
-        search_hits(pool, "ghost").await,
-        1,
-        "被回滚掉的轮次词条必须消失"
-    );
-    assert_eq!(
-        search_hits(pool, "fresh").await,
-        1,
-        "新轮次内容必须立即可检索"
-    );
-    assert_eq!(search_hits(pool, "epsilon").await, 0);
+    // 回滚后的内容事实必须只剩当前快照：被抹掉的轮次正文不得残留。
+    let rolled_back_content: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_turns \
+         WHERE tenant_id = ?1 AND session_id = ?2 \
+           AND (COALESCE(response, '') LIKE '%ghost answer epsilon%' \
+                OR COALESCE(response, '') LIKE '%ghost answer delta%')",
+    )
+    .bind(TENANT)
+    .bind(&session_id)
+    .fetch_one(pool)
+    .await
+    .expect("count rolled back content");
+    assert_eq!(rolled_back_content, 0, "被回滚掉的轮次正文必须消失");
+    let fresh_content: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_turns \
+         WHERE tenant_id = ?1 AND session_id = ?2 \
+           AND COALESCE(response, '') LIKE '%fresh answer%'",
+    )
+    .bind(TENANT)
+    .bind(&session_id)
+    .fetch_one(pool)
+    .await
+    .expect("count fresh content");
+    assert_eq!(fresh_content, 1, "新轮次内容必须立即成为事实");
 
     // 整包替换后必须没有孤儿轮次 / 孤儿零件等结构异常。
     let audit = crate::backend::application::conversations::conversation_maintenance_ops::audit_conversation_data_sqlx(

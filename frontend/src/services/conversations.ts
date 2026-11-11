@@ -394,19 +394,6 @@ export interface ConversationSearchIndexStatus {
   supported_modes: Array<"lexical" | "semantic" | "hybrid">;
 }
 
-export interface ConversationPartIndexStatus {
-  status: "ready" | "building" | "stale";
-  is_ready: boolean;
-  part_count: number;
-  /** 该代索引落盘时使用的检索语料策略版本。 */
-  corpus_policy_version: number;
-  /** 当前代码生效的检索语料策略版本；与上者不一致说明需要一次受控重建。 */
-  current_corpus_policy_version: number;
-  last_error: string | null;
-  rebuilt_at: string | null;
-  updated_at: string | null;
-}
-
 export interface ConversationSearchIndexTaskSnapshot {
   id: string;
   status: ConversationSyncTaskStatus;
@@ -1389,34 +1376,6 @@ export async function getConversationSearchIndexStatus(): Promise<ConversationSe
   }
 }
 
-export async function getConversationPartIndexStatus(): Promise<ConversationPartIndexStatus> {
-  try {
-    return await invoke<ConversationPartIndexStatus>(
-      "get_conversation_part_index_status",
-    );
-  } catch (error) {
-    if (isTauriRuntime()) throw error;
-    return {
-      status: "ready",
-      is_ready: true,
-      part_count: 0,
-      corpus_policy_version: 0,
-      current_corpus_policy_version: 0,
-      last_error: null,
-      rebuilt_at: null,
-      updated_at: null,
-    };
-  }
-}
-
-export async function startConversationPartIndexRebuild(): Promise<unknown> {
-  try {
-    return await invoke<unknown>("start_conversation_part_index_rebuild");
-  } catch (error) {
-    if (isTauriRuntime()) throw error;
-    return null;
-  }
-}
 
 export async function startConversationSearchIndexRebuild(): Promise<ConversationSearchIndexTaskSnapshot> {
   try {

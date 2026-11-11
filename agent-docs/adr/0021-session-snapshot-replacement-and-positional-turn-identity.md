@@ -1,11 +1,11 @@
 # 0021: 会话快照整包替换与轮次位置身份
 
-> **状态**：已接受（部分取代 ADR-0006 中轮次增量对账与持久化问题聚合的约定）
+> **状态**：已接受（部分取代 ADR-0006 中轮次增量对账与持久化问题聚合的约定；其中"单事务内重写全文索引"的约定由 ADR-0023 取代）
 > **决策日期**：2026-11-06
 
 第三方对话适配器每次返回的都是整个会话的完整快照，且现代宿主普遍支持回滚、重生成与分支切换；此前在 `conversation_turns` / `web_record_turns` 上持久化 `external_id`、`fingerprint`、`missing` 做逐轮对账与事后修剪，迫使各适配器拼凑不稳定的源侧标识（`turn-N` 与源消息 ID 混存），并在回滚时引发主键漂移与引用撕裂。
 
-我们决定将同步与版本判定的粒度统一收口在会话级（`conversation_session_observations.synced_version`）：一旦会话版本变化，在单事务中按会话整体清理并重写该会话的轮次、内容事实与全文索引（接受替换时物理清空局部翻译文本）；物理删除轮次表的 `external_id`、`fingerprint`、`missing` 三列，由核心按过滤后的顺序统一赋 `turn_index = 0..N` 并以 `sha256(session_id, turn_index)` 生成轮次主键，同时强制 `started_at` 非空以区分回滚重聊后的新轮次。
+我们决定将同步与版本判定的粒度统一收口在会话级（`conversation_session_observations.synced_version`）：一旦会话版本变化，在单事务中按会话整体清理并重写该会话的轮次与内容事实（接受替换时物理清空局部翻译文本）；**全文索引不再随事实事务维护**（ADR-0023 修订：事实事务零索引写入，派生索引由事件消费者按变化会话推进）；物理删除轮次表的 `external_id`、`fingerprint`、`missing` 三列，由核心按过滤后的顺序统一赋 `turn_index = 0..N` 并以 `sha256(session_id, turn_index)` 生成轮次主键，同时强制 `started_at` 非空以区分回滚重聊后的新轮次。
 
 ## 备选方案与取舍
 

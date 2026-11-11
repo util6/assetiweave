@@ -162,6 +162,29 @@ pub fn search_generation_index(
     index.search_cards(query)
 }
 
+/// 在已发布的当代索引上按会话替换文档。
+///
+/// 调用方负责持有写者租约；本函数只做"删旧 + 写新 + 一次提交"，
+/// 因此同一批会话重复推进是幂等的，未变化会话完全不被触碰。
+pub fn apply_session_documents_to_generation(
+    index_path: &Path,
+    session_ids: &[String],
+    documents: &[ConversationSearchDocument],
+) -> InfraResult<(i64, i64)> {
+    let index = DiskConversationIndex::open(index_path)?;
+    let document_count = index.apply_session_documents(session_ids, documents)?;
+    let size_bytes = directory_size(index_path, None)?;
+    Ok((document_count, size_bytes))
+}
+
+pub fn search_generation_session_ids(
+    index_path: &Path,
+    query: &super::engine::ConversationSessionQuery,
+) -> InfraResult<Vec<String>> {
+    let index = DiskConversationIndex::open(index_path)?;
+    index.search_session_ids(query)
+}
+
 #[cfg(test)]
 #[path = "storage_tests.rs"]
 mod tests;

@@ -15,6 +15,13 @@ pub(super) struct ConversationSearchSchema {
     pub(super) document_id: Field,
     pub(super) record_kind: Field,
     pub(super) session_id: Field,
+    /// 子代理会话的可见父会话 ID；根会话为空。
+    ///
+    /// 索引显式承载父子身份，列表检索才能在索引侧完成"子命中归集到父"，
+    /// 而不是每次查询回表展开。
+    pub(super) parent_session_id: Field,
+    /// 默认列表可见性（`"1"` / `"0"`）。
+    pub(super) user_visible: Field,
     pub(super) question_id: Field,
     pub(super) turn_id: Field,
     pub(super) part_id: Field,
@@ -25,11 +32,8 @@ pub(super) struct ConversationSearchSchema {
     pub(super) adapter_id: Field,
     pub(super) source_id: Field,
     pub(super) project_path: Field,
-    #[allow(dead_code)]
     pub(super) session_title_zh: Field,
-    #[allow(dead_code)]
     pub(super) session_title_en: Field,
-    #[allow(dead_code)]
     pub(super) session_title_ngram: Field,
     pub(super) question_title_zh: Field,
     pub(super) question_title_en: Field,
@@ -46,6 +50,8 @@ pub(super) fn build_conversation_schema() -> ConversationSearchSchema {
     let document_id = builder.add_text_field("document_id", STRING | STORED);
     let record_kind = builder.add_text_field("record_kind", STRING | STORED);
     let session_id = builder.add_text_field("session_id", STRING | STORED);
+    let parent_session_id = builder.add_text_field("parent_session_id", STRING | STORED);
+    let user_visible = builder.add_text_field("user_visible", STRING | STORED);
     let question_id = builder.add_text_field("question_id", STRING | STORED);
     let turn_id = builder.add_text_field("turn_id", STRING | STORED);
     let part_id = builder.add_text_field("part_id", STRING | STORED);
@@ -76,6 +82,8 @@ pub(super) fn build_conversation_schema() -> ConversationSearchSchema {
         document_id,
         record_kind,
         session_id,
+        parent_session_id,
+        user_visible,
         question_id,
         turn_id,
         part_id,

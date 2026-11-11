@@ -397,18 +397,6 @@ async fn normalize_legacy_part_ids(pool: &SqlitePool) -> StoreResult<()> {
                 .execute(&mut *tx)
                 .await
                 .map_err(StoreError::external)?;
-
-            if table_exists(pool, "conversation_part_fts").await? {
-                sqlx::query(
-                    "UPDATE conversation_part_fts SET part_id = ?1 WHERE tenant_id = ?2 AND part_id = ?3",
-                )
-                .bind(&new_id)
-                .bind(&tenant_id)
-                .bind(&old_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(StoreError::external)?;
-            }
         }
         tx.commit().await.map_err(StoreError::external)?;
     }
@@ -435,18 +423,6 @@ async fn normalize_legacy_part_ids(pool: &SqlitePool) -> StoreResult<()> {
                     .execute(&mut *tx)
                     .await
                     .map_err(StoreError::external)?;
-
-                if table_exists(pool, "conversation_part_fts").await? {
-                    sqlx::query(
-                        "UPDATE conversation_part_fts SET part_id = ?1 WHERE tenant_id = ?2 AND part_id = ?3",
-                    )
-                    .bind(&new_id)
-                    .bind(&tenant_id)
-                    .bind(&old_id)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(StoreError::external)?;
-                }
             }
             tx.commit().await.map_err(StoreError::external)?;
         }

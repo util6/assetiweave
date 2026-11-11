@@ -57,8 +57,6 @@
 | `conversation.data.audit` | `audit_conversation_data`<br>`conversation.data.audit` | `assetiweave-cli conversation data audit` | `audit_conversation_data` | `read` | `false` |
 | `conversation.data.repair` | `conversation.data.repair`<br>`repair_conversation_data` | `assetiweave-cli conversation data repair` | `repair_conversation_data` | `high-risk-write` | `true` |
 | `conversation.data.rollback` | `conversation.data.rollback`<br>`rollback_conversation_data` | `assetiweave-cli conversation data rollback` | `rollback_conversation_data` | `high-risk-write` | `true` |
-| `conversation.part.index.rebuild` | `conversation.part.index.rebuild`<br>`start_conversation_part_index_rebuild` | `assetiweave-cli conversation part index rebuild` | `start_conversation_part_index_rebuild` | `write` | `false` |
-| `conversation.part.index.status` | `conversation.part.index.status`<br>`get_conversation_part_index_status` | `assetiweave-cli conversation part index status` | `get_conversation_part_index_status` | `read` | `false` |
 | `conversation.part.translation.update` | `conversation.part.translation.update`<br>`update_conversation_part_translation` | `assetiweave-cli conversation part translation update <part-id> --text <text>` | `update_conversation_part_translation` | `write` | `false` |
 | `conversation.question.get` | `conversation.question.get`<br>`get_conversation_question` | `assetiweave-cli conversation question get <question-id>` | `get_conversation_question` | `read` | `false` |
 | `conversation.question.list` | `conversation.question.list`<br>`list_conversation_questions` | `assetiweave-cli conversation question list <session-id>` | `list_conversation_questions` | `read` | `false` |
@@ -81,14 +79,12 @@
 | `conversation.web-record.export` | `conversation.web-record.export`<br>`export_web_record_session` | `assetiweave-cli conversation web-record export <record-id> --output-root <dir>` | `export_web_record_session` | `write` | `false` |
 | `conversation.web-record.get` | `conversation.web-record.get`<br>`get_web_record_session` | `assetiweave-cli conversation web-record get <record-id>` | `get_web_record_session` | `read` | `false` |
 | `conversation.web-record.list` | `conversation.web-record.list`<br>`list_web_record_sessions` | `assetiweave-cli conversation web-record list` | `list_web_record_sessions` | `read` | `false` |
-| `create_plan` | `create_plan` | — | `create_plan` | `read` | `false` |
 | `create_profile` | `create_profile` | — | `create_profile` | `write` | `false` |
 | `create_skill_group` | `create_skill_group` | — | `create_skill_group` | `write` | `false` |
 | `create_source` | `create_source` | — | `create_source` | `write` | `false` |
 | `delete_profile` | `delete_profile` | — | `delete_profile` | `high-risk-write` | `true` |
 | `delete_skill_group` | `delete_skill_group` | — | `delete_skill_group` | `high-risk-write` | `true` |
 | `doctor.run` | `doctor.run` | `assetiweave-cli doctor` | — | `read` | `false` |
-| `execute_plan` | `execute_plan` | — | `execute_plan` | `high-risk-write` | `true` |
 | `get_navigation_model` | `get_navigation_model` | — | `get_navigation_model` | `read` | `false` |
 | `get_skill_backup_settings` | `get_skill_backup_settings` | — | `get_skill_backup_settings` | `read` | `false` |
 | `list_app_shortcut_settings` | `list_app_shortcut_settings` | — | `list_app_shortcut_settings` | `read` | `false` |

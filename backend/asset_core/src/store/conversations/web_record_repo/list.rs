@@ -9,10 +9,27 @@ pub async fn list_web_record_sessions_sqlx(
     limit: usize,
     offset: usize,
 ) -> StoreResult<Vec<ConversationSessionListItem>> {
+    list_web_record_sessions_with_body_matches_sqlx(
+        pool, tenant_id, adapter_id, source_id, query, None, limit, offset,
+    )
+    .await
+}
+
+/// Web 记录列表：正文命中由检索层给出会话集合（Tantivy 或事实回退）。
+pub async fn list_web_record_sessions_with_body_matches_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    adapter_id: Option<&str>,
+    source_id: Option<&str>,
+    query: Option<&str>,
+    body_match_session_ids: Option<&[String]>,
+    limit: usize,
+    offset: usize,
+) -> StoreResult<Vec<ConversationSessionListItem>> {
     let needle = normalize_query(query);
     let id_needle = query.and_then(crate::backend::domain::conversation_id_search_term);
-    // 正文索引重建期间正文匹配不可用，列表搜索降级为标题级，避免给出误导性的空结果。
-    let body_search_ready = conversation_part_index_ready_sqlx(pool, tenant_id).await?;
+    let body_matches = body_match_session_ids
+        .map(|session_ids| serde_json::to_string(session_ids).unwrap_or_else(|_| "[]".to_string()));
     let rows = sqlx::query_as::<_, WebRecordSessionListItemRow>(
         r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, NULL AS project_path,
@@ -37,20 +54,7 @@ pub async fn list_web_record_sessions_sqlx(
               OR instr(lower(s.title), ?4) > 0
               OR instr(lower(s.external_id), ?4) > 0
               OR (?5 IS NOT NULL AND instr(lower(s.id), ?5) > 0)
-              OR (?8 = 1 AND ?4 IS NOT NULL AND EXISTS (
-                  SELECT 1
-                  FROM conversation_part_fts f
-                  WHERE f.tenant_id = s.tenant_id
-                    AND f.session_id = s.id
-                    AND instr(lower(f.text), ?4) > 0
-              ))
-              OR (?8 = 1 AND ?4 IS NOT NULL AND EXISTS (
-                  SELECT 1
-                  FROM web_record_turns t
-                  WHERE t.tenant_id = s.tenant_id
-                    AND t.session_id = s.id
-                    AND instr(lower(t.prompt), ?4) > 0
-              ))
+              OR (?8 IS NOT NULL AND s.id IN (SELECT value FROM json_each(?8)))
           )
         ORDER BY COALESCE(s.updated_at, s.imported_at) DESC, s.title ASC
         LIMIT ?6 OFFSET ?7
@@ -71,7 +75,7 @@ pub async fn list_web_record_sessions_sqlx(
             .map_err(|_| format!("invalid web record offset: {offset}"))
             .map_err(StoreError::external)?,
     )
-    .bind(i64::from(body_search_ready))
+    .bind(body_matches.as_deref())
     .fetch_all(pool)
     .await
     .map_err(StoreError::external)?;

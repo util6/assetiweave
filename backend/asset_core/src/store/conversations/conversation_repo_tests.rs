@@ -1450,14 +1450,11 @@ async fn sqlx_conversation_reads_and_filters_questions() {
         .await?;
         // 正文匹配走高信号语料（ADR-0023）：只有提问与最终回答会进索引，
         // 轮次中的 reasoning / 工具输出不再下沉，因此这里用 t1 的最终回答取证。
-        let sessions = list_conversation_sessions_sqlx(
+        let sessions = list_sessions_with_corpus_body_matches(
             database.pool(),
             TEST_TENANT_ID,
-            None,
-            Some(&source.id),
-            Some("answer for t1"),
-            20,
-            0,
+            &source.id,
+            "answer for t1",
         )
         .await?;
         let detail = load_conversation_session_detail_sqlx(
@@ -1580,14 +1577,11 @@ async fn sqlx_conversation_lists_sessions_by_display_id_fragment() {
         .execute(database.pool())
         .await
         .map_err(StoreError::external)?;
-        let fragment_matches = list_conversation_sessions_sqlx(
+        let fragment_matches = list_sessions_with_corpus_body_matches(
             database.pool(),
             TEST_TENANT_ID,
-            None,
-            Some(&source.id),
-            Some(&fragment),
-            20,
-            0,
+            &source.id,
+            &fragment,
         )
         .await?;
         let direct_fragment_matches = list_conversation_sessions_by_id_fragment_sqlx(
@@ -1601,14 +1595,11 @@ async fn sqlx_conversation_lists_sessions_by_display_id_fragment() {
             0,
         )
         .await?;
-        let full_matches = list_conversation_sessions_sqlx(
+        let full_matches = list_sessions_with_corpus_body_matches(
             database.pool(),
             TEST_TENANT_ID,
-            None,
-            Some(&source.id),
-            Some(&session_id),
-            20,
-            0,
+            &source.id,
+            &session_id,
         )
         .await?;
         Ok::<_, StoreError>((fragment_matches, direct_fragment_matches, full_matches))
@@ -1913,14 +1904,11 @@ async fn sqlx_search_and_aggregates_only_declared_content_cards() {
             &sessions[0].session.id,
         )
         .await?;
-        let undeclared_list = list_conversation_sessions_sqlx(
+        let undeclared_list = list_sessions_with_corpus_body_matches(
             database.pool(),
             TEST_TENANT_ID,
-            None,
-            Some(&source.id),
-            Some("undeclared answer"),
-            20,
-            0,
+            &source.id,
+            "undeclared answer",
         )
         .await?;
         let undeclared_page = search_conversation_cards_sqlx(
@@ -2036,24 +2024,18 @@ async fn sqlx_conversation_records_are_isolated_by_tenant() {
         )
         .await?;
 
-        let alpha_sessions = list_conversation_sessions_sqlx(
+        let alpha_sessions = list_sessions_with_corpus_body_matches(
             database.pool(),
             tenant_alpha,
-            None,
-            Some(&source.id),
-            Some("alpha tenant"),
-            20,
-            0,
+            &source.id,
+            "alpha tenant",
         )
         .await?;
-        let beta_sessions = list_conversation_sessions_sqlx(
+        let beta_sessions = list_sessions_with_corpus_body_matches(
             database.pool(),
             tenant_beta,
-            None,
-            Some(&source.id),
-            Some("beta tenant"),
-            20,
-            0,
+            &source.id,
+            "beta tenant",
         )
         .await?;
         let session_id = alpha_sessions[0].session.id.clone();
@@ -4214,14 +4196,11 @@ async fn sqlx_session_search_follows_the_high_signal_corpus() {
             "nothing-matches-this-needle",
         ] {
             results.push(
-                list_conversation_sessions_sqlx(
+                list_sessions_with_corpus_body_matches(
                     database.pool(),
                     TEST_TENANT_ID,
-                    None,
-                    Some(&source.id),
-                    Some(needle),
-                    20,
-                    0,
+                    &source.id,
+                    needle,
                 )
                 .await?,
             );
@@ -4256,20 +4235,20 @@ async fn sqlx_session_search_follows_the_high_signal_corpus() {
 }
 
 #[tokio::test]
-async fn sqlx_session_search_degrades_to_title_while_part_index_rebuilds() {
+async fn sqlx_session_search_falls_back_to_committed_facts_without_any_index() {
     let db_path = std::env::temp_dir().join(format!(
-        "assetiweave-conversation-part-search-degraded-sqlx-{}.sqlite",
+        "assetiweave-conversation-part-search-fallback-sqlx-{}.sqlite",
         Uuid::new_v4()
     ));
     let database = Database::open_async(&db_path).await.expect("open database");
     let adapter = test_conversation_adapter(
-        "part-search-degraded-external",
+        "part-search-fallback-external",
         ConversationAdapterKind::External,
         ConversationAdapterTrustState::Trusted,
     );
     let source = test_conversation_source(&adapter.id);
 
-    let (ready_body_hits, rebuilding_body_hits, rebuilding_title_hits) = async {
+    let (body_hits, title_hits, missing_hits) = async {
         upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
         upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
         import_conversation_sessions_sqlx(
@@ -4280,53 +4259,65 @@ async fn sqlx_session_search_degrades_to_title_while_part_index_rebuilds() {
             false,
         )
         .await?;
-        // 派生索引不再随事实事务同步写入，这里显式推进一次消费者应做的工作。
-        crate::backend::store::replace_source_search_corpus_sqlx(
+        // 刻意不写任何派生索引：回退直接读已提交事实，正文命中不得退化为仅标题。
+        let body_hits = list_sessions_with_corpus_body_matches(
             database.pool(),
             TEST_TENANT_ID,
             &source.id,
+            "answer for t1",
         )
         .await?;
-        let search = |needle: &'static str| {
-            list_conversation_sessions_sqlx(
-                database.pool(),
-                TEST_TENANT_ID,
-                None,
-                Some(&source.id),
-                Some(needle),
-                20,
-                0,
-            )
-        };
-        let ready_body_hits = search("answer for t1").await?;
-        crate::backend::store::set_conversation_part_index_status_sqlx(
+        let title_hits = list_sessions_with_corpus_body_matches(
             database.pool(),
             TEST_TENANT_ID,
-            "building",
-            0,
-            None,
+            &source.id,
+            "Fixture",
         )
         .await?;
-        let rebuilding_body_hits = search("answer for t1").await?;
-        let rebuilding_title_hits = search("Fixture").await?;
-        StoreResult::Ok((ready_body_hits, rebuilding_body_hits, rebuilding_title_hits))
+        let missing_hits = list_sessions_with_corpus_body_matches(
+            database.pool(),
+            TEST_TENANT_ID,
+            &source.id,
+            "nothing-matches-this-needle",
+        )
+        .await?;
+        StoreResult::Ok((body_hits, title_hits, missing_hits))
     }
     .await
-    .expect("search sessions while the part index rebuilds");
+    .expect("search sessions without any derived index");
 
-    assert_eq!(ready_body_hits.len(), 1);
-    assert!(
-        rebuilding_body_hits.is_empty(),
-        "重建期间正文匹配应降级，避免给出误导性的空结果"
-    );
-    assert_eq!(
-        rebuilding_title_hits.len(),
-        1,
-        "重建期间标题匹配必须仍然可用"
-    );
+    assert_eq!(body_hits.len(), 1, "回退必须能命中已提交的最终回答正文");
+    assert_eq!(title_hits.len(), 1, "标题匹配独立于正文集合");
+    assert!(missing_hits.is_empty());
+}
 
-    drop(database);
-    cleanup_database(&db_path);
+/// 按"回退检索给出的正文命中集合"查列表：索引缺失时也必须能命中正文。
+async fn list_sessions_with_corpus_body_matches(
+    pool: &sqlx::SqlitePool,
+    tenant_id: &str,
+    source_id: &str,
+    needle: &str,
+) -> StoreResult<Vec<ConversationSessionListItem>> {
+    let body_match_session_ids = crate::backend::store::search_session_ids_by_corpus_sqlx(
+        pool,
+        tenant_id,
+        crate::backend::domain::ConversationRecordKind::Session,
+        needle,
+    )
+    .await?;
+    list_conversation_sessions_filtered_sqlx(
+        pool,
+        tenant_id,
+        ConversationSessionListFilter {
+            source_id: Some(source_id),
+            query: Some(needle),
+            body_match_session_ids: Some(&body_match_session_ids),
+            limit: 20,
+            offset: 0,
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 fn normalized_search_part(

@@ -10,6 +10,11 @@ pub struct ConversationSessionListFilter<'a> {
     pub until: Option<&'a str>,
     /// 传入父会话完整 ID 时改为列出该父会话名下的子代理会话。
     pub parent_session_id: Option<&'a str>,
+    /// 正文命中会话集合（来自 Tantivy 或事实回退）。
+    ///
+    /// `None` 表示"不做正文匹配"；`Some(空集合)` 表示"正文没有命中"，
+    /// 两者语义不同，不能合并成一个布尔。
+    pub body_match_session_ids: Option<&'a [String]>,
     pub limit: usize,
     pub offset: usize,
 }
@@ -28,8 +33,11 @@ pub async fn list_conversation_sessions_filtered_sqlx(
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .map(str::to_ascii_lowercase);
-    // 正文索引重建期间正文匹配不可用，列表搜索降级为标题级，避免给出误导性的空结果。
-    let body_search_ready = conversation_part_index_ready_sqlx(pool, tenant_id).await?;
+    // 正文命中由检索层给出会话集合：索引就绪时来自 Tantivy，否则来自事实回退。
+    // 这里只做集合判定，绝不再退回"标题级降级"。
+    let body_matches = filter
+        .body_match_session_ids
+        .map(|session_ids| serde_json::to_string(session_ids).unwrap_or_else(|_| "[]".to_string()));
 
     let rows = sqlx::query_as::<_, ConversationSessionListItemRow>(
         r#"
@@ -123,38 +131,25 @@ pub async fn list_conversation_sessions_filtered_sqlx(
               OR instr(lower(s.external_id), ?4) > 0
               OR (?5 IS NOT NULL AND instr(lower(s.id), ?5) > 0)
               OR (
-                  ?11 = 1
+                  ?11 IS NOT NULL
                   AND ?4 IS NOT NULL
-                  AND EXISTS (
-                      SELECT 1
-                        FROM conversation_part_fts f
-                        WHERE f.tenant_id = ?1
-                          AND (
-                              -- 两种模式都先匹配会话自己的 Part 正文。
-                              f.session_id = s.id
-                              -- 只有默认可见列表才把子代理会话的命中向上归集；
-                              -- `--parent` 模式列的是子会话本身，不做二次归集。
-                              OR (
-                                  ?12 IS NULL
-                                  AND f.session_id IN (
-                                      SELECT c.id
-                                        FROM conversation_sessions c
-                                        WHERE c.tenant_id = ?1
-                                          AND c.execution_origin = 'subagent'
-                                          AND json_extract(c.execution_purpose, '$.parent_session_id') = s.id
-                                  )
-                              )
+                  AND (
+                      -- 会话自己的正文命中。
+                      s.id IN (SELECT value FROM json_each(?11))
+                      -- 只有默认可见列表才把子代理会话的命中向上归集；
+                      -- `--parent` 模式列的是子会话本身，不做二次归集。
+                      OR (
+                          ?12 IS NULL
+                          AND s.id IN (
+                              SELECT json_extract(c.execution_purpose, '$.parent_session_id')
+                                FROM conversation_sessions c
+                                WHERE c.tenant_id = ?1
+                                  AND c.execution_origin = 'subagent'
+                                  AND c.id IN (SELECT value FROM json_each(?11))
                           )
-                          AND instr(lower(f.text), ?4) > 0
+                      )
                   )
               )
-              OR (?11 = 1 AND ?4 IS NOT NULL AND EXISTS (
-                SELECT 1
-                  FROM conversation_turns t
-                  WHERE t.tenant_id = s.tenant_id
-                    AND t.session_id = s.id
-                    AND instr(lower(t.prompt), ?4) > 0
-              ))
           )
           AND (
               ?10 IS NULL
@@ -194,7 +189,7 @@ pub async fn list_conversation_sessions_filtered_sqlx(
     .bind(filter.since)
     .bind(filter.until)
     .bind(project_needle.as_deref())
-    .bind(i64::from(body_search_ready))
+    .bind(body_matches.as_deref())
     .bind(filter.parent_session_id)
     .fetch_all(pool)
     .await
@@ -225,6 +220,7 @@ pub async fn list_conversation_sessions_sqlx(
             since: None,
             until: None,
             parent_session_id: None,
+            body_match_session_ids: None,
             limit,
             offset,
         },

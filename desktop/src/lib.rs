@@ -217,12 +217,7 @@ pub fn run() {
         }
     };
     let consumers: Vec<std::sync::Arc<dyn backend::infrastructure::events::DomainEventConsumer>> = vec![
-        // 事实提交后先推进 FTS5 派生语料索引，再重建独立搜索索引。
-        std::sync::Arc::new(
-            backend::application::conversations::ConversationCorpusAdvanceConsumer::new(
-                runtime.db().clone(),
-            ),
-        ),
+        // 事实提交后按变化会话推进唯一派生索引。
         std::sync::Arc::new(
             backend::application::conversations::SearchIndexAdvanceConsumer::new(
                 runtime.db().clone(),
@@ -238,21 +233,21 @@ pub fn run() {
         );
     }
     {
-        // 语料口径升级后，派生索引必须整体换代才能继续对外提供正文匹配。
-        // 这里只做判定并启动既有阶段化流水线，绝不在启动路径里同步跑全表重建。
+        // 语料口径或索引代际落后时，派生索引必须整体换代才能继续对外提供正文匹配。
+        // 这里只做判定并调度一次受控重建，绝不在启动路径里同步跑全表。
         let corpus_runtime = runtime.clone();
         tauri::async_runtime::spawn(async move {
             let service = AppService::from_runtime(&corpus_runtime);
-            match service.ensure_search_corpus_current().await {
+            match service.ensure_conversation_search_index_current().await {
                 Ok(true) => tracing::info!(
-                    action = "app.startup.search_corpus",
-                    "started a controlled conversation search corpus rebuild"
+                    action = "app.startup.search_index",
+                    "rebuilt a controlled conversation search index generation"
                 ),
                 Ok(false) => {}
                 Err(error) => tracing::warn!(
-                    action = "app.startup.search_corpus",
+                    action = "app.startup.search_index",
                     error = %error,
-                    "failed to schedule conversation search corpus rebuild"
+                    "failed to schedule conversation search index rebuild"
                 ),
             }
         });

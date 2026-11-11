@@ -29,6 +29,12 @@ pub struct ConversationSearchDocument {
     card_kind: String,
     semantic_role: String,
     question_title: String,
+    /// Session 文档承载的会话标题；Question/Card 文档为空。
+    session_title: String,
+    /// 子代理会话的可见父会话 ID；根会话为空。
+    parent_session_id: String,
+    /// 默认列表可见性。
+    user_visible: bool,
     content: String,
     adapter_id: String,
     source_id: String,
@@ -70,6 +76,9 @@ impl ConversationSearchDocument {
             card_kind: card_kind.to_string(),
             semantic_role: semantic_role.to_string(),
             question_title: question_title.to_string(),
+            session_title: String::new(),
+            parent_session_id: String::new(),
+            user_visible: true,
             content: content.to_string(),
             adapter_id: adapter_id.to_string(),
             source_id: source_id.to_string(),
@@ -78,6 +87,23 @@ impl ConversationSearchDocument {
             part_id: part_id.to_string(),
             id_fragments,
         }
+    }
+
+    /// 补上会话级作用域。Session 文档必须携带，Question/Card 也携带以便按父会话归集。
+    pub fn with_session_scope(
+        mut self,
+        session_title: &str,
+        parent_session_id: Option<&str>,
+        user_visible: bool,
+    ) -> Self {
+        self.session_title = session_title.to_string();
+        self.parent_session_id = parent_session_id.unwrap_or_default().to_string();
+        self.user_visible = user_visible;
+        self
+    }
+
+    pub fn session_id(&self) -> &str {
+        &self.session_id
     }
 }
 
@@ -91,6 +117,16 @@ pub struct ConversationCardQuery {
     pub include_cards: bool,
     pub limit: usize,
     pub offset: usize,
+    pub adapter_id: Option<String>,
+    pub source_id: Option<String>,
+    pub project_path: Option<String>,
+}
+
+/// Session 列表检索的查询：只返回会话身份，展示字段由 SQLite 事实水合。
+#[derive(Clone)]
+pub struct ConversationSessionQuery {
+    pub query: String,
+    pub record_kind: String,
     pub adapter_id: Option<String>,
     pub source_id: Option<String>,
     pub project_path: Option<String>,
@@ -136,6 +172,13 @@ impl InMemoryConversationIndex {
     ) -> InfraResult<ConversationSearchMatches> {
         search_cards(&self.index, &self.fields, request)
     }
+
+    pub(super) fn search_session_ids(
+        &self,
+        request: &ConversationSessionQuery,
+    ) -> InfraResult<Vec<String>> {
+        search_session_ids(&self.index, &self.fields, request)
+    }
 }
 
 pub(super) struct DiskConversationIndex {
@@ -179,11 +222,29 @@ impl DiskConversationIndex {
         Ok(Self { index, fields })
     }
 
+    /// 在当前代索引上按会话替换文档，返回提交后的存活文档数。
+    pub(super) fn apply_session_documents(
+        &self,
+        session_ids: &[String],
+        documents: &[ConversationSearchDocument],
+    ) -> InfraResult<i64> {
+        apply_session_documents(&self.index, &self.fields, session_ids, documents)?;
+        let reader = self.index.reader().map_err(InfraError::external)?;
+        Ok(i64::try_from(reader.searcher().num_docs()).unwrap_or(i64::MAX))
+    }
+
     pub(super) fn search_cards(
         &self,
         request: &ConversationCardQuery,
     ) -> InfraResult<ConversationSearchMatches> {
         search_cards(&self.index, &self.fields, request)
+    }
+
+    pub(super) fn search_session_ids(
+        &self,
+        request: &ConversationSessionQuery,
+    ) -> InfraResult<Vec<String>> {
+        search_session_ids(&self.index, &self.fields, request)
     }
 }
 
@@ -203,36 +264,113 @@ where
         .map_err(InfraError::external)?;
     for item in documents {
         checkpoint()?;
-        let mut document = doc!(
-                fields.document_kind => item.document_kind.as_str(),
-                fields.document_id => item.document_id.as_str(),
-                fields.record_kind => item.record_kind.as_str(),
-                fields.session_id => item.session_id.as_str(),
-                fields.question_id => item.question_id.as_str(),
-                fields.turn_id => item.turn_id.as_str(),
-                fields.part_id => item.part_id.as_str(),
-                fields.block_id => item.document_id.as_str(),
-                fields.card_kind => item.card_kind.as_str(),
-                fields.semantic_role => item.semantic_role.as_str(),
-                fields.adapter_id => item.adapter_id.as_str(),
-                fields.source_id => item.source_id.as_str(),
-                fields.project_path => item.project_path.as_str(),
-                fields.question_title_zh => item.question_title.as_str(),
-                fields.question_title_en => item.question_title.as_str(),
-                fields.question_title_ngram => item.question_title.as_str(),
-                fields.content_zh => item.content.as_str(),
-                fields.content_en => item.content.as_str(),
-        );
-        for fragment in &item.id_fragments {
-            document.add_text(fields.id_fragment, fragment);
-        }
         writer
-            .add_document(document)
+            .add_document(build_document(fields, item))
             .map_err(InfraError::external)?;
     }
     checkpoint()?;
     writer.commit().map_err(InfraError::external)?;
     Ok(())
+}
+
+fn build_document(
+    fields: &ConversationSearchSchema,
+    item: &ConversationSearchDocument,
+) -> TantivyDocument {
+    let mut document = doc!(
+            fields.document_kind => item.document_kind.as_str(),
+            fields.document_id => item.document_id.as_str(),
+            fields.record_kind => item.record_kind.as_str(),
+            fields.session_id => item.session_id.as_str(),
+            fields.parent_session_id => item.parent_session_id.as_str(),
+            fields.user_visible => if item.user_visible { "1" } else { "0" },
+            fields.question_id => item.question_id.as_str(),
+            fields.turn_id => item.turn_id.as_str(),
+            fields.part_id => item.part_id.as_str(),
+            fields.block_id => item.document_id.as_str(),
+            fields.card_kind => item.card_kind.as_str(),
+            fields.semantic_role => item.semantic_role.as_str(),
+            fields.adapter_id => item.adapter_id.as_str(),
+            fields.source_id => item.source_id.as_str(),
+            fields.project_path => item.project_path.as_str(),
+            fields.session_title_zh => item.session_title.as_str(),
+            fields.session_title_en => item.session_title.as_str(),
+            fields.session_title_ngram => item.session_title.as_str(),
+            fields.question_title_zh => item.question_title.as_str(),
+            fields.question_title_en => item.question_title.as_str(),
+            fields.question_title_ngram => item.question_title.as_str(),
+            fields.content_zh => item.content.as_str(),
+            fields.content_en => item.content.as_str(),
+    );
+    for fragment in &item.id_fragments {
+        document.add_text(fields.id_fragment, fragment);
+    }
+    document
+}
+
+/// 按会话替换索引文档：删旧 + 写新 + 一次提交。
+///
+/// 事务边界就是"一个提交"，因此重复执行同一批会话是幂等的：旧文档先按
+/// `session_id` 词项删掉，再写入从最新已提交事实重算出的文档集合。
+fn apply_session_documents(
+    index: &Index,
+    fields: &ConversationSearchSchema,
+    session_ids: &[String],
+    documents: &[ConversationSearchDocument],
+) -> InfraResult<()> {
+    let mut writer = index.writer(50_000_000).map_err(InfraError::external)?;
+    for session_id in session_ids {
+        writer.delete_term(Term::from_field_text(fields.session_id, session_id));
+    }
+    for item in documents {
+        writer
+            .add_document(build_document(fields, item))
+            .map_err(InfraError::external)?;
+    }
+    writer.commit().map_err(InfraError::external)?;
+    Ok(())
+}
+
+fn search_session_ids(
+    index: &Index,
+    fields: &ConversationSearchSchema,
+    request: &ConversationSessionQuery,
+) -> InfraResult<Vec<String>> {
+    let query = request.query.trim();
+    if query.is_empty() {
+        return Err(InfraError::Validation(
+            "conversation search query is required".to_string(),
+        ));
+    }
+    if query.chars().count() > 512 {
+        return Err(InfraError::Validation(
+            "conversation search query must not exceed 512 characters".to_string(),
+        ));
+    }
+    let query_clause = build_session_query(index, fields, query, request)?;
+    let reader = index.reader().map_err(InfraError::external)?;
+    let searcher = reader.searcher();
+    if searcher.num_docs() == 0 {
+        return Ok(Vec::new());
+    }
+    // 列表检索需要"命中会话全集"而不是 top-k：先数总数，再按总数取回并去重。
+    let total = searcher
+        .search(&query_clause, &Count)
+        .map_err(InfraError::external)?;
+    if total == 0 {
+        return Ok(Vec::new());
+    }
+    let matches = searcher
+        .search(&query_clause, &TopDocs::with_limit(total).order_by_score())
+        .map_err(InfraError::external)?;
+    let mut session_ids = BTreeSet::new();
+    for (_, address) in matches {
+        let document = searcher
+            .doc::<TantivyDocument>(address)
+            .map_err(InfraError::external)?;
+        session_ids.insert(stored_text(&document, fields.session_id)?);
+    }
+    Ok(session_ids.into_iter().collect())
 }
 
 fn search_cards(

@@ -13,8 +13,9 @@ use crate::backend::domain::conversations::{
 };
 use crate::backend::domain::ConversationSearchMatches;
 use crate::backend::infrastructure::search::conversation::{
-    cleanup_old_generations, conversation_search_index_root, materialize_index_generation,
-    search_generation_index, ConversationCardQuery, ConversationSearchDocument,
+    apply_session_documents_to_generation, cleanup_old_generations, conversation_search_index_root,
+    materialize_index_generation, search_generation_index, search_generation_session_ids,
+    ConversationCardQuery, ConversationSearchDocument, ConversationSessionQuery,
 };
 
 pub async fn rebuild_conversation_search_index(
@@ -91,27 +92,7 @@ async fn rebuild_conversation_search_index_inner(
         let rows =
             crate::backend::store::load_conversation_search_index_documents_sqlx(pool, tenant_id)
                 .await?;
-        let documents = rows
-            .into_iter()
-            .map(|row| {
-                ConversationSearchDocument::scoped_document(
-                    &row.document_kind,
-                    &row.record_kind,
-                    &row.session_id,
-                    &row.question_id,
-                    &row.block_id,
-                    &row.card_kind,
-                    &row.semantic_role,
-                    &row.question_title,
-                    &row.content,
-                    &row.adapter_id,
-                    &row.source_id,
-                    &row.project_path,
-                    &row.turn_id,
-                    &row.part_id,
-                )
-            })
-            .collect::<Vec<_>>();
+        let documents = rows.into_iter().map(document_from_row).collect::<Vec<_>>();
 
         let materialized = materialize_index_generation(&root, documents, cancellation).await?;
         staged_path = Some(materialized.generation_path.clone());
@@ -158,6 +139,206 @@ async fn rebuild_conversation_search_index_inner(
         .await;
     }
     result
+}
+
+/// 单行文档的统一构造。
+///
+/// 整代重建与增量推进必须产出同一形状的文档，否则同一个会话在两种路径下
+/// 会有不同的可检索性。
+fn document_from_row(
+    row: crate::backend::store::ConversationSearchIndexDocumentRow,
+) -> ConversationSearchDocument {
+    let parent = (!row.parent_session_id.trim().is_empty())
+        .then_some(row.parent_session_id.as_str())
+        .map(str::to_string);
+    ConversationSearchDocument::scoped_document(
+        &row.document_kind,
+        &row.record_kind,
+        &row.session_id,
+        &row.question_id,
+        &row.block_id,
+        &row.card_kind,
+        &row.semantic_role,
+        &row.question_title,
+        &row.content,
+        &row.adapter_id,
+        &row.source_id,
+        &row.project_path,
+        &row.turn_id,
+        &row.part_id,
+    )
+    .with_session_scope(&row.session_title, parent.as_deref(), row.user_visible)
+}
+
+/// 一次增量推进最多处理的会话数。
+///
+/// 超过这个边界说明事件载荷已经不适合小步推进（例如整源首次导入），
+/// 走受控整代重建比让索引长期落后更可靠。
+const MAX_INCREMENTAL_SESSIONS: usize = 512;
+
+/// 按变化会话推进当代索引。
+///
+/// 只读、只写列出的会话；索引不可用或批次过大时自动退回受控整代重建，
+/// 绝不以"跳过"的方式让更新静默丢失。
+pub async fn advance_conversation_search_index(
+    pool: &SqlitePool,
+    db_path: &Path,
+    tenant_id: &str,
+    session_ids: &[String],
+    consumer_offset: Option<(&str, i64)>,
+) -> AppResult<()> {
+    if session_ids.is_empty() {
+        return Ok(());
+    }
+    if session_ids.len() > MAX_INCREMENTAL_SESSIONS {
+        rebuild_conversation_search_index_inner(pool, db_path, tenant_id, consumer_offset, None)
+            .await?;
+        return Ok(());
+    }
+    let state =
+        crate::backend::store::load_or_create_conversation_search_index_state_sqlx(pool, tenant_id)
+            .await?;
+    let Some(generation) = state.active_generation.clone() else {
+        rebuild_conversation_search_index_inner(pool, db_path, tenant_id, consumer_offset, None)
+            .await?;
+        return Ok(());
+    };
+    let root = conversation_search_index_root(db_path, tenant_id);
+    if !state.is_compatible()
+        || state.health.as_str() != "ready"
+        || !root.join(&generation).is_dir()
+    {
+        rebuild_conversation_search_index_inner(pool, db_path, tenant_id, consumer_offset, None)
+            .await?;
+        return Ok(());
+    }
+
+    let owner = format!("advance-{}", Uuid::new_v4());
+    let now = Utc::now();
+    let expires_at = now + Duration::minutes(10);
+    let acquired = crate::backend::store::try_acquire_conversation_search_writer_lease_sqlx(
+        pool,
+        tenant_id,
+        &owner,
+        &now.to_rfc3339(),
+        &expires_at.to_rfc3339(),
+    )
+    .await?;
+    if !acquired {
+        return Err(AppError::Conflict(
+            "conversation search index is already being written".to_string(),
+        ));
+    }
+
+    let result: AppResult<()> = async {
+        // 拿到租约后重新读状态：上一轮可能刚完成整代重建并换了 generation。
+        let state = crate::backend::store::load_or_create_conversation_search_index_state_sqlx(
+            pool, tenant_id,
+        )
+        .await?;
+        let generation = state.active_generation.clone().ok_or_else(|| {
+            AppError::Conflict("conversation search index generation is missing".to_string())
+        })?;
+        let rows =
+            crate::backend::store::load_conversation_search_index_documents_for_sessions_sqlx(
+                pool,
+                tenant_id,
+                session_ids,
+            )
+            .await?;
+        let documents = rows.into_iter().map(document_from_row).collect::<Vec<_>>();
+        let session_ids = session_ids.to_vec();
+        let path = conversation_search_index_root(db_path, tenant_id).join(&generation);
+        let (document_count, size_bytes) = tokio::task::spawn_blocking(move || {
+            apply_session_documents_to_generation(&path, &session_ids, &documents)
+        })
+        .await
+        .map_err(|error| AppError::external(error.to_string()))??;
+
+        crate::backend::store::complete_conversation_search_index_advance_sqlx(
+            pool,
+            tenant_id,
+            state.source_revision,
+            &generation,
+            document_count,
+            size_bytes,
+            consumer_offset,
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
+
+    if let Err(error) = &result {
+        let _ = crate::backend::store::fail_conversation_search_index_rebuild_sqlx(
+            pool,
+            tenant_id,
+            &owner,
+            &error.to_string(),
+        )
+        .await;
+    }
+    result
+}
+
+/// 用关键字检索会话身份。索引不可用时返回 `None`，由调用方走事实回退。
+pub async fn search_conversation_session_ids(
+    pool: &SqlitePool,
+    db_path: &Path,
+    tenant_id: &str,
+    query: &str,
+    record_kind: &str,
+    adapter_id: Option<&str>,
+    source_id: Option<&str>,
+    project_path: Option<&str>,
+) -> AppResult<Option<Vec<String>>> {
+    let state =
+        crate::backend::store::load_or_create_conversation_search_index_state_sqlx(pool, tenant_id)
+            .await?;
+    if state.health.as_str() != "ready" || state.indexed_revision != Some(state.source_revision) {
+        return Ok(None);
+    }
+    if !state.is_compatible() {
+        mark_index_unusable(
+            pool,
+            tenant_id,
+            "conversation search index schema or tokenizer version is incompatible",
+        )
+        .await;
+        return Ok(None);
+    }
+    let Some(generation) = state.active_generation else {
+        return Ok(None);
+    };
+    let path = conversation_search_index_root(db_path, tenant_id).join(generation);
+    if !path.is_dir() {
+        mark_index_unusable(
+            pool,
+            tenant_id,
+            "active conversation search index generation is missing",
+        )
+        .await;
+        return Ok(None);
+    }
+    let request = ConversationSessionQuery {
+        query: query.to_string(),
+        record_kind: record_kind.to_string(),
+        adapter_id: adapter_id.map(str::to_string),
+        source_id: source_id.map(str::to_string),
+        project_path: project_path.map(str::to_string),
+    };
+    match search_generation_session_ids(&path, &request) {
+        Ok(session_ids) => Ok(Some(session_ids)),
+        Err(error) => {
+            mark_index_unusable(
+                pool,
+                tenant_id,
+                &format!("cannot open conversation search index: {error}"),
+            )
+            .await;
+            Ok(None)
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -269,6 +450,27 @@ impl AppService {
         .await?;
 
         Ok(status_from_state(state))
+    }
+
+    /// 索引代际或语料口径落后时做一次受控整代重建。
+    ///
+    /// 判据只看"这一代索引是否还能对外服务"：模式代际/分词器/语料策略任一不一致，
+    /// 或索引尚未追平已提交事实，就重建一代并原子发布。返回是否发生了重建。
+    pub async fn ensure_conversation_search_index_current(&self) -> AppResult<bool> {
+        let state = crate::backend::store::load_or_create_conversation_search_index_state_sqlx(
+            self.pool(),
+            self.tenant_id(),
+        )
+        .await?;
+        let usable = state.is_compatible()
+            && state.health.as_str() == "ready"
+            && state.indexed_revision == Some(state.source_revision)
+            && state.active_generation.is_some();
+        if usable {
+            return Ok(false);
+        }
+        rebuild_conversation_search_index(self.pool(), &self.db_path, self.tenant_id()).await?;
+        Ok(true)
     }
 }
 

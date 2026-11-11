@@ -21,6 +21,15 @@ pub(super) fn build_card_query(
 ) -> InfraResult<BooleanQuery> {
     let mut clauses: Vec<(Occur, Box<dyn Query>)> =
         vec![exact_clause(fields.record_kind, &request.record_kind)];
+    // Session 文档与 Question/Card 文档共用一代索引，卡片检索必须显式排除它，
+    // 否则 `include_questions && include_cards` 时会把会话文档当成命中返回。
+    clauses.push((
+        Occur::MustNot,
+        Box::new(TermQuery::new(
+            Term::from_field_text(fields.document_kind, "session"),
+            IndexRecordOption::Basic,
+        )),
+    ));
     let has_card_filters = !request.card_kinds.is_empty() || !request.semantic_roles.is_empty();
     if !request.include_cards {
         clauses.push(exact_clause(fields.document_kind, "question"));
@@ -192,6 +201,82 @@ fn text_branch(
             })
             .collect(),
     )
+}
+
+/// Session 列表检索的查询：只在 Session 文档上匹配，返回会话身份。
+///
+/// 与卡片检索共用分词与 ngram 分支，保证同一个关键词在两种入口给出同口径命中。
+pub(super) fn build_session_query(
+    index: &Index,
+    fields: &ConversationSearchSchema,
+    query: &str,
+    request: &super::engine::ConversationSessionQuery,
+) -> InfraResult<BooleanQuery> {
+    let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![
+        exact_clause(fields.record_kind, &request.record_kind),
+        exact_clause(fields.document_kind, "session"),
+    ];
+    if let Some(adapter_id) = request.adapter_id.as_deref() {
+        clauses.push(exact_clause(fields.adapter_id, adapter_id));
+    }
+    if let Some(source_id) = request.source_id.as_deref() {
+        clauses.push(exact_clause(fields.source_id, source_id));
+    }
+    if let Some(project_path) = request.project_path.as_deref() {
+        clauses.push(exact_clause(fields.project_path, project_path));
+    }
+
+    if let Some(id_fragment) =
+        conversation_id_search_term(query).map(|value| conversation_id_fragment(&value))
+    {
+        clauses.push((
+            Occur::Must,
+            Box::new(TermQuery::new(
+                Term::from_field_text(fields.id_fragment, &id_fragment),
+                IndexRecordOption::Basic,
+            )),
+        ));
+        return Ok(BooleanQuery::new(clauses));
+    }
+
+    let mut lexical_branches: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+    let jieba_tokens = tokens_for(index, JIEBA_TOKENIZER, query)?;
+    if !jieba_tokens.is_empty() {
+        lexical_branches.push((
+            Occur::Should,
+            Box::new(text_branch(
+                &jieba_tokens,
+                fields.content_zh,
+                fields.session_title_zh,
+            )) as Box<dyn Query>,
+        ));
+    }
+    let default_tokens = tokens_for(index, "default", query)?;
+    if !default_tokens.is_empty() {
+        lexical_branches.push((
+            Occur::Should,
+            Box::new(text_branch(
+                &default_tokens,
+                fields.content_en,
+                fields.session_title_en,
+            )) as Box<dyn Query>,
+        ));
+    }
+    if lexical_branches.is_empty() {
+        return Err(InfraError::Validation(
+            "conversation search query has no searchable terms".to_string(),
+        ));
+    }
+    let normalized = query.trim().to_lowercase();
+    if (2..=15).contains(&normalized.chars().count()) {
+        lexical_branches.push(text_should_clause(
+            fields.session_title_ngram,
+            &normalized,
+            0.6,
+        ));
+    }
+    clauses.push((Occur::Must, Box::new(BooleanQuery::new(lexical_branches))));
+    Ok(BooleanQuery::new(clauses))
 }
 
 pub(super) fn stored_text(

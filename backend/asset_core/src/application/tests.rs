@@ -5236,7 +5236,8 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
         .rebuild_conversation_search_index()
         .await
         .expect("rebuild conversation search index");
-    assert_eq!(report.document_count, 2);
+    // 两份 Turn 级文档（提问 + 回答）+ 一份 Session 聚合文档。
+    assert_eq!(report.document_count, 3);
 
     let result = service
         .search_conversation_records(ConversationSearchParams {
@@ -5739,8 +5740,8 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         .await
         .expect("rebuild raw shell search index");
     assert_eq!(
-        report.document_count, 3,
-        "高信号语料只保留提问 / 最终回答 / 命令语义标签"
+        report.document_count, 4,
+        "高信号语料只保留提问 / 最终回答 / 命令语义标签，并额外有一份 Session 聚合文档"
     );
     let indexed_command_search = service
         .search_conversation_records(ConversationSearchParams {
@@ -5935,5 +5936,199 @@ async fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_
             .map(|value| value.changed_session_count),
         Some(1)
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 单一索引终态：Session 文档让列表正文检索走 Tantivy；索引不可用时由已提交事实
+/// 做完整回退，绝不再退化成"仅标题匹配"（ADR-0023 / Issue #183）。
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_session_list_uses_tantivy_and_keeps_body_hits_when_index_is_unusable() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-search-index-session-doc-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create temp search index session directory");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
+    upsert_conversation_export_fixture(&service, &root, vec![], None, false).await;
+    service
+        .rebuild_conversation_search_index()
+        .await
+        .expect("rebuild conversation search index");
+    let status = service
+        .get_conversation_search_index_status()
+        .await
+        .expect("load search index status");
+    assert_eq!(status.health, "ready");
+
+    let params = || ConversationSessionListParams {
+        adapter_id: None,
+        source_id: None,
+        query: Some("Rust fallback".to_string()),
+        limit: Some(20),
+        offset: Some(0),
+        ..Default::default()
+    };
+    let indexed = service
+        .list_conversation_sessions(params())
+        .await
+        .expect("list sessions through the index");
+    assert_eq!(indexed.len(), 1, "Session 文档必须让正文命中走索引");
+
+    // 索引不可用：列表正文命中必须由已提交事实回退保住。
+    crate::backend::store::mark_conversation_search_index_unusable_sqlx(
+        service.pool(),
+        service.tenant_id(),
+        "test-forced-unusable",
+    )
+    .await
+    .expect("mark index unusable");
+    let fallback = service
+        .list_conversation_sessions(params())
+        .await
+        .expect("list sessions through the fact fallback");
+    assert_eq!(fallback.len(), 1, "回退不得退化为仅标题匹配");
+    assert_eq!(fallback[0].session.id, indexed[0].session.id);
+
+    let title_only = service
+        .list_conversation_sessions(ConversationSessionListParams {
+            adapter_id: None,
+            source_id: None,
+            query: Some("Export this".to_string()),
+            limit: Some(20),
+            offset: Some(0),
+            ..Default::default()
+        })
+        .await
+        .expect("list sessions by title");
+    assert_eq!(title_only.len(), 1, "标题匹配与正文集合互不影响");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 增量推进：只重算被点名的会话，其它会话的文档保持可用；重放同一批次幂等。
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_search_incremental_advance_is_scoped_and_idempotent() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-search-index-advance-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create temp search index advance directory");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
+    upsert_conversation_export_fixture(&service, &root, vec![], None, false).await;
+    let rebuilt = service
+        .rebuild_conversation_search_index()
+        .await
+        .expect("rebuild conversation search index");
+    let session_ids = crate::backend::store::search_session_ids_by_corpus_sqlx(
+        service.pool(),
+        service.tenant_id(),
+        crate::backend::domain::ConversationRecordKind::Session,
+        "Rust fallback",
+    )
+    .await
+    .expect("resolve changed session ids");
+    assert_eq!(session_ids.len(), 1);
+
+    for _ in 0..2 {
+        crate::backend::application::conversations::conversation_search::advance_conversation_search_index(
+            service.pool(),
+            &service.db_path,
+            service.tenant_id(),
+            &session_ids,
+            None,
+        )
+        .await
+        .expect("advance conversation search index");
+    }
+
+    let status = service
+        .get_conversation_search_index_status()
+        .await
+        .expect("load search index status after advance");
+    assert_eq!(status.health, "ready");
+    assert_eq!(status.indexed_revision, Some(status.source_revision));
+    assert_eq!(
+        status.document_count, rebuilt.document_count,
+        "重放同一批会话不得产生重复文档"
+    );
+
+    let hits = service
+        .list_conversation_sessions(ConversationSessionListParams {
+            adapter_id: None,
+            source_id: None,
+            query: Some("Rust fallback".to_string()),
+            limit: Some(20),
+            offset: Some(0),
+            ..Default::default()
+        })
+        .await
+        .expect("list sessions after incremental advance");
+    assert_eq!(hits.len(), 1);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 变更集合超过可可靠承载的边界时，必须退回受控整代重建，而不是静默丢更新。
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_search_advance_overflows_into_a_controlled_rebuild() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-search-index-overflow-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create temp search index overflow directory");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
+    upsert_conversation_export_fixture(&service, &root, vec![], None, false).await;
+    let rebuilt = service
+        .rebuild_conversation_search_index()
+        .await
+        .expect("rebuild conversation search index");
+
+    // 513 个身份（超过 512 的单批边界）：推进请求必须整体退化为一次受控重建。
+    let overflow_ids = (0..513)
+        .map(|index| format!("overflow-session-{index}"))
+        .collect::<Vec<_>>();
+    crate::backend::application::conversations::conversation_search::advance_conversation_search_index(
+        service.pool(),
+        &service.db_path,
+        service.tenant_id(),
+        &overflow_ids,
+        None,
+    )
+    .await
+    .expect("advance over the incremental boundary");
+
+    let status = service
+        .get_conversation_search_index_status()
+        .await
+        .expect("load search index status after overflow");
+    assert_eq!(status.health, "ready");
+    assert_eq!(status.indexed_revision, Some(status.source_revision));
+    assert_eq!(
+        status.document_count, rebuilt.document_count,
+        "整代重建必须按当前事实重算，不得因越界批次引入幻影文档"
+    );
+
+    let hits = service
+        .list_conversation_sessions(ConversationSessionListParams {
+            adapter_id: None,
+            source_id: None,
+            query: Some("Rust fallback".to_string()),
+            limit: Some(20),
+            offset: Some(0),
+            ..Default::default()
+        })
+        .await
+        .expect("list sessions after overflow rebuild");
+    assert_eq!(hits.len(), 1);
+
     let _ = fs::remove_dir_all(root);
 }
