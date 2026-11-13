@@ -113,44 +113,16 @@ impl ProgressHandle {
     }
 
     pub fn progress(&self, current: u64, total: Option<u64>, note: Option<&str>) {
-        if self.runtime.is_noop {
-            return;
-        }
-        let snapshot = if let Ok(mut tasks) = self.runtime.tasks.lock() {
-            if let Some(entry) = tasks.get_mut(&self.task_id) {
-                entry.snapshot.progress = Some(TaskProgress {
+        let note_owned = note.map(str::to_string);
+        let _ = self
+            .runtime
+            .update_and_publish_cosmetic(&self.task_id, |snapshot| {
+                snapshot.progress = Some(TaskProgress {
                     current,
                     total,
-                    note: note.map(str::to_string),
+                    note: note_owned,
                 });
-                entry.snapshot.revision += 1;
-                entry.snapshot.updated_at = Utc::now().to_rfc3339();
-
-                let now = std::time::Instant::now();
-                let should_throttle = entry
-                    .last_cosmetic_publish
-                    .map(|last| now.duration_since(last) < std::time::Duration::from_millis(150))
-                    .unwrap_or(false);
-
-                if should_throttle {
-                    entry.pending_cosmetic = true;
-                    None
-                } else {
-                    entry.last_cosmetic_publish = Some(now);
-                    entry.pending_cosmetic = false;
-                    let mut snap = entry.snapshot.clone();
-                    snap.change_class = TaskChangeClass::Cosmetic;
-                    Some(snap)
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        if let Some(snapshot) = snapshot {
-            self.runtime.publish(&snapshot);
-        }
+            });
     }
 
     pub fn set_stages(&self, stages: Vec<TaskStage>) {

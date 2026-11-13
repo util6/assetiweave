@@ -50,6 +50,8 @@ impl TaskRuntime {
             if entry.snapshot.agent_session_ref.is_none() {
                 entry.snapshot.agent_session_ref = session_ref;
             }
+            Self::flush_cosmetic_locked(entry, &self.events);
+            entry.snapshot.change_class = TaskChangeClass::Structural;
             entry.snapshot.revision += 1;
             entry.snapshot.updated_at = Utc::now().to_rfc3339();
             entry.snapshot.clone()
@@ -137,31 +139,15 @@ impl TaskRuntime {
         total: Option<u64>,
         note: Option<String>,
     ) -> InfraResult<TaskSnapshot> {
-        if self.is_noop {
-            return Ok(TaskSnapshot::empty(task_id));
-        }
-        let snapshot = {
-            let mut tasks = self
-                .tasks
-                .lock()
-                .map_err(|_| InfraError::Conflict("任务注册表不可用".to_string()))?;
-            let entry = tasks
-                .get_mut(task_id)
-                .ok_or_else(|| InfraError::NotFound(format!("任务不存在: {task_id}")))?;
-            let now = Utc::now().to_rfc3339();
-            if let Some(stage) = entry.snapshot.stages.iter_mut().find(|s| s.id == stage_id) {
+        self.update_and_publish_cosmetic(task_id, |snapshot| {
+            if let Some(stage) = snapshot.stages.iter_mut().find(|s| s.id == stage_id) {
                 stage.progress = Some(TaskProgress {
                     current,
                     total,
                     note,
                 });
             }
-            entry.snapshot.revision += 1;
-            entry.snapshot.updated_at = now;
-            entry.snapshot.clone()
-        };
-        self.publish(&snapshot);
-        Ok(snapshot)
+        })
     }
 
     pub fn record_activity(
@@ -169,20 +155,8 @@ impl TaskRuntime {
         task_id: &str,
         activity: TaskActivity,
     ) -> InfraResult<TaskSnapshot> {
-        if self.is_noop {
-            return Ok(TaskSnapshot::empty(task_id));
-        }
-        let snapshot = {
-            let mut tasks = self
-                .tasks
-                .lock()
-                .map_err(|_| InfraError::Conflict("任务注册表不可用".to_string()))?;
-            let entry = tasks
-                .get_mut(task_id)
-                .ok_or_else(|| InfraError::NotFound(format!("任务不存在: {task_id}")))?;
-            let now = Utc::now().to_rfc3339();
-            if let Some(stage) = entry
-                .snapshot
+        self.update_and_publish_cosmetic(task_id, |snapshot| {
+            if let Some(stage) = snapshot
                 .stages
                 .iter_mut()
                 .find(|s| s.id == activity.stage_id)
@@ -197,12 +171,7 @@ impl TaskRuntime {
                     stage.current_activities.push(activity);
                 }
             }
-            entry.snapshot.revision += 1;
-            entry.snapshot.updated_at = now;
-            entry.snapshot.clone()
-        };
-        self.publish(&snapshot);
-        Ok(snapshot)
+        })
     }
 
     pub fn record_activity_silent(
@@ -252,29 +221,13 @@ impl TaskRuntime {
         stage_id: &str,
         worker_id: &str,
     ) -> InfraResult<TaskSnapshot> {
-        if self.is_noop {
-            return Ok(TaskSnapshot::empty(task_id));
-        }
-        let snapshot = {
-            let mut tasks = self
-                .tasks
-                .lock()
-                .map_err(|_| InfraError::Conflict("任务注册表不可用".to_string()))?;
-            let entry = tasks
-                .get_mut(task_id)
-                .ok_or_else(|| InfraError::NotFound(format!("任务不存在: {task_id}")))?;
-            let now = Utc::now().to_rfc3339();
-            if let Some(stage) = entry.snapshot.stages.iter_mut().find(|s| s.id == stage_id) {
+        self.update_and_publish_cosmetic(task_id, |snapshot| {
+            if let Some(stage) = snapshot.stages.iter_mut().find(|s| s.id == stage_id) {
                 stage
                     .current_activities
                     .retain(|a| a.worker_id != worker_id);
             }
-            entry.snapshot.revision += 1;
-            entry.snapshot.updated_at = now;
-            entry.snapshot.clone()
-        };
-        self.publish(&snapshot);
-        Ok(snapshot)
+        })
     }
 
     pub fn record_stage_step(
@@ -286,22 +239,13 @@ impl TaskRuntime {
         current: Option<u64>,
         total: Option<u64>,
     ) -> InfraResult<TaskSnapshot> {
-        if self.is_noop {
-            return Ok(TaskSnapshot::empty(task_id));
-        }
-        let snapshot = {
-            let mut tasks = self
-                .tasks
-                .lock()
-                .map_err(|_| InfraError::Conflict("任务注册表不可用".to_string()))?;
-            let entry = tasks
-                .get_mut(task_id)
-                .ok_or_else(|| InfraError::NotFound(format!("任务不存在: {task_id}")))?;
-            let now = Utc::now().to_rfc3339();
-            if let Some(stage) = entry.snapshot.stages.iter_mut().find(|s| s.id == stage_id) {
+        let operation = operation.into();
+        let now = Utc::now().to_rfc3339();
+        self.update_and_publish_cosmetic(task_id, |snapshot| {
+            if let Some(stage) = snapshot.stages.iter_mut().find(|s| s.id == stage_id) {
                 let step = TaskStageStep {
-                    timestamp: now.clone(),
-                    operation: operation.into(),
+                    timestamp: now,
+                    operation,
                     detail,
                     current,
                     total,
@@ -311,12 +255,7 @@ impl TaskRuntime {
                     stage.steps.remove(0);
                 }
             }
-            entry.snapshot.revision += 1;
-            entry.snapshot.updated_at = now;
-            entry.snapshot.clone()
-        };
-        self.publish(&snapshot);
-        Ok(snapshot)
+        })
     }
 
     pub fn finish_stage(

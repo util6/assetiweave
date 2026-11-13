@@ -35,7 +35,7 @@ describe("taskCenterService", () => {
     const mockTasks: TaskView[] = [
       {
         id: "task-1",
-        kind: "conversation_sync",
+        kind: "conversationsync",
         title: "会话同步",
         state: "running",
         stages: [],

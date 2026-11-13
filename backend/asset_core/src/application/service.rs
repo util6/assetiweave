@@ -104,8 +104,8 @@ impl AppService {
     /// 统一自适应任务执行门面 (ADR-0017 / Issue #79)
     ///
     /// 依据 `spec.admission` 的策略决定实际执行模式：
-    /// - `Managed`：全量托管，分配后台流水线，广播 UI 事件，持久化 journal；
-    /// - `Shadow`：影子观察，后台静默执行 (user_visible = false)，收集指标供策略决策；
+    /// - `Managed`：全量托管，按资源域入队执行并广播 UI 实时事件；
+    /// - `Shadow`：影子观察，后台静默执行 (强制 user_visible = false)，收集内存滑动窗口指标；
     /// - `Direct`：受控穿透直跑，使用 TaskContext::direct() 原地执行，返回已完成的 Fast-path TaskHandle。
     pub async fn execute_task<T, F, Fut>(
         &self,

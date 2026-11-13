@@ -127,6 +127,22 @@ impl<T> TaskHandle<T> {
     }
 }
 
+pub const TASK_RESULT_MAX_BYTES: usize = 64 * 1024;
+
+fn compact_background_result(value: Value, summary: Option<&str>) -> Value {
+    let bytes = serde_json::to_vec(&value).map(|raw| raw.len()).unwrap_or(0);
+    if bytes > TASK_RESULT_MAX_BYTES {
+        serde_json::json!({
+            "truncated": true,
+            "bytes": bytes,
+            "maxBytes": TASK_RESULT_MAX_BYTES,
+            "summary": summary,
+        })
+    } else {
+        value
+    }
+}
+
 impl TaskRuntime {
     pub fn run<T, F, Fut>(&self, spec: TaskSpec, task: F) -> InfraResult<TaskHandle<T>>
     where
@@ -134,18 +150,27 @@ impl TaskRuntime {
         F: FnOnce(TaskContext) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = InfraResult<TaskOutput<T>>> + Send + 'static,
     {
+        let spec_kind = spec.kind;
         let dedup_key = spec.dedup_key.clone();
         let conflict_policy = spec.conflict_policy;
+        let tenant_id = spec.tenant_id.clone();
 
-        let spawn_res = self.prepare_spawn(spec)?;
-        let (task_id, cancellation, tracking) = match spawn_res {
-            Some(tuple) => tuple,
+        let spawn_res = self.prepare_spawn_with_pool(spec, true)?;
+        let (task_id, cancellation, tracking, slot) = match spawn_res {
+            Some(prepared) => (
+                prepared.task_id,
+                prepared.cancellation,
+                prepared.tracking,
+                prepared.slot,
+            ),
             None => {
                 if conflict_policy == ConflictPolicy::Coalesce {
                     if let Some(key) = dedup_key {
                         if let Ok(tasks) = self.tasks.lock() {
                             if let Some(existing) = tasks.values().find(|e| {
                                 e.snapshot.state.is_active()
+                                    && e.snapshot.kind == spec_kind
+                                    && e.snapshot.tenant_id == tenant_id
                                     && e.snapshot.dedup_key.as_deref() == Some(&key)
                             }) {
                                 return Ok(TaskHandle::new(
@@ -160,53 +185,29 @@ impl TaskRuntime {
             }
         };
 
-        let handle = self
-            .runtime_handle
-            .clone()
-            .or_else(|| tokio::runtime::Handle::try_current().ok())
-            .ok_or_else(|| {
-                InfraError::external(
-                    "TaskRuntime requires runtime_handle for async tasks".to_string(),
-                )
-            })?;
-        let runtime = self.clone();
-        let run_task_id = task_id.clone();
         let ret_task_id = task_id.clone();
         let ret_cancel = cancellation.clone();
-
-        handle.spawn(async move {
-            let _tracking = tracking;
-            let cancellation_for_finish = cancellation.clone();
-            let context = TaskContext {
-                cancellation: cancellation.clone(),
-                progress: ProgressHandle {
-                    task_id: run_task_id.clone(),
-                    runtime: runtime.clone(),
-                },
-            };
-            let span = tracing::info_span!("task_execution", task_id = %run_task_id);
-            use tracing::Instrument;
-            let result: Result<Value, AppErrorView> =
-                match tokio::spawn(task(context).instrument(span)).await {
-                    Ok(Ok(output)) => {
-                        let value =
-                            serde_json::to_value(&output.data).unwrap_or(serde_json::Value::Null);
+        self.spawn_tracked_future(
+            task_id,
+            cancellation,
+            tracking,
+            slot,
+            move |context, runtime, run_task_id| async move {
+                match task(context).await {
+                    Ok(output) => {
+                        let value = compact_background_result(
+                            serde_json::to_value(&output.data).unwrap_or(serde_json::Value::Null),
+                            output.summary.as_deref(),
+                        );
                         if let Some(summary) = output.summary {
                             let _ = runtime.set_result_summary(&run_task_id, summary);
                         }
                         Ok(value)
                     }
-                    Ok(Err(err)) => Err(err.view()),
-                    Err(join_err) => {
-                        if join_err.is_cancelled() {
-                            Err(InfraError::Cancelled("后台任务已取消".to_string()).view())
-                        } else {
-                            Err(InfraError::External("后台任务发生 panic".to_string()).view())
-                        }
-                    }
-                };
-            runtime.finish_task(&run_task_id, &cancellation_for_finish, result);
-        });
+                    Err(err) => Err(err.view()),
+                }
+            },
+        )?;
 
         Ok(TaskHandle::new(ret_task_id, ret_cancel))
     }

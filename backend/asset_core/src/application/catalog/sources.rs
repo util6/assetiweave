@@ -101,6 +101,12 @@ impl SourceScanWorkflow {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceScanSummary {
+    pub total_assets: usize,
+}
+
 impl AppService {
     pub async fn refresh_recorded_assets(&self) -> AppResult<Vec<Asset>> {
         super::source_scanner::refresh_recorded_assets(self.db.pool(), self.tenant_id()).await
@@ -280,7 +286,7 @@ impl AppService {
         &self,
         params: SourceScanParams,
         skill_sources_only: bool,
-    ) -> AppResult<crate::backend::infrastructure::tasks::TaskHandle<Vec<CatalogAsset>>> {
+    ) -> AppResult<crate::backend::infrastructure::tasks::TaskHandle<SourceScanSummary>> {
         let pipeline = crate::backend::infrastructure::tasks::PipelineDescriptor::builder()
             .stage(
                 crate::backend::infrastructure::tasks::stages::DISCOVER,
@@ -311,8 +317,14 @@ impl AppService {
             let assets = SourceScanWorkflow::run(&service, params, &cx, skill_sources_only)
                 .await
                 .map_err(crate::backend::infrastructure::error::InfraError::external)?;
-            let summary = format!("扫描完成，共 {} 项资产", assets.len());
-            Ok(crate::backend::infrastructure::tasks::TaskOutput::with_summary(assets, summary))
+            let total_assets = assets.len();
+            let summary = format!("扫描完成，共 {} 项资产", total_assets);
+            Ok(
+                crate::backend::infrastructure::tasks::TaskOutput::with_summary(
+                    SourceScanSummary { total_assets },
+                    summary,
+                ),
+            )
         })
     }
 

@@ -185,10 +185,16 @@ impl ProcessRunner {
         let exit_status = loop {
             tokio::select! {
                 _ = cancellation.cancelled() => {
-                    tracing::info!(stage = %spec.stage_id, "接收到取消信号，向子进程组发送强杀请求");
                     let _ = child.start_kill();
                     let _ = stdout_task.await;
                     let _ = stderr_task.await;
+                    if guard.is_timed_out() {
+                        let err_msg = format!("阶段 '{}' 子进程执行超时，已强制中止", spec.stage_id);
+                        tracing::warn!(stage = %spec.stage_id, "{}", err_msg);
+                        guard.fail(super::task_pipeline::STAGE_TIMEOUT_ERROR_CODE, &err_msg, true);
+                        return Err(InfraError::Timeout(err_msg));
+                    }
+                    tracing::info!(stage = %spec.stage_id, "接收到取消信号，向子进程组发送强杀请求");
                     return Err(InfraError::Cancelled("后台任务已取消".to_string()));
                 }
                 Some(msg) = proto_rx.recv() => {

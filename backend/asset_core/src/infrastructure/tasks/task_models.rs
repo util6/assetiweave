@@ -7,13 +7,14 @@ use std::time::Duration;
 pub const TASK_TERMINAL_RETENTION: Duration = Duration::from_secs(10 * 60);
 pub const TASK_TERMINAL_LIMIT: usize = 50;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "PascalCase")]
 pub enum TaskKind {
     ConversationSync,
     ConversationUsageScan,
     ConversationDataMaintenance,
     SearchIndexRebuild,
+    /// 保留任务类型：供未来脚本自动化安装链路迁移接入，当前无独立后台流水线。
     ScriptInstall,
     ExtensionLifecycle,
     AiExecution,
@@ -32,7 +33,7 @@ pub enum TaskKind {
 /// 任务准入与托管策略 (ADR-0017 / Issue #79)
 ///
 /// 将业务“功能适配”与运行期“准入管理”彻底解耦：
-/// - `Managed`：全量托管，分配后台协程，实时广播 UI 事件，关键帧持久化到 task_journal；
+/// - `Managed`：全量托管，分配后台协程，实时广播 UI 事件（纯内存真相源，不做 DB 写盘）；
 /// - `Shadow`：灰度观察，后台执行并记录 P95 耗时与失败指标，但对 UI 隐形 (user_visible = false)，用于数据驱动准入决策；
 /// - `Direct`：受控穿透直跑，使用 TaskContext::direct() 零开销内联执行，跳过任务中心调度、锁与持久化。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -268,6 +269,7 @@ pub struct TaskProgress {
 pub struct TaskSpec {
     pub kind: TaskKind,
     pub admission: TaskAdmission,
+    pub resource_pool: Option<super::task_pool::ResourcePool>,
     pub task_id: Option<String>,
     pub tenant_id: Option<String>,
     pub title: Option<String>,
@@ -286,6 +288,7 @@ impl TaskSpec {
         Self {
             kind,
             admission: kind.default_admission(),
+            resource_pool: None,
             task_id: None,
             tenant_id: None,
             title: None,
@@ -307,6 +310,25 @@ impl TaskSpec {
     pub fn with_admission(mut self, admission: TaskAdmission) -> Self {
         self.admission = admission;
         self
+    }
+
+    pub fn with_resource_pool(mut self, resource_pool: super::task_pool::ResourcePool) -> Self {
+        self.resource_pool = Some(resource_pool);
+        self
+    }
+
+    pub fn resolved_resource_pool(&self) -> super::task_pool::ResourcePool {
+        self.resource_pool
+            .unwrap_or_else(|| self.kind.default_resource_pool())
+    }
+
+    pub fn resolved_user_visible(&self) -> bool {
+        if self.admission == TaskAdmission::Shadow {
+            false
+        } else {
+            self.user_visible
+                .unwrap_or_else(|| !matches!(self.kind, TaskKind::Other))
+        }
     }
 
     pub fn with_task_id(mut self, task_id: impl Into<String>) -> Self {
@@ -372,6 +394,8 @@ pub struct TaskSnapshot {
     pub task_id: String,
     pub kind: TaskKind,
     #[serde(default)]
+    pub resource_pool: super::task_pool::ResourcePool,
+    #[serde(default)]
     pub category: String,
     #[serde(skip)]
     pub tenant_id: Option<String>,
@@ -405,6 +429,7 @@ impl TaskSnapshot {
         Self {
             task_id: task_id.to_string(),
             kind: TaskKind::Other,
+            resource_pool: super::task_pool::ResourcePool::Unbounded,
             category: "noop".to_string(),
             tenant_id: None,
             title: None,

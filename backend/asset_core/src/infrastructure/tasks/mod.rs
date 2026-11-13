@@ -1,7 +1,9 @@
 pub mod task_activity;
 pub mod task_context;
+pub mod task_metrics;
 pub mod task_models;
 pub mod task_pipeline;
+pub mod task_pool;
 pub mod task_process;
 pub mod task_rollback;
 pub mod task_runner;
@@ -13,7 +15,9 @@ pub mod tasks;
 #[allow(unused_imports)]
 pub use crate::backend::infrastructure::{InfraError, InfraResult};
 pub use task_activity::*;
+pub use task_metrics::*;
 pub use task_pipeline::*;
+pub use task_pool::*;
 pub use task_process::*;
 pub use task_rollback::*;
 pub use task_runner::*;

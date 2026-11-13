@@ -18,6 +18,8 @@ impl TaskRuntime {
                 "应用正在关闭，不再接受新任务".to_string(),
             ));
         }
+        let resource_pool = spec.resolved_resource_pool();
+        let user_visible = spec.resolved_user_visible();
         let task_id = spec.task_id.unwrap_or_else(|| {
             format!("task-{}", self.sequence.fetch_add(1, Ordering::Relaxed) + 1)
         });
@@ -63,23 +65,21 @@ impl TaskRuntime {
             ));
         }
         let tracking = self.tracker.token();
-        let user_visible = spec
-            .user_visible
-            .unwrap_or_else(|| !matches!(spec.kind, TaskKind::Other));
         let capabilities = spec.capabilities.unwrap_or_default();
         let category = spec
             .category
             .clone()
             .unwrap_or_else(|| super::task_pipeline::TaskCategory::from(spec.kind))
             .0;
-        let stages = if let Some(pipeline) = &spec.pipeline {
-            pipeline.to_initial_stages()
+        let (stages, stage_timeouts) = if let Some(pipeline) = &spec.pipeline {
+            (pipeline.to_initial_stages(), pipeline.to_stage_timeouts())
         } else {
-            Vec::new()
+            (Vec::new(), std::collections::HashMap::new())
         };
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
             kind: spec.kind,
+            resource_pool,
             category,
             tenant_id: spec.tenant_id,
             title: spec.title,
@@ -110,6 +110,7 @@ impl TaskRuntime {
                 snapshot: snapshot.clone(),
                 cancellation: cancellation.clone(),
                 conflict_keys: spec.conflict_keys,
+                stage_timeouts,
                 started: false,
                 tracking: Some(tracking),
                 last_cosmetic_publish: None,
@@ -132,12 +133,11 @@ impl TaskRuntime {
             let entry = tasks
                 .get_mut(task_id)
                 .ok_or_else(|| InfraError::NotFound(format!("任务不存在: {task_id}")))?;
+            Self::begin_structural_transition_locked(entry, &self.events);
             if entry.snapshot.state == TaskState::Pending {
                 entry.snapshot.state = TaskState::Running;
                 entry.started = true;
             }
-            entry.snapshot.revision += 1;
-            entry.snapshot.updated_at = Utc::now().to_rfc3339();
             entry.snapshot.clone()
         };
         self.publish(&snapshot);
@@ -157,12 +157,11 @@ impl TaskRuntime {
             let entry = tasks
                 .get_mut(task_id)
                 .ok_or_else(|| InfraError::NotFound(format!("任务不存在: {task_id}")))?;
+            Self::begin_structural_transition_locked(entry, &self.events);
             if entry.snapshot.state == TaskState::Pending {
                 entry.snapshot.state = TaskState::Running;
             }
             entry.snapshot.detail = detail;
-            entry.snapshot.revision += 1;
-            entry.snapshot.updated_at = Utc::now().to_rfc3339();
             entry.snapshot.clone()
         };
         self.publish(&snapshot);
@@ -224,9 +223,7 @@ impl TaskRuntime {
                     total,
                     note: note.map(str::to_string),
                 });
-                entry.snapshot.revision += 1;
-                entry.snapshot.updated_at = Utc::now().to_rfc3339();
-                Some(entry.snapshot.clone())
+                Self::record_cosmetic_change_locked(entry)
             } else {
                 None
             }
@@ -277,12 +274,11 @@ impl TaskRuntime {
             let entry = tasks
                 .get_mut(task_id)
                 .ok_or_else(|| InfraError::NotFound(format!("任务不存在: {task_id}")))?;
+            Self::begin_structural_transition_locked(entry, &self.events);
             if entry.snapshot.state == TaskState::Pending {
                 entry.snapshot.state = TaskState::Running;
             }
             entry.snapshot.detail = sanitize_task_detail(detail);
-            entry.snapshot.revision += 1;
-            entry.snapshot.updated_at = Utc::now().to_rfc3339();
             let should_launch = entry.snapshot.state == TaskState::Running && !entry.started;
             let tracking = if should_launch {
                 entry.started = true;
@@ -332,12 +328,11 @@ impl TaskRuntime {
             let entry = tasks
                 .get_mut(task_id)
                 .ok_or_else(|| InfraError::NotFound(format!("任务不存在: {task_id}")))?;
+            Self::begin_structural_transition_locked(entry, &self.events);
             if entry.snapshot.state == TaskState::Pending {
                 entry.snapshot.state = TaskState::Running;
             }
             entry.snapshot.detail = sanitize_task_detail(detail);
-            entry.snapshot.revision += 1;
-            entry.snapshot.updated_at = Utc::now().to_rfc3339();
             let should_launch = entry.snapshot.state == TaskState::Running && !entry.started;
             let tracking = if should_launch {
                 entry.started = true;
@@ -383,10 +378,9 @@ impl TaskRuntime {
         if entry.snapshot.state.is_terminal() {
             return Ok(entry.snapshot.clone());
         }
-        let now = Utc::now().to_rfc3339();
-        entry.snapshot.finished_at = Some(now.clone());
-        entry.snapshot.updated_at = now;
-        entry.snapshot.revision += 1;
+        Self::begin_structural_transition_locked(entry, &self.events);
+        let now = entry.snapshot.updated_at.clone();
+        entry.snapshot.finished_at = Some(now);
         let _tracking = entry.tracking.take();
         match result {
             Ok(detail) => {
@@ -427,7 +421,7 @@ impl TaskRuntime {
         }
         let snapshot = entry.snapshot.clone();
         drop(tasks);
-        self.publish(&snapshot);
+        self.publish_terminal_and_record(&snapshot);
         Ok(snapshot)
     }
 

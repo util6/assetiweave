@@ -1,5 +1,24 @@
 import type { AgentSessionRef } from "./agentSession";
 
+export type TaskKind =
+  | "conversationsync"
+  | "conversationusagescan"
+  | "conversationdatamaintenance"
+  | "searchindexrebuild"
+  | "scriptinstall"
+  | "extensionlifecycle"
+  | "aiexecution"
+  | "agentmarketrefresh"
+  | "memory"
+  | "remoteskillacquire"
+  | "scan"
+  | "backup"
+  | "batchmount"
+  | "gitsourcepull"
+  | "modelpricingsync"
+  | "other"
+  | (string & {});
+
 export type TaskState =
   "pending" | "running" | "cancelling" | "succeeded" | "failed" | "canceled";
 
@@ -54,10 +73,13 @@ export interface TaskFailureView {
 }
 
 export interface TaskSkippedGroupView {
-  id: string;
-  title: string;
-  reason: string;
+  reasonCode: string;
+  reason_code?: string;
+  count: number;
+  samples: string[];
 }
+
+export type TaskSkippedReasonView = TaskSkippedGroupView;
 
 export interface TaskStageView {
   id: string;
@@ -120,10 +142,19 @@ export interface TaskClearParams {
   task_id?: string;
 }
 
+export type TaskResourcePool =
+  | "sqlite_write"
+  | "disk_io"
+  | "network"
+  | "agent_llm"
+  | "unbounded";
+
 export interface TaskView {
   id: string;
-  kind: string;
+  kind: TaskKind;
   category?: string | null;
+  resourcePool?: TaskResourcePool | string | null;
+  resource_pool?: TaskResourcePool | string | null;
   title: string;
   tenantId?: string | null;
   tenant_id?: string | null;
@@ -223,7 +254,22 @@ export function normalizeTaskView(raw: unknown): TaskView {
       current_activities: normalizedActivities,
       metrics: (st.metrics as TaskMetricView[]) ?? [],
       failures: (st.failures as TaskFailureView[]) ?? [],
-      skipped: (st.skipped as TaskSkippedGroupView[]) ?? [],
+      skipped: ((st.skipped as unknown[]) ?? []).map((skipRaw) => {
+        const skip = (
+          skipRaw && typeof skipRaw === "object" ? skipRaw : {}
+        ) as Record<string, unknown>;
+        const reasonCode = (skip.reasonCode ??
+          skip.reason_code ??
+          skip.id ??
+          "") as string;
+        const rawSamples = Array.isArray(skip.samples) ? skip.samples : [];
+        return {
+          reasonCode,
+          reason_code: reasonCode,
+          count: typeof skip.count === "number" ? skip.count : 0,
+          samples: rawSamples.map((s) => String(s)),
+        };
+      }),
       agentSessionRef: (st.agentSessionRef ??
         st.agent_session_ref ??
         null) as AgentSessionRef | null,
@@ -247,6 +293,9 @@ export function normalizeTaskView(raw: unknown): TaskView {
 
   const tenantId = (data.tenantId ?? data.tenant_id ?? null) as string | null;
   const category = (data.category ?? null) as string | null;
+  const resourcePool = (data.resourcePool ??
+    data.resource_pool ??
+    null) as string | null;
   const startedAt = (data.startedAt ?? data.started_at ?? null) as
     string | null;
   const updatedAt = (data.updatedAt ?? data.updated_at ?? null) as
@@ -271,6 +320,8 @@ export function normalizeTaskView(raw: unknown): TaskView {
     id: (data.id ?? "") as string,
     kind: (data.kind ?? "") as string,
     category,
+    resourcePool,
+    resource_pool: resourcePool,
     title: (data.title ?? "") as string,
     tenantId,
     tenant_id: tenantId,

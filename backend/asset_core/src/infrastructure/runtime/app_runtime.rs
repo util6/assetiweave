@@ -236,32 +236,6 @@ impl AppRuntime {
                 *slot = Some(handle);
             }
         }
-        let mut rx = self.task_runtime.subscribe();
-        let pool = self.db.pool().clone();
-        tokio::spawn(async move {
-            while let Ok(snap) = rx.recv().await {
-                if snap.change_class
-                    == crate::backend::infrastructure::tasks::TaskChangeClass::Structural
-                {
-                    let entry = crate::backend::store::TaskJournalEntry {
-                        task_id: snap.task_id.clone(),
-                        tenant_id: snap.tenant_id.clone(),
-                        kind: snap.kind.to_string(),
-                        state: format!("{:?}", snap.state).to_lowercase(),
-                        stage_id: snap
-                            .stages
-                            .iter()
-                            .find(|s| s.status.is_active())
-                            .map(|s| s.id.clone()),
-                        error_summary: snap.error_summary.clone(),
-                        result_ref: snap.result_summary.clone(),
-                        created_at: chrono::Utc::now().to_rfc3339(),
-                    };
-                    let _ =
-                        crate::backend::store::append_task_journal_entry_sqlx(&pool, &entry).await;
-                }
-            }
-        });
     }
 
     pub async fn start_event_dispatcher(

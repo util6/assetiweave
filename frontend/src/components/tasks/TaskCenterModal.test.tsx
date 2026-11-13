@@ -698,4 +698,85 @@ describe("TaskCenterModal", () => {
       expect(emptyStepHints.length).toBeGreaterThanOrEqual(1);
     });
   });
+
+  it("兼容后端全小写 kind 并渲染阶段 skipped 跳过分组明细", async () => {
+    mockSelectedTaskId = "task-usage-lowercase";
+    mockTasks = [
+      {
+        id: "task-usage-lowercase",
+        kind: "conversationusagescan",
+        title: "扫描会话用量",
+        state: "succeeded",
+        outcome: "success",
+        stages: [
+          {
+            id: "persist",
+            name: "汇总持久化",
+            status: "succeeded",
+            metrics: [],
+            failures: [],
+            skipped: [
+              {
+                reasonCode: "unchanged_hash",
+                count: 4,
+                samples: ["session-a.jsonl", "session-b.jsonl"],
+              },
+            ],
+            steps: [],
+          },
+        ],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: false, retryable: false, clearable: true },
+        revision: 2,
+      },
+    ];
+
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("用量统计扫描").length).toBeGreaterThanOrEqual(
+        1,
+      );
+      expect(screen.getByText(/unchanged_hash/)).toBeTruthy();
+      expect(screen.getByText(/4/)).toBeTruthy();
+      expect(screen.getByText(/session-a\.jsonl/)).toBeTruthy();
+    });
+  });
+
+  it("区分 pending 排队状态与运行中状态，并展示资源域标签", async () => {
+    mockSelectedTaskId = "task-queued-sqlite";
+    mockTasks = [
+      {
+        id: "task-queued-sqlite",
+        kind: "backup",
+        resourcePool: "sqlite_write",
+        title: "数据库增量备份",
+        state: "pending",
+        stages: [],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: true, retryable: false, clearable: false },
+        revision: 1,
+      },
+    ];
+
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("排队中").length).toBeGreaterThanOrEqual(1);
+      expect(screen.queryByText("运行中")).toBeNull();
+      expect(
+        screen.getAllByText(/数据库写入|sqlite_write/).length,
+      ).toBeGreaterThanOrEqual(1);
+    });
+  });
 });

@@ -174,3 +174,56 @@ async fn worker_tracker_concurrent_multiple_workers() {
         .unwrap();
     assert!(stage_end.current_activities.is_empty());
 }
+
+#[tokio::test]
+async fn cosmetic_stage_updates_are_throttled_and_flushed_before_structural_transition() {
+    let runtime = TaskRuntime::with_runtime_handle(tokio::runtime::Handle::current());
+    let mut rx = runtime.subscribe();
+    let spec = TaskSpec::new(TaskKind::Other, None).with_task_id("cosmetic-throttle-task");
+    let _ = runtime.register_external(spec).expect("register");
+    let context = runtime
+        .task_context("cosmetic-throttle-task")
+        .expect("context");
+
+    {
+        let guard = context.enter_stage("scan");
+        for i in 1..=10 {
+            guard.set_progress(i, Some(10), Some(format!("step-{i}")));
+            guard.activity("w1", "scan_file", Some(format!("f-{i}.md")));
+            guard.record_step("parse", Some(format!("f-{i}.md")), Some(i), Some(10));
+        }
+        guard.remove_activity("w1");
+
+        // 内存快照始终保持最新进度，无事件丢状态
+        let snap = runtime.get("cosmetic-throttle-task").unwrap();
+        let stage = snap.stages.iter().find(|s| s.id == "scan").unwrap();
+        assert_eq!(stage.progress.as_ref().map(|p| p.current), Some(10));
+        assert_eq!(stage.steps.len(), 10);
+        assert!(stage.current_activities.is_empty());
+    }
+
+    let mut cosmetic_frames = 0usize;
+    let mut structural_frames = 0usize;
+    while let Ok(ev) = rx.try_recv() {
+        if ev.task_id == "cosmetic-throttle-task" {
+            match ev.change_class {
+                crate::backend::infrastructure::tasks::TaskChangeClass::Cosmetic => {
+                    cosmetic_frames += 1;
+                }
+                crate::backend::infrastructure::tasks::TaskChangeClass::Structural => {
+                    structural_frames += 1;
+                }
+            }
+        }
+    }
+
+    // 31 次高频调用在 150ms 窗口内应被节流成至多 2 帧 Cosmetic（首帧 + 结束前 flush 帧）
+    assert!(
+        cosmetic_frames >= 1 && cosmetic_frames <= 2,
+        "expected coalesced cosmetic frames in 1..=2, got {cosmetic_frames}"
+    );
+    assert!(
+        structural_frames >= 2,
+        "expected structural frames for register + stage start/finish, got {structural_frames}"
+    );
+}

@@ -62,6 +62,29 @@ export interface TaskCenterModalProps {
 
 type FilterStatus = "all" | "running" | "completed" | "failed";
 
+function normalizeTaskKindKey(kind?: string): string {
+  return (kind ?? "").toLowerCase().replace(/[_-]/g, "");
+}
+
+const TASK_KIND_LABELS: Record<string, string> = {
+  conversationsync: "全量会话同步",
+  conversationusagescan: "用量统计扫描",
+  conversationdatamaintenance: "会话数据维护",
+  searchindexrebuild: "搜索索引重建",
+  scriptinstall: "脚本安装",
+  extensionlifecycle: "扩展生命周期",
+  aiexecution: "AI 执行",
+  agentmarketrefresh: "市场刷新",
+  memory: "记忆生成",
+  remoteskillacquire: "远程技能获取",
+  scan: "数据源扫描",
+  backup: "备份维护",
+  batchmount: "批量挂载",
+  gitsourcepull: "Git 技能源更新",
+  modelpricingsync: "模型价格同步与重算",
+  other: "后台任务",
+};
+
 function formatTaskCategoryLabel(
   category?: string | null,
   kind?: string,
@@ -73,8 +96,26 @@ function formatTaskCategoryLabel(
   if (cat === "conversation/sync") return "全量会话同步";
   if (cat === "conversation/pricing_sync") return "模型价格同步与重算";
   if (cat === "conversation/usage_scan") return "用量统计扫描";
-  if (kind === "ConversationUsageScan") return "用量统计扫描";
-  return category || kind || "";
+  if (category) return category;
+  const normalizedKind = normalizeTaskKindKey(kind);
+  if (normalizedKind && TASK_KIND_LABELS[normalizedKind]) {
+    return TASK_KIND_LABELS[normalizedKind];
+  }
+  return kind || "";
+}
+
+const RESOURCE_POOL_LABELS: Record<string, string> = {
+  sqlite_write: "数据库写入",
+  disk_io: "磁盘扫描",
+  network: "网络同步",
+  agent_llm: "AI 推理",
+};
+
+function formatResourcePoolLabel(pool?: string | null): string | null {
+  if (!pool) return null;
+  const normalized = pool.toLowerCase();
+  if (normalized === "unbounded") return null;
+  return RESOURCE_POOL_LABELS[normalized] ?? pool;
 }
 
 export function TaskCenterModal({ open, onClose }: TaskCenterModalProps) {
@@ -264,7 +305,12 @@ function TaskCenterModalContent({
               disabled={
                 actionBusy ||
                 tasks.length === 0 ||
-                tasks.every((t) => t.state === "running")
+                tasks.every(
+                  (t) =>
+                    t.state === "running" ||
+                    t.state === "pending" ||
+                    t.state === "cancelling",
+                )
               }
               onClick={() => void handleClearTerminal()}
               size="default"
@@ -488,6 +534,10 @@ function TaskCenterModalContent({
                   {(() => {
                     const tenantId =
                       selectedTask.tenantId ?? selectedTask.tenant_id;
+                    const resourcePool =
+                      selectedTask.resourcePool ?? selectedTask.resource_pool;
+                    const resourcePoolLabel =
+                      formatResourcePoolLabel(resourcePool);
                     const startedAt =
                       selectedTask.startedAt ?? selectedTask.started_at;
                     const finishedAt =
@@ -536,6 +586,14 @@ function TaskCenterModalContent({
                                     </code>
                                   </span>
                                 ) : null}
+                                {resourcePoolLabel ? (
+                                  <span>
+                                    资源域:{" "}
+                                    <code className="rounded-full bg-theme-control/50 px-2 py-0.5 font-mono text-[11px] text-on-surface-variant">
+                                      {resourcePoolLabel}
+                                    </code>
+                                  </span>
+                                ) : null}
                                 {tenantId ? (
                                   <span>
                                     租户:{" "}
@@ -562,7 +620,8 @@ function TaskCenterModalContent({
                             {/* 任务控制操作 */}
                             <div className="flex items-center gap-2">
                               {capabilities.cancellable &&
-                              selectedTask.state === "running" ? (
+                              (selectedTask.state === "running" ||
+                                selectedTask.state === "pending") ? (
                                 <Button
                                   disabled={actionBusy}
                                   onClick={() =>
@@ -807,6 +866,7 @@ function StageCard({
   const steps = stage.steps ?? [];
   const failures = stage.failures ?? [];
   const metrics = stage.metrics ?? [];
+  const skipped = stage.skipped ?? [];
   const sessionRef = stage.agentSessionRef ?? stage.agent_session_ref;
 
   return (
@@ -1007,6 +1067,43 @@ function StageCard({
                 {taskErrorSummary}
               </p>
             ) : null}
+          </div>
+        ) : null}
+
+        {/* 跳过项分类明细 (ReasonCode + Count + Samples) */}
+        {skipped.length > 0 ? (
+          <div className="flex flex-col gap-2 rounded-xl border border-theme-control-border/60 bg-surface-base/60 p-3 text-body-sm">
+            <div className="flex items-center gap-2 font-medium text-on-surface-variant">
+              <Minus className="size-4 shrink-0" />
+              <span>已跳过项目分组 ({skipped.length})</span>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {skipped.map((group, gIdx) => {
+                const reasonCode =
+                  group.reasonCode ?? group.reason_code ?? "skipped";
+                const samples = group.samples ?? [];
+                return (
+                  <div
+                    className="flex flex-col gap-1 rounded-xl border border-theme-control-border/40 bg-theme-control/15 px-2.5 py-2"
+                    key={`${reasonCode}-${gIdx}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="rounded-full bg-theme-control/60 px-2 py-0.5 font-mono text-code-xs font-medium text-on-surface">
+                        {reasonCode}
+                      </span>
+                      <span className="rounded-full bg-theme-control/40 px-2 py-0.5 font-mono text-code-xs text-on-surface-variant">
+                        {group.count} 项
+                      </span>
+                    </div>
+                    {samples.length > 0 ? (
+                      <div className="font-mono text-code-xs text-on-surface-muted break-all">
+                        示例: {samples.join(", ")}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         ) : null}
 
@@ -1251,7 +1348,16 @@ function TaskStateBadge({
   state: TaskState;
   outcome?: string | null;
 }) {
-  if (state === "running" || state === "pending" || state === "cancelling") {
+  if (state === "pending") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/40 px-2.5 py-0.5 text-caption font-medium text-on-surface-variant">
+        <Clock className="size-3" />
+        排队中
+      </span>
+    );
+  }
+
+  if (state === "running" || state === "cancelling") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-caption font-medium text-primary">
         <Loader2 className="size-3 animate-spin" />
@@ -1302,17 +1408,23 @@ function TaskKindIcon({
   kind: string;
   className?: string;
 }) {
-  switch (kind) {
-    case "ConversationSync":
+  switch (normalizeTaskKindKey(kind)) {
+    case "conversationsync":
+    case "conversationdatamaintenance":
       return <MessageSquare className={className} />;
-    case "Memory":
+    case "memory":
       return <Brain className={className} />;
-    case "Backup":
+    case "backup":
       return <Archive className={className} />;
-    case "Scan":
-    case "ConversationUsageScan":
+    case "scan":
+    case "conversationusagescan":
+    case "searchindexrebuild":
+    case "gitsourcepull":
+    case "modelpricingsync":
+    case "agentmarketrefresh":
       return <RefreshCw className={className} />;
-    case "AiExecution":
+    case "aiexecution":
+    case "remoteskillacquire":
       return <Sparkles className={className} />;
     default:
       return <Layers className={className} />;

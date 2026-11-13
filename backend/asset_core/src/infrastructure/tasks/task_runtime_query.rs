@@ -1,3 +1,4 @@
+use super::super::InfraError;
 use super::task_models::*;
 use super::tasks::{TaskEntry, TaskRuntime};
 use chrono::Utc;
@@ -64,13 +65,14 @@ impl TaskRuntime {
             return CancelOutcome::NotFound;
         };
         if entry.snapshot.state.is_active() {
-            entry.cancellation.cancel();
-            entry.snapshot.state = TaskState::Cancelling;
-            entry.snapshot.revision += 1;
-            entry.snapshot.updated_at = Utc::now().to_rfc3339();
-            let snapshot = entry.snapshot.clone();
+            let (snapshot, was_pending) =
+                Self::cancel_entry_locked(entry, &self.events, "排队任务已取消");
             drop(tasks);
-            self.publish(&snapshot);
+            if was_pending {
+                self.publish_terminal_and_record(&snapshot);
+            } else {
+                self.publish(&snapshot);
+            }
             return CancelOutcome::Requested(snapshot);
         }
         CancelOutcome::AlreadyFinished(entry.snapshot.clone())

@@ -4,7 +4,6 @@ pub mod default_data;
 pub mod defaults;
 pub mod params;
 pub mod system;
-pub mod task_maintenance;
 pub mod task_view;
 pub mod tasks_public;
 pub mod tenant_activation;

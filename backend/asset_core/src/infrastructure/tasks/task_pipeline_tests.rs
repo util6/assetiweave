@@ -204,3 +204,90 @@ fn stage_guard_cancelled_token_marks_canceled() {
         .expect("stage");
     assert_eq!(stage.status, StageStatus::Canceled);
 }
+
+#[tokio::test]
+async fn stage_soft_timeout_fails_stage_without_canceling_parent_task() {
+    use std::time::Duration;
+
+    let runtime = TaskRuntime::with_runtime_handle(tokio::runtime::Handle::current());
+    let pipeline = PipelineDescriptor::builder()
+        .stage("slow_stage", "慢阶段")
+        .with_timeout(Duration::from_millis(30))
+        .build();
+
+    let spec = TaskSpec::new(TaskKind::Scan, None)
+        .with_task_id("task-stage-timeout-1")
+        .with_pipeline(pipeline);
+
+    let handle = runtime
+        .run(spec, |cx| async move {
+            let guard = cx.enter_stage("slow_stage");
+            guard.cancellation().cancelled().await;
+            assert!(
+                guard.is_timed_out(),
+                "watchdog expiry must set timed_out flag on StageGuard"
+            );
+            assert!(
+                !cx.is_cancelled(),
+                "stage soft timeout must NOT cancel parent task token"
+            );
+            Err::<tasks::TaskOutput<serde_json::Value>, _>(
+                crate::backend::infrastructure::InfraError::Timeout("阶段软超时".to_string()),
+            )
+        })
+        .expect("task should spawn");
+
+    let snap = handle
+        .wait_until_finished(&runtime)
+        .await
+        .expect("terminal snapshot");
+    assert_eq!(snap.state, tasks::TaskState::Failed);
+    let stage = snap
+        .stages
+        .iter()
+        .find(|s| s.id == "slow_stage")
+        .expect("slow_stage");
+    assert_eq!(stage.status, StageStatus::Failed);
+    assert!(stage.failures.iter().any(|f| f.code == "stage_timeout"));
+    assert_eq!(
+        snap.error.as_ref().map(|e| e.code.as_str()),
+        Some("stage_timeout")
+    );
+}
+
+#[tokio::test]
+async fn stage_soft_timeout_overrides_ok_closure_return_to_failed() {
+    use std::time::Duration;
+
+    let runtime = TaskRuntime::with_runtime_handle(tokio::runtime::Handle::current());
+    let pipeline = PipelineDescriptor::builder()
+        .stage("slow_stage", "慢阶段")
+        .with_timeout(Duration::from_millis(25))
+        .build();
+
+    let spec = TaskSpec::new(TaskKind::Scan, None)
+        .with_task_id("task-stage-timeout-ok-override")
+        .with_pipeline(pipeline);
+
+    let handle = runtime
+        .run(spec, |cx| async move {
+            let guard = cx.enter_stage("slow_stage");
+            guard.cancellation().cancelled().await;
+            drop(guard);
+            // 即使闭包吞掉超时并返回 Ok，TaskRuntime 也必须判定为 Failed + stage_timeout
+            Ok::<_, crate::backend::infrastructure::InfraError>(tasks::TaskOutput::new(
+                serde_json::json!({"ignored": true}),
+            ))
+        })
+        .expect("task should spawn");
+
+    let snap = handle
+        .wait_until_finished(&runtime)
+        .await
+        .expect("terminal snapshot");
+    assert_eq!(snap.state, tasks::TaskState::Failed);
+    assert_eq!(
+        snap.error.as_ref().map(|e| e.code.as_str()),
+        Some("stage_timeout")
+    );
+}

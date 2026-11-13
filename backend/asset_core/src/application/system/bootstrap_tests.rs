@@ -132,6 +132,32 @@ async fn seed_rejects_invalid_paths_before_persisting_adapters() {
     let _ = fs::remove_dir_all(fixture_root);
 }
 
+#[tokio::test]
+async fn open_migrated_pool_drops_legacy_task_journal_table() {
+    let fixture_root =
+        std::env::temp_dir().join(format!("assetiweave-drop-journal-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&fixture_root).expect("create fixture dir");
+    let db_path = fixture_root.join("migrated.sqlite");
+    let pool = store::open_migrated_pool(&db_path)
+        .await
+        .expect("open migrated database");
+
+    let journal_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'task_journal'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query sqlite_master");
+
+    assert_eq!(
+        journal_exists, 0,
+        "task_journal table should be dropped by migration"
+    );
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(fixture_root);
+}
+
 fn directory_entries(path: &Path) -> Vec<String> {
     let mut entries = fs::read_dir(path)
         .expect("read fixture directory")

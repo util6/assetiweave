@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub struct TaskView {
     pub id: String,
     pub kind: String,
+    #[serde(default = "default_unbounded_pool_str")]
+    pub resource_pool: String,
     pub title: String,
     pub tenant_id: Option<String>,
     pub state: String,
@@ -33,6 +35,10 @@ pub struct TaskView {
 
 fn default_structural_str() -> String {
     "structural".to_string()
+}
+
+fn default_unbounded_pool_str() -> String {
+    "unbounded".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -255,6 +261,7 @@ impl TaskView {
         Self {
             id: snapshot.task_id.clone(),
             kind: format!("{:?}", snapshot.kind).to_ascii_lowercase(),
+            resource_pool: snapshot.resource_pool.as_str().to_string(),
             title,
             tenant_id: snapshot.tenant_id.clone(),
             state: state_str.to_string(),

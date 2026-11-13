@@ -415,34 +415,13 @@ pub fn run() {
         loop {
             match task_events.recv().await {
                 Ok(snapshot) => {
-                    if snapshot.user_visible {
-                        let should_emit = if snapshot.state.is_terminal() {
-                            last_emitted.remove(&snapshot.task_id);
-                            true
-                        } else {
-                            let now = std::time::Instant::now();
-                            match last_emitted.get(&snapshot.task_id) {
-                                Some(last) => {
-                                    if now.duration_since(*last)
-                                        >= std::time::Duration::from_millis(100)
-                                    {
-                                        last_emitted.insert(snapshot.task_id.clone(), now);
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                }
-                                None => {
-                                    last_emitted.insert(snapshot.task_id.clone(), now);
-                                    true
-                                }
-                            }
-                        };
-                        if should_emit {
-                            let view =
-                                backend::application::system::TaskView::from_snapshot(&snapshot);
-                            let _ = task_event_app.emit("task-updated", &view);
-                        }
+                    if should_emit_task_snapshot(
+                        &snapshot,
+                        &mut last_emitted,
+                        std::time::Instant::now(),
+                    ) {
+                        let view = backend::application::system::TaskView::from_snapshot(&snapshot);
+                        let _ = task_event_app.emit("task-updated", &view);
                     }
 
                     if snapshot.kind == backend::infrastructure::tasks::TaskKind::Memory {
@@ -931,6 +910,31 @@ fn install_engine_termination_handlers(
         });
     }
     Ok(())
+}
+
+pub(crate) fn should_emit_task_snapshot(
+    snapshot: &backend::infrastructure::tasks::TaskSnapshot,
+    last_emitted: &mut std::collections::HashMap<String, std::time::Instant>,
+    now: std::time::Instant,
+) -> bool {
+    if !snapshot.user_visible {
+        return false;
+    }
+    if snapshot.state.is_terminal() {
+        last_emitted.remove(&snapshot.task_id);
+        return true;
+    }
+    if snapshot.change_class == backend::infrastructure::tasks::TaskChangeClass::Structural {
+        last_emitted.insert(snapshot.task_id.clone(), now);
+        return true;
+    }
+    match last_emitted.get(&snapshot.task_id) {
+        Some(last) if now.duration_since(*last) < std::time::Duration::from_millis(100) => false,
+        _ => {
+            last_emitted.insert(snapshot.task_id.clone(), now);
+            true
+        }
+    }
 }
 
 #[cfg(test)]

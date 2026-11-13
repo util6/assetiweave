@@ -27,14 +27,6 @@ impl AppService {
         }
         let _ = crate::backend::infrastructure::agent_market::purge_legacy_agent_market_cache_disk_files();
         let pool = store::open_migrated_pool(&db_path).await?;
-        let orphaned_tasks = store::reconcile_orphaned_tasks_sqlx(&pool).await?;
-        if !orphaned_tasks.is_empty() {
-            tracing::info!(
-                orphaned_count = orphaned_tasks.len(),
-                orphaned_tasks = ?orphaned_tasks,
-                "Startup task reconciliation recovered orphaned background tasks"
-            );
-        }
         ensure_app_library_dirs()?;
         let target_catalog_dir = db_path
             .parent()

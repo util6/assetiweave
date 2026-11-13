@@ -5,7 +5,15 @@ use super::tasks::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+pub const STAGE_TIMEOUT_ERROR_CODE: &str = "stage_timeout";
+
 pub mod stages {
     pub const DISCOVER: &str = "discover";
     pub const SCAN_FILES: &str = "scan_files";
@@ -74,6 +82,8 @@ pub struct StageDescriptor {
     pub name: String,
     #[serde(default = "default_true")]
     pub user_visible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
 
 fn default_true() -> bool {
@@ -86,11 +96,17 @@ impl StageDescriptor {
             id: id.into(),
             name: name.into(),
             user_visible: true,
+            timeout_ms: None,
         }
     }
 
     pub fn with_user_visible(mut self, user_visible: bool) -> Self {
         self.user_visible = user_visible;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout_ms = Some(timeout.as_millis().max(1) as u64);
         self
     }
 }
@@ -113,6 +129,17 @@ impl PipelineDescriptor {
 
     pub fn builder() -> PipelineDescriptorBuilder {
         PipelineDescriptorBuilder::default()
+    }
+
+    pub fn to_stage_timeouts(&self) -> HashMap<String, Duration> {
+        self.stages
+            .iter()
+            .filter_map(|desc| {
+                desc.timeout_ms
+                    .filter(|ms| *ms > 0)
+                    .map(|ms| (desc.id.clone(), Duration::from_millis(ms)))
+            })
+            .collect()
     }
 
     /// 将描述符转换为初始 TaskStage 列表（全部预置为 Pending）。
@@ -161,6 +188,14 @@ impl PipelineDescriptorBuilder {
         self
     }
 
+    /// 为最近添加的阶段附加软超时配置。
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        if let Some(last) = self.stages.pop() {
+            self.stages.push(last.with_timeout(timeout));
+        }
+        self
+    }
+
     pub fn build(self) -> PipelineDescriptor {
         PipelineDescriptor {
             stages: self.stages,
@@ -182,7 +217,10 @@ pub struct StageGuard {
     task_id: String,
     stage_id: String,
     runtime: TaskRuntime,
-    cancellation: CancellationToken,
+    task_cancellation: CancellationToken,
+    stage_cancellation: CancellationToken,
+    timed_out: Arc<AtomicBool>,
+    watchdog_abort: Option<tokio::task::AbortHandle>,
     status: Option<StageStatus>,
     metrics: Vec<TaskMetric>,
     failures: Vec<TaskFailure>,
@@ -199,18 +237,58 @@ impl StageGuard {
     ) -> Self {
         let task_id = task_id.into();
         let stage_id = stage_id.into();
+        let configured_timeout = runtime.stage_timeout(&task_id, &stage_id);
         let _ = runtime.update_stage_status(&task_id, &stage_id, StageStatus::Running);
-        Self {
+        let stage_cancellation = cancellation.child_token();
+        let mut guard = Self {
             task_id,
             stage_id,
             runtime,
-            cancellation,
+            task_cancellation: cancellation,
+            stage_cancellation,
+            timed_out: Arc::new(AtomicBool::new(false)),
+            watchdog_abort: None,
             status: None,
             metrics: Vec::new(),
             failures: Vec::new(),
             skipped: Vec::new(),
             completed: false,
+        };
+        if let Some(timeout) = configured_timeout {
+            guard.arm_watchdog(timeout);
         }
+        guard
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.arm_watchdog(timeout);
+        self
+    }
+
+    fn arm_watchdog(&mut self, timeout: Duration) {
+        if let Some(abort) = self.watchdog_abort.take() {
+            abort.abort();
+        }
+        let handle_opt = self
+            .runtime
+            .runtime_handle()
+            .or_else(|| tokio::runtime::Handle::try_current().ok());
+        let Some(handle) = handle_opt else {
+            return;
+        };
+        let task_cancel = self.task_cancellation.clone();
+        let stage_cancel = self.stage_cancellation.clone();
+        let timed_out = self.timed_out.clone();
+        let join = handle.spawn(async move {
+            tokio::select! {
+                _ = task_cancel.cancelled() => {}
+                _ = tokio::time::sleep(timeout) => {
+                    timed_out.store(true, Ordering::Release);
+                    stage_cancel.cancel();
+                }
+            }
+        });
+        self.watchdog_abort = Some(join.abort_handle());
     }
 
     pub fn task_id(&self) -> &str {
@@ -222,11 +300,15 @@ impl StageGuard {
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.cancellation.is_cancelled()
+        self.task_cancellation.is_cancelled()
+    }
+
+    pub fn is_timed_out(&self) -> bool {
+        self.timed_out.load(Ordering::Acquire) && !self.task_cancellation.is_cancelled()
     }
 
     pub fn cancellation(&self) -> &CancellationToken {
-        &self.cancellation
+        &self.stage_cancellation
     }
 
     pub fn record_metric(&mut self, code: impl Into<String>, value: u64) {
@@ -403,6 +485,23 @@ impl StageGuard {
             return;
         }
         self.completed = true;
+        if let Some(abort) = self.watchdog_abort.take() {
+            abort.abort();
+        }
+
+        let timed_out = self.is_timed_out();
+        if timed_out
+            && !self
+                .failures
+                .iter()
+                .any(|f| f.code == STAGE_TIMEOUT_ERROR_CODE)
+        {
+            self.record_failure(
+                STAGE_TIMEOUT_ERROR_CODE,
+                format!("阶段 '{}' 执行超时", self.stage_id),
+                true,
+            );
+        }
 
         let final_status = if std::thread::panicking() {
             self.failures.push(TaskFailure {
@@ -417,9 +516,9 @@ impl StageGuard {
             StageStatus::Failed
         } else if let Some(explicit) = self.status {
             explicit
-        } else if self.cancellation.is_cancelled() {
+        } else if self.task_cancellation.is_cancelled() {
             StageStatus::Canceled
-        } else if !self.failures.is_empty() {
+        } else if timed_out || !self.failures.is_empty() {
             StageStatus::Failed
         } else {
             StageStatus::Succeeded
