@@ -37,8 +37,9 @@ impl AppService {
     pub fn start_model_pricing_sync(
         &self,
         force: bool,
+        target_models: Option<Vec<String>>,
     ) -> AppResult<TaskHandle<ModelPricingSyncResultDto>> {
-        self.start_model_pricing_sync_with(force, |cached_rate, cached_entries, targets| {
+        self.start_model_pricing_sync_with(force, target_models, |cached_rate, cached_entries, targets| {
             let rate = fetch_usd_to_cny_rate().unwrap_or(cached_rate);
             let outcome = fetch_tiered_pricing_catalog(rate, cached_entries, targets.as_deref());
             (rate, outcome)
@@ -56,12 +57,13 @@ impl AppService {
             + Send
             + 'static,
     {
-        self.start_model_pricing_sync_with(force, fetcher)
+        self.start_model_pricing_sync_with(force, None, fetcher)
     }
 
     fn start_model_pricing_sync_with<Fetch>(
         &self,
         force: bool,
+        target_models: Option<Vec<String>>,
         fetcher: Fetch,
     ) -> AppResult<TaskHandle<ModelPricingSyncResultDto>>
     where
@@ -92,7 +94,7 @@ impl AppService {
             let result = service
                 .sync_model_pricing_catalog_inner(
                     force,
-                    None,
+                    target_models,
                     Some(&cancellation),
                     Some(&task_id),
                     &mut noop_progress,

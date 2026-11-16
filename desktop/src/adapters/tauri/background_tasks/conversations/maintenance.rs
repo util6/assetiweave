@@ -196,7 +196,6 @@ impl BackgroundTaskRegistry {
             &snapshot.id,
             Some("用量统计扫描".to_string()),
             Some("conversation/usage_scan".to_string()),
-            None,
             Some(dedup_key),
             std::iter::once(conflict_key),
             &snapshot,

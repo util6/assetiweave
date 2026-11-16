@@ -6,7 +6,6 @@ import type {
   ModelPricingCatalog,
   ModelPricingStatus,
   ModelPricingSyncResult,
-  ModelPricingSyncTaskSnapshot,
   UsageDashboardDto,
   UsageDashboardFilter,
   UsageScanOptions,
@@ -736,36 +735,19 @@ function buildMockPricingStatus(): ModelPricingStatus {
   };
 }
 
+export interface PricingSyncTaskHandle {
+  id: string;
+  state: string;
+}
+
 export async function updateModelPricingCatalog(
   force = false,
   models?: string[],
-): Promise<ModelPricingSyncTaskSnapshot> {
+): Promise<PricingSyncTaskHandle> {
   if (!isTauriRuntime()) {
-    return {
-      id: "mock-task-pricing-sync",
-      status: "completed",
-      force,
-      progress: {
-        phase: "completed",
-        message: "价格同步完成",
-        channel: "litellm",
-        modelsCount: models ? models.length : MOCK_REFERENCE_MODELS.length,
-        recalculatedEventsCount: 22938,
-        exchangeRate: mockPricingState.exchangeRate,
-      },
-      startedAt: new Date().toISOString(),
-      finishedAt: new Date().toISOString(),
-      result: {
-        channelUsed: "litellm",
-        modelsCount: models ? models.length : MOCK_REFERENCE_MODELS.length,
-        exchangeRate: mockPricingState.exchangeRate,
-        recalculatedEventsCount: 22938,
-        catalogVersion: mockPricingState.catalogVersion,
-        updatedAt: new Date().toISOString(),
-      },
-    };
+    return { id: "mock-task-pricing-sync", state: "succeeded" };
   }
-  return invoke<ModelPricingSyncTaskSnapshot>("update_model_pricing_catalog", {
+  return invoke<PricingSyncTaskHandle>("update_model_pricing_catalog", {
     force,
     models,
   });

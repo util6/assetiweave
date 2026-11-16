@@ -155,15 +155,13 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
     setSyncing(true);
     setSyncNotice(null);
     try {
-      const snapshot = await updateModelPricingCatalog(true);
-      if (snapshot.status === "completed") {
-        setSyncNotice({
-          type: "success",
-          text: `同步完成：收录 ${snapshot.result?.modelsCount ?? 0} 款模型单价`,
-        });
-        await loadData();
-        setSyncing(false);
-      }
+      // 同步在任务中心托管执行，完成态由 task-updated 事件驱动，此处只接管启动态。
+      const task = await updateModelPricingCatalog(true);
+      setSyncing(
+        task.state === "running" ||
+          task.state === "pending" ||
+          task.state === "cancelling",
+      );
     } catch (err) {
       setSyncNotice({
         type: "error",

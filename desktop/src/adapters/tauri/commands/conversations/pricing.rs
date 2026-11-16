@@ -10,82 +10,24 @@ use crate::backend::application::AppResult as RuntimeAppResult;
 use crate::backend::application::{AppError, AppService};
 use tauri::State;
 
-fn start_model_pricing_sync_background(
+fn start_model_pricing_sync(
     runtime: std::sync::Arc<crate::backend::infrastructure::runtime::AppRuntime>,
     background_tasks: std::sync::Arc<
         crate::adapters::tauri::background_tasks::BackgroundTaskRegistry,
     >,
     force: bool,
     models: Option<Vec<String>>,
-) -> RuntimeAppResult<crate::adapters::tauri::background_tasks::ModelPricingSyncTaskSnapshot> {
-    let tenant_id = runtime.context().tenant.id.clone();
-    let (snapshot, should_start) =
-        background_tasks.begin_model_pricing_sync_for_tenant(&tenant_id, force)?;
-    if !should_start {
-        return Ok(snapshot);
-    }
-
-    let task_id = snapshot.id.clone();
+) -> RuntimeAppResult<crate::backend::application::system::TaskView> {
+    let handle = AppService::from_runtime(&runtime).start_model_pricing_sync(force, models)?;
     let task_runtime = background_tasks
         .task_runtime()
         .ok_or_else(|| AppError::Conflict("TaskRuntime 未初始化".to_string()))?;
-    let task_detail = task_runtime
-        .get(&task_id)
-        .map(|task| task.detail)
-        .ok_or_else(|| AppError::NotFound(format!("background task not found: {task_id}")))?;
-    let task_background_tasks = background_tasks.clone();
-    let task_id_for_runtime = task_id.clone();
-    let target_models = models;
-    let outcome =
-        task_runtime.start_external_with_async(&task_id, task_detail, move |context| async move {
-            // 进度由 TaskRuntime 的阶段 / 步骤统一表达，宿主不再维护私有进度事件与占位数值。
-            let mut on_progress = |_phase: &str, _msg: &str| {};
-
-            let cancellation = context.cancellation();
-            if context.is_cancelled() {
-                return Err(AppError::Cancelled(
-                    "model pricing sync cancelled".to_string(),
-                ));
-            }
-
-            let result = AppService::from_runtime(&runtime)
-                .sync_model_pricing_catalog_with_control(
-                    force,
-                    target_models,
-                    Some(&cancellation),
-                    Some(&task_id_for_runtime),
-                    &mut on_progress,
-                )
-                .await;
-
-            match &result {
-                Ok(value) => tracing::info!(
-                    action = "conversation.pricing.sync",
-                    task_id = %task_id_for_runtime,
-                    models_count = value.models_count,
-                    recalculated = value.recalculated_events_count,
-                    "后台同步模型价格成功"
-                ),
-                Err(error) => tracing::error!(
-                    action = "conversation.pricing.sync",
-                    task_id = %task_id_for_runtime,
-                    error = %error,
-                    "后台同步模型价格失败"
-                ),
-            }
-
-            let json_result =
-                result.map(|dto| serde_json::to_value(dto).unwrap_or(serde_json::Value::Null));
-
-            task_background_tasks.finish_model_pricing_sync(&task_id_for_runtime, json_result)?;
-            Ok(serde_json::Value::Null)
-        });
-
-    if let Err(error) = outcome {
-        return Err(error.into());
-    }
-
-    Ok(snapshot)
+    let snapshot = task_runtime.get(handle.task_id()).ok_or_else(|| {
+        AppError::NotFound(format!("background task not found: {}", handle.task_id()))
+    })?;
+    Ok(crate::backend::application::system::TaskView::from_snapshot(
+        &snapshot,
+    ))
 }
 
 #[tauri::command]
@@ -93,8 +35,8 @@ pub(crate) fn update_model_pricing_catalog(
     state: State<'_, AppState>,
     force: Option<bool>,
     models: Option<Vec<String>>,
-) -> RuntimeAppResult<crate::adapters::tauri::background_tasks::ModelPricingSyncTaskSnapshot> {
-    start_model_pricing_sync_background(
+) -> RuntimeAppResult<crate::backend::application::system::TaskView> {
+    start_model_pricing_sync(
         state.runtime.clone(),
         state.background_tasks.clone(),
         force.unwrap_or(false),
@@ -125,12 +67,21 @@ pub(crate) async fn get_model_pricing_catalog(
 #[tauri::command]
 pub(crate) fn get_model_pricing_sync_task(
     state: State<'_, AppState>,
-) -> RuntimeAppResult<Option<crate::adapters::tauri::background_tasks::ModelPricingSyncTaskSnapshot>>
-{
+) -> RuntimeAppResult<Option<crate::backend::application::system::TaskView>> {
     let tenant_id = state.runtime.context().tenant.id.clone();
-    state
+    Ok(state
         .background_tasks
-        .model_pricing_sync_snapshot_for_tenant(&tenant_id)
+        .task_runtime()
+        .list_for_tenant(
+            &tenant_id,
+            crate::backend::infrastructure::tasks::TaskFilter {
+                kind: Some(crate::backend::infrastructure::tasks::TaskKind::ModelPricingSync),
+                ..Default::default()
+            },
+        )
+        .into_iter()
+        .max_by(|left, right| left.started_at.cmp(&right.started_at))
+        .map(|snapshot| crate::backend::application::system::TaskView::from_snapshot(&snapshot)))
 }
 
 #[tauri::command]
