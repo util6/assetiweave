@@ -779,4 +779,620 @@ describe("TaskCenterModal", () => {
       ).toBeGreaterThanOrEqual(1);
     });
   });
+
+  it("右侧详情将固定摘要顶栏与独立阶段时间线滚动区分离，并采用紧凑单行元信息与指标条带", async () => {
+    mockSelectedTaskId = "task-layout-1";
+    mockTasks = [
+      {
+        id: "task-layout-1",
+        kind: "ConversationSync",
+        category: "conversation/session_sync",
+        resourcePool: "network",
+        tenantId: "default",
+        title: "固定顶栏布局验证任务",
+        state: "succeeded",
+        outcome: "success",
+        startedAt: "2026-09-10T03:00:00Z",
+        finishedAt: "2026-09-10T03:05:30Z",
+        resultSummary: "已完成全部 120 个会话的同步与索引写入，无任何失败记录",
+        metrics: [
+          { code: "m1", value: 10 },
+          { code: "m2", value: 20 },
+          { code: "m3", value: 30 },
+          { code: "m4", value: 40 },
+          { code: "m5", value: 50 },
+          { code: "m6", value: 60 },
+          { code: "m7", value: 70 },
+        ],
+        stages: [
+          {
+            id: "s1",
+            name: "阶段一",
+            status: "succeeded",
+            durationMs: 1200,
+            metrics: [],
+            failures: [],
+            skipped: [],
+          },
+        ],
+        failures: [],
+        capabilities: { cancellable: false, retryable: false, clearable: true },
+        revision: 1,
+      },
+    ];
+
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    const summaryHeader = await screen.findByTestId(
+      "task-detail-summary-header",
+    );
+    const timelineScroll = screen.getByTestId("task-detail-timeline-scroll");
+
+    expect(summaryHeader.className).toContain("shrink-0");
+    expect(timelineScroll.className).toContain("flex-1");
+    expect(timelineScroll.className).toContain("min-h-0");
+    expect(timelineScroll.className).toContain("overflow-y-auto");
+    expect(summaryHeader.contains(timelineScroll)).toBe(false);
+
+    // 阶段时间线位于独立滚动区内，而非顶部摘要卡内
+    expect(within(timelineScroll).getByText("阶段一")).toBeTruthy();
+
+    // 顶部元信息单行防换行且时间携带完整 tooltip
+    const metaRow = screen.getByTestId("task-detail-meta-row");
+    expect(metaRow.className).toContain("whitespace-nowrap");
+    const startTimeEl = within(metaRow).getByTitle(
+      new Date("2026-09-10T03:00:00Z").toLocaleString(),
+    );
+    expect(startTimeEl.className).toContain("tabular-nums");
+
+    // 指标条带为单行横向滚动容器且数字等宽
+    const metricsStrip = screen.getByTestId("task-detail-metrics-strip");
+    expect(metricsStrip.className).toContain("flex-nowrap");
+    expect(metricsStrip.className).toContain("overflow-x-auto");
+    expect(within(metricsStrip).getByText("70").className).toContain(
+      "tabular-nums",
+    );
+  });
+
+  it("左侧任务列表行跨状态维持一致的两行固定骨架，并将运行期进度轨贴合底边绝对定位而不撑高行高", async () => {
+    mockSelectedTaskId = "task-row-running-det";
+    mockTasks = [
+      {
+        id: "task-row-pending",
+        kind: "ConversationSync",
+        title: "排队中任务",
+        state: "pending",
+        startedAt: "2026-09-10T03:00:00Z",
+        stages: [],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: true, retryable: false, clearable: false },
+        revision: 1,
+      },
+      {
+        id: "task-row-running-det",
+        kind: "ConversationSync",
+        title: "运行中确定进度任务",
+        state: "running",
+        startedAt: "2026-09-10T03:01:00Z",
+        progress: { current: 3, total: 10, note: "正在同步第 3/10 批" },
+        stages: [],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: true, retryable: false, clearable: false },
+        revision: 2,
+      },
+      {
+        id: "task-row-running-indet",
+        kind: "Memory",
+        title: "运行中不确定进度任务",
+        state: "running",
+        startedAt: "2026-09-10T03:02:00Z",
+        progress: { current: 4, total: null, note: "正在分析上下文" },
+        stages: [],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: true, retryable: false, clearable: false },
+        revision: 2,
+      },
+      {
+        id: "task-row-done",
+        kind: "Backup",
+        title: "已完成任务",
+        state: "succeeded",
+        outcome: "success",
+        startedAt: "2026-09-10T02:50:00Z",
+        stages: [],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: false, retryable: false, clearable: true },
+        revision: 3,
+      },
+    ];
+
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    const taskList = await screen.findByTestId("task-list");
+    const rows = within(taskList).getAllByRole("button");
+    expect(rows).toHaveLength(4);
+
+    for (const row of rows) {
+      expect(row.className).toContain("overflow-hidden");
+      expect(row.className).toContain("min-h-[68px]");
+    }
+
+    // 运行中确定进度行：百分比采用 tabular-nums 并入固定元信息行，底边存在绝对定位进度轨
+    const detRow = within(taskList)
+      .getByText("运行中确定进度任务")
+      .closest("button")!;
+    const detPercent = within(detRow).getByText("30%");
+    expect(detPercent.className).toContain("tabular-nums");
+
+    const detRail = within(detRow).getByTestId(
+      "task-row-progress-rail-task-row-running-det",
+    );
+    expect(detRail.className).toContain("absolute");
+    expect(detRail.className).toContain("bottom-0");
+
+    // 运行中不确定进度行：同样渲染底边绝对定位不确定进度轨
+    const indetRow = within(taskList)
+      .getByText("运行中不确定进度任务")
+      .closest("button")!;
+    const indetRail = within(indetRow).getByTestId(
+      "task-row-progress-rail-task-row-running-indet",
+    );
+    expect(indetRail.className).toContain("absolute");
+    expect(indetRail.className).toContain("bottom-0");
+    expect(indetRail.querySelector("[data-indeterminate='true']")).toBeTruthy();
+
+    // 终态行与排队行：不渲染底边进度轨
+    const doneRow = within(taskList).getByText("已完成任务").closest("button")!;
+    expect(
+      within(doneRow).queryByTestId("task-row-progress-rail-task-row-done"),
+    ).toBeNull();
+  });
+
+  it("运行中与失败阶段默认折叠 steps，运行态展示单行最新步骤预览与总数并支持手动展开收起", async () => {
+    const runningTask: TaskView = {
+      id: "task-steps-collapse",
+      kind: "ConversationSync",
+      title: "步骤默认折叠测试任务",
+      state: "running",
+      stages: [
+        {
+          id: "sync-stage",
+          name: "增量同步阶段",
+          status: "running",
+          progress: { current: 2, total: 5, note: "同步中" },
+          steps: [
+            {
+              timestamp: "2026-09-10T03:00:01Z",
+              operation: "fetch",
+              detail: "拉取历史消息批次 #1",
+              current: 1,
+              total: 5,
+            },
+            {
+              timestamp: "2026-09-10T03:00:02Z",
+              operation: "parse",
+              detail: "解析会话 /very/long/path/session-latest.jsonl 的内容",
+              current: 2,
+              total: 5,
+            },
+          ],
+          metrics: [],
+          failures: [],
+          skipped: [],
+        },
+        {
+          id: "failed-stage",
+          name: "失败阶段",
+          status: "failed",
+          steps: [
+            {
+              timestamp: "2026-09-10T03:00:03Z",
+              operation: "index",
+              detail: "失败阶段历史步骤明细不应自动展开",
+            },
+          ],
+          metrics: [],
+          failures: [],
+          skipped: [],
+        },
+      ],
+      metrics: [],
+      failures: [],
+      capabilities: { cancellable: true, retryable: false, clearable: false },
+      revision: 1,
+    };
+
+    mockSelectedTaskId = "task-steps-collapse";
+    mockTasks = [runningTask];
+
+    const { rerender } = render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    // 1. running 与 failed 阶段均默认折叠，完整历史步骤不渲染
+    expect(screen.queryByText("拉取历史消息批次 #1")).toBeNull();
+    expect(screen.queryByText("失败阶段历史步骤明细不应自动展开")).toBeNull();
+
+    // 2. running 阶段在折叠态展示总步数与最新一条步骤的单行截断预览
+    expect(
+      screen.getByRole("button", { name: /查看详细流程 \(2 个子节点步骤\)/ }),
+    ).toBeTruthy();
+    const preview = screen.getByTestId("stage-latest-step-preview-sync-stage");
+    expect(within(preview).getByText("parse")).toBeTruthy();
+    const previewDetail = within(preview).getByText(
+      "解析会话 /very/long/path/session-latest.jsonl 的内容",
+    );
+    expect(previewDetail.className).toContain("truncate");
+    expect(preview.getAttribute("title")).toContain(
+      "解析会话 /very/long/path/session-latest.jsonl 的内容",
+    );
+
+    // 3. 当 running 阶段更新更多步骤或状态变为 failed 时，不会自动强行展开
+    mockTasks = [
+      {
+        ...runningTask,
+        state: "failed",
+        outcome: "failure",
+        stages: [
+          {
+            ...runningTask.stages[0],
+            status: "failed",
+            steps: [
+              ...(runningTask.stages[0].steps ?? []),
+              {
+                timestamp: "2026-09-10T03:00:04Z",
+                operation: "abort",
+                detail: "阶段异常中断第 3 步",
+              },
+            ],
+          },
+          runningTask.stages[1],
+        ],
+      },
+    ];
+    rerender(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    expect(screen.queryByText("拉取历史消息批次 #1")).toBeNull();
+    expect(screen.queryByText("阶段异常中断第 3 步")).toBeNull();
+    // 终态/failed 折叠态不再显示运行中单行预览，保持与历史回放视图一致
+    expect(
+      screen.queryByTestId("stage-latest-step-preview-sync-stage"),
+    ).toBeNull();
+
+    // 4. 用户手动点击展开后可查看全部步骤，再次点击可收起
+    fireEvent.click(
+      screen.getByRole("button", { name: /查看详细流程 \(3 个子节点步骤\)/ }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText("拉取历史消息批次 #1")).toBeTruthy();
+      expect(screen.getByText("阶段异常中断第 3 步")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "收起流程明细" }));
+    await waitFor(() => {
+      expect(screen.queryByText("拉取历史消息批次 #1")).toBeNull();
+    });
+  });
+
+  it("展开后的步骤列表使用固定高度滚动容器，仅在滚动条贴近底部时自动跟随新增步骤", async () => {
+    const baseTask: TaskView = {
+      id: "task-steps-scroll",
+      kind: "ConversationSync",
+      title: "步骤定高智能滚动测试",
+      state: "running",
+      stages: [
+        {
+          id: "scroll-stage",
+          name: "流式步骤阶段",
+          status: "running",
+          steps: [
+            {
+              timestamp: "2026-09-10T03:00:01Z",
+              operation: "step-1",
+              detail: "步骤一",
+            },
+            {
+              timestamp: "2026-09-10T03:00:02Z",
+              operation: "step-2",
+              detail: "步骤二",
+            },
+          ],
+          metrics: [],
+          failures: [],
+          skipped: [],
+        },
+      ],
+      metrics: [],
+      failures: [],
+      capabilities: { cancellable: true, retryable: false, clearable: false },
+      revision: 1,
+    };
+
+    mockSelectedTaskId = "task-steps-scroll";
+    mockTasks = [baseTask];
+
+    const { rerender } = render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    // 点击展开
+    fireEvent.click(
+      screen.getByRole("button", { name: /查看详细流程 \(2 个子节点步骤\)/ }),
+    );
+
+    const scrollBox = await screen.findByTestId(
+      "stage-steps-list-scroll-stage",
+    );
+    expect(scrollBox.className).toContain("h-56");
+    expect(scrollBox.className).toContain("overflow-y-auto");
+    expect(scrollBox.className).not.toContain("max-h-64");
+
+    // 模拟滚动几何：容器可视高度 224，总高 800，当前贴近底部 (scrollTop = 576)
+    let currentScrollHeight = 800;
+    let currentScrollTop = 576;
+    Object.defineProperty(scrollBox, "clientHeight", {
+      configurable: true,
+      get: () => 224,
+    });
+    Object.defineProperty(scrollBox, "scrollHeight", {
+      configurable: true,
+      get: () => currentScrollHeight,
+    });
+    Object.defineProperty(scrollBox, "scrollTop", {
+      configurable: true,
+      get: () => currentScrollTop,
+      set: (val: number) => {
+        currentScrollTop = val;
+      },
+    });
+
+    fireEvent.scroll(scrollBox);
+
+    // 新增步骤 3：处于底部阈值内，应自动滚动到新底部
+    currentScrollHeight = 860;
+    mockTasks = [
+      {
+        ...baseTask,
+        revision: 2,
+        stages: [
+          {
+            ...baseTask.stages[0],
+            steps: [
+              ...(baseTask.stages[0].steps ?? []),
+              {
+                timestamp: "2026-09-10T03:00:03Z",
+                operation: "step-3",
+                detail: "步骤三",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    rerender(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("步骤三")).toBeTruthy();
+      expect(currentScrollTop).toBe(860);
+    });
+
+    // 用户向上回看早期步骤（远离底部）
+    currentScrollTop = 40;
+    fireEvent.scroll(scrollBox);
+
+    // 新增步骤 4：用户不在底部，不应强行拉回底部
+    currentScrollHeight = 920;
+    mockTasks = [
+      {
+        ...baseTask,
+        revision: 3,
+        stages: [
+          {
+            ...baseTask.stages[0],
+            steps: [
+              ...(mockTasks[0].stages[0].steps ?? []),
+              {
+                timestamp: "2026-09-10T03:00:04Z",
+                operation: "step-4",
+                detail: "步骤四",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    rerender(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("步骤四")).toBeTruthy();
+    });
+    expect(currentScrollTop).toBe(40);
+  });
+
+  it("运行态阶段无 total 时常驻渲染不确定进度条槽位，note 与 worker 路径保持单行定高截断且活跃 Workers 容器在 0→多→0 波动时不卸载", async () => {
+    const stageBase: TaskView["stages"][number] = {
+      id: "ingest-stage",
+      name: "并发抓取阶段",
+      status: "running",
+      durationMs: 2400,
+      progress: {
+        current: 3,
+        total: null,
+        note: "正在扫描 /Users/demo/workspace/very-long-directory/sub-module/file.jsonl",
+      },
+      currentActivities: [],
+      metrics: [],
+      failures: [],
+      skipped: [],
+      steps: [],
+    };
+
+    const taskFrame1: TaskView = {
+      id: "task-stage-stability",
+      kind: "ConversationSync",
+      title: "阶段防抖稳定性测试任务",
+      state: "running",
+      stages: [stageBase],
+      metrics: [],
+      failures: [],
+      capabilities: { cancellable: true, retryable: false, clearable: false },
+      revision: 1,
+    };
+
+    mockSelectedTaskId = "task-stage-stability";
+    mockTasks = [taskFrame1];
+
+    const { rerender } = render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    // 1. progress.note 单行截断并带完整 title 提示
+    const noteEl = await screen.findByTestId("stage-note-ingest-stage");
+    expect(noteEl.className).toContain("truncate");
+    expect(noteEl.className).toContain("h-5");
+    expect(noteEl.getAttribute("title")).toBe(
+      "正在扫描 /Users/demo/workspace/very-long-directory/sub-module/file.jsonl",
+    );
+
+    // 2. 耗时数字使用 tabular-nums
+    const durationEl = screen.getByText("耗时: 2.4s");
+    expect(durationEl.className).toContain("tabular-nums");
+
+    // 3. total 缺失时仍常驻渲染阶段进度条占位（不确定态）
+    const progressSlot = screen.getByTestId("stage-progress-ingest-stage");
+    expect(
+      progressSlot.querySelector("[data-indeterminate='true']"),
+    ).toBeTruthy();
+
+    // 4. currentActivities=0 时，活跃 Workers 固定高度容器仍常驻并展示静态等待提示
+    expect(screen.getByText("活跃 Workers (0)")).toBeTruthy();
+    const workersContainer = screen.getByTestId(
+      "stage-activities-container-ingest-stage",
+    );
+    expect(workersContainer.className).toContain("h-28");
+    expect(workersContainer.className).toContain("overflow-y-auto");
+    expect(
+      within(workersContainer).getByText(/暂无并发执行中的 Worker/),
+    ).toBeTruthy();
+
+    // 5. 帧 2：total 到达 + 2 个 Workers（一个带长 path，一个无 path）+ note 临时为空
+    mockTasks = [
+      {
+        ...taskFrame1,
+        revision: 2,
+        stages: [
+          {
+            ...stageBase,
+            progress: { current: 5, total: 10, note: "" },
+            currentActivities: [
+              {
+                stageId: "ingest-stage",
+                workerId: "w-with-path",
+                operation: "解析超长会话文件操作名称",
+                path: "/Users/demo/very/long/path/to/session-01.jsonl",
+                current: 5,
+                total: 10,
+              },
+              {
+                stageId: "ingest-stage",
+                workerId: "w-no-path",
+                operation: "等待下一批任务",
+                path: null,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    rerender(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    // note 为空时仍保留 h-5 槽位
+    const noteElFrame2 = screen.getByTestId("stage-note-ingest-stage");
+    expect(noteElFrame2.className).toContain("h-5");
+
+    // 进度条平滑切换为确定态 50%，数值使用 tabular-nums
+    const progressFrame2 = screen.getByTestId("stage-progress-ingest-stage");
+    expect(
+      progressFrame2.querySelector("[data-indeterminate='true']"),
+    ).toBeNull();
+    expect(within(progressFrame2).getByText("50%")).toBeTruthy();
+    expect(within(progressFrame2).getByText("5 / 10")).toBeTruthy();
+
+    // 活跃 Workers 为 2，带路径与无路径子卡均保留固定单行 path 槽位
+    expect(screen.getByText("活跃 Workers (2)")).toBeTruthy();
+    const withPathSlot = screen.getByTestId(
+      "stage-activity-path-slot-w-with-path",
+    );
+    expect(withPathSlot.className).toContain("h-5");
+    const pathText = within(withPathSlot).getByText(
+      "/Users/demo/very/long/path/to/session-01.jsonl",
+    );
+    expect(pathText.className).toContain("truncate");
+    expect(pathText.getAttribute("title")).toBe(
+      "/Users/demo/very/long/path/to/session-01.jsonl",
+    );
+
+    const noPathSlot = screen.getByTestId("stage-activity-path-slot-w-no-path");
+    expect(noPathSlot.className).toContain("h-5");
+    expect(within(noPathSlot).getByText("—")).toBeTruthy();
+
+    // 6. 帧 3：currentActivities 回落到 0，容器保持存在而不卸载
+    mockTasks = [
+      {
+        ...taskFrame1,
+        revision: 3,
+        stages: [
+          {
+            ...stageBase,
+            progress: { current: 10, total: 10, note: "收尾中" },
+            currentActivities: [],
+          },
+        ],
+      },
+    ];
+    rerender(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("活跃 Workers (0)")).toBeTruthy();
+    expect(
+      screen.getByTestId("stage-activities-container-ingest-stage"),
+    ).toBeTruthy();
+  });
 });
