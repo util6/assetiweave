@@ -43,19 +43,334 @@ async fn test_pricing_catalog_persistence_and_metadata() {
     let count = upsert_pricing_catalog_entries_sqlx(pool, tenant_id, &[entry], "litellm")
         .await
         .expect("upsert entries");
-    assert_eq!(count, 2);
+    assert_eq!(
+        count, 1,
+        "non-user_override upsert must write only primary base model_id"
+    );
 
     // 3. Load entries
     let loaded = load_pricing_catalog_entries_sqlx(pool, tenant_id)
         .await
         .expect("load entries");
-    assert_eq!(loaded.len(), 2);
-    let loaded_item = loaded
-        .iter()
-        .find(|i| i.model_patterns.contains(&"claude-3-7-sonnet".to_string()))
-        .unwrap();
+    assert_eq!(loaded.len(), 1);
+    let loaded_item = &loaded[0];
+    assert_eq!(loaded_item.model_patterns, vec!["claude-3-7-sonnet"]);
     assert_eq!(loaded_item.currency, "CNY");
+    assert_eq!(loaded_item.source_channel, "litellm");
+    assert!(!loaded_item.price_locked);
+    assert!(!loaded_item.is_ignored);
+    assert!(loaded_item.usage_aliases.is_empty());
     assert!((loaded_item.input_per_million - 21.75).abs() < 1e-4);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_upsert_non_overwrite_locked_and_override_and_loads_metadata_columns() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-pricing-non-overwrite-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+    let tenant_id = "test-tenant";
+
+    // Seed:
+    // 1. Unlocked reference row with existing usage_aliases
+    // 2. Locked reference row (price_locked = 1)
+    // 3. User override row (source_channel = 'user_override', price_locked = 1, 0.0 price)
+    // 4. Zero-priced row with non-empty usage_aliases
+    // 5. Ignored row (__ignore__::deadbeef)
+    sqlx::query(
+        r#"
+        INSERT INTO model_pricing_catalog (
+            tenant_id, model_id, provider, currency,
+            input_per_million, cache_read_per_million, cache_write_per_million,
+            reasoning_per_million, output_per_million,
+            raw_currency, raw_input_per_million, raw_output_per_million,
+            source_channel, price_locked, usage_aliases, created_at, updated_at
+        ) VALUES
+            (?, 'gpt-4o', 'openai', 'CNY', 10.0, 1.0, 1.0, 1.0, 20.0, 'USD', 1.4, 2.8, 'bundled', 0, '["gpt4o-alias"]', 'now', 'now'),
+            (?, 'deepseek-chat', 'deepseek', 'CNY', 5.0, 0.5, 0.5, 0.5, 9.0, 'CNY', 5.0, 9.0, 'litellm', 1, '["ds-alias"]', 'now', 'now'),
+            (?, '__override__::mimo-v2.5-free', 'xiaomi', 'CNY', 0.0, 0.0, 0.0, 0.0, 0.0, 'CNY', 0.0, 0.0, 'user_override', 1, '[]', 'now', 'now'),
+            (?, 'zero-with-alias', 'custom', 'CNY', 0.0, 0.0, 0.0, 0.0, 0.0, 'CNY', 0.0, 0.0, 'bundled', 0, '["custom-raw"]', 'now', 'now'),
+            (?, '__ignore__::deadbeef', 'custom', 'CNY', 0.0, 0.0, 0.0, 0.0, 0.0, 'CNY', 0.0, 0.0, 'user_override', 1, '["dirty \"model\""]', 'now', 'now')
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(tenant_id)
+    .bind(tenant_id)
+    .bind(tenant_id)
+    .bind(tenant_id)
+    .execute(pool)
+    .await
+    .expect("seed rows");
+
+    let sync_entries = vec![
+        ModelPriceEntry {
+            provider: "openai".to_string(),
+            model_patterns: vec!["gpt-4o".to_string(), "gpt-4o*".to_string()],
+            currency: "CNY".to_string(),
+            input_per_million: 18.125,
+            output_per_million: 72.5,
+            ..Default::default()
+        },
+        ModelPriceEntry {
+            provider: "deepseek".to_string(),
+            model_patterns: vec!["deepseek-chat".to_string()],
+            currency: "CNY".to_string(),
+            input_per_million: 99.0,
+            output_per_million: 199.0,
+            ..Default::default()
+        },
+        ModelPriceEntry {
+            provider: "xiaomi".to_string(),
+            model_patterns: vec!["__override__::mimo-v2.5-free".to_string()],
+            currency: "CNY".to_string(),
+            input_per_million: 12.0,
+            output_per_million: 24.0,
+            ..Default::default()
+        },
+        ModelPriceEntry {
+            provider: "anthropic".to_string(),
+            model_patterns: vec!["claude-3-7-sonnet".to_string()],
+            currency: "CNY".to_string(),
+            input_per_million: 21.75,
+            output_per_million: 108.75,
+            ..Default::default()
+        },
+    ];
+
+    let affected = upsert_pricing_catalog_entries_sqlx(pool, tenant_id, &sync_entries, "litellm")
+        .await
+        .expect("sync upsert");
+    assert_eq!(
+        affected, 2,
+        "only unlocked gpt-4o and new claude-3-7-sonnet should count as affected"
+    );
+
+    let loaded = load_pricing_catalog_entries_sqlx(pool, tenant_id)
+        .await
+        .expect("load entries");
+    assert_eq!(loaded.len(), 6);
+
+    let gpt4o = loaded
+        .iter()
+        .find(|e| e.model_patterns == vec!["gpt-4o"])
+        .expect("gpt-4o");
+    assert!((gpt4o.input_per_million - 18.125).abs() < 1e-4);
+    assert_eq!(gpt4o.source_channel, "litellm");
+    assert!(!gpt4o.price_locked);
+    assert_eq!(gpt4o.usage_aliases, vec!["gpt4o-alias"]);
+
+    let ds = loaded
+        .iter()
+        .find(|e| e.model_patterns == vec!["deepseek-chat"])
+        .expect("deepseek-chat");
+    assert!(
+        (ds.input_per_million - 5.0).abs() < 1e-4,
+        "locked row must not be overwritten"
+    );
+    assert!(ds.price_locked);
+    assert_eq!(ds.usage_aliases, vec!["ds-alias"]);
+
+    let zero_alias = loaded
+        .iter()
+        .find(|e| e.model_patterns == vec!["zero-with-alias"])
+        .expect("zero-priced row with usage_aliases must be loaded");
+    assert_eq!(zero_alias.usage_aliases, vec!["custom-raw"]);
+
+    let ignored = loaded
+        .iter()
+        .find(|e| e.model_patterns == vec!["__ignore__::deadbeef"])
+        .expect("ignored row must be loaded");
+    assert!(ignored.is_ignored);
+    assert!(ignored.price_locked);
+    assert_eq!(ignored.source_channel, "user_override");
+
+    drop(database);
+    std::fs::remove_file(path).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_locked_override_row_separation_unlock_and_zero_recalc() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-pricing-lock-sep-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+    let tenant_id = "test-tenant";
+
+    // Seed native reference row with an alias AND a legacy unprefixed user_override row
+    sqlx::query(
+        r#"
+        INSERT INTO model_pricing_catalog (
+            tenant_id, model_id, provider, currency,
+            input_per_million, cache_read_per_million, cache_write_per_million,
+            reasoning_per_million, output_per_million,
+            raw_currency, raw_input_per_million, raw_output_per_million,
+            source_channel, price_locked, usage_aliases, created_at, updated_at
+        ) VALUES
+            (?, 'claude-3-7-sonnet', 'anthropic', 'CNY', 21.75, 2.0, 27.0, 108.75, 108.75, 'USD', 3.0, 15.0, 'litellm', 0, '["custom-sonnet"]', 'now', 'now'),
+            (?, 'legacy-model', 'custom', 'CNY', 10.0, 0.0, 0.0, 20.0, 20.0, 'CNY', 10.0, 20.0, 'user_override', 1, '[]', 'now', 'now')
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(tenant_id)
+    .execute(pool)
+    .await
+    .expect("seed reference and legacy rows");
+
+    // Seed an unpriced usage event for claude-3-7-sonnet
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_usage_events (
+            tenant_id, source_id, adapter_id, external_event_id, timestamp,
+            provider, model, status, input_tokens, output_tokens,
+            cost_basis, currency, created_at, updated_at
+        ) VALUES (
+            ?, 'src-1', 'claude', 'evt-lock-1', '2026-10-05T08:00:00Z',
+            'anthropic', 'claude-3-7-sonnet', 'success', 1000000, 1000000,
+            'none', 'CNY', 'now', 'now'
+        )
+        "#,
+    )
+    .bind(tenant_id)
+    .execute(pool)
+    .await
+    .expect("seed usage event");
+
+    // 1. Save locked ¥0 override -> must create __override__::claude-3-7-sonnet and preserve reference row
+    let zero_override = ModelPriceEntry {
+        provider: "anthropic".to_string(),
+        model_patterns: vec!["claude-3-7-sonnet".to_string()],
+        currency: "CNY".to_string(),
+        input_per_million: 0.0,
+        output_per_million: 0.0,
+        raw_currency: Some("CNY".to_string()),
+        raw_input_per_million: Some(0.0),
+        raw_output_per_million: Some(0.0),
+        ..Default::default()
+    };
+    save_locked_override_sqlx(pool, tenant_id, "claude-3-7-sonnet", &zero_override)
+        .await
+        .expect("save locked override");
+
+    let loaded = load_pricing_catalog_entries_sqlx(pool, tenant_id)
+        .await
+        .expect("load entries");
+    let ref_row = loaded
+        .iter()
+        .find(|e| e.model_patterns == vec!["claude-3-7-sonnet"])
+        .expect("native reference row preserved");
+    assert!(!ref_row.price_locked);
+    assert_eq!(ref_row.source_channel, "litellm");
+    assert!((ref_row.input_per_million - 21.75).abs() < 1e-4);
+    assert_eq!(ref_row.usage_aliases, vec!["custom-sonnet"]);
+
+    let ov_row = loaded
+        .iter()
+        .find(|e| e.model_patterns == vec!["__override__::claude-3-7-sonnet"])
+        .expect("override row created");
+    assert!(ov_row.price_locked);
+    assert_eq!(ov_row.source_channel, "user_override");
+    assert_eq!(ov_row.input_per_million, 0.0);
+
+    // 2. Recalculate with DB-loaded catalog -> locked ¥0 must become 0.0 + catalog_estimated
+    let catalog = PriceCatalog::new("v1".into(), "now".into(), 7.25, loaded);
+    let recalc_count = recalculate_usage_costs_sqlx(pool, tenant_id, &catalog)
+        .await
+        .expect("recalc zero locked");
+    assert_eq!(recalc_count, 1);
+
+    let row = sqlx::query(
+        "SELECT catalog_estimated_cost, cost_basis FROM conversation_usage_events WHERE tenant_id = ? AND external_event_id = 'evt-lock-1'"
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+    .expect("fetch evt");
+    assert_eq!(row.get::<String, _>("cost_basis"), "catalog_estimated");
+    assert_eq!(
+        row.get::<Option<f64>, _>("catalog_estimated_cost"),
+        Some(0.0)
+    );
+
+    // 3. Unlock claude-3-7-sonnet -> removes __override__::claude-3-7-sonnet, falls back to 21.75/108.75
+    set_model_pricing_lock_sqlx(pool, tenant_id, "claude-3-7-sonnet", false, None)
+        .await
+        .expect("unlock claude");
+    let loaded_after_unlock = load_pricing_catalog_entries_sqlx(pool, tenant_id)
+        .await
+        .expect("load after unlock");
+    assert!(!loaded_after_unlock
+        .iter()
+        .any(|e| e.model_patterns == vec!["__override__::claude-3-7-sonnet"]));
+
+    let catalog_unlocked = PriceCatalog::new("v1".into(), "now".into(), 7.25, loaded_after_unlock);
+    recalculate_usage_costs_sqlx(pool, tenant_id, &catalog_unlocked)
+        .await
+        .expect("recalc unlocked");
+    let row_unlocked = sqlx::query(
+        "SELECT catalog_estimated_cost, cost_basis FROM conversation_usage_events WHERE tenant_id = ? AND external_event_id = 'evt-lock-1'"
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+    .expect("fetch evt unlocked");
+    assert_eq!(
+        row_unlocked.get::<String, _>("cost_basis"),
+        "catalog_estimated"
+    );
+    assert!(
+        (row_unlocked
+            .get::<Option<f64>, _>("catalog_estimated_cost")
+            .unwrap()
+            - 130.5)
+            .abs()
+            < 1e-4
+    );
+
+    // 4. Lock from existing DB reference row (fallback = None) and lock from bundled fallback (fallback = Some)
+    set_model_pricing_lock_sqlx(pool, tenant_id, "claude-3-7-sonnet", true, None)
+        .await
+        .expect("re-lock from db reference");
+    let gpt_fallback = ModelPriceEntry {
+        provider: "openai".to_string(),
+        model_patterns: vec!["gpt-4o".to_string()],
+        currency: "CNY".to_string(),
+        input_per_million: 18.125,
+        output_per_million: 72.5,
+        ..Default::default()
+    };
+    set_model_pricing_lock_sqlx(pool, tenant_id, "gpt-4o", true, Some(&gpt_fallback))
+        .await
+        .expect("lock with fallback");
+
+    // 5. Unlock legacy unprefixed user_override row -> clears price_locked = 0
+    set_model_pricing_lock_sqlx(pool, tenant_id, "legacy-model", false, None)
+        .await
+        .expect("unlock legacy row");
+    let loaded_final = load_pricing_catalog_entries_sqlx(pool, tenant_id)
+        .await
+        .expect("load final");
+    assert!(loaded_final
+        .iter()
+        .any(|e| e.model_patterns == vec!["__override__::claude-3-7-sonnet"] && e.price_locked));
+    assert!(loaded_final
+        .iter()
+        .any(|e| e.model_patterns == vec!["__override__::gpt-4o"] && e.price_locked));
+    let legacy = loaded_final
+        .iter()
+        .find(|e| e.model_patterns == vec!["legacy-model"])
+        .expect("legacy row remains with price_locked=0");
+    assert!(!legacy.price_locked);
+
+    drop(database);
+    std::fs::remove_file(path).ok();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -436,4 +751,263 @@ async fn test_migration_adds_lock_and_aliases_and_cleans_dirty_rows() {
             ),
         ]
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_rebind_model_pricing_alias_materializes_bundled_moves_and_unbinds() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-pricing-rebind-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+    let tenant_id = "test-tenant";
+
+    let bundled_gpt4o = ModelPriceEntry {
+        provider: "openai".to_string(),
+        model_patterns: vec!["gpt-4o".to_string(), "gpt-4o-2024*".to_string()],
+        currency: "CNY".to_string(),
+        input_per_million: 18.125,
+        output_per_million: 72.5,
+        raw_currency: Some("USD".to_string()),
+        raw_input_per_million: Some(2.5),
+        raw_output_per_million: Some(10.0),
+        source_channel: "bundled".to_string(),
+        ..Default::default()
+    };
+
+    // 1. Rebind to unmaterialized bundled entry -> materializes 'bundled' row with price_locked = 0
+    rebind_model_pricing_alias_sqlx(pool, tenant_id, "Custom-X-Model", Some(&bundled_gpt4o))
+        .await
+        .expect("rebind to gpt-4o");
+
+    let loaded = load_pricing_catalog_entries_sqlx(pool, tenant_id)
+        .await
+        .expect("load after rebind");
+    let gpt_row = loaded
+        .iter()
+        .find(|e| e.model_patterns == vec!["gpt-4o"])
+        .expect("materialized bundled row");
+    assert_eq!(gpt_row.source_channel, "bundled");
+    assert!(!gpt_row.price_locked);
+    assert_eq!(gpt_row.usage_aliases, vec!["Custom-X-Model"]);
+
+    // 2. Sync updates price on materialized row while preserving usage_aliases
+    let synced_gpt4o = ModelPriceEntry {
+        provider: "openai".to_string(),
+        model_patterns: vec!["gpt-4o".to_string()],
+        currency: "CNY".to_string(),
+        input_per_million: 20.0,
+        output_per_million: 80.0,
+        ..Default::default()
+    };
+    upsert_pricing_catalog_entries_sqlx(pool, tenant_id, &[synced_gpt4o], "litellm")
+        .await
+        .expect("sync update");
+
+    let loaded_synced = load_pricing_catalog_entries_sqlx(pool, tenant_id)
+        .await
+        .expect("load after sync");
+    let gpt_synced = loaded_synced
+        .iter()
+        .find(|e| e.model_patterns == vec!["gpt-4o"])
+        .expect("synced gpt-4o");
+    assert!((gpt_synced.input_per_million - 20.0).abs() < 1e-4);
+    assert_eq!(gpt_synced.source_channel, "litellm");
+    assert_eq!(gpt_synced.usage_aliases, vec!["Custom-X-Model"]);
+
+    // 3. Move alias (case-insensitive trimmed) to claude-3-7-sonnet
+    let claude = ModelPriceEntry {
+        provider: "anthropic".to_string(),
+        model_patterns: vec!["claude-3-7-sonnet".to_string()],
+        currency: "CNY".to_string(),
+        input_per_million: 21.75,
+        output_per_million: 108.75,
+        ..Default::default()
+    };
+    rebind_model_pricing_alias_sqlx(pool, tenant_id, "  custom-x-model  ", Some(&claude))
+        .await
+        .expect("move alias to claude");
+
+    let targets = get_rebind_target_model_ids_sqlx(pool, tenant_id)
+        .await
+        .expect("get rebind targets");
+    assert_eq!(targets, vec!["claude-3-7-sonnet".to_string()]);
+
+    let loaded_moved = load_pricing_catalog_entries_sqlx(pool, tenant_id)
+        .await
+        .expect("load moved");
+    let gpt_after_move = loaded_moved
+        .iter()
+        .find(|e| e.model_patterns == vec!["gpt-4o"])
+        .expect("gpt-4o");
+    assert!(gpt_after_move.usage_aliases.is_empty());
+    let claude_after_move = loaded_moved
+        .iter()
+        .find(|e| e.model_patterns == vec!["claude-3-7-sonnet"])
+        .expect("claude-3-7-sonnet");
+    assert_eq!(claude_after_move.usage_aliases, vec!["custom-x-model"]);
+
+    // 4. Unbind (None) removes alias completely
+    rebind_model_pricing_alias_sqlx(pool, tenant_id, "CUSTOM-X-MODEL", None)
+        .await
+        .expect("unbind alias");
+    let targets_empty = get_rebind_target_model_ids_sqlx(pool, tenant_id)
+        .await
+        .expect("get targets after unbind");
+    assert!(targets_empty.is_empty());
+
+    drop(database);
+    std::fs::remove_file(path).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_ignore_unignore_model_pricing_and_rebind_target_ids() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-pricing-ignore-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+    let tenant_id = "test-tenant";
+
+    let dirty_raw = "dirty \"bad\" model\nline2";
+
+    // Seed a usage event with the dirty raw model
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_usage_events (
+            tenant_id, source_id, adapter_id, external_event_id, timestamp,
+            provider, model, status, input_tokens, output_tokens,
+            cost_basis, currency, created_at, updated_at
+        ) VALUES (
+            ?, 'src-1', 'codex', 'evt-dirty-1', '2026-10-05T08:00:00Z',
+            'codex', ?, 'success', 500000, 500000,
+            'none', 'CNY', 'now', 'now'
+        )
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(dirty_raw)
+    .execute(pool)
+    .await
+    .expect("seed dirty usage event");
+
+    let gpt4o = ModelPriceEntry {
+        provider: "openai".to_string(),
+        model_patterns: vec!["gpt-4o".to_string()],
+        currency: "CNY".to_string(),
+        input_per_million: 18.125,
+        output_per_million: 72.5,
+        ..Default::default()
+    };
+    rebind_model_pricing_alias_sqlx(pool, tenant_id, dirty_raw, Some(&gpt4o))
+        .await
+        .expect("rebind dirty raw first");
+
+    // Seed an active locked override and another aliased model
+    let claude = ModelPriceEntry {
+        provider: "anthropic".to_string(),
+        model_patterns: vec!["claude-3-7-sonnet".to_string()],
+        currency: "CNY".to_string(),
+        input_per_million: 21.75,
+        output_per_million: 108.75,
+        ..Default::default()
+    };
+    save_locked_override_sqlx(pool, tenant_id, "claude-3-7-sonnet", &claude)
+        .await
+        .expect("save locked override");
+
+    let deepseek = ModelPriceEntry {
+        provider: "deepseek".to_string(),
+        model_patterns: vec!["deepseek-chat".to_string()],
+        currency: "CNY".to_string(),
+        input_per_million: 1.0,
+        output_per_million: 2.0,
+        ..Default::default()
+    };
+    rebind_model_pricing_alias_sqlx(pool, tenant_id, "ds-v3-alias", Some(&deepseek))
+        .await
+        .expect("rebind deepseek alias");
+
+    // Ignore dirty_raw -> removes from gpt-4o usage_aliases and creates __ignore__::...
+    set_model_pricing_ignored_sqlx(pool, tenant_id, dirty_raw, Some("codex"), true)
+        .await
+        .expect("ignore dirty raw");
+
+    let targets = get_rebind_target_model_ids_sqlx(pool, tenant_id)
+        .await
+        .expect("get rebind target ids");
+    assert_eq!(
+        targets,
+        vec![
+            "claude-3-7-sonnet".to_string(),
+            "deepseek-chat".to_string()
+        ],
+        "must include locked override (stripped) and aliased rows, excluding ignored and empty-alias gpt-4o"
+    );
+
+    let loaded = load_pricing_catalog_entries_sqlx(pool, tenant_id)
+        .await
+        .expect("load entries");
+    let ignored_entry = loaded
+        .iter()
+        .find(|e| e.is_ignored)
+        .expect("ignored entry present");
+    assert!(ignored_entry.model_patterns[0].starts_with(IGNORE_MODEL_ID_PREFIX));
+    assert_eq!(ignored_entry.source_channel, "user_override");
+    assert!(ignored_entry.price_locked);
+    assert_eq!(ignored_entry.input_per_million, 0.0);
+    assert_eq!(ignored_entry.usage_aliases, vec![dirty_raw.to_string()]);
+
+    let catalog = PriceCatalog::new("v1".into(), "now".into(), 7.25, loaded);
+    recalculate_usage_costs_sqlx(pool, tenant_id, &catalog)
+        .await
+        .expect("recalc ignored");
+    let row = sqlx::query(
+        "SELECT catalog_estimated_cost, cost_basis FROM conversation_usage_events WHERE tenant_id = ? AND external_event_id = 'evt-dirty-1'",
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+    .expect("fetch ignored event");
+    assert_eq!(row.get::<String, _>("cost_basis"), "catalog_estimated");
+    assert_eq!(
+        row.get::<Option<f64>, _>("catalog_estimated_cost"),
+        Some(0.0)
+    );
+
+    // Unignore (case-insensitive) -> removes __ignore__ row and resets event to none
+    set_model_pricing_ignored_sqlx(pool, tenant_id, "DIRTY \"BAD\" MODEL\nLINE2", None, false)
+        .await
+        .expect("unignore dirty raw");
+
+    let loaded_unignored = load_pricing_catalog_entries_sqlx(pool, tenant_id)
+        .await
+        .expect("load after unignore");
+    assert!(!loaded_unignored.iter().any(|e| e.is_ignored));
+
+    let catalog_unignored = PriceCatalog::new("v1".into(), "now".into(), 7.25, loaded_unignored);
+    recalculate_usage_costs_sqlx(pool, tenant_id, &catalog_unignored)
+        .await
+        .expect("recalc after unignore");
+    let row_unignored = sqlx::query(
+        "SELECT catalog_estimated_cost, cost_basis FROM conversation_usage_events WHERE tenant_id = ? AND external_event_id = 'evt-dirty-1'",
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+    .expect("fetch unignored event");
+    assert_eq!(row_unignored.get::<String, _>("cost_basis"), "none");
+    assert_eq!(
+        row_unignored.get::<Option<f64>, _>("catalog_estimated_cost"),
+        None
+    );
+
+    drop(database);
+    std::fs::remove_file(path).ok();
 }
