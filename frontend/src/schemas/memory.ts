@@ -1,11 +1,14 @@
 import { z } from "zod";
 import type {
   MemoryContextResult,
+  MemoryNodeStatus,
+  MemoryProjectStateView,
   MemoryProjectView,
   MemoryRecallSearchResult,
   MemoryRecallSession,
   MemoryRebuildResult,
   MemoryTaskView,
+  MemoryTreeNode,
   RecentMemoryEventTarget,
   RecentMemorySession,
   RecentMemoryStateView,
@@ -216,19 +219,45 @@ export const memoryTaskViewSchema: z.ZodType<MemoryTaskView> = z.object({
   detail: z.record(z.string(), z.unknown()),
 });
 
-export const recentNodeStatusSchema = z.enum([
+export const recentNodeStatusSchema: z.ZodType<RecentNodeStatus> = z.enum([
   "completed",
   "continued",
   "unexplored",
 ]);
 
+export const memoryNodeStatusSchema: z.ZodType<MemoryNodeStatus> = z.enum([
+  "completed",
+  "continued",
+  "unexplored",
+  "dismissed",
+]);
+
+export const memoryTreeNodeSchema: z.ZodType<MemoryTreeNode> = z.object({
+  id: z.string(),
+  parent_id: z.string().nullable(),
+  topic_id: z.string(),
+  summary: z.string(),
+  status: memoryNodeStatusSchema,
+  source_session_id: z.string(),
+  turn_index: z.number().int(),
+  turn_started_at: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
 export const recentTreeNodeViewSchema: z.ZodType<RecentTreeNodeView> = z.object({
   id: z.string(),
   parentId: z.string().nullable(),
-  status: recentNodeStatusSchema,
+  status: memoryNodeStatusSchema,
   label: z.string(),
   summary: z.string(),
   recordedAt: z.string().nullable().optional(),
+  sourceSessionId: z.string().nullable().optional(),
+  turnIndex: z.number().int().nullable().optional(),
+  sessionTitle: z.string().nullable().optional(),
+  sourceAgent: z.string().nullable().optional(),
+  sessionAvailable: z.boolean().nullable().optional(),
+  parentSummary: z.string().nullable().optional(),
 });
 
 export const recentTopicViewSchema: z.ZodType<RecentTopicView> = z.object({
@@ -237,6 +266,16 @@ export const recentTopicViewSchema: z.ZodType<RecentTopicView> = z.object({
   updatedAt: z.string(),
   nodes: z.array(recentTreeNodeViewSchema),
 });
+
+export const memoryProjectStateViewSchema: z.ZodType<MemoryProjectStateView> =
+  z.object({
+    projectKey: z.string(),
+    projectTitle: z.string(),
+    projectPath: z.string().nullable(),
+    updatedAt: z.string(),
+    watermarkCount: z.number().int().nonnegative(),
+    topics: z.array(recentTopicViewSchema),
+  });
 
 export const recentMemoryStateViewSchema: z.ZodType<RecentMemoryStateView> =
   z.object({

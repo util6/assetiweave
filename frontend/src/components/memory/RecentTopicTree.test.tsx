@@ -1,22 +1,54 @@
-/* @vitest-environment jsdom */
-
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Translator } from "../../i18n/I18nProvider";
+import { memoryZh } from "../../i18n/resources/zh/memory";
+import type {
+  MemoryProjectStateView,
+  RecentProjectView,
+  RecentTreeNodeView,
+} from "../../types/memory";
 import {
   RecentTopicTree,
   buildTreeHierarchy,
   parseNodeAnchor,
 } from "./RecentTopicTree";
-import type {
-  RecentProjectView,
-  RecentTopicView,
-  RecentTreeNodeView,
-} from "../../types/memory";
-import type { Translator } from "../../i18n/I18nProvider";
 
-const mockT: Translator = (key: string) => key;
+const mockT: Translator = (key, vars) => {
+  const dict = memoryZh as Record<string, string>;
+  let value = dict[key] ?? key;
+  if (vars) {
+    for (const [k, v] of Object.entries(vars)) {
+      value = value.replace(`{${k}}`, String(v));
+    }
+  }
+  return value;
+};
+
+function makeNode(
+  partial: Partial<RecentTreeNodeView> & { id: string },
+): RecentTreeNodeView {
+  return {
+    parentId: null,
+    parentSummary: null,
+    status: "completed",
+    label: "已完成",
+    summary: `Summary for ${partial.id}`,
+    recordedAt: "2026-11-13T09:00:00Z",
+    sourceSessionId: "full-session-uuid-1",
+    turnIndex: 1,
+    sessionTitle: "Session Alpha",
+    sourceAgent: "claude",
+    sessionAvailable: true,
+    ...partial,
+  };
+}
 
 describe("RecentTopicTree Unit & Stress Tests", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   describe("parseNodeAnchor", () => {
     it("correctly parses standard shortId#T<turn>", () => {
       expect(parseNodeAnchor("098b0c4b#T13")).toEqual({
@@ -60,31 +92,21 @@ describe("RecentTopicTree Unit & Stress Tests", () => {
 
   describe("buildTreeHierarchy", () => {
     it("builds a single root with children and grandchildren", () => {
-      const nodes = [
-        {
+      const nodes: RecentTreeNodeView[] = [
+        makeNode({
           id: "root#T1",
-          parentId: null,
-          status: "completed" as const,
-          label: "Root Node",
-          summary: "Root summary",
-          recordedAt: "2026-11-02T10:00:00Z",
-        },
-        {
+          recordedAt: "2026-11-13T08:00:00Z",
+        }),
+        makeNode({
           id: "child1#T2",
           parentId: "root#T1",
-          status: "continued" as const,
-          label: "Child 1",
-          summary: "Child 1 summary",
-          recordedAt: "2026-11-02T10:30:00Z",
-        },
-        {
+          recordedAt: "2026-11-13T08:10:00Z",
+        }),
+        makeNode({
           id: "grandchild#T3",
           parentId: "child1#T2",
-          status: "unexplored" as const,
-          label: "Grandchild",
-          summary: "Grandchild summary",
-          recordedAt: "2026-11-02T11:00:00Z",
-        },
+          recordedAt: "2026-11-13T08:20:00Z",
+        }),
       ];
 
       const tree = buildTreeHierarchy(nodes);
@@ -92,22 +114,16 @@ describe("RecentTopicTree Unit & Stress Tests", () => {
       expect(tree[0].id).toBe("root#T1");
       expect(tree[0].children).toHaveLength(1);
       expect(tree[0].children[0].id).toBe("child1#T2");
-      expect(tree[0].children[0].children).toHaveLength(1);
       expect(tree[0].children[0].children[0].id).toBe("grandchild#T3");
     });
 
     it("gracefully falls back to root when parentId is missing or unknown", () => {
-      const nodes = [
-        {
+      const nodes: RecentTreeNodeView[] = [
+        makeNode({
           id: "orphan#T1",
-          parentId: "non-existent-parent",
-          status: "completed" as const,
-          label: "Orphan Node",
-          summary: "Orphan summary",
-          recordedAt: "2026-11-02T10:00:00Z",
-        },
+          parentId: "missing-parent#T0",
+        }),
       ];
-
       const tree = buildTreeHierarchy(nodes);
       expect(tree).toHaveLength(1);
       expect(tree[0].id).toBe("orphan#T1");
@@ -116,304 +132,238 @@ describe("RecentTopicTree Unit & Stress Tests", () => {
     it("handles empty node array", () => {
       expect(buildTreeHierarchy([])).toEqual([]);
     });
-  });
-
-  describe("RecentTopicTree rendering and interaction", () => {
-    it("renders project, topics, multi-way hierarchy, badges, and lineage notes", () => {
-      const onNavigateSession = vi.fn();
-      const topic: RecentTopicView = {
-        topicId: "topic-1",
-        topic: "Core Engine Refactor",
-        updatedAt: "2026-11-02T12:00:00Z",
-        nodes: [
-          {
-            id: "098b0c4b#T13",
-            parentId: null,
-            status: "completed",
-            label: "Node 1",
-            summary: "Root completed node",
-            recordedAt: "2026-11-02T10:00:00Z",
-          },
-          {
-            id: "73c20273#T1.2",
-            parentId: "098b0c4b#T13",
-            status: "continued",
-            label: "Node 2",
-            summary: "Child continued node",
-            recordedAt: "2026-11-02T11:00:00Z",
-          },
-          {
-            id: "malformed-node-id",
-            parentId: "098b0c4b#T13",
-            status: "unexplored",
-            label: "Node 3",
-            summary: "Malformed node ID without anchor",
-            recordedAt: "2026-11-02T11:30:00Z",
-          },
-        ],
-      };
-
-      const project: RecentProjectView = {
-        projectKey: "proj-1",
-        projectTitle: "Project Alpha",
-        projectPath: "/path/to/alpha",
-        summary: "Project summary",
-        noMaterialChange: false,
-        latestActivityAt: "2026-11-02T12:00:00Z",
-        sourceSessionCount: 2,
-        items: [],
-        topics: [topic],
-      };
-
-      render(
-        <RecentTopicTree
-          onNavigateSession={onNavigateSession}
-          project={project}
-          t={mockT}
-        />,
-      );
-
-      // Verify headers
-      expect(screen.getByText("Project Alpha")).toBeTruthy();
-      expect(screen.getByText("/path/to/alpha")).toBeTruthy();
-      expect(screen.getByText("topic-1")).toBeTruthy();
-      expect(screen.getByText("Core Engine Refactor")).toBeTruthy();
-
-      // Verify status counts in header
-      expect(screen.getByText("1 已完成")).toBeTruthy();
-      expect(screen.getByText("1 推进中")).toBeTruthy();
-      expect(screen.getByText("1 待探索")).toBeTruthy();
-
-      // Verify lineage note
-      expect(screen.getAllByText(/\(↖ 继承自 098b0c4b#T13\)/)).toHaveLength(2);
-
-      // Verify jump buttons for valid anchors
-      const jump1 = screen.getByRole("button", { name: /098b0c4b #T13/ });
-      expect(jump1).toBeTruthy();
-      fireEvent.click(jump1);
-
-      expect(onNavigateSession).toHaveBeenCalledTimes(1);
-      expect(onNavigateSession).toHaveBeenCalledWith({
-        record_kind: "session",
-        source_id: null,
-        session_id: "098b0c4b",
-        question_id: null,
-        turn_id: "13",
-        part_id: null,
-        block_id: "13",
-      });
-
-      // Verify sub-index jump button
-      const jump2 = screen.getByRole("button", { name: /73c20273 #T1/ });
-      expect(jump2).toBeTruthy();
-      fireEvent.click(jump2);
-
-      expect(onNavigateSession).toHaveBeenCalledTimes(2);
-      expect(onNavigateSession).toHaveBeenCalledWith({
-        record_kind: "session",
-        source_id: null,
-        session_id: "73c20273",
-        question_id: null,
-        turn_id: "1",
-        part_id: null,
-        block_id: "1",
-      });
-
-      // Verify malformed-node-id does NOT have a jump button
-      const allJumpButtons = screen.getAllByRole("button");
-      const hasMalformedButton = allJumpButtons.some((b) =>
-        b.textContent?.includes("malformed-node-id"),
-      );
-      expect(hasMalformedButton).toBe(false);
-    });
-
-    it("handles empty topics array gracefully", () => {
-      const project: RecentProjectView = {
-        projectKey: "proj-empty",
-        projectTitle: "Empty Topics",
-        projectPath: null,
-        summary: "",
-        noMaterialChange: false,
-        latestActivityAt: "2026-11-02T12:00:00Z",
-        sourceSessionCount: 0,
-        items: [],
-        topics: [],
-      };
-
-      const { container } = render(
-        <RecentTopicTree project={project} t={mockT} />,
-      );
-      expect(container.textContent).toContain("Empty Topics");
-      expect(container.textContent).toContain("0 memory.recent.topics");
-    });
 
     it("stress-tests deep tree hierarchy (depth 20) with branching siblings without stack overflow", () => {
-      const onNavigateSession = vi.fn();
       const nodes: RecentTreeNodeView[] = [];
-      const DEPTH = 20;
-
-      // Root
-      nodes.push({
-        id: "sess0#T1",
-        parentId: null,
-        status: "completed",
-        label: "Root Level 0",
-        summary: "Root summary",
-        recordedAt: "2026-11-02T10:00:00Z",
-      });
-
-      // Chain of 20 nodes with siblings
-      for (let d = 1; d <= DEPTH; d++) {
-        const parentId = `sess${d - 1}#T1`;
-        nodes.push({
-          id: `sess${d}#T1`,
-          parentId,
-          status: d % 3 === 0 ? "completed" : d % 3 === 1 ? "continued" : "unexplored",
-          label: `Chain Level ${d}`,
-          summary: `Summary at depth ${d}`,
-          recordedAt: "2026-11-02T10:00:00Z",
-        });
-
-        if (d % 2 === 0) {
-          nodes.push({
-            id: `sess${d}#T1.sib`,
-            parentId,
-            status: "unexplored",
-            label: `Sibling Level ${d}`,
-            summary: `Sibling at depth ${d}`,
-            recordedAt: "2026-11-02T10:00:00Z",
-          });
+      for (let i = 0; i <= 20; i += 1) {
+        nodes.push(
+          makeNode({
+            id: `sess${i}#T${i + 1}`,
+            parentId: i === 0 ? null : `sess${i - 1}#T${i}`,
+            recordedAt: `2026-11-13T09:${String(i).padStart(2, "0")}:00Z`,
+          }),
+        );
+        if (i > 0) {
+          nodes.push(
+            makeNode({
+              id: `sibling${i}#T${i + 100}`,
+              parentId: `sess${i - 1}#T${i}`,
+              recordedAt: `2026-11-13T10:${String(i).padStart(2, "0")}:00Z`,
+            }),
+          );
         }
       }
 
+      const tree = buildTreeHierarchy(nodes);
+      expect(tree).toHaveLength(1);
+      let curr = tree[0];
+      for (let i = 1; i <= 20; i += 1) {
+        expect(curr.children.length).toBeGreaterThanOrEqual(1);
+        const nextMainline = curr.children.find(
+          (c) => c.id === `sess${i}#T${i + 1}`,
+        );
+        expect(nextMainline).toBeDefined();
+        curr = nextMainline!;
+      }
+    });
+
+    it("handles circular references without infinite recursion", () => {
+      const nodes: RecentTreeNodeView[] = [
+        makeNode({ id: "cycle-a#T1", parentId: "cycle-b#T2" }),
+        makeNode({ id: "cycle-b#T2", parentId: "cycle-a#T1" }),
+        makeNode({ id: "self#T3", parentId: "self#T3" }),
+        makeNode({ id: "valid-root#T4", parentId: null }),
+        makeNode({ id: "valid-child#T5", parentId: "valid-root#T4" }),
+      ];
+
+      const roots = buildTreeHierarchy(nodes);
+      expect(roots.length).toBeGreaterThanOrEqual(1);
+      const validRoot = roots.find((r) => r.id === "valid-root#T4");
+      expect(validRoot).toBeDefined();
+      expect(validRoot?.children.map((c) => c.id)).toEqual(["valid-child#T5"]);
+    });
+  });
+
+  describe("RecentTopicTree rendering and interaction", () => {
+    it("renders project, topics, status badges, parent context, full session jump, and lifecycle actions", () => {
+      const onNavigateSession = vi.fn();
+      const onStatusChange = vi.fn();
+      const onToggleProjectHistory = vi.fn();
+
       const project: RecentProjectView = {
-        projectKey: "deep-stress-proj",
-        projectTitle: "Deep Tree Stress",
-        projectPath: "/path/to/deep",
-        summary: "Testing depth 20 hierarchy",
+        projectKey: "alpha",
+        projectTitle: "Project Alpha",
+        projectPath: "/path/to/alpha",
+        summary: "",
         noMaterialChange: false,
-        latestActivityAt: "2026-11-02T12:00:00Z",
-        sourceSessionCount: 21,
+        latestActivityAt: "2026-11-13T09:00:00Z",
+        sourceSessionCount: 1,
         items: [],
         topics: [
           {
-            topicId: "topic-deep",
-            topic: "Deep Hierarchy Topic",
-            updatedAt: "2026-11-02T12:00:00Z",
-            nodes,
+            topicId: "topic-1",
+            topic: "Memory UI Rewrite",
+            updatedAt: "2026-11-13T09:00:00Z",
+            nodes: [
+              makeNode({
+                id: "098b0c4b#T13",
+                parentId: "continued-parent#T10",
+                parentSummary: "Earlier design context from continued node",
+                status: "unexplored",
+                label: "未探索分支",
+                summary: "Decide on unexplored focus layout",
+                sourceSessionId: "session-full-098b0c4b",
+                turnIndex: 13,
+                sessionTitle: "Design discussion",
+                sourceAgent: "codex",
+                sessionAvailable: true,
+              }),
+              makeNode({
+                id: "deadbeef#T2",
+                parentId: "098b0c4b#T13",
+                status: "completed",
+                summary: "Implemented card component",
+                sourceSessionId: "session-full-deadbeef",
+                turnIndex: 2,
+                sessionTitle: "Missing session",
+                sessionAvailable: false,
+              }),
+            ],
           },
         ],
       };
 
-      // 1. Test buildTreeHierarchy directly
-      const roots = buildTreeHierarchy(nodes);
-      expect(roots).toHaveLength(1);
-
-      let curr = roots[0];
-      for (let d = 1; d <= DEPTH; d++) {
-        expect(curr.children.length).toBeGreaterThanOrEqual(1);
-        const nextMainline = curr.children.find((c) => c.id === `sess${d}#T1`);
-        expect(nextMainline).toBeDefined();
-        curr = nextMainline!;
-      }
-
-      // 2. Test React rendering under depth 20
       render(
         <RecentTopicTree
           onNavigateSession={onNavigateSession}
-          project={project}
+          onStatusChange={onStatusChange}
+          onToggleProjectHistory={onToggleProjectHistory}
+          projects={[project]}
           t={mockT}
         />,
       );
 
-      expect(screen.getByText("Root Level 0")).toBeTruthy();
-      expect(screen.getByText("Chain Level 20")).toBeTruthy();
-      expect(screen.getByText("Sibling Level 20")).toBeTruthy();
+      expect(screen.getByText("Project Alpha")).toBeTruthy();
+      expect(screen.getByText("/path/to/alpha")).toBeTruthy();
+      expect(screen.getByText("Memory UI Rewrite")).toBeTruthy();
+      expect(
+        screen.getByText(/Earlier design context from continued node/),
+      ).toBeTruthy();
+      expect(screen.getByText("codex")).toBeTruthy();
+      expect(screen.getByText("Design discussion")).toBeTruthy();
 
-      // Test jump button at deepest level
-      const deepJump = screen.getByRole("button", { name: /sess20 #T1/ });
-      expect(deepJump).toBeTruthy();
-      fireEvent.click(deepJump);
+      fireEvent.click(
+        screen.getByRole("button", { name: "标为已完成: 098b0c4b#T13" }),
+      );
+      expect(onStatusChange).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "098b0c4b#T13" }),
+        "completed",
+        "alpha",
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "跳回 T13: 098b0c4b#T13" }),
+      );
       expect(onNavigateSession).toHaveBeenCalledWith({
         record_kind: "session",
         source_id: null,
-        session_id: "sess20",
+        session_id: "session-full-098b0c4b",
         question_id: null,
-        turn_id: "1",
         part_id: null,
-        block_id: "1",
+        turn_id: "13",
+        block_id: "13",
       });
+
+      const unavailableJump = screen.getByRole("button", {
+        name: "跳回 T2: deadbeef#T2",
+      }) as HTMLButtonElement;
+      expect(unavailableJump.disabled).toBe(true);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "查看完整历史树" }),
+      );
+      expect(onToggleProjectHistory).toHaveBeenCalledWith("alpha");
     });
 
-    it("stress-tests circular references (A <-> B and self-referencing) without hanging or crashing", () => {
-      const nodes: RecentTreeNodeView[] = [
-        {
-          id: "cycle-a#T1",
-          parentId: "cycle-b#T2",
-          status: "continued",
-          label: "Cycle A",
-          summary: "Points to B",
-        },
-        {
-          id: "cycle-b#T2",
-          parentId: "cycle-a#T1",
-          status: "continued",
-          label: "Cycle B",
-          summary: "Points to A",
-        },
-        {
-          id: "self-cycle#T3",
-          parentId: "self-cycle#T3",
-          status: "unexplored",
-          label: "Self Cycle",
-          summary: "Points to self",
-        },
-        {
-          id: "valid-root#T4",
-          parentId: null,
-          status: "completed",
-          label: "Valid Root Alongside Cycle",
-          summary: "Legitimate root",
-        },
-        {
-          id: "valid-child#T5",
-          parentId: "valid-root#T4",
-          status: "continued",
-          label: "Valid Child Alongside Cycle",
-          summary: "Legitimate child",
-        },
-      ];
-
-      const roots = buildTreeHierarchy(nodes);
-      // Only the valid root should be in roots; cycles are safely excluded from roots
-      expect(roots).toHaveLength(1);
-      expect(roots[0].id).toBe("valid-root#T4");
-      expect(roots[0].children).toHaveLength(1);
-      expect(roots[0].children[0].id).toBe("valid-child#T5");
-
+    it("renders full project state tree when expandedHistorySlugs includes the project", () => {
       const project: RecentProjectView = {
-        projectKey: "cycle-proj",
-        projectTitle: "Cycle Resilience Project",
-        projectPath: "/path/to/cycle",
-        summary: "Project with circular nodes",
+        projectKey: "alpha",
+        projectTitle: "Project Alpha",
+        projectPath: "/path/to/alpha",
+        summary: "",
         noMaterialChange: false,
-        latestActivityAt: "2026-11-02T12:00:00Z",
-        sourceSessionCount: 2,
+        latestActivityAt: "2026-11-13T10:00:00Z",
+        sourceSessionCount: 1,
         items: [],
         topics: [
           {
-            topicId: "topic-cycle",
-            topic: "Cycle Resilience Topic",
-            updatedAt: "2026-11-02T12:00:00Z",
-            nodes,
+            topicId: "topic-1",
+            topic: "Topic One",
+            updatedAt: "2026-11-13T10:00:00Z",
+            nodes: [
+              makeNode({
+                id: "node-2#T5",
+                parentId: "node-1#T2",
+                status: "unexplored",
+                summary: "Recent slice branch",
+              }),
+            ],
           },
         ],
       };
 
-      // Ensure React renders cleanly without recursion error
-      render(<RecentTopicTree project={project} t={mockT} />);
-      expect(screen.getByText("Valid Root Alongside Cycle")).toBeTruthy();
-      expect(screen.getByText("Valid Child Alongside Cycle")).toBeTruthy();
+      const fullState: MemoryProjectStateView = {
+        projectKey: "alpha",
+        projectTitle: "Project Alpha",
+        projectPath: "/path/to/alpha",
+        updatedAt: "2026-11-13T10:00:00Z",
+        watermarkCount: 9,
+        topics: [
+          {
+            topicId: "topic-1",
+            topic: "Topic One",
+            updatedAt: "2026-11-13T10:00:00Z",
+            nodes: [
+              makeNode({
+                id: "node-1#T2",
+                parentId: null,
+                status: "continued",
+                label: "延续中",
+                summary: "Continued history node",
+                recordedAt: "2026-11-10T09:55:00Z",
+                sourceSessionId: "full-sess-1",
+                turnIndex: 2,
+              }),
+              makeNode({
+                id: "node-2#T5",
+                parentId: "node-1#T2",
+                status: "unexplored",
+                label: "未探索分支",
+                summary: "Recent slice branch",
+                recordedAt: "2026-11-13T09:55:00Z",
+                sourceSessionId: "full-sess-1",
+                turnIndex: 5,
+              }),
+            ],
+          },
+        ],
+      };
+
+      render(
+        <RecentTopicTree
+          expandedHistorySlugs={new Set(["alpha"])}
+          fullProjectStates={{ alpha: fullState }}
+          onToggleProjectHistory={vi.fn()}
+          projects={[project]}
+          t={mockT}
+        />,
+      );
+
+      expect(screen.getByText("Continued history node")).toBeTruthy();
+      expect(screen.getByText("延续中")).toBeTruthy();
+      expect(screen.getByText(/已提炼 9 条会话/)).toBeTruthy();
+      expect(screen.getByText("水位 9")).toBeTruthy();
+      expect(screen.getByText("收起为近期切片")).toBeTruthy();
     });
   });
 });

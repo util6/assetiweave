@@ -236,14 +236,34 @@ export interface RecentMemoryItemView {
 }
 
 export type RecentNodeStatus = "completed" | "continued" | "unexplored";
+export type MemoryNodeStatus = RecentNodeStatus | "dismissed";
+
+export interface MemoryTreeNode {
+  id: string;
+  parent_id: string | null;
+  topic_id: string;
+  summary: string;
+  status: MemoryNodeStatus;
+  source_session_id: string;
+  turn_index: number;
+  turn_started_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface RecentTreeNodeView {
   id: string;
   parentId: string | null;
-  status: RecentNodeStatus;
+  status: MemoryNodeStatus;
   label: string;
   summary: string;
   recordedAt?: string | null;
+  sourceSessionId?: string | null;
+  turnIndex?: number | null;
+  sessionTitle?: string | null;
+  sourceAgent?: string | null;
+  sessionAvailable?: boolean | null;
+  parentSummary?: string | null;
 }
 
 export interface RecentTopicView {
@@ -251,6 +271,15 @@ export interface RecentTopicView {
   topic: string;
   updatedAt: string;
   nodes: RecentTreeNodeView[];
+}
+
+export interface MemoryProjectStateView {
+  projectKey: string;
+  projectTitle: string;
+  projectPath: string | null;
+  updatedAt: string;
+  watermarkCount: number;
+  topics: RecentTopicView[];
 }
 
 export interface RecentProjectView {

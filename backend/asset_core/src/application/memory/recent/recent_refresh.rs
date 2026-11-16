@@ -69,6 +69,7 @@ impl AppService {
         let duration = parse_window_duration(window);
         let cutoff = chrono::Utc::now() - duration;
         let mut recent_state = RecentMemoryState::new();
+        recent_state.window_hours = Some(duration.num_hours().max(1));
 
         for proj in load_all_project_states(storage)? {
             let mut filtered_trees = HashMap::new();

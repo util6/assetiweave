@@ -330,6 +330,8 @@ fn is_newer_node(existing: &MemoryTreeNode, legacy: &MemoryTreeNode) -> bool {
 pub struct RecentMemoryState {
     #[serde(default)]
     pub projects: HashMap<String, ProjectMemoryState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_hours: Option<i64>,
     pub updated_at: String,
 }
 
@@ -343,6 +345,7 @@ impl RecentMemoryState {
     pub fn new() -> Self {
         Self {
             projects: HashMap::new(),
+            window_hours: None,
             updated_at: Utc::now().to_rfc3339(),
         }
     }

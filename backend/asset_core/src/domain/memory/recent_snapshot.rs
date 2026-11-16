@@ -76,6 +76,49 @@ pub struct RecentTreeNodeView {
         alias = "recorded_at"
     )]
     pub recorded_at: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "source_session_id"
+    )]
+    pub source_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "turn_index")]
+    pub turn_index: Option<u32>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "session_title"
+    )]
+    pub session_title: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "source_agent"
+    )]
+    pub source_agent: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "session_available"
+    )]
+    pub session_available: Option<bool>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "parent_summary"
+    )]
+    pub parent_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryProjectStateView {
+    pub project_key: String,
+    pub project_title: String,
+    pub project_path: Option<String>,
+    pub updated_at: String,
+    pub watermark_count: usize,
+    pub topics: Vec<RecentTopicView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

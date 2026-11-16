@@ -1,1172 +1,766 @@
 import {
   AlertCircle,
-  Calendar,
-  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Clock3,
-  Copy,
-  ExternalLink,
+  Filter,
   FolderOpen,
+  GitBranch,
+  Layers,
   RefreshCw,
+  RotateCcw,
   Sparkles,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import clsx from "clsx";
+import { useMemoryTasks } from "../../app/backgroundTasks/MemoryTaskProvider";
 import type { Translator } from "../../i18n/I18nProvider";
 import {
+  emptyMemoryScope,
+  getMemoryProjectState,
   getRecentMemorySnapshot,
   rebuildMemoryScope,
+  refreshMemoryRecentState,
   subscribeMemoryTasks,
+  updateMemoryNodeStatus,
 } from "../../services/memory";
-import { useMemoryTasks } from "../../app/backgroundTasks/MemoryTaskProvider";
 import type {
   MemoryNavigationTarget,
+  MemoryNodeStatus,
+  MemoryProjectStateView,
   RecentMemoryEvent,
-  RecentMemoryItemView,
-  RecentMemorySnapshotView,
   RecentMemoryStateView,
-  RecentProjectView,
-  RecentSessionReferenceView,
+  RecentTreeNodeView,
 } from "../../types/memory";
+import {
+  DataToolbar,
+  DebouncedToolbarSearch,
+  ToolbarActionButton,
+  ToolbarCluster,
+  ToolbarSingleSelectDropdown,
+} from "../common/DataToolbar";
 import { PillTabs, type PillTabItem } from "../common/PillTabs";
+import { Badge } from "../foundation/Badge";
 import { EmptyState } from "../foundation/EmptyState";
 import { Panel } from "../foundation/Panel";
 import { AppSkeleton } from "../foundation/skeleton";
 import { Button } from "../ui/button";
-import { MarkdownContent } from "../conversations/ConversationMarkdown";
 import { RecentTopicTree, parseNodeAnchor } from "./RecentTopicTree";
+import { MemoryDateRailView } from "./recent/MemoryDateRailView";
+import { MemoryNodeCard } from "./recent/MemoryNodeCard";
+import {
+  computeRecentMetrics,
+  extractUnexploredEntries,
+  filterRecentProjects,
+  type RecentMetricsSummary,
+  type RecentStatusFilter,
+  type RecentViewMode,
+} from "./recent/recentModel";
 
 export { parseNodeAnchor };
 
 export interface MemoryRecentWorkspaceProps {
   onEventOpen?: (event: RecentMemoryEvent) => void;
+  onMetricsChange?: (metrics: RecentMetricsSummary) => void;
   onNavigateSession?: (target: MemoryNavigationTarget) => void;
   t: Translator;
 }
 
+type WindowChoice = "24h" | "48h" | "72h";
+
+interface DismissedUndoRecord {
+  nodeId: string;
+  previousStatus: MemoryNodeStatus;
+  projectKey: string;
+  summary: string;
+}
+
 export function MemoryRecentWorkspace({
   onEventOpen: _legacyOnEventOpen,
+  onMetricsChange,
   onNavigateSession,
   t,
 }: MemoryRecentWorkspaceProps) {
-  const [view, setView] = useState<"time" | "project">("time");
+  const [view, setView] = useState<RecentViewMode>("project");
   const [stateView, setStateView] = useState<RecentMemoryStateView | null>(
     null,
   );
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(
-    new Set(),
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [reslicing, setReslicing] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<RecentStatusFilter>("all");
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedWindow, setSelectedWindow] = useState<WindowChoice>("72h");
+  const [focusExpanded, setFocusExpanded] = useState(true);
+  const [updatingNodeId, setUpdatingNodeId] = useState<string | null>(null);
+  const [dismissedUndo, setDismissedUndo] =
+    useState<DismissedUndoRecord | null>(null);
+  const [expandedHistorySlugs, setExpandedHistorySlugs] = useState<Set<string>>(
+    () => new Set(),
   );
+  const [fullProjectStates, setFullProjectStates] = useState<
+    Record<string, MemoryProjectStateView | null>
+  >({});
+  const [loadingProjectSlugs, setLoadingProjectSlugs] = useState<Set<string>>(
+    () => new Set(),
+  );
+
   const { task } = useMemoryTasks();
-  const [triggering, setTriggering] = useState(false);
+  const isMemoryTaskRunning =
+    generating || task?.status === "pending" || task?.status === "running";
 
-  const isGenerating = Boolean(
-    triggering ||
-      task?.status === "running" ||
-      stateView?.status === "generating",
+  const applySnapshot = useCallback(
+    (nextState: RecentMemoryStateView) => {
+      setStateView(nextState);
+      const windowHours = nextState.snapshot?.windowHours ?? 72;
+      const normalizedHours: WindowChoice =
+        windowHours <= 24 ? "24h" : windowHours <= 48 ? "48h" : "72h";
+      setSelectedWindow(normalizedHours);
+      onMetricsChange?.(computeRecentMetrics(nextState));
+    },
+    [onMetricsChange],
   );
 
-  const handleTriggerRebuild = useCallback(async () => {
-    setTriggering(true);
-    try {
-      await rebuildMemoryScope(undefined, { target: "recent" });
-    } catch {
-      // 容错处理
-    } finally {
-      setTriggering(false);
-    }
-  }, []);
-
-  const toggleItem = useCallback((itemId: string) => {
-    setExpandedItemIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(itemId)) {
-        next.delete(itemId);
-      } else {
-        next.add(itemId);
+  const loadSnapshot = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!silent) {
+        setLoading(true);
       }
-      return next;
-    });
-  }, []);
-
-  const loadSnapshot = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      const res = await getRecentMemorySnapshot();
-      setStateView(res);
-    } catch {
-      // 容错处理，不弹阻断性弹窗 (M35-UI-06)
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  // Tier 1: Window focus revalidation with 1000ms throttle guard
-  useEffect(() => {
-    let lastFocusTime = 0;
-    const THROTTLE_MS = 1000;
-
-    const handleWindowFocus = () => {
-      const now = Date.now();
-      if (now - lastFocusTime >= THROTTLE_MS) {
-        lastFocusTime = now;
-        void loadSnapshot();
+      setLoadError(null);
+      try {
+        const snapshot = await getRecentMemorySnapshot();
+        applySnapshot(snapshot);
+      } catch (error) {
+        setLoadError(
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        if (!silent) {
+          setLoading(false);
+        }
       }
-    };
+    },
+    [applySnapshot],
+  );
 
-    window.addEventListener("focus", handleWindowFocus);
-    return () => {
-      window.removeEventListener("focus", handleWindowFocus);
-    };
-  }, [loadSnapshot]);
-
-  // Tier 3: subscribeMemoryTasks / background pipeline task completion listener
   useEffect(() => {
     void loadSnapshot();
-    const unsubPromise = subscribeMemoryTasks(() => {
-      void loadSnapshot();
-    });
+  }, [loadSnapshot]);
+
+  useEffect(() => {
+    let active = true;
+    let cleanup: (() => void) | undefined;
+
+    Promise.resolve(
+      subscribeMemoryTasks?.(() => {
+        if (active) {
+          void loadSnapshot({ silent: true });
+        }
+      }),
+    )
+      .then((unlisten) => {
+        if (active && typeof unlisten === "function") {
+          cleanup = unlisten;
+        } else if (typeof unlisten === "function") {
+          unlisten();
+        }
+      })
+      .catch(() => {
+        // Ignore task subscription setup errors in non-Tauri previews.
+      });
+
     return () => {
-      void unsubPromise.then((unsub) => unsub?.());
+      active = false;
+      cleanup?.();
     };
   }, [loadSnapshot]);
 
-  const snapshot = stateView?.snapshot ?? null;
-
-  // 客户端时间视图分组 (M35-UI-01, M35-UI-02)
-  const timeViewData = useMemo(() => {
-    if (!snapshot) return [];
-
-    const dateMap = new Map<
-      string,
-      Map<
-        string,
-        {
-          project: RecentProjectView;
-          showWindowSummaryAndSuggestions: boolean;
-          items: RecentMemoryItemView[];
-        }
-      >
-    >();
-
-    for (const proj of snapshot.projects) {
-      const projSummaryDate = proj.latestActivityAt.split("T")[0] || "unknown";
-
-      // 确保项目的摘要归入 latestActivityAt 当天
-      if (!dateMap.has(projSummaryDate)) {
-        dateMap.set(projSummaryDate, new Map());
-      }
-      const projMap = dateMap.get(projSummaryDate)!;
-      if (!projMap.has(proj.projectKey)) {
-        projMap.set(proj.projectKey, {
-          project: proj,
-          showWindowSummaryAndSuggestions: true,
-          items: [],
-        });
-      } else {
-        projMap.get(proj.projectKey)!.showWindowSummaryAndSuggestions = true;
-      }
-
-      // 普通条目归入 occurredAt 当天
-      for (const item of proj.items) {
-        const itemDate = item.occurredAt.split("T")[0] || "unknown";
-        if (!dateMap.has(itemDate)) {
-          dateMap.set(itemDate, new Map());
-        }
-        const m = dateMap.get(itemDate)!;
-        if (!m.has(proj.projectKey)) {
-          m.set(proj.projectKey, {
-            project: proj,
-            showWindowSummaryAndSuggestions: false,
-            items: [item],
-          });
-        } else {
-          m.get(proj.projectKey)!.items.push(item);
-        }
-      }
-    }
-
-    // 日期降序排序
-    const sortedDates = [...dateMap.keys()].sort((a, b) => b.localeCompare(a));
-
-    return sortedDates.map((date) => {
-      const projsInDate = [...dateMap.get(date)!.values()].sort((a, b) => {
-        const titleCmp = a.project.projectTitle.localeCompare(
-          b.project.projectTitle,
+  const handleReslice = useCallback(
+    async (windowOverride?: WindowChoice) => {
+      const targetWindow = windowOverride ?? selectedWindow;
+      setReslicing(true);
+      setActionError(null);
+      try {
+        const nextSnapshot = await refreshMemoryRecentState(targetWindow);
+        applySnapshot(nextSnapshot);
+      } catch (error) {
+        setActionError(
+          t("memory.recent.actionError", {
+            message: error instanceof Error ? error.message : String(error),
+          }),
         );
-        if (titleCmp !== 0) return titleCmp;
-        return a.project.projectKey.localeCompare(b.project.projectKey);
+      } finally {
+        setReslicing(false);
+      }
+    },
+    [applySnapshot, selectedWindow, t],
+  );
+
+  const handleGenerateNow = useCallback(async () => {
+    setGenerating(true);
+    setActionError(null);
+    try {
+      await rebuildMemoryScope(emptyMemoryScope(), {
+        target: "recent",
+        reason: "manual",
+      });
+      const snapshot = await getRecentMemorySnapshot();
+      applySnapshot(snapshot);
+    } catch (error) {
+      setActionError(
+        t("memory.recent.actionError", {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    } finally {
+      setGenerating(false);
+    }
+  }, [applySnapshot, t]);
+
+  const handleToggleProjectHistory = useCallback(
+    async (projectKey: string) => {
+      const isCurrentlyExpanded = expandedHistorySlugs.has(projectKey);
+      setExpandedHistorySlugs((prev) => {
+        const next = new Set(prev);
+        if (isCurrentlyExpanded) {
+          next.delete(projectKey);
+        } else {
+          next.add(projectKey);
+        }
+        return next;
       });
 
-      return {
-        date,
-        projectGroups: projsInDate,
-      };
-    });
-  }, [snapshot]);
+      if (!isCurrentlyExpanded && fullProjectStates[projectKey] === undefined) {
+        setLoadingProjectSlugs((prev) => {
+          const next = new Set(prev);
+          next.add(projectKey);
+          return next;
+        });
+        try {
+          const projectState = await getMemoryProjectState(projectKey);
+          setFullProjectStates((prev) => ({
+            ...prev,
+            [projectKey]: projectState,
+          }));
+        } catch (error) {
+          setActionError(
+            t("memory.recent.actionError", {
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        } finally {
+          setLoadingProjectSlugs((prev) => {
+            const next = new Set(prev);
+            next.delete(projectKey);
+            return next;
+          });
+        }
+      }
+    },
+    [expandedHistorySlugs, fullProjectStates, t],
+  );
 
-  // 客户端项目视图分组 (M35-UI-01, M35-UI-02)
-  const projectViewData = useMemo(() => {
-    if (!snapshot) return [];
+  const handleStatusChange = useCallback(
+    async (
+      node: RecentTreeNodeView,
+      nextStatus: MemoryNodeStatus,
+      projectKey: string,
+    ) => {
+      setUpdatingNodeId(node.id);
+      setActionError(null);
+      try {
+        await updateMemoryNodeStatus({
+          nodeId: node.id,
+          status: nextStatus,
+          projectSlug: projectKey,
+          window: selectedWindow,
+        });
 
-    return [...snapshot.projects]
-      .sort((a, b) => b.latestActivityAt.localeCompare(a.latestActivityAt))
-      .map((proj) => ({
-        project: proj,
-        items: [...proj.items].sort((a, b) =>
-          b.occurredAt.localeCompare(a.occurredAt),
-        ),
-      }));
-  }, [snapshot]);
+        if (nextStatus === "dismissed") {
+          setDismissedUndo({
+            nodeId: node.id,
+            previousStatus: node.status,
+            projectKey,
+            summary: node.summary,
+          });
+        } else if (dismissedUndo?.nodeId === node.id) {
+          setDismissedUndo(null);
+        }
 
-  const pillItems: PillTabItem<"time" | "project">[] = useMemo(
+        const refreshed = await getRecentMemorySnapshot();
+        applySnapshot(refreshed);
+
+        if (expandedHistorySlugs.has(projectKey)) {
+          const fullState = await getMemoryProjectState(projectKey);
+          setFullProjectStates((prev) => ({
+            ...prev,
+            [projectKey]: fullState,
+          }));
+        }
+      } catch (error) {
+        setActionError(
+          t("memory.recent.actionError", {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      } finally {
+        setUpdatingNodeId(null);
+      }
+    },
+    [
+      applySnapshot,
+      dismissedUndo?.nodeId,
+      expandedHistorySlugs,
+      selectedWindow,
+      t,
+    ],
+  );
+
+  const handleUndoDismiss = useCallback(async () => {
+    if (!dismissedUndo) return;
+    const target = dismissedUndo;
+    setDismissedUndo(null);
+    setUpdatingNodeId(target.nodeId);
+    setActionError(null);
+    try {
+      await updateMemoryNodeStatus({
+        nodeId: target.nodeId,
+        status: target.previousStatus,
+        projectSlug: target.projectKey,
+        window: selectedWindow,
+      });
+      const refreshed = await getRecentMemorySnapshot();
+      applySnapshot(refreshed);
+      if (expandedHistorySlugs.has(target.projectKey)) {
+        const fullState = await getMemoryProjectState(target.projectKey);
+        setFullProjectStates((prev) => ({
+          ...prev,
+          [target.projectKey]: fullState,
+        }));
+      }
+    } catch (error) {
+      setActionError(
+        t("memory.recent.actionError", {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    } finally {
+      setUpdatingNodeId(null);
+    }
+  }, [applySnapshot, dismissedUndo, expandedHistorySlugs, selectedWindow, t]);
+
+  const rawProjects = useMemo(
+    () => stateView?.snapshot?.projects ?? [],
+    [stateView],
+  );
+
+  const viewTabs: PillTabItem<RecentViewMode>[] = useMemo(
     () => [
+      {
+        id: "project",
+        label: t("memory.recent.projectView"),
+        icon: <Layers size={14} />,
+      },
       {
         id: "time",
         label: t("memory.recent.timeView"),
         icon: <Clock3 size={14} />,
       },
+    ],
+    [t],
+  );
+
+  const statusOptions = useMemo(
+    () => [
+      { value: "all" as const, label: t("memory.recent.filterStatusAll") },
       {
-        id: "project",
-        label: t("memory.recent.projectView"),
-        icon: <FolderOpen size={14} />,
+        value: "unexplored" as const,
+        label: t("memory.recent.filterStatusUnexplored"),
+      },
+      {
+        value: "completed" as const,
+        label: t("memory.recent.filterStatusCompleted"),
       },
     ],
     [t],
   );
 
-  if (loading && !stateView) {
-    return <AppSkeleton label={t("common.loading")} layout="list" />;
-  }
+  const projectOptions = useMemo(
+    () => [
+      { value: "all", label: t("memory.recent.filterProjectAll") },
+      ...rawProjects.map((project) => ({
+        value: project.projectKey,
+        label: project.projectTitle,
+      })),
+    ],
+    [rawProjects, t],
+  );
 
-  if (!snapshot && stateView?.status === "generating") {
-    return <AppSkeleton label={t("memory.recent.generating")} layout="list" />;
-  }
+  const windowOptions = useMemo(
+    () => [
+      { value: "24h" as const, label: "24h" },
+      { value: "48h" as const, label: "48h" },
+      { value: "72h" as const, label: "72h" },
+    ],
+    [],
+  );
 
-  const todayStr = new Date().toISOString().split("T")[0];
-  const windowInfo = snapshot
-    ? `${snapshot.windowHours}h · ${formatWatermark(snapshot.targetWatermark)}`
-    : `48h · ${formatWatermark(new Date().toISOString())}`;
+  const filteredProjects = useMemo(
+    () =>
+      filterRecentProjects(rawProjects, {
+        projectKey: selectedProjectKey,
+        query: searchQuery,
+        statusFilter,
+      }),
+    [rawProjects, searchQuery, selectedProjectKey, statusFilter],
+  );
 
-  if (!snapshot || snapshot.projects.length === 0) {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-        {/* 顶部控制栏 */}
-        <div className="flex shrink-0 items-center justify-between gap-3 px-1">
-          <div className="flex items-center gap-3">
-            <PillTabs<"time" | "project">
-              activeId={view}
-              items={pillItems}
-              onSelect={(id) => setView(id)}
-              size="sm"
-            />
-            <span className="text-caption font-medium text-on-surface-variant">
-              {windowInfo}
-            </span>
-          </div>
+  const focusUnexploredEntries = useMemo(() => {
+    if (statusFilter === "completed") return [];
+    const scoped = filterRecentProjects(rawProjects, {
+      projectKey: selectedProjectKey,
+      query: searchQuery,
+      statusFilter: "unexplored",
+    });
+    return extractUnexploredEntries(scoped);
+  }, [rawProjects, searchQuery, selectedProjectKey, statusFilter]);
 
-          <div className="flex items-center gap-2">
-            <Button
-              aria-label={t("memory.recent.triggerGenerate") || "提炼记忆"}
-              className="h-8 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/70 px-2.5 text-caption font-medium hover:bg-theme-control shadow-xs"
-              disabled={isGenerating}
-              onClick={() => void handleTriggerRebuild()}
-              size="sm"
-              variant="outline"
-            >
-              <Sparkles
-                className={clsx(
-                  "size-3.5 text-primary",
-                  isGenerating && "animate-spin",
-                )}
-              />
-              <span className="hidden sm:inline">
-                {isGenerating
-                  ? t("memory.recent.generating")
-                  : t("memory.recent.triggerGenerate") || "提炼记忆"}
-              </span>
-            </Button>
-            <Button
-              aria-label={t("common.refresh") || "刷新"}
-              className="h-8 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/70 px-2.5 text-caption font-medium hover:bg-theme-control shadow-xs"
-              disabled={refreshing}
-              onClick={() => void loadSnapshot()}
-              size="sm"
-              variant="outline"
-            >
-              <RefreshCw
-                className={clsx(
-                  "size-3.5 text-on-surface-variant",
-                  refreshing && "animate-spin text-primary",
-                )}
-              />
-              <span className="hidden sm:inline">
-                {t("common.refresh") || "刷新"}
-              </span>
-            </Button>
-            {renderStatusBadge(stateView, t)}
-          </div>
-        </div>
+  const hasActiveFilters =
+    statusFilter !== "all" ||
+    selectedProjectKey !== "all" ||
+    searchQuery.trim().length > 0;
 
-        {/* 视图内容区 (空状态手账 Date Rail 导轨) */}
-        <div className="min-h-0 flex-1 overflow-auto pr-2 pb-8">
-          {view === "time" ? (
-            <div className="flex flex-col gap-8">
-              {(() => {
-                const dateParts = parseDateRailParts(todayStr, undefined, t);
-                return (
-                  <section className="relative min-w-0 pl-[84px] sm:pl-[98px] mt-2">
-                    {/* 左侧垂直时间轴导轨 Date Rail */}
-                    <div
-                      aria-label={`${todayStr}, ${dateParts.relative}`}
-                      className="absolute inset-y-0 left-0 w-[72px] sm:w-[84px] select-none"
-                    >
-                      {/* 时间轴节点圆点 */}
-                      <div className="absolute left-[32px] sm:left-[38px] top-[130px] z-10 size-2 rounded-full border-2 border-surface bg-primary shadow-xs ring-4 ring-primary/15" />
-
-                      {/* 粘性吸顶日期头 */}
-                      <div className="sticky top-2 z-10 flex w-full flex-col items-center py-1 text-center">
-                        <span className="font-serif text-3xl sm:text-4xl font-bold tracking-tight text-on-surface leading-none">
-                          {dateParts.dayNumber}
-                        </span>
-                        <span className="mt-1 text-[10px] font-bold tracking-widest text-primary uppercase">
-                          {dateParts.month}
-                        </span>
-                        <div className="mt-2 flex flex-col items-center gap-0.5 text-[11px] leading-tight text-on-surface-variant font-medium">
-                          <span className="font-semibold text-on-surface">
-                            {dateParts.relative}
-                          </span>
-                          <span className="text-[10px] text-outline">
-                            {dateParts.weekday}
-                          </span>
-                        </div>
-                        <span className="mt-1.5 font-mono text-[9px] text-outline/85 tracking-tight">
-                          {todayStr}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* 右侧主体内容 */}
-                    <div className="mb-4 h-[1px] bg-gradient-to-r from-theme-control-border/80 via-theme-control-border/30 to-transparent" />
-
-                    <Panel
-                      className="flex flex-col items-center justify-center gap-3 p-8 text-center rounded-2xl border border-theme-control-border/70 bg-surface/85 backdrop-blur-md shadow-xs"
-                      variant="default"
-                    >
-                      <div className="grid size-12 place-items-center rounded-2xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
-                        <Clock3 size={22} />
-                      </div>
-                      <div className="flex flex-col gap-1 max-w-[420px]">
-                        <h3 className="text-body-md font-bold text-on-surface">
-                          {t("memory.recent.emptyTitle")}
-                        </h3>
-                        <p className="text-body-sm text-on-surface-variant leading-relaxed">
-                          {t("memory.recent.emptyDescription")}
-                        </p>
-                      </div>
-                      <Button
-                        className="mt-1 h-10 gap-2 rounded-xl px-5 font-medium shadow-xs"
-                        disabled={isGenerating}
-                        onClick={() => void handleTriggerRebuild()}
-                        variant="default"
-                      >
-                        <Sparkles
-                          className={clsx(
-                            "size-4",
-                            isGenerating && "animate-spin",
-                          )}
-                        />
-                        <span>
-                          {isGenerating
-                            ? t("memory.recent.generating")
-                            : t("memory.recent.generateNow") || "立即提炼近期记忆"}
-                        </span>
-                      </Button>
-                      {stateView?.latestAttemptError && (
-                        <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-status-issue/30 bg-status-issue/10 px-3 py-1.5 text-[12px] text-status-issue">
-                          <AlertCircle size={14} />
-                          <span>{stateView.latestAttemptError.message}</span>
-                        </div>
-                      )}
-                    </Panel>
-                  </section>
-                );
-              })()}
-            </div>
-          ) : (
-            <Panel
-              className="flex flex-col items-center justify-center gap-3 p-8 text-center rounded-2xl border border-theme-control-border/70 bg-surface/85 backdrop-blur-md shadow-xs"
-              variant="default"
-            >
-              <div className="grid size-12 place-items-center rounded-2xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
-                <FolderOpen size={22} />
-              </div>
-              <div className="flex flex-col gap-1 max-w-[420px]">
-                <h3 className="text-body-md font-bold text-on-surface">
-                  {t("memory.recent.emptyTitle")}
-                </h3>
-                <p className="text-body-sm text-on-surface-variant leading-relaxed">
-                  {t("memory.recent.emptyDescription")}
-                </p>
-              </div>
-              <Button
-                className="mt-1 h-10 gap-2 rounded-xl px-5 font-medium shadow-xs"
-                disabled={isGenerating}
-                onClick={() => void handleTriggerRebuild()}
-                variant="default"
-              >
-                <Sparkles
-                  className={clsx(
-                    "size-4",
-                    isGenerating && "animate-spin",
-                  )}
-                />
-                <span>
-                  {isGenerating
-                    ? t("memory.recent.generating")
-                    : t("memory.recent.generateNow") || "立即提炼近期记忆"}
-                </span>
-              </Button>
-            </Panel>
-          )}
-        </div>
-      </div>
-    );
+  function clearFilters() {
+    setStatusFilter("all");
+    setSelectedProjectKey("all");
+    setSearchQuery("");
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-      {/* 顶部控制栏 */}
-      <div className="flex shrink-0 items-center justify-between gap-3 px-1">
-        <div className="flex items-center gap-3">
-          <PillTabs<"time" | "project">
-            activeId={view}
-            items={pillItems}
-            onSelect={(id) => setView(id)}
-            size="sm"
-          />
-          <span className="text-caption font-medium text-on-surface-variant">
-            {windowInfo}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button
-            aria-label={t("memory.recent.triggerGenerate") || "提炼记忆"}
-            className="h-8 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/70 px-2.5 text-caption font-medium hover:bg-theme-control shadow-xs"
-            disabled={isGenerating}
-            onClick={() => void handleTriggerRebuild()}
-            size="sm"
-            variant="outline"
+    <div
+      className="flex min-h-0 flex-1 flex-col gap-3"
+      data-testid="memory-recent-workspace"
+    >
+      <DataToolbar
+        actions={
+          <ToolbarCluster
+            ariaLabel={t("memory.recent.toolbarLabel")}
+            className="flex-wrap justify-end"
           >
-            <Sparkles
-              className={clsx(
-                "size-3.5 text-primary",
-                isGenerating && "animate-spin",
-              )}
+            <DebouncedToolbarSearch
+              className="w-64 min-w-[14rem]"
+              commitDelayMs={150}
+              commitImmediatelyWhen={(next) => next.trim().length === 0}
+              onChange={setSearchQuery}
+              placeholder={t("memory.recent.searchPlaceholder")}
+              value={searchQuery}
             />
-            <span className="hidden sm:inline">
-              {isGenerating
-                ? t("memory.recent.generating")
-                : t("memory.recent.triggerGenerate") || "提炼记忆"}
-            </span>
-          </Button>
-          <Button
-            aria-label={t("common.refresh") || "刷新"}
-            className="h-8 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/70 px-2.5 text-caption font-medium hover:bg-theme-control shadow-xs"
-            disabled={refreshing}
-            onClick={() => void loadSnapshot()}
-            size="sm"
-            variant="outline"
-          >
-            <RefreshCw
-              className={clsx(
-                "size-3.5 text-on-surface-variant",
-                refreshing && "animate-spin text-primary",
-              )}
-            />
-            <span className="hidden sm:inline">
-              {t("common.refresh") || "刷新"}
-            </span>
-          </Button>
-          {renderStatusBadge(stateView, t)}
-        </div>
-      </div>
-
-      {/* 视图内容区 */}
-      <div className="min-h-0 flex-1 overflow-auto pr-2 pb-8">
-        {view === "time" ? (
-          <div className="flex flex-col gap-8">
-            {timeViewData.map(({ date, projectGroups }, dateIdx) => {
-              const isLastDate = dateIdx === timeViewData.length - 1;
-              const dateParts = parseDateRailParts(
-                date,
-                snapshot.targetWatermark,
-                t,
-              );
-
-              return (
-                <section
-                  className="relative min-w-0 pl-[84px] sm:pl-[98px]"
-                  key={date}
-                >
-                  {/* 左侧垂直时间轴导轨 Date Rail */}
-                  <div
-                    aria-label={`${date}, ${dateParts.relative}`}
-                    className="absolute inset-y-0 left-0 w-[72px] sm:w-[84px] select-none"
-                  >
-                    {/* 纵向时间连接线 */}
-                    <div
-                      className={clsx(
-                        "absolute left-[35px] sm:left-[41px] top-[140px] w-[2px] bg-gradient-to-b from-primary/40 via-theme-control-border/60 to-theme-control-border/15",
-                        isLastDate ? "bottom-4 mask-gradient" : "-bottom-8",
-                      )}
-                    />
-
-                    {/* 时间轴节点圆点 */}
-                    <div className="absolute left-[32px] sm:left-[38px] top-[130px] z-10 size-2 rounded-full border-2 border-surface bg-primary shadow-xs ring-4 ring-primary/15" />
-
-                    {/* 粘性吸顶日期头 */}
-                    <div className="sticky top-2 z-10 flex w-full flex-col items-center py-1 text-center">
-                      {/* 大号衬线日期数字 */}
-                      <span className="font-serif text-3xl sm:text-4xl font-bold tracking-tight text-on-surface leading-none">
-                        {dateParts.dayNumber}
-                      </span>
-
-                      {/* 大写月份缩写 */}
-                      <span className="mt-1 text-[10px] font-bold tracking-widest text-primary uppercase">
-                        {dateParts.month}
-                      </span>
-
-                      {/* 相对时间与星期 */}
-                      <div className="mt-2 flex flex-col items-center gap-0.5 text-[11px] leading-tight text-on-surface-variant font-medium">
-                        <span className="font-semibold text-on-surface">
-                          {dateParts.relative}
-                        </span>
-                        <span className="text-[10px] text-outline">
-                          {dateParts.weekday}
-                        </span>
-                      </div>
-
-                      {/* 完整日期标识 (满足机器测试与精确审计) */}
-                      <span className="mt-1.5 font-mono text-[9px] text-outline/85 tracking-tight">
-                        {date}
-                      </span>
-
-                      {/* 水位更新标记 */}
-                      {dateParts.latestWatermark && (
-                        <div className="mt-2 flex flex-col items-center border-t border-theme-control-border/60 pt-1.5 text-[10px] text-on-surface-variant">
-                          <span className="font-mono font-semibold text-on-surface">
-                            {dateParts.latestWatermark}
-                          </span>
-                          <span className="text-[9px] text-outline">
-                            {t("memory.recent.latestUpdate") || "最近更新"}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* 右侧主体内容 */}
-                  {/* 顶部微细的水平连接线 */}
-                  <div className="mb-4 h-[1px] bg-gradient-to-r from-theme-control-border/80 via-theme-control-border/30 to-transparent" />
-
-                  {/* 该日期下的各个项目卡片 */}
-                  <div className="flex flex-col gap-4">
-                    {projectGroups.map(
-                      ({ project, showWindowSummaryAndSuggestions, items }) => (
-                        <Panel
-                          className="flex flex-col gap-3.5 p-4 rounded-2xl border border-theme-control-border/70 bg-surface/85 backdrop-blur-md shadow-xs"
-                          key={project.projectKey}
-                          variant="default"
-                        >
-                          {/* 项目标题栏 */}
-                          <div className="flex items-center justify-between gap-3 border-b border-theme-control-border/60 pb-3">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <span className="grid size-7 shrink-0 place-items-center rounded-xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
-                                <FolderOpen size={14} />
-                              </span>
-                              <span className="truncate text-body-md font-bold text-on-surface">
-                                {project.projectTitle}
-                              </span>
-                              {project.projectPath && (
-                                <span className="hidden sm:inline-block max-w-[240px] truncate rounded-md border border-theme-control-border/60 bg-theme-control/30 px-1.5 py-0.5 font-mono text-[11px] text-on-surface-variant">
-                                  {project.projectPath}
-                                </span>
-                              )}
-                            </div>
-                            <span className="shrink-0 text-caption font-medium text-on-surface-variant">
-                              {items.length} {t("memory.recent.items")}
-                            </span>
-                          </div>
-
-                          {/* 工作摘要与下一步 (M35-PROJ-02: 仅在 latestActivityAt 当日渲染一次) */}
-                          {showWindowSummaryAndSuggestions && (
-                            <>
-                              {project.summary && (
-                                <div className="flex flex-col gap-1.5 rounded-xl border border-theme-control-border/50 bg-theme-control/15 p-3">
-                                  <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
-                                    {t("memory.recent.whatChanged")}
-                                  </span>
-                                  <div className="text-body-sm text-on-surface leading-relaxed">
-                                    <MarkdownContent
-                                      onNavigateSession={onNavigateSession}
-                                      value={project.summary}
-                                    />
-                                  </div>
-                                </div>
-                              )}
-
-                              <SuggestedNextSteps project={project} t={t} />
-                            </>
-                          )}
-
-                          {/* 当日条目列表 */}
-                          {items.length > 0 && (
-                            <div className="flex flex-col gap-2.5">
-                              {items.map((item) => (
-                                <RecentItemCard
-                                  isExpanded={expandedItemIds.has(item.itemId)}
-                                  item={item}
-                                  key={item.itemId}
-                                  onNavigateSession={onNavigateSession}
-                                  onToggle={() => toggleItem(item.itemId)}
-                                  t={t}
-                                  targetWatermark={snapshot.targetWatermark}
-                                />
-                              ))}
-                            </div>
-                          )}
-                        </Panel>
-                      ),
-                    )}
-                  </div>
-                </section>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-5">
-            {projectViewData.map(({ project, items }) =>
-              project.topics && project.topics.length > 0 ? (
-                <RecentTopicTree
-                  key={project.projectKey}
-                  onNavigateSession={onNavigateSession}
-                  project={project}
-                  t={t}
+            <ToolbarActionButton
+              disabled={reslicing || loading}
+              icon={
+                <RefreshCw
+                  className={reslicing ? "animate-spin" : undefined}
+                  size={15}
                 />
-              ) : (
-                <Panel
-                  className="flex flex-col gap-3.5 p-4.5 rounded-2xl border border-theme-control-border/70 bg-surface/85 backdrop-blur-md shadow-xs"
-                  key={project.projectKey}
+              }
+              label={t("memory.recent.resliceTitle")}
+              onClick={() => void handleReslice()}
+              text={t("memory.recent.reslice")}
+            />
+            <ToolbarActionButton
+              disabled={isMemoryTaskRunning}
+              icon={
+                <Sparkles
+                  className={isMemoryTaskRunning ? "animate-pulse" : undefined}
+                  size={15}
+                />
+              }
+              label={
+                isMemoryTaskRunning
+                  ? t("memory.recent.generating")
+                  : t("memory.recent.triggerGenerate")
+              }
+              onClick={() => void handleGenerateNow()}
+              primary
+              text={
+                isMemoryTaskRunning
+                  ? t("memory.recent.generating")
+                  : t("memory.recent.triggerGenerate")
+              }
+            />
+          </ToolbarCluster>
+        }
+        ariaLabel={t("memory.recent.toolbarLabel")}
+        leading={
+          <ToolbarCluster
+            ariaLabel={t("memory.recent.viewToggleLabel")}
+            className="flex-wrap"
+          >
+            <PillTabs
+              activeId={view}
+              ariaLabel={t("memory.recent.viewToggleLabel")}
+              items={viewTabs}
+              onSelect={(id) => setView(id)}
+              size="sm"
+            />
+            <ToolbarSingleSelectDropdown
+              ariaLabel={t("memory.recent.filterStatusAll")}
+              icon={<Filter size={14} />}
+              onChange={setStatusFilter}
+              options={statusOptions}
+              value={statusFilter}
+            />
+            <ToolbarSingleSelectDropdown
+              ariaLabel={t("memory.recent.filterProjectAria")}
+              icon={<FolderOpen size={14} />}
+              onChange={setSelectedProjectKey}
+              options={projectOptions}
+              value={selectedProjectKey}
+            />
+            <ToolbarSingleSelectDropdown
+              ariaLabel={t("memory.recent.windowAria")}
+              icon={<Clock3 size={14} />}
+              onChange={(nextWindow) => {
+                setSelectedWindow(nextWindow);
+                void handleReslice(nextWindow);
+              }}
+              options={windowOptions}
+              value={selectedWindow}
+            />
+          </ToolbarCluster>
+        }
+      />
+
+      {actionError && (
+        <Panel
+          className="flex items-center justify-between gap-3 border-status-remove/40"
+          padding="sm"
+          variant="inset"
+        >
+          <div className="flex items-center gap-2 text-body-sm text-status-remove">
+            <AlertCircle className="shrink-0" size={16} />
+            <span>{actionError}</span>
+          </div>
+          <Button
+            aria-label={t("memory.recent.searchClear")}
+            onClick={() => setActionError(null)}
+            size="icon-sm"
+            type="button"
+            variant="ghost"
+          >
+            <X size={14} />
+          </Button>
+        </Panel>
+      )}
+
+      {dismissedUndo && (
+        <Panel
+          className="flex flex-wrap items-center justify-between gap-3"
+          padding="sm"
+          variant="inset"
+        >
+          <span className="min-w-0 flex-1 truncate text-body-sm text-on-surface-variant">
+            {t("memory.recent.dismissedNotice", {
+              summary: dismissedUndo.summary,
+            })}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={() => void handleUndoDismiss()}
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
+              <RotateCcw size={13} />
+              <span>{t("memory.recent.action.restore")}</span>
+            </Button>
+            <Button
+              onClick={() => setDismissedUndo(null)}
+              size="icon-sm"
+              type="button"
+              variant="ghost"
+            >
+              <X size={14} />
+            </Button>
+          </div>
+        </Panel>
+      )}
+
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        {loading ? (
+          <AppSkeleton label={t("memory.recent.generating")} layout="list" />
+        ) : loadError ? (
+          <EmptyState
+            actions={
+              <Button
+                onClick={() => void loadSnapshot()}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <RefreshCw size={14} />
+                <span>{t("memory.recent.refresh")}</span>
+              </Button>
+            }
+            description={loadError}
+            icon={<AlertCircle size={20} />}
+            title={t("memory.recent.errorTitle")}
+          />
+        ) : rawProjects.length === 0 ? (
+          <EmptyState
+            actions={
+              <div className="flex flex-wrap items-center justify-center gap-2.5">
+                <Button
+                  disabled={isMemoryTaskRunning}
+                  onClick={() => void handleGenerateNow()}
+                  size="default"
+                  type="button"
                   variant="default"
                 >
-                  {/* 项目标题与元数据 */}
-                  <div className="flex items-center justify-between gap-3 border-b border-theme-control-border/60 pb-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="grid size-7 shrink-0 place-items-center rounded-xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
-                        <FolderOpen size={14} />
-                      </span>
-                      <span className="truncate text-body-md font-bold text-on-surface">
-                        {project.projectTitle}
-                      </span>
-                      {project.projectPath && (
-                        <span className="hidden sm:inline-block max-w-[260px] truncate rounded-full border border-theme-control-border/60 bg-theme-control/30 px-2 py-0.5 font-mono text-[11px] text-on-surface-variant">
-                          {project.projectPath}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2 text-caption text-on-surface-variant">
-                      <span>{formatTime(project.latestActivityAt)}</span>
-                      <span>·</span>
-                      <span>
-                        {items.length} {t("memory.recent.items")}
-                      </span>
+                  <Sparkles size={15} />
+                  <span>
+                    {isMemoryTaskRunning
+                      ? t("memory.recent.generating")
+                      : t("memory.recent.generateNow")}
+                  </span>
+                </Button>
+                <Button
+                  disabled={reslicing}
+                  onClick={() => void handleReslice()}
+                  size="default"
+                  type="button"
+                  variant="outline"
+                >
+                  <RefreshCw size={15} />
+                  <span>{t("memory.recent.reslice")}</span>
+                </Button>
+              </div>
+            }
+            description={t("memory.recent.emptyDescription")}
+            icon={<GitBranch size={20} />}
+            title={t("memory.recent.emptyTitle")}
+          />
+        ) : (
+          <div className="flex flex-col gap-5 pb-4">
+            {focusUnexploredEntries.length > 0 && (
+              <Panel
+                data-testid="unexplored-focus-panel"
+                padding="none"
+                variant="muted"
+              >
+                <header className="flex flex-wrap items-center justify-between gap-2 border-b border-theme-card-border/65 px-5 py-3.5">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-xl border border-status-conflict/35 bg-status-conflict/12 text-status-conflict">
+                      <GitBranch size={15} />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-title-sm font-semibold text-on-surface">
+                          {t("memory.recent.unexploredFocusTitle")}
+                        </h3>
+                        <Badge tone="conflict">
+                          {focusUnexploredEntries.length}
+                        </Badge>
+                      </div>
+                      <p className="mt-0.5 text-caption text-on-surface-muted">
+                        {t("memory.recent.unexploredFocusSubtitle")}
+                      </p>
                     </div>
                   </div>
+                  <Button
+                    aria-expanded={focusExpanded}
+                    onClick={() => setFocusExpanded((prev) => !prev)}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    {focusExpanded ? (
+                      <ChevronUp size={15} />
+                    ) : (
+                      <ChevronDown size={15} />
+                    )}
+                  </Button>
+                </header>
 
-                {project.summary && (
-                  <div className="flex flex-col gap-1.5 rounded-xl border border-theme-control-border/50 bg-theme-control/15 p-3">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
-                      {t("memory.recent.whatChanged")}
-                    </span>
-                    <div className="text-body-sm text-on-surface leading-relaxed">
-                      <MarkdownContent
+                {focusExpanded && (
+                  <div className="grid grid-cols-1 gap-3 p-4 xl:grid-cols-2">
+                    {focusUnexploredEntries.map((entry) => (
+                      <MemoryNodeCard
+                        contextLabel={`${entry.projectTitle} · ${entry.topicName}`}
+                        highlightUnexplored
+                        key={`focus-${entry.projectKey}-${entry.node.id}`}
+                        node={entry.node}
                         onNavigateSession={onNavigateSession}
-                        value={project.summary}
+                        onStatusChange={(targetNode, nextStatus) =>
+                          void handleStatusChange(
+                            targetNode,
+                            nextStatus,
+                            entry.projectKey,
+                          )
+                        }
+                        showParentContext
+                        t={t}
+                        updating={updatingNodeId === entry.node.id}
                       />
-                    </div>
+                    ))}
                   </div>
                 )}
-
-                <SuggestedNextSteps project={project} t={t} />
-
-                <div className="flex flex-col gap-2.5">
-                  {items.map((item) => (
-                    <RecentItemCard
-                      isExpanded={expandedItemIds.has(item.itemId)}
-                      item={item}
-                      key={item.itemId}
-                      onNavigateSession={onNavigateSession}
-                      onToggle={() => toggleItem(item.itemId)}
-                      t={t}
-                      targetWatermark={snapshot.targetWatermark}
-                    />
-                  ))}
-                </div>
               </Panel>
-            ))}
+            )}
+
+            {filteredProjects.length === 0 ? (
+              <EmptyState
+                actions={
+                  hasActiveFilters ? (
+                    <Button
+                      onClick={clearFilters}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <span>{t("memory.recent.searchClear")}</span>
+                    </Button>
+                  ) : undefined
+                }
+                description={t("memory.recent.filteredEmptyDescription")}
+                icon={<Filter size={20} />}
+                title={t("memory.recent.filteredEmptyTitle")}
+              />
+            ) : view === "project" ? (
+              <RecentTopicTree
+                expandedHistorySlugs={expandedHistorySlugs}
+                fullProjectStates={fullProjectStates}
+                loadingProjectSlugs={loadingProjectSlugs}
+                onNavigateSession={onNavigateSession}
+                onStatusChange={(targetNode, nextStatus, projectKey) =>
+                  void handleStatusChange(targetNode, nextStatus, projectKey)
+                }
+                onToggleProjectHistory={(projectKey) =>
+                  void handleToggleProjectHistory(projectKey)
+                }
+                projects={filteredProjects}
+                searchQuery={searchQuery}
+                statusFilter={statusFilter}
+                t={t}
+                updatingNodeId={updatingNodeId}
+              />
+            ) : (
+              <MemoryDateRailView
+                onNavigateSession={onNavigateSession}
+                onStatusChange={(targetNode, nextStatus, projectKey) =>
+                  void handleStatusChange(targetNode, nextStatus, projectKey)
+                }
+                projects={filteredProjects}
+                t={t}
+                updatingNodeId={updatingNodeId}
+              />
+            )}
           </div>
         )}
       </div>
     </div>
   );
-}
-
-function SuggestedNextSteps({
-  project,
-  t,
-}: {
-  project: RecentProjectView;
-  t: Translator;
-}) {
-  const suggestions = useMemo(() => {
-    return project.items
-      .filter((item) => typeof item.recommendationRank === "number")
-      .sort(
-        (a, b) => (a.recommendationRank ?? 99) - (b.recommendationRank ?? 99),
-      )
-      .slice(0, 3);
-  }, [project.items]);
-
-  return (
-    <div className="flex flex-col gap-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
-      <div className="flex items-center gap-1.5 text-caption font-semibold text-on-surface">
-        <Sparkles size={13} className="text-primary" />
-        <span>{t("memory.recent.suggestedNext")}</span>
-      </div>
-      {suggestions.length === 0 ? (
-        <p className="text-body-sm text-on-surface-variant/80 italic">
-          {t("memory.recent.noSuggestions")}
-        </p>
-      ) : (
-        <ol className="flex flex-col gap-2 text-body-sm text-on-surface">
-          {suggestions.map((item, idx) => (
-            <li className="flex items-start gap-2.5" key={item.itemId}>
-              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-primary/20 text-[11px] font-bold text-primary shadow-xs">
-                {idx + 1}
-              </span>
-              <div className="flex flex-col">
-                <span className="font-semibold text-on-surface">
-                  {item.title}
-                </span>
-                {item.summary && (
-                  <span className="text-caption text-on-surface-variant mt-0.5">
-                    {item.summary}
-                  </span>
-                )}
-              </div>
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
-  );
-}
-
-function RecentItemCard({
-  item,
-  isExpanded,
-  onToggle,
-  onNavigateSession,
-  targetWatermark,
-  t,
-}: {
-  item: RecentMemoryItemView;
-  isExpanded: boolean;
-  onToggle: () => void;
-  onNavigateSession?: (target: MemoryNavigationTarget) => void;
-  targetWatermark: string;
-  t: Translator;
-}) {
-  const categoryBadgeClass = matchCategory(item.category);
-  const dotColorClass = matchCategoryDot(item.category);
-
-  return (
-    <div className="flex flex-col rounded-xl border border-theme-control-border/60 bg-theme-control/20 transition-all duration-150 hover:border-theme-control-border/90 hover:bg-theme-control/30 shadow-xs">
-      {/* 头部摘要栏 (可点击展开/收起) */}
-      <button
-        aria-expanded={isExpanded}
-        aria-label={
-          isExpanded
-            ? `${t("memory.recent.collapseItem")}: ${item.title}`
-            : `${t("memory.recent.expandItem")}: ${item.title}`
-        }
-        className="flex w-full items-start justify-between gap-3 p-3.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 cursor-pointer rounded-xl"
-        onClick={onToggle}
-        type="button"
-      >
-        <div className="flex min-w-0 flex-1 items-start gap-3">
-          {/* 类别圆点指示 */}
-          <span
-            className={clsx(
-              "mt-1.5 size-2 shrink-0 rounded-full ring-4 shadow-xs",
-              dotColorClass,
-            )}
-          />
-
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <span
-                className={clsx(
-                  "rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider",
-                  categoryBadgeClass,
-                )}
-              >
-                {item.category}
-              </span>
-              <span className="rounded-full border border-theme-control-border/70 bg-theme-control/40 px-2 py-0.5 text-caption font-medium text-on-surface-variant">
-                {item.status}
-              </span>
-              <span className="text-caption text-on-surface-variant">
-                {formatTime(item.occurredAt)}
-              </span>
-              <AvailabilityBadge availability={item.sourceAvailability} t={t} />
-            </div>
-
-            <h4 className="text-body-md font-semibold text-on-surface leading-snug">
-              {item.title}
-            </h4>
-
-            {item.summary && (
-              <div className="text-body-sm text-on-surface-variant leading-relaxed">
-                <MarkdownContent
-                  onNavigateSession={onNavigateSession}
-                  value={item.summary}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-
-        <span className="mt-1 grid size-7 shrink-0 place-items-center rounded-full border border-theme-control-border/70 bg-theme-control/50 text-on-surface-variant transition-colors hover:text-on-surface">
-          {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-        </span>
-      </button>
-
-      {/* 展开详细信息 (M35-UI-03: rationale, watermark, sessions) */}
-      {isExpanded && (
-        <div className="flex flex-col gap-3.5 border-t border-theme-control-border/50 bg-theme-control/10 p-4">
-          {item.rationale && (
-            <div className="flex flex-col gap-1.5">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
-                {t("memory.recent.why")}
-              </span>
-              <div className="rounded-xl border border-theme-control-border/60 bg-surface-elevated/70 p-3 text-body-sm text-on-surface leading-relaxed shadow-xs">
-                {item.rationale}
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center gap-2 text-caption text-on-surface-variant">
-            <span className="font-semibold text-on-surface">
-              {t("memory.recent.watermark")}:
-            </span>
-            <span className="font-mono">{formatTime(targetWatermark)}</span>
-          </div>
-
-          {item.sessionReferences.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
-                {t("memory.recent.sessions")} ({item.sessionReferences.length})
-              </span>
-              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                {item.sessionReferences.map((ref) => (
-                  <SessionReferenceCard
-                    key={`${ref.sourceId}:${ref.sessionId}`}
-                    onNavigateSession={onNavigateSession}
-                    reference={ref}
-                    t={t}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SessionReferenceCard({
-  reference,
-  onNavigateSession,
-  t,
-}: {
-  reference: RecentSessionReferenceView;
-  onNavigateSession?: (target: MemoryNavigationTarget) => void;
-  t: Translator;
-}) {
-  const isAvailable = reference.available;
-
-  const handleClick = () => {
-    if (!isAvailable) return;
-    onNavigateSession?.({
-      record_kind: "session",
-      source_id: reference.sourceId,
-      session_id: reference.sessionId,
-      question_id: null,
-      turn_id: null,
-      part_id: null,
-      block_id: null,
-    });
-  };
-
-  return (
-    <div
-      aria-disabled={!isAvailable}
-      className={clsx(
-        "flex flex-col gap-1.5 rounded-xl border p-3 transition-all text-left",
-        isAvailable
-          ? "cursor-pointer border-theme-control-border/70 bg-surface-elevated/60 hover:border-primary/50 hover:bg-surface-elevated/90 shadow-xs"
-          : "cursor-not-allowed border-theme-control-border/40 bg-theme-control/15 opacity-65",
-      )}
-      onClick={handleClick}
-      onKeyDown={(e) => {
-        if (isAvailable && (e.key === "Enter" || e.key === " ")) {
-          e.preventDefault();
-          handleClick();
-        }
-      }}
-      role={isAvailable ? "button" : undefined}
-      tabIndex={isAvailable ? 0 : undefined}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="rounded-md border border-primary/25 bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-primary">
-          {reference.sourceAgent}
-        </span>
-        <div className="flex items-center gap-1">
-          {isAvailable ? (
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-status-add">
-              <span className="size-1.5 rounded-full bg-status-add" />
-              <span>{t("memory.recent.sourceAvailable")}</span>
-              <ExternalLink size={11} />
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-[11px] text-on-surface-variant">
-              <span className="size-1.5 rounded-full bg-outline" />
-              <span>
-                {reference.unavailableReason ||
-                  t("memory.recent.sourceUnavailable")}
-              </span>
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="line-clamp-2 text-body-sm font-semibold text-on-surface">
-        {reference.sessionTitle}
-      </div>
-
-      <div className="text-[11px] text-on-surface-variant">
-        {formatTime(reference.lastActivityAt)}
-      </div>
-    </div>
-  );
-}
-
-function AvailabilityBadge({
-  availability,
-  t,
-}: {
-  availability: string;
-  t: Translator;
-}) {
-  if (availability === "available") {
-    return null;
-  }
-  if (availability === "partially_unavailable") {
-    return (
-      <span className="rounded-full border border-status-issue/40 bg-status-issue/10 px-2 py-0.5 text-[10px] font-medium text-status-issue">
-        {t("memory.recent.partiallyUnavailable")}
-      </span>
-    );
-  }
-  return (
-    <span className="rounded-full border border-theme-control-border/60 bg-theme-control/40 px-2 py-0.5 text-[10px] font-medium text-on-surface-variant">
-      {t("memory.recent.sourceUnavailable")}
-    </span>
-  );
-}
-
-function renderStatusBadge(
-  stateView: RecentMemoryStateView | null,
-  t: Translator,
-) {
-  if (!stateView) return null;
-  const { status, snapshot, latestAttemptError } = stateView;
-
-  if (status === "update_failed" || (latestAttemptError && snapshot)) {
-    return (
-      <div className="inline-flex items-center gap-1.5 rounded-full border border-status-issue/40 bg-status-issue/10 px-2.5 py-0.5 text-caption font-medium text-status-issue">
-        <AlertCircle size={12} />
-        <span>{t("memory.recent.updateIncomplete")}</span>
-      </div>
-    );
-  }
-
-  if (snapshot?.publicationKind === "reused") {
-    return (
-      <div className="inline-flex items-center gap-1.5 rounded-full border border-theme-control-border/80 bg-theme-control/50 px-2.5 py-0.5 text-caption font-medium text-on-surface-variant shadow-xs">
-        <Copy className="text-primary" size={12} />
-        <span>{t("memory.recent.reused")}</span>
-      </div>
-    );
-  }
-
-  if (snapshot?.publicationKind === "generated" || status === "ready") {
-    return (
-      <div className="inline-flex items-center gap-1.5 rounded-full border border-status-add/40 bg-status-add/10 px-2.5 py-0.5 text-caption font-medium text-status-add">
-        <CheckCircle2 size={12} />
-        <span>{t("memory.recent.updated")}</span>
-      </div>
-    );
-  }
-
-  return null;
-}
-
-function matchCategory(cat: string): string {
-  switch (cat.toLowerCase()) {
-    case "decision":
-      return "border-primary/40 bg-primary/10 text-primary";
-    case "research":
-      return "border-theme-control-border bg-theme-control/50 text-theme-nav-active-fg";
-    case "verification":
-      return "border-status-add/40 bg-status-add/10 text-status-add";
-    case "blocker":
-      return "border-status-remove/40 bg-status-remove/10 text-status-remove";
-    case "follow_up":
-      return "border-theme-control-border bg-theme-control/40 text-on-surface";
-    default:
-      return "border-theme-control-border bg-theme-control/30 text-on-surface-variant";
-  }
-}
-
-function matchCategoryDot(cat: string): string {
-  switch (cat.toLowerCase()) {
-    case "decision":
-      return "bg-primary ring-primary/20";
-    case "research":
-      return "bg-status-update ring-status-update/20";
-    case "verification":
-      return "bg-status-add ring-status-add/20";
-    case "blocker":
-      return "bg-status-remove ring-status-remove/20";
-    default:
-      return "bg-on-surface-variant ring-on-surface-variant/20";
-  }
-}
-
-interface DateRailParts {
-  dayNumber: string;
-  month: string;
-  weekday: string;
-  relative: string;
-  latestWatermark?: string;
-}
-
-function parseDateRailParts(
-  dateStr: string,
-  targetWatermark: string | undefined,
-  t: Translator,
-): DateRailParts {
-  const parts = dateStr.split("-");
-  const year = parseInt(parts[0], 10);
-  const monthIdx = parseInt(parts[1], 10) - 1;
-  const day = parseInt(parts[2], 10);
-
-  const dateObj = new Date(year, monthIdx, day);
-  const dayNumber = isNaN(day) ? dateStr : String(day);
-
-  const monthNames = [
-    "JAN",
-    "FEB",
-    "MAR",
-    "APR",
-    "MAY",
-    "JUN",
-    "JUL",
-    "AUG",
-    "SEP",
-    "OCT",
-    "NOV",
-    "DEC",
-  ];
-  const month = monthNames[monthIdx] ?? monthIdx + 1 + "月";
-
-  const weekdaysZh = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-  const weekdaysEn = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const isZh = t("memory.recent.today") === "今天";
-  const weekday = isZh
-    ? (weekdaysZh[dateObj.getDay()] ?? "")
-    : (weekdaysEn[dateObj.getDay()] ?? "");
-
-  const today = new Date();
-  const todayZero = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-  ).getTime();
-  const targetZero = new Date(year, monthIdx, day).getTime();
-  const diffDays = Math.round((todayZero - targetZero) / (1000 * 60 * 60 * 24));
-
-  let relative = "";
-  if (diffDays === 0) {
-    relative = t("memory.recent.today");
-  } else if (diffDays === 1) {
-    relative = t("memory.recent.yesterday");
-  } else if (diffDays === 2) {
-    relative = t("memory.recent.beforeYesterday");
-  } else if (diffDays > 2 && diffDays < 30) {
-    relative = t("memory.recent.daysAgo", { days: diffDays });
-  } else {
-    relative = `${monthIdx + 1}/${day}`;
-  }
-
-  let latestWatermark: string | undefined;
-  if (targetWatermark) {
-    const wmDate = targetWatermark.split("T")[0];
-    if (wmDate === dateStr) {
-      const wDateObj = new Date(targetWatermark);
-      if (!isNaN(wDateObj.valueOf())) {
-        const hh = String(wDateObj.getHours()).padStart(2, "0");
-        const mm = String(wDateObj.getMinutes()).padStart(2, "0");
-        latestWatermark = `${hh}:${mm}`;
-      }
-    }
-  }
-
-  return {
-    dayNumber,
-    month,
-    weekday,
-    relative,
-    latestWatermark,
-  };
-}
-
-function formatWatermark(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf())
-    ? value
-    : `${date.getMonth() + 1}月${date.getDate()}日 ${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
-}
-
-function formatTime(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
 }

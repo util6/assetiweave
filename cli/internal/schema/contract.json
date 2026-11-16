@@ -12604,5 +12604,11 @@
       "since": "0.1.0",
       "deprecated": false
     }
-  ]
+  ],
+  "supported_methods": [
+    "refresh_memory_recent_state",
+    "update_memory_node_status",
+    "get_memory_project_state"
+  ],
+  "contracts": []
 }

@@ -1,125 +1,267 @@
+import clsx from "clsx";
 import {
-  ArrowRightCircle,
-  CheckCircle2,
-  ExternalLink,
+  ChevronDown,
+  ChevronRight,
   FolderOpen,
-  Sparkles,
+  GitBranch,
+  History,
+  Layers,
+  Loader2,
 } from "lucide-react";
-import { useCallback } from "react";
+import { useMemo, useState } from "react";
 import type { Translator } from "../../i18n/I18nProvider";
 import type {
   MemoryNavigationTarget,
-  RecentNodeStatus,
+  MemoryNodeStatus,
+  MemoryProjectStateView,
   RecentProjectView,
   RecentTopicView,
   RecentTreeNodeView,
 } from "../../types/memory";
+import { Badge } from "../foundation/Badge";
 import { Panel } from "../foundation/Panel";
+import { Button } from "../ui/button";
+import { MemoryNodeCard } from "./recent/MemoryNodeCard";
+import {
+  buildTreeHierarchy,
+  filterRecentProjects,
+  parseNodeAnchor,
+  projectStateToRecentProjectView,
+  type NodeAnchor,
+  type RecentStatusFilter,
+  type TreeHierarchyNode,
+} from "./recent/recentModel";
 
-export interface NodeAnchor {
-  shortId: string;
-  turnNumber: number;
-  subIndex?: number;
-}
-
-export function parseNodeAnchor(nodeId: string): NodeAnchor | null {
-  const match = nodeId.trim().match(/^([a-zA-Z0-9_-]+)#T(\d+)(?:\.(\d+))?$/);
-  if (!match) return null;
-  return {
-    shortId: match[1],
-    turnNumber: parseInt(match[2], 10),
-    subIndex: match[3] ? parseInt(match[3], 10) : undefined,
-  };
-}
-
-export interface HierarchyNode extends RecentTreeNodeView {
-  children: HierarchyNode[];
-}
-
-export function buildTreeHierarchy(nodes: RecentTreeNodeView[]): HierarchyNode[] {
-  const nodeMap = new Map<string, HierarchyNode>();
-  for (const n of nodes) {
-    nodeMap.set(n.id, { ...n, children: [] });
-  }
-
-  const roots: HierarchyNode[] = [];
-  for (const n of nodes) {
-    const current = nodeMap.get(n.id)!;
-    if (n.parentId && nodeMap.has(n.parentId)) {
-      nodeMap.get(n.parentId)!.children.push(current);
-    } else {
-      roots.push(current);
-    }
-  }
-
-  return roots;
-}
+export { buildTreeHierarchy, parseNodeAnchor };
+export type { NodeAnchor, TreeHierarchyNode, TreeHierarchyNode as HierarchyNode };
 
 export interface RecentTopicTreeProps {
-  project: RecentProjectView;
+  expandedHistorySlugs?: Set<string>;
+  fullProjectStates?: Record<string, MemoryProjectStateView | null>;
+  loadingProjectSlugs?: Set<string>;
   onNavigateSession?: (target: MemoryNavigationTarget) => void;
+  onStatusChange?: (
+    node: RecentTreeNodeView,
+    nextStatus: MemoryNodeStatus,
+    projectKey: string,
+  ) => void;
+  onToggleProjectHistory?: (projectKey: string) => void;
+  project?: RecentProjectView;
+  projects?: RecentProjectView[];
+  searchQuery?: string;
+  statusFilter?: RecentStatusFilter;
   t: Translator;
+  updatingNodeId?: string | null;
 }
 
 export function RecentTopicTree({
-  project,
+  expandedHistorySlugs,
+  fullProjectStates,
+  loadingProjectSlugs,
   onNavigateSession,
+  onStatusChange,
+  onToggleProjectHistory,
+  project,
+  projects,
+  searchQuery = "",
+  statusFilter = "all",
   t,
+  updatingNodeId,
 }: RecentTopicTreeProps) {
-  const handleJump = useCallback(
-    (nodeId: string) => {
-      const parsed = parseNodeAnchor(nodeId);
-      if (!parsed || !onNavigateSession) return;
-      onNavigateSession({
-        record_kind: "session",
-        source_id: null,
-        session_id: parsed.shortId,
-        question_id: null,
-        turn_id: String(parsed.turnNumber),
-        part_id: null,
-        block_id: String(parsed.turnNumber),
-      });
-    },
-    [onNavigateSession],
-  );
+  const effectiveProjects = useMemo<RecentProjectView[]>(() => {
+    if (projects) return projects;
+    if (project) return [project];
+    return [];
+  }, [project, projects]);
 
-  const topics = project.topics ?? [];
+  return (
+    <div className="flex flex-col gap-4" data-testid="recent-topic-tree">
+      {effectiveProjects.map((item, index) => (
+        <ProjectTopicTreePanel
+          expandedHistory={expandedHistorySlugs?.has(item.projectKey) ?? false}
+          fullState={fullProjectStates?.[item.projectKey]}
+          key={item.projectKey || item.projectTitle || String(index)}
+          loadingHistory={loadingProjectSlugs?.has(item.projectKey) ?? false}
+          onNavigateSession={onNavigateSession}
+          onStatusChange={onStatusChange}
+          onToggleProjectHistory={onToggleProjectHistory}
+          project={item}
+          searchQuery={searchQuery}
+          statusFilter={statusFilter}
+          t={t}
+          updatingNodeId={updatingNodeId}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ProjectTopicTreePanel({
+  expandedHistory,
+  fullState,
+  loadingHistory,
+  onNavigateSession,
+  onStatusChange,
+  onToggleProjectHistory,
+  project,
+  searchQuery,
+  statusFilter,
+  t,
+  updatingNodeId,
+}: {
+  expandedHistory: boolean;
+  fullState?: MemoryProjectStateView | null;
+  loadingHistory: boolean;
+  onNavigateSession?: (target: MemoryNavigationTarget) => void;
+  onStatusChange?: (
+    node: RecentTreeNodeView,
+    nextStatus: MemoryNodeStatus,
+    projectKey: string,
+  ) => void;
+  onToggleProjectHistory?: (projectKey: string) => void;
+  project: RecentProjectView;
+  searchQuery: string;
+  statusFilter: RecentStatusFilter;
+  t: Translator;
+  updatingNodeId?: string | null;
+}) {
+  const effectiveProject = useMemo(() => {
+    if (!expandedHistory || !fullState) {
+      return project;
+    }
+    const converted = projectStateToRecentProjectView(fullState, project);
+    const trimmed = searchQuery.trim();
+    if (!trimmed && statusFilter === "all") {
+      return converted;
+    }
+    const filtered = filterRecentProjects([converted], {
+      projectKey: "all",
+      query: trimmed,
+      statusFilter,
+    });
+    return filtered[0] ?? { ...converted, topics: [] };
+  }, [expandedHistory, fullState, project, searchQuery, statusFilter]);
+
+  const effectiveTopics = effectiveProject.topics ?? [];
+  const totalNodes = effectiveTopics.reduce(
+    (sum, topic) => sum + topic.nodes.length,
+    0,
+  );
+  const unexploredCount = effectiveTopics.reduce(
+    (sum, topic) =>
+      sum + topic.nodes.filter((node) => node.status === "unexplored").length,
+    0,
+  );
+  const watermarkCount =
+    "watermarkCount" in effectiveProject &&
+    typeof effectiveProject.watermarkCount === "number"
+      ? effectiveProject.watermarkCount
+      : fullState?.watermarkCount;
 
   return (
     <Panel
-      className="flex flex-col gap-5 p-4.5 rounded-2xl border border-theme-control-border/70 bg-surface/85 backdrop-blur-md shadow-xs"
+      className="overflow-hidden"
+      data-project-slug={project.projectKey}
+      padding="none"
       variant="default"
     >
-      {/* Project Header */}
-      <div className="flex items-center justify-between gap-3 border-b border-theme-control-border/60 pb-3">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span className="grid size-7 shrink-0 place-items-center rounded-xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
-            <FolderOpen size={14} />
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-theme-card-border/75 bg-theme-card-header/45 px-5 py-3.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <span className="grid size-8 shrink-0 place-items-center rounded-xl border border-theme-control-border/70 bg-theme-control/75 text-primary">
+            <FolderOpen size={15} />
           </span>
-          <span className="truncate text-body-md font-bold text-on-surface">
-            {project.projectTitle}
-          </span>
-          {project.projectPath && (
-            <span className="hidden sm:inline-block max-w-[280px] truncate rounded-full border border-theme-control-border/60 bg-theme-control/30 px-2.5 py-0.5 font-mono text-[11px] text-on-surface-variant">
-              {project.projectPath}
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="truncate text-title-sm font-semibold text-on-surface">
+                {effectiveProject.projectTitle}
+              </h3>
+              <Badge tone="neutral">
+                {effectiveTopics.length} {t("memory.recent.topics")}
+              </Badge>
+              <Badge tone="neutral">
+                {t("memory.recent.nodeCountBadge", { count: totalNodes })}
+              </Badge>
+              {unexploredCount > 0 && (
+                <Badge tone="conflict">
+                  {t("memory.recent.unexploredCountBadge", {
+                    count: unexploredCount,
+                  })}
+                </Badge>
+              )}
+              {watermarkCount != null && (
+                <span className="rounded-full border border-theme-control-border/70 bg-theme-control/60 px-2.5 py-0.5 font-mono text-caption text-on-surface-muted">
+                  {t("memory.recent.watermarkSessions", {
+                    count: watermarkCount,
+                  })}
+                </span>
+              )}
+            </div>
+            {effectiveProject.projectPath && (
+              <p
+                className="mt-0.5 truncate font-mono text-caption text-outline"
+                title={effectiveProject.projectPath}
+              >
+                {effectiveProject.projectPath}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {onToggleProjectHistory && (
+          <Button
+            aria-expanded={expandedHistory}
+            disabled={loadingHistory}
+            onClick={() => onToggleProjectHistory(project.projectKey)}
+            size="sm"
+            type="button"
+            variant={expandedHistory ? "secondary" : "outline"}
+          >
+            {loadingHistory ? (
+              <Loader2 className="animate-spin" size={14} />
+            ) : (
+              <History size={14} />
+            )}
+            <span>
+              {loadingHistory
+                ? t("memory.recent.projectHistoryLoading")
+                : expandedHistory
+                  ? t("memory.recent.projectHistoryHide")
+                  : t("memory.recent.projectHistoryShow")}
             </span>
+          </Button>
+        )}
+      </header>
+
+      {expandedHistory && (
+        <div className="border-b border-theme-card-border/60 bg-theme-control/45 px-5 py-2.5 text-caption text-on-surface-variant">
+          {loadingHistory ? (
+            <span>{t("memory.recent.projectHistoryLoading")}</span>
+          ) : fullState ? (
+            <span>
+              {t("memory.recent.projectHistoryBanner", {
+                watermark: fullState.watermarkCount,
+              })}
+            </span>
+          ) : (
+            <span>{t("memory.recent.projectHistoryEmpty")}</span>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
-            {topics.length} {t("memory.recent.topics") || "个主题"}
-          </span>
-        </div>
-      </div>
+      )}
 
-      {/* Topics */}
-      <div className="flex flex-col gap-6">
-        {topics.map((topic) => (
-          <TopicSection
-            handleJump={handleJump}
+      <div className="flex flex-col divide-y divide-theme-card-border/55">
+        {effectiveTopics.map((topic) => (
+          <TopicBranchSection
             key={topic.topicId}
+            onNavigateSession={onNavigateSession}
+            onStatusChange={
+              onStatusChange
+                ? (node, nextStatus) =>
+                    onStatusChange(node, nextStatus, project.projectKey)
+                : undefined
+            }
             t={t}
             topic={topic}
+            updatingNodeId={updatingNodeId}
           />
         ))}
       </div>
@@ -127,178 +269,138 @@ export function RecentTopicTree({
   );
 }
 
-interface TopicSectionProps {
-  topic: RecentTopicView;
-  handleJump: (nodeId: string) => void;
+function TopicBranchSection({
+  onNavigateSession,
+  onStatusChange,
+  t,
+  topic,
+  updatingNodeId,
+}: {
+  onNavigateSession?: (target: MemoryNavigationTarget) => void;
+  onStatusChange?: (node: RecentTreeNodeView, nextStatus: MemoryNodeStatus) => void;
   t: Translator;
-}
-
-function TopicSection({ topic, handleJump, t }: TopicSectionProps) {
-  const roots = buildTreeHierarchy(topic.nodes);
-
-  // Status summaries
-  const completedCount = topic.nodes.filter(
-    (n) => n.status === "completed",
-  ).length;
-  const continuedCount = topic.nodes.filter(
-    (n) => n.status === "continued",
-  ).length;
-  const unexploredCount = topic.nodes.filter(
-    (n) => n.status === "unexplored",
+  topic: RecentTopicView;
+  updatingNodeId?: string | null;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const hierarchy = useMemo(
+    () => buildTreeHierarchy(topic.nodes),
+    [topic.nodes],
+  );
+  const visibleNodeIds = useMemo(
+    () => new Set(topic.nodes.map((node) => node.id)),
+    [topic.nodes],
+  );
+  const topicUnexplored = topic.nodes.filter(
+    (node) => node.status === "unexplored",
   ).length;
 
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-theme-control-border/50 bg-theme-control/10 p-3.5 sm:p-4">
-      {/* Topic Header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-theme-control-border/40 pb-2.5">
-        <div className="flex items-center gap-2">
-          <span className="rounded-full border border-theme-control-border/80 bg-theme-control/60 px-2.5 py-0.5 font-mono text-[11px] font-bold text-primary">
-            {topic.topicId}
+    <section className="px-5 py-4" data-topic-id={topic.topicId}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          aria-expanded={!collapsed}
+          className="inline-flex min-w-0 items-center gap-2 rounded-xl px-1.5 py-1 text-left transition-colors hover:bg-theme-control-hover/65 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55"
+          onClick={() => setCollapsed((prev) => !prev)}
+          type="button"
+        >
+          <span className="text-outline">
+            {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
           </span>
-          <span className="text-body-sm font-bold text-on-surface">
+          <Layers className="shrink-0 text-primary" size={14} />
+          <h4 className="truncate text-body-sm font-semibold text-on-surface">
             {topic.topic}
+          </h4>
+        </button>
+
+        <div className="flex items-center gap-1.5">
+          {topicUnexplored > 0 && (
+            <Badge tone="conflict">
+              <GitBranch className="mr-1" size={11} />
+              {t("memory.recent.unexploredCountBadge", {
+                count: topicUnexplored,
+              })}
+            </Badge>
+          )}
+          <span className="font-mono text-caption text-outline">
+            {t("memory.recent.nodeCountBadge", { count: topic.nodes.length })}
           </span>
         </div>
+      </div>
 
-        {/* Status Chips */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {completedCount > 0 && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-status-add/30 bg-status-add/10 px-2 py-0.5 text-[10px] font-medium text-status-add">
-              <CheckCircle2 size={11} className="shrink-0" />
-              <span>{completedCount} 已完成</span>
-            </span>
-          )}
-          {continuedCount > 0 && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
-              <ArrowRightCircle size={11} className="shrink-0" />
-              <span>{continuedCount} 推进中</span>
-            </span>
-          )}
-          {unexploredCount > 0 && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-status-issue/30 bg-status-issue/10 px-2 py-0.5 text-[10px] font-medium text-status-issue">
-              <Sparkles size={11} className="shrink-0" />
-              <span>{unexploredCount} 待探索</span>
-            </span>
-          )}
+      {!collapsed && (
+        <div className="mt-3 flex flex-col gap-2.5">
+          {hierarchy.map((branch) => (
+            <TreeBranchNode
+              branch={branch}
+              key={branch.id}
+              onNavigateSession={onNavigateSession}
+              onStatusChange={onStatusChange}
+              t={t}
+              updatingNodeId={updatingNodeId}
+              visibleNodeIds={visibleNodeIds}
+            />
+          ))}
         </div>
-      </div>
-
-      {/* Tree Nodes */}
-      <div className="flex flex-col gap-2 pt-1">
-        {roots.map((rootNode) => (
-          <TreeNodeCard
-            depth={0}
-            handleJump={handleJump}
-            key={rootNode.id}
-            node={rootNode}
-            t={t}
-          />
-        ))}
-      </div>
-    </div>
+      )}
+    </section>
   );
 }
 
-interface TreeNodeCardProps {
-  node: HierarchyNode;
-  depth: number;
-  handleJump: (nodeId: string) => void;
+function TreeBranchNode({
+  branch,
+  onNavigateSession,
+  onStatusChange,
+  t,
+  updatingNodeId,
+  visibleNodeIds,
+}: {
+  branch: TreeHierarchyNode;
+  onNavigateSession?: (target: MemoryNavigationTarget) => void;
+  onStatusChange?: (node: RecentTreeNodeView, nextStatus: MemoryNodeStatus) => void;
   t: Translator;
-}
-
-function TreeNodeCard({ node, depth, handleJump }: TreeNodeCardProps) {
-  const parsed = parseNodeAnchor(node.id);
+  updatingNodeId?: string | null;
+  visibleNodeIds: Set<string>;
+}) {
+  const { children, depth } = branch;
+  const parentMissingFromSlice =
+    Boolean(branch.parentId) && !visibleNodeIds.has(branch.parentId!);
 
   return (
-    <div className="relative flex flex-col">
-      {/* Node content card */}
-      <div className="group relative flex flex-col gap-1.5 rounded-xl border border-theme-control-border/60 bg-surface/70 backdrop-blur-xs p-3 transition-colors hover:border-theme-control-border hover:bg-surface/95 shadow-2xs">
-        {/* Top line: status badge, lineage notes, and jump button */}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <NodeStatusBadge status={node.status} />
-            {node.parentId && (
-              <span className="font-mono text-[10px] text-on-surface-variant/80">
-                (↖ 继承自 {node.parentId})
-              </span>
-            )}
-          </div>
+    <div
+      className={clsx(
+        "flex flex-col gap-2",
+        depth > 0 &&
+          depth <= 4 &&
+          "ml-3 border-l-2 border-theme-card-border/65 pl-4",
+      )}
+      data-depth={depth}
+    >
+      <MemoryNodeCard
+        highlightUnexplored
+        node={branch}
+        onNavigateSession={onNavigateSession}
+        onStatusChange={onStatusChange}
+        showParentContext={parentMissingFromSlice}
+        t={t}
+        updating={updatingNodeId === branch.id}
+      />
 
-          {parsed && (
-            <button
-              className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/80 px-2 py-0.5 font-mono text-[11px] text-primary hover:border-primary/50 hover:bg-theme-control cursor-pointer transition-colors shadow-2xs"
-              onClick={() => handleJump(node.id)}
-              title={`跳转到会话轮次 ${parsed.shortId} #T${parsed.turnNumber}`}
-              type="button"
-            >
-              <span>
-                {parsed.shortId} #T{parsed.turnNumber}
-              </span>
-              <ExternalLink className="shrink-0" size={10} />
-            </button>
-          )}
-        </div>
-
-        {/* Node label and summary */}
-        <div className="flex flex-col gap-0.5">
-          {node.label && (
-            <span className="text-body-sm font-semibold text-on-surface">
-              {node.label}
-            </span>
-          )}
-          {node.summary && node.summary !== node.label && (
-            <span className="text-body-xs text-on-surface-variant leading-relaxed">
-              {node.summary}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Children with visual connector lines */}
-      {node.children.length > 0 && (
-        <div className="relative ml-5 sm:ml-6 mt-2 flex flex-col gap-2 pl-4 border-l-2 border-theme-control-border/60">
-          {node.children.map((child) => (
-            <div className="relative" key={child.id}>
-              {/* Elbow connector curve */}
-              <div className="absolute -left-[18px] top-4 h-3 w-3.5 rounded-bl-xl border-b-2 border-l-2 border-theme-control-border/60 pointer-events-none" />
-              <TreeNodeCard
-                depth={depth + 1}
-                handleJump={handleJump}
-                node={child}
-                t={TranslatorDefault}
-              />
-            </div>
+      {children.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {children.map((child) => (
+            <TreeBranchNode
+              branch={child}
+              key={child.id}
+              onNavigateSession={onNavigateSession}
+              onStatusChange={onStatusChange}
+              t={t}
+              updatingNodeId={updatingNodeId}
+              visibleNodeIds={visibleNodeIds}
+            />
           ))}
         </div>
       )}
     </div>
   );
-}
-
-const TranslatorDefault: Translator = (k: string) => k;
-
-function NodeStatusBadge({ status }: { status: RecentNodeStatus }) {
-  switch (status) {
-    case "completed":
-      return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-status-add/40 bg-status-add/10 px-2 py-0.5 text-[11px] font-medium text-status-add">
-          <CheckCircle2 className="shrink-0" size={12} />
-          <span>已完成</span>
-        </span>
-      );
-    case "continued":
-      return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
-          <ArrowRightCircle className="shrink-0" size={12} />
-          <span>推进中</span>
-        </span>
-      );
-    case "unexplored":
-      return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-status-issue/40 bg-status-issue/10 px-2 py-0.5 text-[11px] font-medium text-status-issue">
-          <Sparkles className="shrink-0" size={12} />
-          <span>待探索</span>
-        </span>
-      );
-  }
 }

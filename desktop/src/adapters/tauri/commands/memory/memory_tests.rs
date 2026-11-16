@@ -3,6 +3,9 @@ use super::*;
 #[test]
 fn test_memory_module_exports_expected_commands() {
     let _ = get_memory_recent_snapshot;
+    let _ = refresh_memory_recent_state;
+    let _ = update_memory_node_status;
+    let _ = get_memory_project_state;
     let _ = duplicate_memory_generation_skill;
     let _ = reset_memory_generation_skill_to_default;
     let _ = search_memory_recall;

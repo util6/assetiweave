@@ -1,24 +1,29 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  memoryContextResultSchema,
+  memoryProjectStateViewSchema,
+  memoryProjectViewSchema,
   memoryRecallSearchResultSchema,
   memoryRecallSessionSchema,
-  memoryContextResultSchema,
-  memoryProjectViewSchema,
   memoryRebuildResultSchema,
   memoryTaskViewSchema,
+  memoryTreeNodeSchema,
   recentMemoryStateViewSchema,
 } from "../schemas/memory";
 import type {
-  MemoryScope,
+  MemoryContextResult,
+  MemoryNodeStatus,
+  MemoryProjectStateView,
+  MemoryProjectView,
   MemoryRecallSearchResult,
   MemoryRecallSession,
-  MemoryContextResult,
-  MemoryProjectView,
-  MemoryRebuildResult,
   MemoryRebuildReason,
+  MemoryRebuildResult,
   MemoryRebuildTarget,
+  MemoryScope,
   MemoryTaskView,
+  MemoryTreeNode,
   RecentMemoryStateView,
 } from "../types/memory";
 import type { Asset } from "../types";
@@ -43,6 +48,46 @@ export async function getRecentMemorySnapshot(): Promise<RecentMemoryStateView> 
   return recentMemoryStateViewSchema.parse(
     await invoke("get_memory_recent_snapshot"),
   );
+}
+
+export async function refreshMemoryRecentState(
+  window?: string | null,
+): Promise<RecentMemoryStateView> {
+  requireDesktop();
+  return recentMemoryStateViewSchema.parse(
+    await invoke("refresh_memory_recent_state", {
+      params: { window: window ?? null },
+    }),
+  );
+}
+
+export async function updateMemoryNodeStatus(params: {
+  nodeId: string;
+  status: MemoryNodeStatus;
+  projectSlug?: string | null;
+  window?: string | null;
+}): Promise<MemoryTreeNode> {
+  requireDesktop();
+  return memoryTreeNodeSchema.parse(
+    await invoke("update_memory_node_status", {
+      params: {
+        node_id: params.nodeId,
+        status: params.status,
+        project_slug: params.projectSlug ?? null,
+        window: params.window ?? null,
+      },
+    }),
+  );
+}
+
+export async function getMemoryProjectState(
+  projectSlug: string,
+): Promise<MemoryProjectStateView | null> {
+  if (!isTauriRuntime()) return null;
+  const value = await invoke("get_memory_project_state", {
+    params: { project_slug: projectSlug },
+  });
+  return value == null ? null : memoryProjectStateViewSchema.parse(value);
 }
 
 export async function resolveMemoryContext(

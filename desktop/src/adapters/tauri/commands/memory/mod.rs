@@ -17,8 +17,9 @@ pub(crate) use recall::{
     search_memory_recall, send_memory_recall_turn,
 };
 pub(crate) use recent::{
-    duplicate_memory_generation_skill, get_memory_recent_snapshot,
-    reset_memory_generation_skill_to_default,
+    duplicate_memory_generation_skill, get_memory_project_state, get_memory_recent_snapshot,
+    refresh_memory_recent_state, reset_memory_generation_skill_to_default,
+    update_memory_node_status,
 };
 pub(crate) use tasks::{
     cancel_memory_public_task, get_memory_public_task, list_memory_public_tasks,

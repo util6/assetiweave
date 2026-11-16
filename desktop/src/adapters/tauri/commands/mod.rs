@@ -16,7 +16,7 @@ pub(crate) mod mounting;
 #[macro_use]
 pub(crate) mod system;
 
-pub(crate) const BASELINE_COMMAND_COUNT: usize = 200;
+pub(crate) const BASELINE_COMMAND_COUNT: usize = 203;
 
 pub(crate) use self::agents::*;
 pub(crate) use self::catalog::*;
@@ -42,6 +42,9 @@ pub(crate) fn command_handler(
         list_assets,
         list_source_assets,
         get_memory_recent_snapshot,
+        refresh_memory_recent_state,
+        update_memory_node_status,
+        get_memory_project_state,
         duplicate_memory_generation_skill,
         reset_memory_generation_skill_to_default,
         resolve_memory_context,

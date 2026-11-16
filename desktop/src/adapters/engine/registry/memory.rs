@@ -380,4 +380,48 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         None,
         since: "0.6.1", deprecated: false
     ),
+    command!(
+        "refresh_memory_recent_state",
+        "memory.recent.refresh",
+        "Re-slice recent memory state by time window",
+        Write,
+        App,
+        false,
+        crate::backend::application::MemoryRecentRefreshParams,
+        ServiceAsync => |service, params| service.refresh_memory_recent_state_view(params).await,
+        &[param!("window", "Optional time window such as 24h, 48h, 72h")],
+        None,
+        since: "0.6.1", deprecated: false
+    ),
+    command!(
+        "update_memory_node_status",
+        "memory.node.status.update",
+        "Update a memory tree node status and re-project state",
+        Write,
+        App,
+        false,
+        crate::backend::application::MemoryNodeStatusUpdateParams,
+        ServiceAsync => |service, params| service.update_memory_node_status_for_ui(params).await,
+        &[
+            param!("node_id", "Memory node identifier", ["nodeId"]),
+            param!("status", "Target status: completed, continued, unexplored, dismissed"),
+            param!("project_slug", "Optional project slug", ["projectSlug"]),
+            param!("window", "Optional recent window"),
+        ],
+        None,
+        since: "0.6.1", deprecated: false
+    ),
+    command!(
+        "get_memory_project_state",
+        "memory.project.state.get",
+        "Get a project's full cumulative memory topic tree state",
+        Read,
+        App,
+        false,
+        crate::backend::application::MemoryProjectStateGetParams,
+        ServiceAsync => |service, params| service.get_memory_project_state_view(&params.project_slug).await,
+        &[param!("project_slug", "Project slug", ["projectSlug"])],
+        None,
+        since: "0.6.1", deprecated: false
+    ),
 ];

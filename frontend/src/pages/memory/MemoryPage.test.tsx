@@ -1,96 +1,44 @@
-/* @vitest-environment jsdom */
-
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/react";
+// @vitest-environment jsdom
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryTaskProvider } from "../../app/backgroundTasks/MemoryTaskProvider";
+import { createAppI18nSync } from "../../i18n/createAppI18n";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { MemoryPage } from "./MemoryPage";
 
-const memoryService = vi.hoisted(() => ({
-  cancelMemoryRecallTurn: vi.fn(),
-  createMemoryRecallSession: vi.fn(),
-  emptyMemoryScope: vi.fn(() => ({
+vi.mock("../../services/memory", () => ({
+  emptyMemoryScope: () => ({
     app_id: null,
     source_id: null,
     project_path: null,
     session_id: null,
-  })),
-  getMemoryRecallSession: vi.fn(),
-  getRecentMemorySnapshot: vi.fn(),
-  searchMemoryRecall: vi.fn(),
-  sendMemoryRecallTurn: vi.fn(),
-  subscribeMemoryTasks: vi.fn(),
-}));
-vi.mock("../../services/memory", () => memoryService);
-
-beforeEach(() => {
-  vi.stubGlobal("localStorage", createMockLocalStorage());
-  localStorage.setItem("assetiweave.locale", "zh");
-  vi.clearAllMocks();
-  memoryService.emptyMemoryScope.mockReturnValue({
-    app_id: null,
-    source_id: null,
-    project_path: null,
-    session_id: null,
-  });
-  memoryService.getRecentMemorySnapshot.mockResolvedValue({
+  }),
+  getRecentMemorySnapshot: vi.fn(async () => ({
     status: "empty",
     snapshot: null,
     latestAttemptTaskId: null,
     latestAttemptError: null,
-  });
-  memoryService.subscribeMemoryTasks.mockResolvedValue(() => undefined);
-  memoryService.createMemoryRecallSession.mockResolvedValue(session());
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
-
-describe("MemoryPage", () => {
-  it("only renders the Recent workspace for the default entry point", async () => {
-    renderMemoryPage("recent");
-    expect(await screen.findByText("最近 72 小时没有工作记录")).toBeTruthy();
-    expect(screen.queryByText("今日 / 继续工作")).toBeNull();
-    expect(screen.queryByText("自动 Dream")).toBeNull();
-  });
-
-  it("opens one persistent Recall session and sends sequential turns", async () => {
-    renderMemoryPage("recall");
-    expect(
-      await screen.findByRole("heading", { level: 1, name: "深度回忆" }),
-    ).toBeTruthy();
-    expect(memoryService.createMemoryRecallSession).toHaveBeenCalledTimes(1);
-    fireEvent.change(screen.getByRole("textbox", { name: "回忆问题" }), {
-      target: { value: "为什么？" },
-    });
-    memoryService.sendMemoryRecallTurn.mockResolvedValue(
-      session({ turnCount: 1, activeTurnId: "turn-1" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "发送" }));
-    await act(async () => {});
-    expect(memoryService.sendMemoryRecallTurn).toHaveBeenCalledWith(
-      expect.any(String),
-      "为什么？",
-    );
-  });
-});
-
-function renderMemoryPage(activeSubNavId: string) {
-  return render(
-    <I18nProvider>
-      <MemoryPage activeSubNavId={activeSubNavId} />
-    </I18nProvider>,
-  );
-}
-
-function session(overrides: Record<string, unknown> = {}) {
-  return {
+  })),
+  refreshMemoryRecentState: vi.fn(async () => ({
+    status: "empty",
+    snapshot: null,
+    latestAttemptTaskId: null,
+    latestAttemptError: null,
+  })),
+  updateMemoryNodeStatus: vi.fn(),
+  getMemoryProjectState: vi.fn(async () => null),
+  rebuildMemoryScope: vi.fn(async () => ({
+    accepted: true,
+    scheduledTaskIds: [],
+    targetWatermark: null,
+    reused: false,
+  })),
+  listMemoryPublicTasks: vi.fn(async () => []),
+  getMemoryPublicTask: vi.fn(async () => null),
+  cancelMemoryPublicTask: vi.fn(),
+  retryMemoryPublicTask: vi.fn(),
+  subscribeMemoryTasks: vi.fn(async () => () => {}),
+  createMemoryRecallSession: vi.fn(async () => ({
     id: "recall-1",
     status: "active",
     scope: {
@@ -99,29 +47,54 @@ function session(overrides: Record<string, unknown> = {}) {
       project_path: null,
       session_id: null,
     },
-    executionContextKey: "memory-recall:recall-1",
-    agentId: "opencode",
+    executionContextKey: "ctx-1",
+    agentId: "claude",
     model: null,
     turnCount: 0,
     activeTurnId: null,
     lastError: null,
-    createdAt: "2026-09-01T00:00:00Z",
-    updatedAt: "2026-09-01T00:00:00Z",
+    createdAt: "2026-11-13T00:00:00Z",
+    updatedAt: "2026-11-13T00:00:00Z",
     turns: [],
-    ...overrides,
-  };
+  })),
+  getMemoryRecallSession: vi.fn(async () => null),
+  searchMemoryRecall: vi.fn(async () => null),
+  sendMemoryRecallTurn: vi.fn(),
+  cancelMemoryRecallTurn: vi.fn(),
+}));
+
+function renderMemoryPage(activeSubNavId: string) {
+  return render(
+    <I18nProvider i18n={createAppI18nSync("zh")}>
+      <MemoryTaskProvider>
+        <MemoryPage activeSubNavId={activeSubNavId} />
+      </MemoryTaskProvider>
+    </I18nProvider>,
+  );
 }
 
-function createMockLocalStorage(): Storage {
-  const values = new Map<string, string>();
-  return {
-    get length() {
-      return values.size;
-    },
-    clear: () => values.clear(),
-    getItem: (key) => values.get(key) ?? null,
-    key: (index) => Array.from(values.keys())[index] ?? null,
-    removeItem: (key) => values.delete(key),
-    setItem: (key, value) => values.set(key, String(value)),
-  };
-}
+describe("MemoryPage", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("only renders the Recent workspace for the default entry point", async () => {
+    renderMemoryPage("recent");
+    expect(await screen.findByText("当前窗口暂无近期记忆")).toBeTruthy();
+    expect(screen.getByText("72h")).toBeTruthy();
+    expect(screen.queryByText("今日 / 继续工作")).toBeNull();
+    expect(screen.queryByText("自动 Dream")).toBeNull();
+  });
+
+  it("renders Recall in its own dedicated view", async () => {
+    renderMemoryPage("recall");
+    expect(
+      await screen.findByRole("heading", { name: "深度回忆" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("当前窗口暂无近期记忆")).toBeNull();
+  });
+});

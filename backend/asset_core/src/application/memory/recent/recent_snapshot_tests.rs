@@ -336,6 +336,12 @@ async fn test_get_recent_memory_snapshot_deep_tree_hierarchy() {
             label: format!("Deep Level {depth}"),
             summary: format!("Summary for depth {depth} under parent {parent_id:?}"),
             recorded_at: Some("2026-11-02T10:00:00Z".to_string()),
+            source_session_id: None,
+            turn_index: None,
+            session_title: None,
+            source_agent: None,
+            session_available: None,
+            parent_summary: None,
         });
 
         // Add sibling branch
@@ -347,6 +353,12 @@ async fn test_get_recent_memory_snapshot_deep_tree_hierarchy() {
                 label: format!("Sibling Level {depth}"),
                 summary: format!("Sibling summary for depth {depth}"),
                 recorded_at: Some("2026-11-02T10:15:00Z".to_string()),
+                source_session_id: None,
+                turn_index: None,
+                session_title: None,
+                source_agent: None,
+                session_available: None,
+                parent_summary: None,
             });
         }
 
@@ -382,4 +394,150 @@ async fn test_get_recent_memory_snapshot_deep_tree_hierarchy() {
     assert_eq!(topic.nodes.len(), 17); // 12 mainline + 5 siblings
     assert_eq!(snapshot.projects[0].items.len(), 17);
     assert_eq!(snapshot.projects[0].source_session_count, 12);
+}
+
+#[tokio::test]
+async fn test_get_recent_memory_snapshot_enriches_sqlite_parent_summary_and_turn_started_at() {
+    use crate::backend::domain::memory::{
+        MemoryTreeNode, NodeStatus, ProjectMemoryState, RecentMemoryState, TopicTree,
+    };
+
+    let harness = TestHarness::new("enrich");
+    let service = harness.create_service().await;
+    let storage = harness.storage(service.tenant_id());
+
+    // Insert a conversation source + session into SQLite
+    sqlx::query(
+        "INSERT INTO conversation_sources (tenant_id, id, adapter_id, name, kind, location, enabled, created_at, updated_at) \
+         VALUES ('default', 'src-1', 'claude-code', 'Claude Code', 'local', '/tmp', 1, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')",
+    )
+    .execute(service.db.pool())
+    .await
+    .unwrap();
+
+    let full_sess_id =
+        "conversation-session-098b0c4b11223344556677889900aabbccddeeff00112233445566778899001122";
+    sqlx::query(
+        "INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, project_path, last_cwd, missing, created_at, imported_at) \
+         VALUES ('default', ?1, 'src-1', 'claude-code', 'ext-1', 'Refactor Recent UI', '/Users/test/assetiweave', '/Users/test/assetiweave', 0, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')",
+    )
+    .bind(full_sess_id)
+    .execute(service.db.pool())
+    .await
+    .unwrap();
+
+    // Write full project state (with a Continued parent node and a Dismissed node)
+    let mut full_tree = TopicTree::new("ui-rewrite", "UI 重写");
+    full_tree.insert_node(
+        MemoryTreeNode {
+            id: "098b0c4b#T1".to_string(),
+            parent_id: None,
+            topic_id: "ui-rewrite".to_string(),
+            summary: "旧版前端与 .state 结构脱节".to_string(),
+            status: NodeStatus::Continued,
+            source_session_id: full_sess_id.to_string(),
+            turn_index: 1,
+            turn_started_at: Some("2026-11-01T08:00:00Z".to_string()),
+            created_at: "2026-11-05T00:00:00Z".to_string(),
+            updated_at: "2026-11-05T00:00:00Z".to_string(),
+        },
+        true,
+    );
+    full_tree.insert_node(
+        MemoryTreeNode {
+            id: "098b0c4b#T2".to_string(),
+            parent_id: Some("098b0c4b#T1".to_string()),
+            topic_id: "ui-rewrite".to_string(),
+            summary: "按 .state JSON 重写前端工作区".to_string(),
+            status: NodeStatus::Unexplored,
+            source_session_id: full_sess_id.to_string(),
+            turn_index: 2,
+            turn_started_at: Some("2026-11-02T09:30:00Z".to_string()),
+            created_at: "2026-11-05T00:00:00Z".to_string(),
+            updated_at: "2026-11-05T00:00:00Z".to_string(),
+        },
+        false,
+    );
+    full_tree.insert_node(
+        MemoryTreeNode {
+            id: "098b0c4b#T3".to_string(),
+            parent_id: None,
+            topic_id: "ui-rewrite".to_string(),
+            summary: "被废弃的旧方案".to_string(),
+            status: NodeStatus::Dismissed,
+            source_session_id: full_sess_id.to_string(),
+            turn_index: 3,
+            turn_started_at: Some("2026-11-02T10:00:00Z".to_string()),
+            created_at: "2026-11-05T00:00:00Z".to_string(),
+            updated_at: "2026-11-05T00:00:00Z".to_string(),
+        },
+        true,
+    );
+
+    let mut full_proj = ProjectMemoryState::new("users-test-assetiweave");
+    full_proj
+        .topic_trees
+        .insert("ui-rewrite".to_string(), full_tree);
+    full_proj
+        .session_watermarks
+        .insert(full_sess_id.to_string(), 3);
+    storage
+        .write_project_state_atomic("users-test-assetiweave", &full_proj)
+        .unwrap();
+
+    // Recent slice omits Continued parent & Dismissed node
+    let mut recent_tree = TopicTree::new("ui-rewrite", "UI 重写");
+    recent_tree.insert_node(
+        full_proj.topic_trees["ui-rewrite"].nodes["098b0c4b#T2"].clone(),
+        false,
+    );
+    let mut recent_proj = ProjectMemoryState::new("users-test-assetiweave");
+    recent_proj
+        .topic_trees
+        .insert("ui-rewrite".to_string(), recent_tree);
+
+    let mut recent_state = RecentMemoryState::new();
+    recent_state.window_hours = Some(72);
+    recent_state.updated_at = "2026-11-02T12:00:00Z".to_string();
+    recent_state
+        .projects
+        .insert("users-test-assetiweave".to_string(), recent_proj);
+    storage.write_recent_state_atomic(&recent_state).unwrap();
+
+    let view = service
+        .get_recent_memory_snapshot_with_storage(&storage)
+        .await
+        .unwrap();
+    assert_eq!(view.status, RecentMemoryStatus::Ready);
+    let snap = view.snapshot.unwrap();
+    assert_eq!(snap.window_hours, 72);
+    assert_eq!(snap.target_watermark, "2026-11-02T12:00:00Z");
+
+    let proj = &snap.projects[0];
+    assert_eq!(proj.project_title, "assetiweave");
+    assert_eq!(
+        proj.project_path.as_deref(),
+        Some("/Users/test/assetiweave")
+    );
+
+    let node = &proj.topics[0].nodes[0];
+    assert_eq!(node.recorded_at.as_deref(), Some("2026-11-02T09:30:00Z"));
+    assert_eq!(node.source_session_id.as_deref(), Some(full_sess_id));
+    assert_eq!(node.session_title.as_deref(), Some("Refactor Recent UI"));
+    assert_eq!(node.source_agent.as_deref(), Some("claude-code"));
+    assert_eq!(node.session_available, Some(true));
+    assert_eq!(
+        node.parent_summary.as_deref(),
+        Some("旧版前端与 .state 结构脱节")
+    );
+
+    // Full project state view should include Continued parent and exclude Dismissed
+    let full_view = service
+        .get_memory_project_state_view_with_storage("users-test-assetiweave", &storage)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(full_view.project_title, "assetiweave");
+    assert_eq!(full_view.watermark_count, 1);
+    assert_eq!(full_view.topics[0].nodes.len(), 2);
 }

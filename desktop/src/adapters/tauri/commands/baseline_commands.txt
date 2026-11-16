@@ -12,6 +12,9 @@ complete_app_close
 list_assets
 list_source_assets
 get_memory_recent_snapshot
+refresh_memory_recent_state
+update_memory_node_status
+get_memory_project_state
 duplicate_memory_generation_skill
 reset_memory_generation_skill_to_default
 resolve_memory_context

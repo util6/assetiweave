@@ -476,8 +476,23 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
+        canonical_method: "memory.project.state.get",
+        tauri_command: Some("get_memory_project_state"),
+        note: None,
+    },
+    SurfaceMapping {
         canonical_method: "memory.rebuild",
         tauri_command: Some("rebuild_memory_scope"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "memory.recent.refresh",
+        tauri_command: Some("refresh_memory_recent_state"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "memory.node.status.update",
+        tauri_command: Some("update_memory_node_status"),
         note: None,
     },
     SurfaceMapping {

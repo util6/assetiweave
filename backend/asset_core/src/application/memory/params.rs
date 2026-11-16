@@ -59,6 +59,29 @@ pub struct MemoryProjectGetParams {
     pub project_path: String,
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct MemoryProjectStateGetParams {
+    #[serde(alias = "projectSlug")]
+    pub project_slug: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct MemoryNodeStatusUpdateParams {
+    #[serde(alias = "nodeId")]
+    pub node_id: String,
+    pub status: crate::backend::domain::memory::NodeStatus,
+    #[serde(default, alias = "projectSlug")]
+    pub project_slug: Option<String>,
+    #[serde(default)]
+    pub window: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct MemoryRecentRefreshParams {
+    #[serde(default)]
+    pub window: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 pub struct MemoryScopeRebuildParams {
     #[serde(default)]
