@@ -135,7 +135,7 @@ impl AppService {
             if let Some(entry) = ctx.catalog.find_model(&item.provider, &item.model) {
                 local_entries.push(ModelPriceEntryDto {
                     provider: item.provider,
-                    model_patterns: vec![item.model],
+                    model_patterns: vec![item.model.clone()],
                     currency: "CNY".to_string(),
                     input_per_million: (entry.input_per_million * 100.0).round() / 100.0,
                     cache_read_per_million: (entry.cache_read_per_million * 100.0).round() / 100.0,
@@ -146,11 +146,17 @@ impl AppService {
                     raw_currency: entry.raw_currency.clone(),
                     raw_input_per_million: entry.raw_input_per_million,
                     raw_output_per_million: entry.raw_output_per_million,
+                    raw_model: item.model,
+                    matched_model_id: entry.model_patterns.first().cloned(),
+                    match_source: "auto_matched".to_string(),
+                    price_locked: entry.price_locked,
+                    is_ignored: entry.is_ignored,
+                    is_manual_rebind: false,
                 });
             } else {
                 local_entries.push(ModelPriceEntryDto {
                     provider: item.provider,
-                    model_patterns: vec![item.model],
+                    model_patterns: vec![item.model.clone()],
                     currency: "CNY".to_string(),
                     input_per_million: 0.0,
                     cache_read_per_million: 0.0,
@@ -160,6 +166,12 @@ impl AppService {
                     raw_currency: Some("CNY".to_string()),
                     raw_input_per_million: Some(0.0),
                     raw_output_per_million: Some(0.0),
+                    raw_model: item.model,
+                    matched_model_id: None,
+                    match_source: "unmatched".to_string(),
+                    price_locked: false,
+                    is_ignored: false,
+                    is_manual_rebind: false,
                 });
             }
         }
@@ -187,6 +199,12 @@ impl AppService {
                         raw_currency: cached.raw_currency.clone(),
                         raw_input_per_million: cached.raw_input_per_million,
                         raw_output_per_million: cached.raw_output_per_million,
+                        raw_model: pattern.clone(),
+                        matched_model_id: Some(pattern.clone()),
+                        match_source: "reference".to_string(),
+                        price_locked: cached.price_locked,
+                        is_ignored: cached.is_ignored,
+                        is_manual_rebind: false,
                     });
                 }
             }
@@ -202,18 +220,27 @@ impl AppService {
             .catalog
             .models
             .into_iter()
-            .map(|m| ModelPriceEntryDto {
-                provider: m.provider,
-                model_patterns: m.model_patterns,
-                currency: m.currency,
-                input_per_million: (m.input_per_million * 100.0).round() / 100.0,
-                cache_read_per_million: (m.cache_read_per_million * 100.0).round() / 100.0,
-                cache_write_per_million: (m.cache_write_per_million * 100.0).round() / 100.0,
-                output_per_million: (m.output_per_million * 100.0).round() / 100.0,
-                reasoning_per_million: (m.reasoning_per_million * 100.0).round() / 100.0,
-                raw_currency: m.raw_currency,
-                raw_input_per_million: m.raw_input_per_million,
-                raw_output_per_million: m.raw_output_per_million,
+            .map(|m| {
+                let primary_model = m.model_patterns.first().cloned();
+                ModelPriceEntryDto {
+                    provider: m.provider,
+                    model_patterns: m.model_patterns,
+                    currency: m.currency,
+                    input_per_million: (m.input_per_million * 100.0).round() / 100.0,
+                    cache_read_per_million: (m.cache_read_per_million * 100.0).round() / 100.0,
+                    cache_write_per_million: (m.cache_write_per_million * 100.0).round() / 100.0,
+                    output_per_million: (m.output_per_million * 100.0).round() / 100.0,
+                    reasoning_per_million: (m.reasoning_per_million * 100.0).round() / 100.0,
+                    raw_currency: m.raw_currency,
+                    raw_input_per_million: m.raw_input_per_million,
+                    raw_output_per_million: m.raw_output_per_million,
+                    raw_model: primary_model.clone().unwrap_or_default(),
+                    matched_model_id: primary_model,
+                    match_source: "reference".to_string(),
+                    price_locked: m.price_locked,
+                    is_ignored: m.is_ignored,
+                    is_manual_rebind: false,
+                }
             })
             .collect::<Vec<_>>();
 
@@ -272,6 +299,10 @@ impl AppService {
             raw_currency: entry.raw_currency,
             raw_input_per_million: entry.raw_input_per_million,
             raw_output_per_million: entry.raw_output_per_million,
+            price_locked: entry.price_locked,
+            usage_aliases: Vec::new(),
+            source_channel: "user_override".to_string(),
+            is_ignored: entry.is_ignored,
         };
         upsert_pricing_catalog_entries_sqlx(pool, tenant_id, &[domain_entry], "user_override")
             .await?;

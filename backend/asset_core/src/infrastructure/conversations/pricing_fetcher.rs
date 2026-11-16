@@ -136,6 +136,10 @@ pub fn parse_litellm_json(raw_json: &str, rate: f64) -> InfraResult<Vec<ModelPri
             raw_currency: Some(raw_currency.to_string()),
             raw_input_per_million: Some(input_per_token * raw_multiplier),
             raw_output_per_million: Some(output_per_token * raw_multiplier),
+            price_locked: false,
+            usage_aliases: Vec::new(),
+            source_channel: "litellm".to_string(),
+            is_ignored: false,
         });
     }
 
@@ -260,6 +264,10 @@ pub fn parse_openrouter_json(raw_json: &str, rate: f64) -> InfraResult<Vec<Model
             raw_currency: Some("USD".to_string()),
             raw_input_per_million: Some(prompt_cost * 1_000_000.0),
             raw_output_per_million: Some(completion_cost * 1_000_000.0),
+            price_locked: false,
+            usage_aliases: Vec::new(),
+            source_channel: "openrouter".to_string(),
+            is_ignored: false,
         });
     }
 

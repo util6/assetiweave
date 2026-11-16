@@ -85,6 +85,7 @@ fn test_fallback_chain_to_cache_and_bundled() {
         raw_currency: Some("CNY".to_string()),
         raw_input_per_million: Some(5.0),
         raw_output_per_million: Some(10.0),
+        ..Default::default()
     };
 
     // If cache is empty, fallback returns Bundled
@@ -143,6 +144,7 @@ fn test_filter_entries_resolves_promotional_and_vendor_models() {
             raw_currency: Some("USD".to_string()),
             raw_input_per_million: Some(1.1),
             raw_output_per_million: Some(3.52),
+            ..Default::default()
         },
         ModelPriceEntry {
             provider: "bedrock".to_string(),
@@ -158,6 +160,7 @@ fn test_filter_entries_resolves_promotional_and_vendor_models() {
             raw_currency: Some("USD".to_string()),
             raw_input_per_million: Some(0.33),
             raw_output_per_million: Some(1.32),
+            ..Default::default()
         },
     ];
 
