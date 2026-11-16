@@ -3,6 +3,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -174,6 +175,10 @@ const SESSION_PAGE_SIZE = 100;
 const SESSION_SEARCH_COMMIT_DELAY_MS = 700;
 const CONTENT_SEARCH_COMMIT_DELAY_MS = 700;
 const CONVERSATION_SHORT_ID_PATTERN = /^[0-9a-f]{8}$/i;
+
+/** 服务端静态渲染没有 layout effect；浏览器内仍用 layout effect 避免闪一帧收起态。 */
+const useIsomorphicLayoutEffect =
+  typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 export function isConversationShortIdQuery(value: string) {
   return CONVERSATION_SHORT_ID_PATTERN.test(value.trim());
@@ -745,10 +750,6 @@ export function ConversationsPage({
       showSessionBrowser();
     }
   }, [selectedSessionId, sessionView, showSessionBrowser]);
-
-  useEffect(() => {
-    window.scrollTo({ top: 0, behavior: "auto" });
-  }, [sessionView]);
 
   useEffect(() => {
     if (!sessionDetail) {
@@ -1480,10 +1481,7 @@ export function ConversationsPage({
             <ToolbarActionButton
               icon={<ArrowLeft size={16} />}
               label={t("conversation.session.backToBrowser")}
-              onClick={() => {
-                clearSessionDetail();
-                showSessionBrowser();
-              }}
+              onClick={closeSession}
               text={t("conversation.session.back")}
             />
             <ConversationContentFilter
@@ -1608,66 +1606,79 @@ export function ConversationsPage({
         />
       ) : null}
 
-      {sessionView === "browser" ? (
-        <AppSessionBrowser
-          appShortcuts={appShortcuts}
-          columnMinWidth={appSettings.columnMinWidth}
-          completedAdapterIds={completedAdapterIds}
-          groups={appGroups}
-          onAppSelect={selectApp}
-          onProjectSelect={selectProject}
-          onSessionOpen={handleOpenSession}
-          recordKind={currentRecordKind}
-          selectedAppId={selectedAppId}
-          selectedProjectKey={selectedProjectKey}
-          syncingAdapterIds={syncingAdapterIds}
-          t={t}
-        />
-      ) : (
-        <SessionQuestionWorkspace
-          adapterVersion={
-            adapters.find(
-              (adapter) =>
-                canonicalConversationAppId(adapter.id) ===
-                canonicalConversationAppId(
-                  sessionDetail?.session.adapter_id ?? "",
-                ),
-            )?.version ?? "unknown"
+      <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1">
+        <div
+          aria-hidden={sessionView === "detail"}
+          className="col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col"
+          inert={sessionView === "detail"}
+          style={
+            sessionView === "detail" ? { visibility: "hidden" } : undefined
           }
-          activeSearchTarget={activeSearchTarget}
-          contentCardColors={appSettings.conversations.contentCardColors}
-          focusTurn={activeParentFocus}
-          onFocusTurnConsumed={handleConsumeParentFocus}
-          onExport={() => openExportDialog("session")}
-          onCopyError={onNotifyError}
-          onOpenSubagentSession={handleOpenSubagentSession}
-          onPickOutputRoot={() =>
-            selectTargetDirectory(t("conversation.export.pickOutputRoot"))
-          }
-          onQuestionSelect={selectQuestion}
-          onQuestionSelectionChange={handleQuestionSelectionChange}
-          onReturnToParentSession={handleReturnToParentSession}
-          parentBreadcrumb={activeParentBreadcrumb}
-          columnMinWidth={appSettings.columnMinWidth}
-          outputRoot={outputRoot}
-          question={selectedQuestion}
-          questions={visibleSessionQuestions}
-          resultPreviewLineLimit={
-            appSettings.conversations.resultPreviewLineLimit
-          }
-          selectedQuestionId={selectedQuestionId}
-          selectedQuestionIds={selectedQuestionIds}
-          session={sessionDetail}
-          setOutputRoot={setOutputRoot}
-          t={t}
-          recordKind={currentRecordKind}
-          translationSettings={{
-            ...appSettings.conversationTranslation,
-            ...resolveAgentCapability(appSettings, "cardTranslation"),
-          }}
-          visibility={contentVisibility}
-        />
-      )}
+        >
+          <AppSessionBrowser
+            active={sessionView === "browser"}
+            appShortcuts={appShortcuts}
+            columnMinWidth={appSettings.columnMinWidth}
+            completedAdapterIds={completedAdapterIds}
+            groups={appGroups}
+            onAppSelect={selectApp}
+            onProjectSelect={selectProject}
+            onSessionOpen={handleOpenSession}
+            recordKind={currentRecordKind}
+            selectedAppId={selectedAppId}
+            selectedProjectKey={selectedProjectKey}
+            syncingAdapterIds={syncingAdapterIds}
+            t={t}
+          />
+        </div>
+        {sessionView === "detail" ? (
+          <div className="col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col">
+            <SessionQuestionWorkspace
+              adapterVersion={
+                adapters.find(
+                  (adapter) =>
+                    canonicalConversationAppId(adapter.id) ===
+                    canonicalConversationAppId(
+                      sessionDetail?.session.adapter_id ?? "",
+                    ),
+                )?.version ?? "unknown"
+              }
+              activeSearchTarget={activeSearchTarget}
+              contentCardColors={appSettings.conversations.contentCardColors}
+              focusTurn={activeParentFocus}
+              onFocusTurnConsumed={handleConsumeParentFocus}
+              onExport={() => openExportDialog("session")}
+              onCopyError={onNotifyError}
+              onOpenSubagentSession={handleOpenSubagentSession}
+              onPickOutputRoot={() =>
+                selectTargetDirectory(t("conversation.export.pickOutputRoot"))
+              }
+              onQuestionSelect={selectQuestion}
+              onQuestionSelectionChange={handleQuestionSelectionChange}
+              onReturnToParentSession={handleReturnToParentSession}
+              parentBreadcrumb={activeParentBreadcrumb}
+              columnMinWidth={appSettings.columnMinWidth}
+              outputRoot={outputRoot}
+              question={selectedQuestion}
+              questions={visibleSessionQuestions}
+              resultPreviewLineLimit={
+                appSettings.conversations.resultPreviewLineLimit
+              }
+              selectedQuestionId={selectedQuestionId}
+              selectedQuestionIds={selectedQuestionIds}
+              session={sessionDetail}
+              setOutputRoot={setOutputRoot}
+              t={t}
+              recordKind={currentRecordKind}
+              translationSettings={{
+                ...appSettings.conversationTranslation,
+                ...resolveAgentCapability(appSettings, "cardTranslation"),
+              }}
+              visibility={contentVisibility}
+            />
+          </div>
+        ) : null}
+      </div>
     </ConversationShell>
   );
 }
@@ -1767,13 +1778,10 @@ function ConversationShellContent({
   t: Translator;
   title: string;
 }) {
-  const collapsible = useCollapsibleHeader();
-
   return (
     <div
       className="app-bounded-route flex w-full flex-col px-[var(--app-page-x)] py-6"
       style={style}
-      onScrollCapture={collapsible?.onScroll}
     >
       <CollapsibleHeader className="mb-5">
         <PageHeader
@@ -2210,6 +2218,7 @@ export function ConversationExportDialog({
 }
 
 export const AppSessionBrowser = memo(function AppSessionBrowser({
+  active = true,
   appShortcuts,
   columnMinWidth = DEFAULT_COLUMN_MIN_WIDTH,
   completedAdapterIds,
@@ -2223,6 +2232,7 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
   syncingAdapterIds,
   t,
 }: {
+  active?: boolean;
   appShortcuts: AppShortcut[];
   columnMinWidth?: number;
   completedAdapterIds?: Set<string>;
@@ -2236,7 +2246,18 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
   syncingAdapterIds?: Set<string>;
   t: Translator;
 }) {
+  const collapsible = useCollapsibleHeader();
   const sessionListScrollRef = useRef<HTMLDivElement>(null);
+  const wasActiveRef = useRef(active);
+
+  // 保活视图重新可见时展开折叠头，并用列表当前偏移作为滚动基线，
+  // 否则返回后第一次向上回滚会被误判成向下滚动而再次收起。
+  useIsomorphicLayoutEffect(() => {
+    if (active && !wasActiveRef.current) {
+      collapsible?.reset(sessionListScrollRef.current?.scrollTop ?? 0);
+    }
+    wasActiveRef.current = active;
+  }, [active, collapsible]);
   const showProjectColumn = recordKind !== "web";
   const selectedGroup =
     groups.find((group) => group.app.id === selectedAppId) ?? null;
@@ -2273,6 +2294,9 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
   const emptySessionsMessage = showProjectColumn
     ? t("conversation.session.emptyForProject")
     : t("conversation.session.emptyForApp");
+  const sessionListVirtualized =
+    renderingFlags.conversationListVirtualization &&
+    (selectedProjectGroup?.sessions.length ?? 0) >= 12;
 
   return (
     <ResizableColumns
@@ -2380,33 +2404,35 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
             <EmptyPanel>{emptySessionsMessage}</EmptyPanel>
           ) : (
             <RenderActivityProvider scrollElementRef={sessionListScrollRef}>
-              <VirtualizedCollection
-                className="grid gap-3"
-                contentVisibilityContainmentEnabled={
-                  renderingFlags.contentVisibilityContainment
-                }
-                deferredRenderingEnabled={
-                  renderingFlags.deferredSkeletonRendering &&
-                  selectedProjectGroup.sessions.length >= 12
-                }
-                enabled={renderingFlags.conversationListVirtualization}
-                estimateSize={132}
-                fallback={() => <SessionCardSkeleton />}
-                getItemKey={(session) => session.id}
-                gap={12}
-                items={selectedProjectGroup.sessions}
-                minItems={12}
-                renderItem={(session) => (
-                  <SessionCard
-                    onOpen={() => onSessionOpen(session.id)}
-                    session={session}
-                    showProjectPath={showProjectColumn}
-                    t={t}
-                  />
-                )}
-                scrollElementRef={sessionListScrollRef}
-                size="regular"
-              />
+              <div className="render-safe-scroll-content grid gap-3">
+                <VirtualizedCollection
+                  className={sessionListVirtualized ? undefined : "grid gap-3"}
+                  // 会话卡片很轻，且已经是虚拟化绝对定位项；content-visibility
+                  // 只会让 WebKit 在重新可见的首帧跳过绘制，导致列表空白。
+                  contentVisibilityContainmentEnabled={false}
+                  deferredRenderingEnabled={
+                    renderingFlags.deferredSkeletonRendering &&
+                    sessionListVirtualized
+                  }
+                  enabled={renderingFlags.conversationListVirtualization}
+                  estimateSize={132}
+                  fallback={() => <SessionCardSkeleton />}
+                  getItemKey={(session) => session.id}
+                  gap={12}
+                  items={selectedProjectGroup.sessions}
+                  minItems={12}
+                  renderItem={(session) => (
+                    <SessionCard
+                      onOpen={() => onSessionOpen(session.id)}
+                      session={session}
+                      showProjectPath={showProjectColumn}
+                      t={t}
+                    />
+                  )}
+                  scrollElementRef={sessionListScrollRef}
+                  size="regular"
+                />
+              </div>
             </RenderActivityProvider>
           )}
         </RenderSafeScrollSurface>

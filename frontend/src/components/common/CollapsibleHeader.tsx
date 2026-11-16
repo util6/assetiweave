@@ -13,7 +13,11 @@ export interface CollapsibleHeaderContextValue {
   visible: boolean;
   setVisible: (visible: boolean) => void;
   onScroll: (event: UIEvent<HTMLElement>) => void;
-  reset: () => void;
+  /**
+   * 展开头部并把滚动基线设回指定位置。视图切换后重新可见时必须传入
+   * 当前滚动容器的 `scrollTop`，否则下一次小幅向上滚动会被误判为向下折叠。
+   */
+  reset: (baselineScrollTop?: number) => void;
 }
 
 const CollapsibleHeaderContext =
@@ -40,9 +44,9 @@ export function useCollapsibleHeaderState({
   const [visible, setVisible] = useState(initialVisible);
   const lastScrollTopRef = useRef(0);
 
-  const reset = useCallback(() => {
+  const reset = useCallback((baselineScrollTop = 0) => {
     setVisible(true);
-    lastScrollTopRef.current = 0;
+    lastScrollTopRef.current = baselineScrollTop;
   }, []);
 
   const onScroll = useCallback(
