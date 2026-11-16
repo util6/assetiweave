@@ -40,6 +40,8 @@ export interface UsageModelBreakdown {
   currency: string;
   costBasis: string;
   unitPricePerMillion?: number | null;
+  rawModels?: string[];
+  matchedModelId?: string | null;
 }
 
 export interface UsageSourceBreakdown {
@@ -92,6 +94,14 @@ export interface ModelPricingSyncResult {
   updatedAt: string;
 }
 
+export type ModelMatchSource =
+  | "ignored"
+  | "manual_rebind"
+  | "user_override"
+  | "auto_matched"
+  | "reference"
+  | "unmatched";
+
 export interface ModelPriceEntry {
   provider: string;
   modelPatterns: string[];
@@ -104,6 +114,12 @@ export interface ModelPriceEntry {
   rawCurrency?: string | null;
   rawInputPerMillion?: number | null;
   rawOutputPerMillion?: number | null;
+  rawModel?: string;
+  matchedModelId?: string | null;
+  matchSource?: ModelMatchSource | string;
+  priceLocked?: boolean;
+  isIgnored?: boolean;
+  isManualRebind?: boolean;
 }
 
 export interface ModelPricingCatalog {

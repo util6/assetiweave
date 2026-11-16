@@ -127,6 +127,8 @@ const DEFAULT_MOCK_DASHBOARD: UsageDashboardDto = {
   models: [
     {
       model: "gpt-5.0-turbo",
+      matchedModelId: "gpt-5.0-turbo",
+      rawModels: ["gpt-5.0-turbo", "gpt-5.0-turbo-2026-08-01"],
       provider: "openai",
       requestsCount: 18450,
       totalTokens: 2741000000,
@@ -137,10 +139,17 @@ const DEFAULT_MOCK_DASHBOARD: UsageDashboardDto = {
       cost: 450.2,
       currency: "USD",
       costBasis: "official",
+      unitPricePerMillion: 18.13,
     },
     {
-      model: "gpt-4.5-preview",
-      provider: "openai",
+      model: "gemini-3.8-flash",
+      matchedModelId: "gemini-3.8-flash",
+      rawModels: [
+        "Flash -N",
+        "Gemini 3.8 Flash (High)",
+        "gemini-3.8-flash-free",
+      ],
+      provider: "google",
       requestsCount: 3800,
       totalTokens: 561000000,
       inputTokens: 561000000,
@@ -149,20 +158,24 @@ const DEFAULT_MOCK_DASHBOARD: UsageDashboardDto = {
       cacheTokens: 535000000,
       cost: 95.4,
       currency: "USD",
-      costBasis: "official",
+      costBasis: "catalog_estimated",
+      unitPricePerMillion: 0.54,
     },
     {
-      model: "gpt-4-turbo",
-      provider: "openai",
+      model: "qwen-2.5-free",
+      matchedModelId: "qwen-2.5-free",
+      rawModels: ["qwen-2.5-free"],
+      provider: "qwen",
       requestsCount: 688,
       totalTokens: 28000000,
       inputTokens: 28000000,
       outputTokens: 98000,
       reasoningTokens: 0,
       cacheTokens: 18000000,
-      cost: 10.09,
-      currency: "USD",
-      costBasis: "official",
+      cost: 0,
+      currency: "CNY",
+      costBasis: "catalog_estimated",
+      unitPricePerMillion: 0,
     },
   ],
   sources: [
@@ -400,6 +413,328 @@ export async function scanConversationUsage(
   };
 }
 
+const MOCK_REFERENCE_MODELS: ModelPriceEntry[] = [
+  {
+    provider: "openai",
+    modelPatterns: ["gpt-4o", "gpt-4o-*"],
+    rawModel: "gpt-4o",
+    matchedModelId: "gpt-4o",
+    matchSource: "reference",
+    priceLocked: false,
+    isIgnored: false,
+    isManualRebind: false,
+    currency: "CNY",
+    inputPerMillion: 18.13,
+    cacheReadPerMillion: 9.06,
+    cacheWritePerMillion: 18.13,
+    outputPerMillion: 72.5,
+    reasoningPerMillion: 0,
+    rawCurrency: "USD",
+    rawInputPerMillion: 2.5,
+    rawOutputPerMillion: 10.0,
+  },
+  {
+    provider: "openai",
+    modelPatterns: ["gpt-5.0-turbo"],
+    rawModel: "gpt-5.0-turbo",
+    matchedModelId: "gpt-5.0-turbo",
+    matchSource: "reference",
+    priceLocked: false,
+    isIgnored: false,
+    isManualRebind: false,
+    currency: "CNY",
+    inputPerMillion: 18.13,
+    cacheReadPerMillion: 9.06,
+    cacheWritePerMillion: 18.13,
+    outputPerMillion: 72.5,
+    reasoningPerMillion: 0,
+    rawCurrency: "USD",
+    rawInputPerMillion: 2.5,
+    rawOutputPerMillion: 10.0,
+  },
+  {
+    provider: "anthropic",
+    modelPatterns: ["claude-3-7-sonnet*"],
+    rawModel: "claude-3-7-sonnet*",
+    matchedModelId: "claude-3-7-sonnet*",
+    matchSource: "reference",
+    priceLocked: false,
+    isIgnored: false,
+    isManualRebind: false,
+    currency: "CNY",
+    inputPerMillion: 21.75,
+    cacheReadPerMillion: 2.18,
+    cacheWritePerMillion: 27.19,
+    outputPerMillion: 108.75,
+    reasoningPerMillion: 108.75,
+    rawCurrency: "USD",
+    rawInputPerMillion: 3.0,
+    rawOutputPerMillion: 15.0,
+  },
+  {
+    provider: "deepseek",
+    modelPatterns: ["deepseek-chat", "deepseek-v3"],
+    rawModel: "deepseek-chat",
+    matchedModelId: "deepseek-chat",
+    matchSource: "reference",
+    priceLocked: false,
+    isIgnored: false,
+    isManualRebind: false,
+    currency: "CNY",
+    inputPerMillion: 2.0,
+    cacheReadPerMillion: 0.5,
+    cacheWritePerMillion: 2.0,
+    outputPerMillion: 8.0,
+    reasoningPerMillion: 0,
+    rawCurrency: "CNY",
+    rawInputPerMillion: 2.0,
+    rawOutputPerMillion: 8.0,
+  },
+  {
+    provider: "google",
+    modelPatterns: ["gemini-3.8-flash"],
+    rawModel: "gemini-3.8-flash",
+    matchedModelId: "gemini-3.8-flash",
+    matchSource: "reference",
+    priceLocked: false,
+    isIgnored: false,
+    isManualRebind: false,
+    currency: "CNY",
+    inputPerMillion: 0.54,
+    cacheReadPerMillion: 0.14,
+    cacheWritePerMillion: 0.54,
+    outputPerMillion: 2.18,
+    reasoningPerMillion: 0,
+    rawCurrency: "USD",
+    rawInputPerMillion: 0.075,
+    rawOutputPerMillion: 0.3,
+  },
+  {
+    provider: "qwen",
+    modelPatterns: ["qwen-2.5-free"],
+    rawModel: "qwen-2.5-free",
+    matchedModelId: "qwen-2.5-free",
+    matchSource: "reference",
+    priceLocked: false,
+    isIgnored: false,
+    isManualRebind: false,
+    currency: "CNY",
+    inputPerMillion: 1.0,
+    cacheReadPerMillion: 0.25,
+    cacheWritePerMillion: 1.0,
+    outputPerMillion: 4.0,
+    reasoningPerMillion: 0,
+    rawCurrency: "CNY",
+    rawInputPerMillion: 1.0,
+    rawOutputPerMillion: 4.0,
+  },
+];
+
+interface MockLocalUsageSeed {
+  rawModel: string;
+  provider: string;
+}
+
+const MOCK_LOCAL_SEEDS: MockLocalUsageSeed[] = [
+  { rawModel: "custom-new-model-x", provider: "custom" },
+  { rawModel: "Gemini 3.8 Flash (High)", provider: "google" },
+  { rawModel: "gpt-4o", provider: "openai" },
+  { rawModel: "qwen-2.5-free", provider: "qwen" },
+  { rawModel: 'ERROR: {"model":"broken"} line\nbreak', provider: "unknown" },
+];
+
+const mockPricingState: {
+  exchangeRate: number;
+  activeChannel: string;
+  catalogVersion: string;
+  lastUpdatedAt: string;
+  manualAliases: Record<string, string>;
+  lockedOverrides: Record<string, ModelPriceEntry>;
+  ignoredRawModels: Record<string, boolean>;
+} = {
+  exchangeRate: 7.25,
+  activeChannel: "litellm",
+  catalogVersion: "litellm-2026-10-05",
+  lastUpdatedAt: new Date().toISOString(),
+  manualAliases: {},
+  lockedOverrides: {
+    "qwen-2.5-free": {
+      provider: "qwen",
+      modelPatterns: ["qwen-2.5-free"],
+      rawModel: "qwen-2.5-free",
+      matchedModelId: "qwen-2.5-free",
+      matchSource: "user_override",
+      priceLocked: true,
+      isIgnored: false,
+      isManualRebind: false,
+      currency: "CNY",
+      inputPerMillion: 0,
+      cacheReadPerMillion: 0,
+      cacheWritePerMillion: 0,
+      outputPerMillion: 0,
+      reasoningPerMillion: 0,
+    },
+  },
+  ignoredRawModels: {
+    'ERROR: {"model":"broken"} line\nbreak': true,
+  },
+};
+
+function findMockReferenceById(modelId: string): ModelPriceEntry | undefined {
+  return MOCK_REFERENCE_MODELS.find(
+    (m) =>
+      m.matchedModelId === modelId ||
+      m.rawModel === modelId ||
+      m.modelPatterns[0] === modelId,
+  );
+}
+
+function autoMatchMockReference(rawModel: string): ModelPriceEntry | undefined {
+  if (/["{}\n\r]/.test(rawModel)) return undefined;
+  const normalized = rawModel
+    .replace(/\s*\((high|medium|low|minimal|thinking)\)\s*$/i, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/(-n|-tail|-free)$/i, "");
+  return MOCK_REFERENCE_MODELS.find((m) =>
+    m.modelPatterns.some((pat) => {
+      const p = pat.toLowerCase();
+      if (p.endsWith("*")) {
+        return normalized.startsWith(p.slice(0, -1));
+      }
+      return p === normalized;
+    }),
+  );
+}
+
+function sortMockLocalEntries(entries: ModelPriceEntry[]): ModelPriceEntry[] {
+  return [...entries].sort((a, b) => {
+    const aUnpriced = !a.isIgnored && !a.matchedModelId ? 0 : 1;
+    const bUnpriced = !b.isIgnored && !b.matchedModelId ? 0 : 1;
+    if (aUnpriced !== bUnpriced) return aUnpriced - bUnpriced;
+    const pCmp = a.provider.localeCompare(b.provider);
+    if (pCmp !== 0) return pCmp;
+    const aName = a.rawModel || a.modelPatterns[0] || "";
+    const bName = b.rawModel || b.modelPatterns[0] || "";
+    return aName.localeCompare(bName);
+  });
+}
+
+function buildMockLocalModels(): ModelPriceEntry[] {
+  const entries: ModelPriceEntry[] = MOCK_LOCAL_SEEDS.map((seed) => {
+    if (mockPricingState.ignoredRawModels[seed.rawModel]) {
+      return {
+        provider: seed.provider,
+        modelPatterns: [seed.rawModel],
+        rawModel: seed.rawModel,
+        matchedModelId: null,
+        matchSource: "ignored",
+        priceLocked: true,
+        isIgnored: true,
+        isManualRebind: false,
+        currency: "CNY",
+        inputPerMillion: 0,
+        cacheReadPerMillion: 0,
+        cacheWritePerMillion: 0,
+        outputPerMillion: 0,
+        reasoningPerMillion: 0,
+      };
+    }
+
+    const manualTargetId = mockPricingState.manualAliases[seed.rawModel];
+    if (manualTargetId) {
+      const locked = mockPricingState.lockedOverrides[manualTargetId];
+      const ref = findMockReferenceById(manualTargetId);
+      const source = locked ?? ref;
+      return {
+        provider: source?.provider ?? seed.provider,
+        modelPatterns: [seed.rawModel],
+        rawModel: seed.rawModel,
+        matchedModelId: manualTargetId,
+        matchSource: "manual_rebind",
+        priceLocked: Boolean(locked?.priceLocked),
+        isIgnored: false,
+        isManualRebind: true,
+        currency: "CNY",
+        inputPerMillion: source?.inputPerMillion ?? 0,
+        cacheReadPerMillion: source?.cacheReadPerMillion ?? 0,
+        cacheWritePerMillion: source?.cacheWritePerMillion ?? 0,
+        outputPerMillion: source?.outputPerMillion ?? 0,
+        reasoningPerMillion: source?.reasoningPerMillion ?? 0,
+      };
+    }
+
+    const directLocked = mockPricingState.lockedOverrides[seed.rawModel];
+    if (directLocked) {
+      return {
+        ...directLocked,
+        rawModel: seed.rawModel,
+        modelPatterns: [seed.rawModel],
+        matchedModelId: directLocked.matchedModelId ?? seed.rawModel,
+        matchSource: "user_override",
+        priceLocked: true,
+        isIgnored: false,
+        isManualRebind: false,
+      };
+    }
+
+    const autoRef = autoMatchMockReference(seed.rawModel);
+    if (autoRef) {
+      const baseId = autoRef.matchedModelId ?? autoRef.modelPatterns[0];
+      const baseLocked = mockPricingState.lockedOverrides[baseId];
+      const effective = baseLocked ?? autoRef;
+      return {
+        provider: effective.provider,
+        modelPatterns: [seed.rawModel],
+        rawModel: seed.rawModel,
+        matchedModelId: baseId,
+        matchSource: baseLocked ? "user_override" : "auto_matched",
+        priceLocked: Boolean(baseLocked?.priceLocked),
+        isIgnored: false,
+        isManualRebind: false,
+        currency: "CNY",
+        inputPerMillion: effective.inputPerMillion,
+        cacheReadPerMillion: effective.cacheReadPerMillion,
+        cacheWritePerMillion: effective.cacheWritePerMillion,
+        outputPerMillion: effective.outputPerMillion,
+        reasoningPerMillion: effective.reasoningPerMillion,
+      };
+    }
+
+    return {
+      provider: seed.provider,
+      modelPatterns: [seed.rawModel],
+      rawModel: seed.rawModel,
+      matchedModelId: null,
+      matchSource: "unmatched",
+      priceLocked: false,
+      isIgnored: false,
+      isManualRebind: false,
+      currency: "CNY",
+      inputPerMillion: 0,
+      cacheReadPerMillion: 0,
+      cacheWritePerMillion: 0,
+      outputPerMillion: 0,
+      reasoningPerMillion: 0,
+    };
+  });
+
+  return sortMockLocalEntries(entries);
+}
+
+function buildMockPricingStatus(): ModelPricingStatus {
+  const localModels = buildMockLocalModels();
+  return {
+    modelsCount: MOCK_REFERENCE_MODELS.length,
+    localModelsCount: localModels.length,
+    exchangeRate: mockPricingState.exchangeRate,
+    activeChannel: mockPricingState.activeChannel,
+    catalogVersion: mockPricingState.catalogVersion,
+    lastUpdatedAt: mockPricingState.lastUpdatedAt,
+  };
+}
+
 export async function updateModelPricingCatalog(
   force = false,
   models?: string[],
@@ -413,18 +748,18 @@ export async function updateModelPricingCatalog(
         phase: "completed",
         message: "价格同步完成",
         channel: "litellm",
-        modelsCount: models ? models.length : 12,
+        modelsCount: models ? models.length : MOCK_REFERENCE_MODELS.length,
         recalculatedEventsCount: 22938,
-        exchangeRate: 7.25,
+        exchangeRate: mockPricingState.exchangeRate,
       },
       startedAt: new Date().toISOString(),
       finishedAt: new Date().toISOString(),
       result: {
         channelUsed: "litellm",
-        modelsCount: models ? models.length : 12,
-        exchangeRate: 7.25,
+        modelsCount: models ? models.length : MOCK_REFERENCE_MODELS.length,
+        exchangeRate: mockPricingState.exchangeRate,
         recalculatedEventsCount: 22938,
-        catalogVersion: "litellm-2026-10-05",
+        catalogVersion: mockPricingState.catalogVersion,
         updatedAt: new Date().toISOString(),
       },
     };
@@ -437,13 +772,7 @@ export async function updateModelPricingCatalog(
 
 export async function getModelPricingStatus(): Promise<ModelPricingStatus> {
   if (!isTauriRuntime()) {
-    return {
-      modelsCount: 1248,
-      exchangeRate: 7.25,
-      activeChannel: "litellm",
-      catalogVersion: "litellm-2026-10-05",
-      lastUpdatedAt: new Date().toISOString(),
-    };
+    return buildMockPricingStatus();
   }
   return invoke<ModelPricingStatus>("get_model_pricing_status");
 }
@@ -451,51 +780,12 @@ export async function getModelPricingStatus(): Promise<ModelPricingStatus> {
 export async function getModelPricingCatalog(): Promise<ModelPricingCatalog> {
   if (!isTauriRuntime()) {
     return {
-      catalogVersion: "bundled",
-      updatedAt: new Date().toISOString(),
-      usdToCnyRate: 7.25,
-      activeChannel: "litellm",
-      models: [
-        {
-          provider: "openai",
-          modelPatterns: ["gpt-4o", "gpt-4o-*"],
-          currency: "CNY",
-          inputPerMillion: 18.13,
-          cacheReadPerMillion: 9.06,
-          cacheWritePerMillion: 18.13,
-          outputPerMillion: 72.5,
-          reasoningPerMillion: 0,
-          rawCurrency: "USD",
-          rawInputPerMillion: 2.5,
-          rawOutputPerMillion: 10.0,
-        },
-        {
-          provider: "anthropic",
-          modelPatterns: ["claude-3-7-sonnet*"],
-          currency: "CNY",
-          inputPerMillion: 21.75,
-          cacheReadPerMillion: 2.18,
-          cacheWritePerMillion: 27.19,
-          outputPerMillion: 108.75,
-          reasoningPerMillion: 108.75,
-          rawCurrency: "USD",
-          rawInputPerMillion: 3.0,
-          rawOutputPerMillion: 15.0,
-        },
-        {
-          provider: "deepseek",
-          modelPatterns: ["deepseek-chat", "deepseek-v3"],
-          currency: "CNY",
-          inputPerMillion: 2.0,
-          cacheReadPerMillion: 0.5,
-          cacheWritePerMillion: 2.0,
-          outputPerMillion: 8.0,
-          reasoningPerMillion: 0,
-          rawCurrency: "CNY",
-          rawInputPerMillion: 2.0,
-          rawOutputPerMillion: 8.0,
-        },
-      ],
+      catalogVersion: mockPricingState.catalogVersion,
+      updatedAt: mockPricingState.lastUpdatedAt,
+      usdToCnyRate: mockPricingState.exchangeRate,
+      activeChannel: mockPricingState.activeChannel,
+      models: MOCK_REFERENCE_MODELS.map((m) => ({ ...m })),
+      localModels: buildMockLocalModels(),
     };
   }
   return invoke<ModelPricingCatalog>("get_model_pricing_catalog");
@@ -519,13 +809,11 @@ export async function setModelPricingExchangeRate(
   rate: number,
 ): Promise<ModelPricingStatus> {
   if (!isTauriRuntime()) {
-    return {
-      modelsCount: 1248,
-      exchangeRate: rate,
-      activeChannel: "custom",
-      catalogVersion: "custom",
-      lastUpdatedAt: new Date().toISOString(),
-    };
+    mockPricingState.exchangeRate = rate;
+    mockPricingState.activeChannel = "custom";
+    mockPricingState.catalogVersion = "custom";
+    mockPricingState.lastUpdatedAt = new Date().toISOString();
+    return buildMockPricingStatus();
   }
   return invoke<ModelPricingStatus>("set_model_pricing_exchange_rate", {
     rate,
@@ -536,15 +824,93 @@ export async function saveModelPriceEntry(
   entry: ModelPriceEntry,
 ): Promise<ModelPricingStatus> {
   if (!isTauriRuntime()) {
-    return {
-      modelsCount: 1248,
-      exchangeRate: 7.25,
-      activeChannel: "custom",
-      catalogVersion: "custom",
-      lastUpdatedAt: new Date().toISOString(),
-    };
+    const baseId =
+      entry.matchedModelId || entry.rawModel || entry.modelPatterns[0];
+    if (baseId) {
+      mockPricingState.lockedOverrides[baseId] = {
+        ...entry,
+        modelPatterns: [baseId],
+        matchedModelId: baseId,
+        matchSource: "user_override",
+        priceLocked: true,
+        isIgnored: false,
+      };
+    }
+    mockPricingState.activeChannel = "custom";
+    mockPricingState.catalogVersion = "custom";
+    mockPricingState.lastUpdatedAt = new Date().toISOString();
+    return buildMockPricingStatus();
   }
   return invoke<ModelPricingStatus>("save_model_price_entry", {
     entry,
+  });
+}
+
+export async function rebindModelPricingAlias(
+  rawModel: string,
+  targetModelId: string | null,
+): Promise<ModelPricingStatus> {
+  if (!isTauriRuntime()) {
+    if (targetModelId === null) {
+      delete mockPricingState.manualAliases[rawModel];
+    } else {
+      delete mockPricingState.ignoredRawModels[rawModel];
+      mockPricingState.manualAliases[rawModel] = targetModelId;
+    }
+    mockPricingState.lastUpdatedAt = new Date().toISOString();
+    return buildMockPricingStatus();
+  }
+  return invoke<ModelPricingStatus>("rebind_model_pricing_alias", {
+    rawModel,
+    targetModelId,
+  });
+}
+
+export async function setModelPricingLock(
+  modelId: string,
+  locked: boolean,
+): Promise<ModelPricingStatus> {
+  if (!isTauriRuntime()) {
+    if (!locked) {
+      delete mockPricingState.lockedOverrides[modelId];
+    } else if (!mockPricingState.lockedOverrides[modelId]) {
+      const ref = findMockReferenceById(modelId);
+      if (ref) {
+        mockPricingState.lockedOverrides[modelId] = {
+          ...ref,
+          matchedModelId: modelId,
+          matchSource: "user_override",
+          priceLocked: true,
+        };
+      }
+    }
+    mockPricingState.lastUpdatedAt = new Date().toISOString();
+    return buildMockPricingStatus();
+  }
+  return invoke<ModelPricingStatus>("set_model_pricing_lock", {
+    modelId,
+    locked,
+  });
+}
+
+export async function setModelPricingIgnored(
+  rawModel: string,
+  provider: string | null,
+  ignored: boolean,
+): Promise<ModelPricingStatus> {
+  if (!isTauriRuntime()) {
+    if (ignored) {
+      delete mockPricingState.manualAliases[rawModel];
+      mockPricingState.ignoredRawModels[rawModel] = true;
+    } else {
+      delete mockPricingState.ignoredRawModels[rawModel];
+    }
+    mockPricingState.lastUpdatedAt = new Date().toISOString();
+    return buildMockPricingStatus();
+  }
+  return invoke<ModelPricingStatus>("set_model_pricing_ignored", {
+    rawModel,
+    provider,
+    ignored,
   });
 }

@@ -85,4 +85,137 @@ describe("usage service in browser / mock mode", () => {
     });
     expect(saved).toBeDefined();
   });
+
+  it("keeps status.modelsCount consistent with catalog.models.length and provides rich localModels & rawModels", async () => {
+    const {
+      getModelPricingStatus,
+      getModelPricingCatalog,
+      getConversationUsageDashboard,
+    } = await import("./usage");
+
+    const [status, catalog, dashboard] = await Promise.all([
+      getModelPricingStatus(),
+      getModelPricingCatalog(),
+      getConversationUsageDashboard(),
+    ]);
+
+    expect(status.modelsCount).toBe(catalog.models.length);
+    expect(catalog.localModels).toBeDefined();
+    expect(catalog.localModels!.length).toBeGreaterThanOrEqual(4);
+    expect(status.localModelsCount).toBe(catalog.localModels!.length);
+
+    // Unmatched entry sorted at top
+    const first = catalog.localModels![0];
+    expect(first.matchSource).toBe("unmatched");
+    expect(first.matchedModelId).toBeNull();
+
+    // Includes locked ¥0 free, auto_matched variant, and ignored dirty string
+    expect(
+      catalog.localModels!.some(
+        (m) =>
+          m.priceLocked === true &&
+          m.inputPerMillion === 0 &&
+          m.outputPerMillion === 0 &&
+          !m.isIgnored,
+      ),
+    ).toBe(true);
+    expect(
+      catalog.localModels!.some(
+        (m) => m.isIgnored === true && m.matchSource === "ignored",
+      ),
+    ).toBe(true);
+    expect(
+      catalog.localModels!.some(
+        (m) =>
+          m.matchSource === "auto_matched" &&
+          Boolean(m.rawModel) &&
+          Boolean(m.matchedModelId) &&
+          m.rawModel !== m.matchedModelId,
+      ),
+    ).toBe(true);
+
+    // Dashboard models include rawModels arrays
+    expect(
+      dashboard.models.some(
+        (m) => Array.isArray(m.rawModels) && m.rawModels.length > 1,
+      ),
+    ).toBe(true);
+  });
+
+  it("supports rebindModelPricingAlias, setModelPricingLock, and setModelPricingIgnored in mock mode", async () => {
+    const {
+      getModelPricingCatalog,
+      rebindModelPricingAlias,
+      saveModelPriceEntry,
+      setModelPricingLock,
+      setModelPricingIgnored,
+    } = await import("./usage");
+
+    const before = await getModelPricingCatalog();
+    const unmatched = before.localModels!.find(
+      (m) => m.matchSource === "unmatched",
+    )!;
+    expect(unmatched).toBeDefined();
+    const rawName = unmatched.rawModel || unmatched.modelPatterns[0];
+
+    // 1. Rebind to an existing reference model
+    await rebindModelPricingAlias(rawName, "deepseek-chat");
+    let after = await getModelPricingCatalog();
+    let rebound = after.localModels!.find(
+      (m) => (m.rawModel || m.modelPatterns[0]) === rawName,
+    )!;
+    expect(rebound.matchedModelId).toBe("deepseek-chat");
+    expect(rebound.matchSource).toBe("manual_rebind");
+    expect(rebound.isManualRebind).toBe(true);
+    expect(rebound.inputPerMillion).toBe(2.0);
+
+    // 2. Edit price -> auto-locks
+    await saveModelPriceEntry({
+      ...rebound,
+      inputPerMillion: 3.5,
+      outputPerMillion: 9.0,
+    });
+    after = await getModelPricingCatalog();
+    rebound = after.localModels!.find(
+      (m) => (m.rawModel || m.modelPatterns[0]) === rawName,
+    )!;
+    expect(rebound.priceLocked).toBe(true);
+    expect(rebound.inputPerMillion).toBe(3.5);
+
+    // 3. Unlock -> reverts to reference price
+    await setModelPricingLock("deepseek-chat", false);
+    after = await getModelPricingCatalog();
+    rebound = after.localModels!.find(
+      (m) => (m.rawModel || m.modelPatterns[0]) === rawName,
+    )!;
+    expect(rebound.priceLocked).toBe(false);
+    expect(rebound.inputPerMillion).toBe(2.0);
+
+    // 4. Unbind manual alias -> returns to unmatched
+    await rebindModelPricingAlias(rawName, null);
+    after = await getModelPricingCatalog();
+    rebound = after.localModels!.find(
+      (m) => (m.rawModel || m.modelPatterns[0]) === rawName,
+    )!;
+    expect(rebound.isManualRebind).toBe(false);
+    expect(rebound.matchedModelId).toBeNull();
+    expect(rebound.matchSource).toBe("unmatched");
+
+    // 5. Ignore and restore
+    await setModelPricingIgnored(rawName, unmatched.provider, true);
+    after = await getModelPricingCatalog();
+    rebound = after.localModels!.find(
+      (m) => (m.rawModel || m.modelPatterns[0]) === rawName,
+    )!;
+    expect(rebound.isIgnored).toBe(true);
+    expect(rebound.matchSource).toBe("ignored");
+
+    await setModelPricingIgnored(rawName, unmatched.provider, false);
+    after = await getModelPricingCatalog();
+    rebound = after.localModels!.find(
+      (m) => (m.rawModel || m.modelPatterns[0]) === rawName,
+    )!;
+    expect(rebound.isIgnored).toBe(false);
+    expect(rebound.matchSource).toBe("unmatched");
+  });
 });
