@@ -4,8 +4,8 @@ use super::usage_dto::{
 };
 use crate::backend::application::prelude::*;
 use crate::backend::infrastructure::tasks::{
-    stages, InfraError, PipelineDescriptor, TaskCapabilities, TaskHandle, TaskKind, TaskOutput,
-    TaskSpec,
+    stages, InfraError, PipelineDescriptor, StageStatus, TaskCapabilities, TaskFailure, TaskFilter,
+    TaskHandle, TaskKind, TaskOutcome, TaskOutput, TaskSkippedGroup, TaskSpec,
 };
 use crate::backend::{
     domain::{conversations::pricing::PriceCatalog, ConversationAdapter, ConversationSource},
@@ -76,8 +76,11 @@ impl AppService {
                 .await
                 .map_err(InfraError::external)?;
             let summary = format!(
-                "用量扫描完成：共 {} 个来源，写入 {} 条用量事件（模式: {}）",
-                result["total_sources"], result["total_events_ingested"], result["mode"]
+                "用量扫描完成：共 {} 个来源（{} 个失败），写入 {} 条用量事件（模式: {}）",
+                result["total_sources"],
+                result["failed_sources"],
+                result["total_events_ingested"],
+                result["mode"]
             );
             Ok(TaskOutput::with_summary(result, summary))
         })
@@ -145,9 +148,26 @@ impl AppService {
             scanned_sources_count,
             total_events_count,
             last_scanned_at,
-            active_scan_task_id: None,
+            active_scan_task_id: self.active_usage_scan_task_id(tenant_id),
             source_diagnostics,
         })
+    }
+
+    /// 当前租户正在运行的用量扫描任务 id（供前端恢复运行态）。
+    fn active_usage_scan_task_id(&self, tenant_id: &str) -> Option<String> {
+        self.runtime
+            .task_runtime()
+            .list_for_tenant(
+                tenant_id,
+                TaskFilter {
+                    kind: Some(TaskKind::ConversationUsageScan),
+                    active_only: true,
+                    ..Default::default()
+                },
+            )
+            .into_iter()
+            .next()
+            .map(|snapshot| snapshot.task_id)
     }
 
     pub async fn scan_conversation_usage_with_control<F>(
@@ -259,6 +279,8 @@ impl AppService {
         let observation_run_id = Uuid::new_v4().to_string();
         let mut total_events_ingested = 0usize;
         let mut completed_source_count = 0usize;
+        let mut successful_source_count = 0usize;
+        let mut source_failures: Vec<TaskFailure> = Vec::new();
 
         // Stage 2 & Stage 3: 采集解码与入库
         for source in &target_sources {
@@ -364,6 +386,7 @@ impl AppService {
                         &now,
                     );
                     save_usage_source_state_sqlx(pool, &new_state).await?;
+                    successful_source_count += 1;
                 }
                 Err(err) => {
                     tracing::error!(
@@ -373,6 +396,15 @@ impl AppService {
                         "数据源用量扫描失败"
                     );
 
+                    source_failures.push(TaskFailure {
+                        code: "usage_source_read_failed".to_string(),
+                        message: format!("数据源【{}】读取用量失败：{err}", source.name),
+                        stage: stages::COLLECT_USAGE.to_string(),
+                        identity: Some(source.id.clone()),
+                        retryable: true,
+                        path: None,
+                        timestamp: now.clone(),
+                    });
                     let failed_state = build_usage_source_state(
                         tenant_id,
                         source,
@@ -395,6 +427,47 @@ impl AppService {
                 Some(source.name.clone()),
                 total_events_ingested,
             );
+        }
+
+        let failed_source_count = source_failures.len();
+
+        // 单源读取失败必须成为当前阶段的可见故障，而不是被静默吞掉。
+        if let Some(tid) = task_id {
+            if failed_source_count > 0 {
+                let collect_status = if successful_source_count > 0 {
+                    StageStatus::PartialSuccess
+                } else {
+                    StageStatus::Failed
+                };
+                let _ = task_runtime.finish_stage(
+                    tid,
+                    stages::COLLECT_USAGE,
+                    collect_status,
+                    Vec::new(),
+                    source_failures.clone(),
+                    Vec::new(),
+                );
+            }
+
+            if total_sources > 0 && successful_source_count == 0 {
+                // 没有任何来源可入库时，不去假装“持久化”阶段仍在运行。
+                let _ = task_runtime.finish_stage(
+                    tid,
+                    stages::PERSIST_EVENTS,
+                    StageStatus::Skipped,
+                    Vec::new(),
+                    Vec::new(),
+                    vec![TaskSkippedGroup {
+                        reason_code: "no_successful_sources".to_string(),
+                        count: total_sources as u64,
+                        samples: source_failures
+                            .iter()
+                            .filter_map(|failure| failure.identity.clone())
+                            .take(5)
+                            .collect(),
+                    }],
+                );
+            }
         }
 
         // Stage 4: 加载模型价格与计费规则 (100% 优先本地缓存/内置，零网络开销)
@@ -476,14 +549,56 @@ impl AppService {
             recalculated
         };
 
+        if let Some(ctx) = task_ctx.as_ref() {
+            if failed_source_count == 0 {
+                ctx.set_outcome(
+                    TaskOutcome::Success,
+                    Some(format!(
+                        "成功扫描 {successful_source_count} 个数据源，写入 {total_events_ingested} 条用量事件"
+                    )),
+                    None,
+                );
+            } else if successful_source_count > 0 {
+                ctx.set_outcome(
+                    TaskOutcome::PartialSuccess,
+                    Some(format!(
+                        "扫描完成 {successful_source_count} 个数据源，写入 {total_events_ingested} 条用量事件；{failed_source_count} 个数据源读取失败"
+                    )),
+                    Some(failure_summary(&source_failures)),
+                );
+            } else {
+                ctx.set_outcome(
+                    TaskOutcome::Failure,
+                    None,
+                    Some(failure_summary(&source_failures)),
+                );
+            }
+        }
+
+        if total_sources > 0 && successful_source_count == 0 && failed_source_count > 0 {
+            return Err(AppError::External(format!(
+                "所有数据源用量扫描均失败（{failed_source_count} 个）"
+            )));
+        }
+
         Ok(json!({
             "total_sources": total_sources,
             "completed_sources": completed_source_count,
+            "successful_sources": successful_source_count,
+            "failed_sources": failed_source_count,
             "total_events_ingested": total_events_ingested,
             "recalculated_events_count": recalculated_events_count,
             "mode": mode,
         }))
     }
+}
+
+fn failure_summary(failures: &[TaskFailure]) -> String {
+    let names: Vec<&str> = failures
+        .iter()
+        .map(|failure| failure.identity.as_deref().unwrap_or("unknown-source"))
+        .collect();
+    format!("{} 个数据源读取失败：{}", failures.len(), names.join("、"))
 }
 
 fn build_usage_source_state(

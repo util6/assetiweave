@@ -19,32 +19,6 @@ export function isTauriRuntime(): boolean {
   );
 }
 
-export const USAGE_SCAN_TASK_UPDATED_EVENT =
-  "conversation-usage-scan-task-updated";
-
-export interface UsageScanTaskSnapshot {
-  id: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled" | string;
-  sourceId?: string | null;
-  mode: string;
-  startedAt: string;
-  finishedAt?: string | null;
-}
-
-export function subscribeUsageScanTask(
-  listener: (snapshot: UsageScanTaskSnapshot) => void,
-): Promise<() => void> {
-  if (!isTauriRuntime()) {
-    return Promise.resolve(() => undefined);
-  }
-  return listen<UsageScanTaskSnapshot>(
-    USAGE_SCAN_TASK_UPDATED_EVENT,
-    (event) => {
-      listener(event.payload);
-    },
-  );
-}
-
 const DEFAULT_MOCK_DASHBOARD: UsageDashboardDto = {
   hero: {
     totalTokens: 3330000000,
@@ -400,8 +374,7 @@ export async function scanConversationUsage(
       sourceDiagnostics: [],
     };
   }
-  const snapshot = await invoke<{ id: string; status: string }>(
-    "scan_conversation_usage",
+  const snapshot = await invoke<{ id: string }>("scan_conversation_usage", {
     {
       options: options ?? {},
     },

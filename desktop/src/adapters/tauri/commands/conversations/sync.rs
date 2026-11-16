@@ -133,127 +133,21 @@ pub(crate) fn start_conversation_sync_background(
     Ok(snapshot)
 }
 
-fn start_conversation_usage_scan_background(
-    app: AppHandle,
+fn start_conversation_usage_scan(
     runtime: std::sync::Arc<crate::backend::infrastructure::runtime::AppRuntime>,
     background_tasks: std::sync::Arc<
         crate::adapters::tauri::background_tasks::BackgroundTaskRegistry,
     >,
     options: crate::backend::application::conversations::UsageScanOptions,
-) -> RuntimeAppResult<crate::adapters::tauri::background_tasks::ConversationUsageScanTaskSnapshot> {
-    let tenant_id = runtime.context().tenant.id.clone();
-    let mode = options
-        .mode
-        .clone()
-        .unwrap_or_else(|| "incremental".to_string());
-    let (snapshot, should_start) = background_tasks.begin_conversation_usage_scan_for_tenant(
-        &tenant_id,
-        options.source_id.clone(),
-        &mode,
-    )?;
-    if !should_start {
-        return Ok(snapshot);
-    }
-
-    let task_id = snapshot.id.clone();
+) -> RuntimeAppResult<crate::backend::application::system::TaskView> {
+    let handle = AppService::from_runtime(&runtime).start_conversation_usage_scan(options)?;
     let task_runtime = background_tasks
         .task_runtime()
         .ok_or_else(|| AppError::Conflict("TaskRuntime 未初始化".to_string()))?;
-    let task_detail = task_runtime
-        .get(&task_id)
-        .map(|task| task.detail)
-        .ok_or_else(|| AppError::NotFound(format!("background task not found: {task_id}")))?;
-    let task_background_tasks = background_tasks.clone();
-    let task_app = app.clone();
-    let task_id_for_runtime = task_id.clone();
-    let outcome =
-        task_runtime.start_external_with_async(&task_id, task_detail, move |context| async move {
-            let progress_app = task_app.clone();
-            let progress_tasks = task_background_tasks.clone();
-            let progress_task_id = task_id_for_runtime.clone();
-            let mut on_progress = move |completed_source_count: usize,
-                                        total_source_count: usize,
-                                        current_source_name: Option<String>,
-                                        total_events: usize| {
-                match progress_tasks.update_conversation_usage_scan_progress(
-                    &progress_task_id,
-                    completed_source_count,
-                    total_source_count,
-                    current_source_name,
-                    total_events,
-                ) {
-                    Ok(snapshot) => {
-                        if let Err(error) =
-                            progress_app.emit("conversation-usage-scan-task-updated", &snapshot)
-                        {
-                            tracing::error!(
-                                action = "conversation.usage.scan",
-                                task_id = %progress_task_id,
-                                error = %error,
-                                "推送后台用量扫描进度失败"
-                            );
-                        }
-                    }
-                    Err(error) => tracing::error!(
-                        action = "conversation.usage.scan",
-                        task_id = %progress_task_id,
-                        error = %error,
-                        "更新后台用量扫描进度失败"
-                    ),
-                }
-            };
-            let cancellation = context.cancellation();
-            if context.is_cancelled() {
-                return Err(AppError::Cancelled(
-                    "conversation usage scan cancelled".to_string(),
-                ));
-            }
-            let result = AppService::from_runtime(&runtime)
-                .scan_conversation_usage_with_control(
-                    options,
-                    Some(&cancellation),
-                    Some(&task_id_for_runtime),
-                    &mut on_progress,
-                )
-                .await;
-
-            match &result {
-                Ok(value) => tracing::info!(
-                    action = "conversation.usage.scan",
-                    task_id = %task_id_for_runtime,
-                    result = %value,
-                    "后台扫描对话用量成功"
-                ),
-                Err(error) => tracing::error!(
-                    action = "conversation.usage.scan",
-                    task_id = %task_id_for_runtime,
-                    error = %error,
-                    "后台扫描对话用量失败"
-                ),
-            }
-            match task_background_tasks.finish_conversation_usage_scan(&task_id_for_runtime, result)
-            {
-                Ok(snapshot) => {
-                    if let Err(error) =
-                        task_app.emit("conversation-usage-scan-task-updated", &snapshot)
-                    {
-                        tracing::error!(
-                            action = "conversation.usage.scan",
-                            task_id = %task_id_for_runtime,
-                            error = %error,
-                            "推送后台用量扫描任务状态失败"
-                        );
-                    }
-                    Ok(serde_json::Value::Null)
-                }
-                Err(error) => Err(error),
-            }
-        });
-    if let Err(error) = outcome {
-        return Err(error.into());
-    }
-
-    Ok(snapshot)
+    let snapshot = task_runtime.get(handle.task_id()).ok_or_else(|| {
+        AppError::NotFound(format!("background task not found: {}", handle.task_id()))
+    })?;
+    Ok(crate::backend::application::system::TaskView::from_snapshot(&snapshot))
 }
 
 #[tauri::command]
@@ -315,28 +209,17 @@ pub(crate) async fn get_conversation_usage_dashboard(
 pub(crate) async fn get_conversation_usage_scan_status(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<crate::backend::application::conversations::UsageScanStatusDto> {
-    let mut status = AppService::from_runtime(&state.runtime)
+    AppService::from_runtime(&state.runtime)
         .get_conversation_usage_scan_status()
-        .await?;
-    let context = state.runtime.context();
-    let tenant_id = context.tenant.id.as_str();
-    if let Some(active_id) = state
-        .background_tasks
-        .active_conversation_usage_scan_id(tenant_id)
-    {
-        status.active_scan_task_id = Some(active_id);
-    }
-    Ok(status)
+        .await
 }
 
 #[tauri::command]
 pub(crate) fn scan_conversation_usage(
-    app: AppHandle,
     state: State<'_, AppState>,
     options: crate::backend::application::conversations::UsageScanOptions,
-) -> RuntimeAppResult<crate::adapters::tauri::background_tasks::ConversationUsageScanTaskSnapshot> {
-    start_conversation_usage_scan_background(
-        app,
+) -> RuntimeAppResult<crate::backend::application::system::TaskView> {
+    start_conversation_usage_scan(
         state.runtime.clone(),
         state.background_tasks.clone(),
         options,
