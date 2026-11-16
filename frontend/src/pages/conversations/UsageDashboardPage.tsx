@@ -8,7 +8,6 @@ import {
   getConversationUsageDashboard,
   getConversationUsageScanStatus,
   scanConversationUsage,
-  subscribeUsageScanTask,
 } from "../../services/usage";
 import { UsageHeader } from "../../components/conversations/usage/UsageHeader";
 import {
@@ -131,48 +130,6 @@ export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
     }
     prevSettingsPanelRef.current = settingsPanel;
   }, [settingsPanel, loadDashboard]);
-
-  // Subscribe to real-time background scan task events
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-
-    void subscribeUsageScanTask((snapshot) => {
-      if (cancelled) return;
-      const isRunning =
-        snapshot.status === "running" ||
-        snapshot.status === "pending" ||
-        snapshot.status === "preparing";
-
-      if (isRunning) {
-        setScanStatus((prev) => ({
-          ...prev,
-          activeScanTaskId: snapshot.id,
-        }));
-      } else {
-        // completed, failed, or cancelled
-        setScanStatus((prev) => ({
-          ...prev,
-          activeScanTaskId: null,
-          lastScannedAt: snapshot.finishedAt || new Date().toISOString(),
-        }));
-        void loadDashboard(true);
-      }
-    })
-      .then((cleanup) => {
-        if (cancelled) {
-          cleanup();
-        } else {
-          unlisten = cleanup;
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [loadDashboard]);
 
   // Poll scan status fallback while scanning in background
   useEffect(() => {
