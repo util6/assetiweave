@@ -48,6 +48,7 @@ pub use conversations::{
         ConversationPartTranslationUpdateParams, ConversationQuestionGetParams,
         ConversationQuestionListParams, ConversationScriptCatalogParams,
         ConversationScriptInstallParams, ConversationSearchParams, ConversationSearchResult,
+        ConversationSearchTaskResultGetParams, ConversationSearchTaskSummary,
         ConversationSessionExportParams, ConversationSessionGetParams,
         ConversationSessionListParams, ConversationSessionOutlineParams,
         ConversationSourceDisableParams, ConversationSourceUpsertParams, ConversationSyncMode,

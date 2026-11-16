@@ -159,6 +159,14 @@ export const conversationsEn = {
   "conversation.search.quickHintsTitle": "Search Tips",
   "conversation.search.quickHintsDesc":
     "Search questions, code snippets, commands, file changes, and skills",
+  "conversation.search.runningBanner": "Searching “{{query}}” in background…",
+  "conversation.search.cancelTask": "Cancel task",
+  "conversation.search.conflictBanner":
+    "“{{activeQuery}}” is still searching in background. Cancel it and search “{{nextQuery}}” instead?",
+  "conversation.search.conflictReplace": "Cancel & Search New",
+  "conversation.search.conflictWait": "Keep Waiting",
+  "conversation.search.triggerSearching": "Searching…",
+  "conversation.search.triggerResults": "{{count}} results",
   "conversation.toolbar.sync": "Sync",
   "conversation.toolbar.syncing": "Syncing...",
   "conversation.searchIndex.metric": "Local index",

@@ -60,6 +60,9 @@
     "get_memory_recall_session",
     "send_memory_recall_turn",
     "cancel_memory_recall_turn",
+    "refresh_memory_recent_state",
+    "update_memory_node_status",
+    "get_memory_project_state",
     "profile.list",
     "list_target_profile_descriptors",
     "refresh_target_profile_descriptors",
@@ -2469,6 +2472,122 @@
             "description": "Recall turn identifier",
             "aliases": [
               "turnId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.6.1",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "refresh_memory_recent_state",
+      "canonical_method": "memory.recent.refresh",
+      "description": "Re-slice recent memory state by time window",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "properties": {
+          "window": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Optional time window such as 24h, 48h, 72h"
+          }
+        },
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
+      },
+      "cli": null,
+      "since": "0.6.1",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "update_memory_node_status",
+      "canonical_method": "memory.node.status.update",
+      "description": "Update a memory tree node status and re-project state",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "node_id",
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "description": "Memory node identifier",
+            "aliases": [
+              "nodeId"
+            ]
+          },
+          "status": {
+            "description": "Target status: completed, continued, unexplored, dismissed",
+            "type": "string",
+            "enum": [
+              "completed",
+              "continued",
+              "unexplored",
+              "dismissed"
+            ]
+          },
+          "project_slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Optional project slug",
+            "aliases": [
+              "projectSlug"
+            ]
+          },
+          "window": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Optional recent window"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.6.1",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "get_memory_project_state",
+      "canonical_method": "memory.project.state.get",
+      "description": "Get a project's full cumulative memory topic tree state",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "project_slug"
+        ],
+        "type": "object",
+        "properties": {
+          "project_slug": {
+            "type": "string",
+            "description": "Project slug",
+            "aliases": [
+              "projectSlug"
             ]
           }
         },
@@ -12604,11 +12723,5 @@
       "since": "0.1.0",
       "deprecated": false
     }
-  ],
-  "supported_methods": [
-    "refresh_memory_recent_state",
-    "update_memory_node_status",
-    "get_memory_project_state"
-  ],
-  "contracts": []
+  ]
 }

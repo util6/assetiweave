@@ -68,6 +68,7 @@ function normalizeTaskKindKey(kind?: string): string {
 
 const TASK_KIND_LABELS: Record<string, string> = {
   conversationsync: "全量会话同步",
+  conversationcontentsearch: "搜索对话内容",
   conversationusagescan: "用量统计扫描",
   conversationdatamaintenance: "会话数据维护",
   searchindexrebuild: "搜索索引重建",
@@ -94,6 +95,7 @@ function formatTaskCategoryLabel(
   if (cat === "conversation/session_sync") return "会话同步";
   if (cat === "conversation/web_sync") return "网页记录同步";
   if (cat === "conversation/sync") return "全量会话同步";
+  if (cat === "conversation/search") return "搜索对话内容";
   if (cat === "conversation/pricing_sync") return "模型价格同步与重算";
   if (cat === "conversation/usage_scan") return "用量统计扫描";
   if (category) return category;

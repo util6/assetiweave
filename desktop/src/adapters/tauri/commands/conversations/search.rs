@@ -5,11 +5,12 @@ use crate::adapters::tauri::background_tasks::{
     BackgroundTaskStatus, ConversationSearchIndexTaskSnapshot,
 };
 use crate::backend::application::prelude::*;
+use crate::backend::application::system::TaskView;
 use crate::backend::application::AppResult as RuntimeAppResult;
 use crate::backend::application::{
     BackgroundTaskGetParams, ConversationBlockGetParams, ConversationBlockListParams,
     ConversationQuestionGetParams, ConversationQuestionListParams, ConversationSearchParams,
-    ConversationSearchResult,
+    ConversationSearchResult, ConversationSearchTaskResultGetParams,
 };
 use crate::backend::domain::{AppErrorView, ConversationSearchIndexStatus};
 
@@ -21,6 +22,31 @@ pub(crate) async fn search_conversation_records(
     AppService::from_runtime(&state.runtime)
         .search_conversation_records(params)
         .await
+}
+
+#[tauri::command]
+pub(crate) fn start_conversation_content_search_task(
+    state: State<'_, AppState>,
+    params: ConversationSearchParams,
+) -> RuntimeAppResult<TaskView> {
+    let handle =
+        AppService::from_runtime(&state.runtime).start_conversation_content_search_task(params)?;
+    let snapshot = state
+        .runtime
+        .task_runtime()
+        .get(handle.task_id())
+        .ok_or_else(|| {
+            AppError::NotFound(format!("background task not found: {}", handle.task_id()))
+        })?;
+    Ok(TaskView::from_snapshot(&snapshot))
+}
+
+#[tauri::command]
+pub(crate) fn get_conversation_content_search_task_result(
+    state: State<'_, AppState>,
+    params: ConversationSearchTaskResultGetParams,
+) -> RuntimeAppResult<Option<ConversationSearchResult>> {
+    AppService::from_runtime(&state.runtime).get_conversation_content_search_task_result(params)
 }
 
 #[tauri::command]

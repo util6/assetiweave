@@ -15,6 +15,8 @@ import { useAppUiStore } from "../../store/ui/appUiStore";
 const mockDismiss = vi.hoisted(() => vi.fn());
 const mockSetSelectedTaskId = vi.hoisted(() => vi.fn());
 const mockNavigate = vi.hoisted(() => vi.fn());
+const mockOpenResultForTask = vi.hoisted(() => vi.fn());
+const mockGetTaskRecordKind = vi.hoisted(() => vi.fn(() => "session"));
 let mockNotification: TaskNotificationItem | null = null;
 let mockPathname = "/skills/overview";
 
@@ -28,6 +30,13 @@ vi.mock("../../app/backgroundTasks/TaskCenterProvider", () => ({
     currentNotification: mockNotification,
     dismissNotification: mockDismiss,
     setSelectedTaskId: mockSetSelectedTaskId,
+  }),
+}));
+
+vi.mock("../../app/backgroundTasks/ConversationSearchProvider", () => ({
+  useOptionalConversationSearch: () => ({
+    openResultForTask: mockOpenResultForTask,
+    getTaskRecordKind: mockGetTaskRecordKind,
   }),
 }));
 
@@ -45,6 +54,9 @@ describe("TaskNotificationBubble", () => {
     mockDismiss.mockReset();
     mockSetSelectedTaskId.mockReset();
     mockNavigate.mockReset();
+    mockOpenResultForTask.mockReset();
+    mockGetTaskRecordKind.mockReset();
+    mockGetTaskRecordKind.mockReturnValue("session");
     mockPathname = "/skills/overview";
     mockNotification = {
       id: "notif-1",
@@ -127,5 +139,39 @@ describe("TaskNotificationBubble", () => {
     useAppUiStore.getState().setTaskCenterOpen(true);
     const { container } = render(<TaskNotificationBubble />);
     expect(container.firstChild).toBeNull();
+  });
+
+  it("navigates to record route and opens search dialog when clicking conversationcontentsearch notification", () => {
+    mockGetTaskRecordKind.mockReturnValue("web");
+    mockNotification = {
+      id: "notif-search-1",
+      task: {
+        id: "task-search-1",
+        kind: "conversationcontentsearch",
+        title: "搜索对话内容",
+        state: "succeeded",
+        outcome: "success",
+        stages: [],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: false, retryable: false, clearable: true },
+        revision: 2,
+      },
+      title: "搜索对话内容 (已完成)",
+      message: "「docker」共找到 5 个结果",
+      isFailure: false,
+      durationMs: 4000,
+      createdAt: Date.now(),
+    };
+
+    render(<TaskNotificationBubble />);
+    fireEvent.click(screen.getByRole("status"));
+
+    expect(mockDismiss).toHaveBeenCalledWith("notif-search-1");
+    expect(mockNavigate).toHaveBeenCalledWith({
+      to: "/conversations/web-records",
+    });
+    expect(mockOpenResultForTask).toHaveBeenCalledWith("task-search-1");
+    expect(useAppUiStore.getState().taskCenterOpen).toBe(false);
   });
 });

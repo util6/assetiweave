@@ -149,6 +149,14 @@ export const conversationsZh = {
   "conversation.search.quickHintsTitle": "快捷搜索建议",
   "conversation.search.quickHintsDesc":
     "支持搜索提问、代码段、命令、文件变更及 Skill 卡片",
+  "conversation.search.runningBanner": "正在后台搜索「{{query}}」…",
+  "conversation.search.cancelTask": "中断任务",
+  "conversation.search.conflictBanner":
+    "「{{activeQuery}}」仍在后台搜索中，是否中断并改为搜索「{{nextQuery}}」？",
+  "conversation.search.conflictReplace": "中断并搜索新词",
+  "conversation.search.conflictWait": "继续等待旧任务",
+  "conversation.search.triggerSearching": "搜索中…",
+  "conversation.search.triggerResults": "{{count}} 个结果",
   "conversation.toolbar.sync": "同步",
   "conversation.toolbar.syncing": "同步中...",
   "conversation.searchIndex.metric": "本地索引",

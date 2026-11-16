@@ -2,6 +2,7 @@ import type { AgentSessionRef } from "./agentSession";
 
 export type TaskKind =
   | "conversationsync"
+  | "conversationcontentsearch"
   | "conversationusagescan"
   | "conversationdatamaintenance"
   | "searchindexrebuild"

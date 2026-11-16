@@ -1,7 +1,6 @@
 import { CornerDownLeft, Loader2, Search, Sparkles, X } from "lucide-react";
 import {
   type ChangeEvent,
-  type ClipboardEvent,
   type CompositionEvent,
   type KeyboardEvent,
   useCallback,
@@ -17,6 +16,10 @@ import type { Translator } from "../../i18n/I18nProvider";
 import type { ConversationSearchHit } from "../../types";
 import type { ConversationSearchResultState } from "../../hooks/conversations/useConversationsController";
 import type { ConversationContentCardColorSettings } from "../../store/settings/settingsSchema";
+import type {
+  ActiveConversationSearchTask,
+  PendingConversationSearchConflict,
+} from "../../app/backgroundTasks/ConversationSearchProvider";
 import { Button } from "../ui/button";
 import { DialogFrame } from "../foundation/DialogFrame";
 import {
@@ -36,6 +39,7 @@ export { ConversationSearchHitPreview } from "./ConversationSearchHitPreview";
 export { ConversationContentSearchResults } from "./ConversationContentSearchResults";
 
 export interface ConversationSearchDialogProps {
+  activeTask?: ActiveConversationSearchTask | null;
   adapterId?: string | null;
   appMetaById?: ReadonlyMap<string, ConversationSearchAppChipMeta>;
   commitDelayMs?: number;
@@ -46,15 +50,23 @@ export interface ConversationSearchDialogProps {
   loadingMore?: boolean;
   onAdapterChange?: (adapterId: string | null) => void;
   onApplyFilters?: (filters: ConversationSearchFilterValues) => void;
+  onCancelActiveTask?: () => void;
   onCardKindToggle?: (kind: string) => void;
   onClose: () => void;
+  onConfirmConflictReplace?: () => void;
+  onDismissConflictKeepWaiting?: () => void;
   onLoadMore?: () => void;
   onOpenHit: (hit: ConversationSearchHit) => void;
   onQueryChange: (query: string) => void;
   onQuestionToggle?: () => void;
   onSemanticRoleToggle?: (role: string) => void;
   onShowAllCardTypes?: () => void;
+  onSubmitSearch?: (
+    query: string,
+    filters: ConversationSearchFilterValues,
+  ) => void;
   open: boolean;
+  pendingConflict?: PendingConversationSearchConflict | null;
   query: string;
   result: ConversationSearchResultState | null;
   selectedCardKinds: string[];
@@ -62,10 +74,13 @@ export interface ConversationSearchDialogProps {
   t: Translator;
 }
 
+const IME_ENTER_GUARD_WINDOW_MS = 80;
+
 export function ConversationSearchDialog({
+  activeTask = null,
   adapterId,
   appMetaById,
-  commitDelayMs = 700,
+  commitDelayMs: _commitDelayMs,
   commitImmediatelyWhen,
   contentCardColors,
   includeQuestions,
@@ -73,15 +88,20 @@ export function ConversationSearchDialog({
   loadingMore = false,
   onAdapterChange,
   onApplyFilters,
+  onCancelActiveTask,
   onCardKindToggle,
   onClose,
+  onConfirmConflictReplace,
+  onDismissConflictKeepWaiting,
   onLoadMore,
   onOpenHit,
   onQueryChange,
   onQuestionToggle,
   onSemanticRoleToggle,
   onShowAllCardTypes,
+  onSubmitSearch,
   open,
+  pendingConflict = null,
   query,
   result,
   selectedCardKinds,
@@ -92,11 +112,16 @@ export function ConversationSearchDialog({
   const [draftQuery, setDraftQuery] = useState(query);
   const draftRef = useRef(query);
   const committedQueryRef = useRef(query);
+  const wasOpenRef = useRef(false);
+  const onQueryChangeRef = useRef(onQueryChange);
   const composingRef = useRef(false);
+  const lastCompositionEndAtRef = useRef(0);
   const isPasteRef = useRef(false);
-  const timerRef = useRef<number | null>(null);
-  const [, setPending] = useState(false);
   const [, startTransition] = useTransition();
+
+  useEffect(() => {
+    onQueryChangeRef.current = onQueryChange;
+  }, [onQueryChange]);
 
   const {
     applyDraftFilters,
@@ -129,27 +154,42 @@ export function ConversationSearchDialog({
   const [activeHitKey, setActiveHitKey] = useState<string | null>(null);
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
 
-  const clearTimer = () => {
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-  };
-
-  useEffect(() => () => clearTimer(), []);
-
   useEffect(() => {
-    if (open) {
-      clearTimer();
-      setPending(false);
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (!open) {
       composingRef.current = false;
+      lastCompositionEndAtRef.current = 0;
       isPasteRef.current = false;
-      committedQueryRef.current = query;
-      draftRef.current = query;
-      setDraftQuery(query);
+      return;
+    }
+    const justOpened = !wasOpen;
+    if (!justOpened && query === committedQueryRef.current) {
+      return;
+    }
+    composingRef.current = false;
+    lastCompositionEndAtRef.current = 0;
+    isPasteRef.current = false;
+    committedQueryRef.current = query;
+    draftRef.current = query;
+    setDraftQuery(query);
+    if (inputRef.current && inputRef.current.value !== query) {
+      inputRef.current.value = query;
+    }
+    if (justOpened) {
       const timer = window.setTimeout(() => {
-        inputRef.current?.focus();
-        inputRef.current?.select();
+        const input = inputRef.current;
+        if (!input) return;
+        if (document.activeElement !== input) {
+          input.focus();
+        }
+        if (
+          !composingRef.current &&
+          input.value === query &&
+          query.length > 0
+        ) {
+          input.select();
+        }
       }, 50);
       return () => window.clearTimeout(timer);
     }
@@ -201,22 +241,46 @@ export function ConversationSearchDialog({
     null;
 
   const commitDraft = (nextValue: string) => {
-    clearTimer();
-    setPending(false);
-    if (nextValue === committedQueryRef.current) return;
+    const trimmed = nextValue.trim();
+    if (!trimmed) return;
+    if (onSubmitSearch) {
+      committedQueryRef.current = nextValue;
+      startTransition(() => {
+        onSubmitSearch(nextValue, {
+          adapterId: draftAdapterId,
+          cardKinds: draftCardKinds,
+          includeQuestions: draftIncludeQuestions,
+          semanticRoles: draftSemanticRoles,
+        });
+      });
+      return;
+    }
+    if (nextValue === committedQueryRef.current && !hasPendingFilterChanges) {
+      return;
+    }
     committedQueryRef.current = nextValue;
-    onQueryChange(nextValue);
+    startTransition(() => {
+      onQueryChangeRef.current(nextValue);
+    });
   };
 
-  const scheduleCommit = (nextValue: string) => {
-    clearTimer();
-    setPending(nextValue !== committedQueryRef.current);
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null;
-      if (!composingRef.current) {
-        commitDraft(nextValue);
+  const handleApplyDraftAndSubmit = () => {
+    if (onSubmitSearch) {
+      applyDraftFilters();
+      if (draftRef.current.trim()) {
+        committedQueryRef.current = draftRef.current;
+        startTransition(() => {
+          onSubmitSearch(draftRef.current, {
+            adapterId: draftAdapterId,
+            cardKinds: draftCardKinds,
+            includeQuestions: draftIncludeQuestions,
+            semanticRoles: draftSemanticRoles,
+          });
+        });
       }
-    }, commitDelayMs);
+      return;
+    }
+    applyDraftFilters();
   };
 
   const handlePaste = () => {
@@ -225,43 +289,49 @@ export function ConversationSearchDialog({
 
   const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
     const value = event.target.value;
-    const prevLength = draftRef.current.length;
+    const prevValue = draftRef.current;
     draftRef.current = value;
-    setDraftQuery(value);
     if (composingRef.current || inputEventIsComposing(event)) {
-      clearTimer();
       return;
     }
+    if (value === prevValue && !isPasteRef.current) {
+      return;
+    }
+    setDraftQuery(value);
     const isBulkOrPaste =
-      isPasteRef.current || Math.abs(value.length - prevLength) !== 1;
+      isPasteRef.current || Math.abs(value.length - prevValue.length) > 1;
     isPasteRef.current = false;
     if (isBulkOrPaste && commitImmediatelyWhen?.(value)) {
-      clearTimer();
+      if (hasPendingFilterChanges) applyDraftFilters();
       commitDraft(value);
-      return;
     }
-    scheduleCommit(value);
   };
 
   const handleCompositionStart = () => {
     composingRef.current = true;
-    clearTimer();
-    setPending(false);
   };
 
   const handleCompositionEnd = (event: CompositionEvent<HTMLInputElement>) => {
     composingRef.current = false;
+    lastCompositionEndAtRef.current = Date.now();
     const value = event.currentTarget.value;
     draftRef.current = value;
     setDraftQuery(value);
-    scheduleCommit(value);
   };
 
   const handleClear = () => {
-    clearTimer();
+    composingRef.current = false;
+    lastCompositionEndAtRef.current = 0;
+    isPasteRef.current = false;
     draftRef.current = "";
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
     setDraftQuery("");
-    commitDraft("");
+    if (!activeTask && !onSubmitSearch) {
+      committedQueryRef.current = "";
+      onQueryChangeRef.current("");
+    }
     inputRef.current?.focus();
   };
 
@@ -316,15 +386,22 @@ export function ConversationSearchDialog({
       return;
     }
     if (event.key === "Enter") {
+      if (
+        Date.now() - lastCompositionEndAtRef.current <
+        IME_ENTER_GUARD_WINDOW_MS
+      ) {
+        return;
+      }
       event.preventDefault();
-      clearTimer();
       const hasQueryChange =
         draftRef.current.trim() !== committedQueryRef.current.trim();
       if (hasQueryChange || hasPendingFilterChanges) {
         if (hasPendingFilterChanges) applyDraftFilters();
-        if (hasQueryChange) commitDraft(draftRef.current);
+        commitDraft(draftRef.current);
       } else if (activeHit) {
         handleHitSelect(activeHit);
+      } else if (draftRef.current.trim()) {
+        commitDraft(draftRef.current);
       }
       return;
     }
@@ -343,7 +420,6 @@ export function ConversationSearchDialog({
 
   const handleSubmit = () => {
     if (composingRef.current) return;
-    clearTimer();
     if (hasPendingFilterChanges) applyDraftFilters();
     commitDraft(draftRef.current);
   };
@@ -425,6 +501,7 @@ export function ConversationSearchDialog({
         </div>
       }
       icon={<Search size={19} />}
+      initialFocusRef={inputRef}
       onClose={onClose}
       size="xl"
       title={t("conversation.search.dialogTitle")}
@@ -442,6 +519,7 @@ export function ConversationSearchDialog({
               aria-label={t("conversation.search.contentPlaceholder")}
               autoFocus
               className="min-w-0 flex-1 border-0 bg-transparent text-body-base font-medium text-on-surface outline-none placeholder:text-outline"
+              defaultValue={query}
               onChange={handleInputChange}
               onCompositionEnd={handleCompositionEnd}
               onCompositionStart={handleCompositionStart}
@@ -450,7 +528,6 @@ export function ConversationSearchDialog({
               placeholder={t("conversation.search.contentPlaceholder")}
               ref={inputRef}
               type="search"
-              value={draftQuery}
             />
 
             {/* Short ID badge */}
@@ -501,6 +578,74 @@ export function ConversationSearchDialog({
               ) : null}
             </button>
           </div>
+
+          {pendingConflict ? (
+            <div
+              className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-status-conflict/40 bg-status-conflict/10 px-4 py-2.5 text-body-sm text-on-surface"
+              role="alert"
+            >
+              <span className="min-w-0 flex-1 font-medium">
+                {t("conversation.search.conflictBanner", {
+                  activeQuery: pendingConflict.activeQuery,
+                  nextQuery: pendingConflict.nextQuery,
+                })}
+              </span>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  className="h-8 rounded-xl px-3 text-body-xs"
+                  onClick={onConfirmConflictReplace}
+                  size="sm"
+                  type="button"
+                  variant="default"
+                >
+                  {t("conversation.search.conflictReplace")}
+                </Button>
+                <Button
+                  className="h-8 rounded-xl px-3 text-body-xs"
+                  onClick={onDismissConflictKeepWaiting}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {t("conversation.search.conflictWait")}
+                </Button>
+              </div>
+            </div>
+          ) : activeTask ? (
+            <div
+              className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-theme-nav-active-border/60 bg-primary/8 px-4 py-2 text-body-sm text-on-surface"
+              role="status"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <Loader2 className="size-4 shrink-0 animate-spin text-status-update" />
+                <span className="truncate font-medium">
+                  {t("conversation.search.runningBanner", {
+                    query: activeTask.query,
+                  })}
+                </span>
+                {activeTask.task?.stages.find((s) => s.status === "running")
+                  ?.name ? (
+                  <span className="hidden rounded-full bg-theme-control/80 px-2 py-0.5 text-[11px] font-medium text-on-surface-variant sm:inline-block">
+                    {
+                      activeTask.task.stages.find((s) => s.status === "running")
+                        ?.name
+                    }
+                  </span>
+                ) : null}
+              </div>
+              {onCancelActiveTask ? (
+                <Button
+                  className="h-8 shrink-0 rounded-xl px-3 text-body-xs"
+                  onClick={onCancelActiveTask}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {t("conversation.search.cancelTask")}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         {/* Hits list with filter & pagination */}
@@ -516,7 +661,7 @@ export function ConversationSearchDialog({
             loading={loading}
             loadingMore={loadingMore}
             onAdapterChange={handleDraftAdapterChange}
-            onApplyFilters={applyDraftFilters}
+            onApplyFilters={handleApplyDraftAndSubmit}
             onCardKindToggle={handleDraftCardKindToggle}
             onLoadMore={onLoadMore}
             onOpenHit={handleHitSelect}
@@ -537,7 +682,11 @@ export function ConversationSearchDialog({
 }
 
 function inputEventIsComposing(event: ChangeEvent<HTMLInputElement>) {
-  return Boolean((event.nativeEvent as InputEvent)?.isComposing);
+  const nativeEvent = event.nativeEvent as InputEvent | undefined;
+  return Boolean(
+    nativeEvent?.isComposing ||
+    nativeEvent?.inputType === "insertCompositionText",
+  );
 }
 
 export { ConversationSearchTrigger } from "./conversationSearchHelpers";

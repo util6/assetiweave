@@ -9,10 +9,12 @@ import {
   Check,
 } from "lucide-react";
 import clsx from "clsx";
+import { useNavigate } from "@tanstack/react-router";
 import {
   useOptionalTaskCenter,
   type TaskNotificationItem,
 } from "../../app/backgroundTasks/TaskCenterProvider";
+import { useOptionalConversationSearch } from "../../app/backgroundTasks/ConversationSearchProvider";
 import { useAppUiStore } from "../../store/ui/appUiStore";
 
 export function TaskNotificationBubble() {
@@ -42,6 +44,11 @@ function TaskNotificationBubbleContent({
   setSelectedTaskId: (id: string | null) => void;
 }) {
   const setTaskCenterOpen = useAppUiStore((state) => state.setTaskCenterOpen);
+  const setConversationSearchDialogOpen = useAppUiStore(
+    (state) => state.setConversationSearchDialogOpen,
+  );
+  const navigate = useNavigate();
+  const conversationSearch = useOptionalConversationSearch();
 
   return (
     <NotificationItem
@@ -49,8 +56,26 @@ function TaskNotificationBubbleContent({
       notification={currentNotification}
       onDismiss={() => dismissNotification(currentNotification.id)}
       onSelect={() => {
-        setSelectedTaskId(currentNotification.task.id);
         dismissNotification(currentNotification.id);
+        if (currentNotification.task.kind === "conversationcontentsearch") {
+          const recordKind =
+            conversationSearch?.getTaskRecordKind(currentNotification.task.id) ??
+            "session";
+          const targetPath =
+            recordKind === "web"
+              ? "/conversations/web-records"
+              : "/conversations/sessions";
+          void navigate({ to: targetPath });
+          if (conversationSearch) {
+            void conversationSearch.openResultForTask(
+              currentNotification.task.id,
+            );
+          } else {
+            setConversationSearchDialogOpen(true);
+          }
+          return;
+        }
+        setSelectedTaskId(currentNotification.task.id);
         setTaskCenterOpen(true);
       }}
     />

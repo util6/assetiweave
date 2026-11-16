@@ -195,6 +195,7 @@ import {
   getHitKey,
   type ConversationSearchAppChipMeta,
 } from "../../components/conversations/ConversationSearchDialog";
+import { useOptionalConversationSearch } from "../../app/backgroundTasks/ConversationSearchProvider";
 
 type ConversationPageNotification = Omit<NotificationMessage, "id">;
 
@@ -322,6 +323,46 @@ export function ConversationsPage({
     turnIndex?: number | null;
   } | null>(null);
   const [contentSearchDialogOpen, setContentSearchDialogOpen] = useState(false);
+  const globalSearch = useOptionalConversationSearch();
+  const effectiveContentSearchDialogOpen = globalSearch
+    ? globalSearch.dialogOpen
+    : contentSearchDialogOpen;
+  const setEffectiveContentSearchDialogOpen = useCallback(
+    (next: boolean | ((current: boolean) => boolean)) => {
+      if (globalSearch) {
+        const resolved =
+          typeof next === "function" ? next(globalSearch.dialogOpen) : next;
+        globalSearch.setDialogOpen(resolved);
+      } else {
+        setContentSearchDialogOpen(next);
+      }
+    },
+    [globalSearch],
+  );
+  const effectiveContentQuery = globalSearch
+    ? globalSearch.committedQuery
+    : contentQuery;
+  const effectiveContentSearchResult = globalSearch
+    ? globalSearch.result
+    : contentSearchResult;
+  const effectiveContentSearchLoading = globalSearch
+    ? globalSearch.loading
+    : contentSearchLoading;
+  const effectiveContentSearchLoadingMore = globalSearch
+    ? globalSearch.loadingMore
+    : contentSearchLoadingMore;
+  const effectiveContentSearchAdapterId = globalSearch
+    ? globalSearch.committedAdapterId
+    : contentSearchAdapterId;
+  const effectiveContentSearchCardKinds = globalSearch
+    ? globalSearch.committedCardKinds
+    : contentSearchCardKinds;
+  const effectiveContentSearchSemanticRoles = globalSearch
+    ? globalSearch.committedSemanticRoles
+    : contentSearchSemanticRoles;
+  const effectiveContentSearchIncludesQuestions = globalSearch
+    ? globalSearch.committedIncludesQuestions
+    : contentSearchIncludesQuestions;
   const handledSyncTaskIdRef = useRef<string | null>(null);
   const syncedAdapterIdsRef = useRef<Set<string>>(new Set());
   const incrementalRefreshingRef = useRef(false);
@@ -337,12 +378,12 @@ export function ConversationsPage({
     function handleGlobalKeyDown(event: globalThis.KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setContentSearchDialogOpen((current) => !current);
+        setEffectiveContentSearchDialogOpen((current) => !current);
       }
     }
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, []);
+  }, [setEffectiveContentSearchDialogOpen]);
 
   useEffect(() => {
     if (sessionsQuery.data !== undefined) {
@@ -484,6 +525,16 @@ export function ConversationsPage({
   }, [ensureContentVisibility, sessionDetail]);
 
   useEffect(() => {
+    if (globalSearch?.lastError && globalSearch.dialogOpen) {
+      onNotifyError(globalSearch.lastError);
+      globalSearch.clearLastError();
+    }
+  }, [globalSearch, onNotifyError]);
+
+  useEffect(() => {
+    if (globalSearch) {
+      return;
+    }
     const trimmedQuery = contentQuery.trim();
     if (!trimmedQuery) {
       setContentSearchResult(null);
@@ -539,6 +590,7 @@ export function ConversationsPage({
     contentSearchSemanticRoles,
     contentSearchIncludesQuestions,
     currentRecordKind,
+    globalSearch,
     onNotifyError,
     setContentSearchLoading,
     setContentSearchResult,
@@ -1327,9 +1379,24 @@ export function ConversationsPage({
                 value={query}
               />
               <ConversationSearchTrigger
-                activeQuery={contentQuery}
-                onClick={() => setContentSearchDialogOpen(true)}
+                activeQuery={effectiveContentQuery}
+                onClick={() => setEffectiveContentSearchDialogOpen(true)}
                 placeholder={t("conversation.search.contentPlaceholder")}
+                resultCount={
+                  effectiveContentSearchResult
+                    ? effectiveContentSearchResult.totalCount
+                    : null
+                }
+                resultCountLabel={
+                  effectiveContentSearchResult
+                    ? t("conversation.search.triggerResults", {
+                        count: effectiveContentSearchResult.totalCount,
+                      })
+                    : undefined
+                }
+                searching={Boolean(globalSearch?.activeTask)}
+                searchingLabel={t("conversation.search.triggerSearching")}
+                searchingQuery={globalSearch?.activeTask?.query}
                 shortcut="⌘K"
               />
               <ToolbarSingleSelectDropdown
@@ -1420,19 +1487,35 @@ export function ConversationsPage({
       )}
 
       <ConversationSearchDialog
-        adapterId={contentSearchAdapterId}
+        activeTask={globalSearch?.activeTask ?? null}
+        adapterId={effectiveContentSearchAdapterId}
         appMetaById={appMetaById}
         commitDelayMs={CONTENT_SEARCH_COMMIT_DELAY_MS}
         commitImmediatelyWhen={isConversationShortIdQuery}
         contentCardColors={appSettings.conversations.contentCardColors}
-        includeQuestions={contentSearchIncludesQuestions}
-        loading={contentSearchLoading}
-        loadingMore={contentSearchLoadingMore}
+        includeQuestions={effectiveContentSearchIncludesQuestions}
+        loading={effectiveContentSearchLoading}
+        loadingMore={effectiveContentSearchLoadingMore}
         onAdapterChange={setContentSearchAdapterId}
         onApplyFilters={handleApplyContentSearchFilters}
+        onCancelActiveTask={
+          globalSearch ? () => void globalSearch.cancelActiveSearch() : undefined
+        }
         onCardKindToggle={toggleContentSearchCardKind}
-        onClose={() => setContentSearchDialogOpen(false)}
-        onLoadMore={handleLoadMoreSearchResults}
+        onClose={() => setEffectiveContentSearchDialogOpen(false)}
+        onConfirmConflictReplace={
+          globalSearch
+            ? () => void globalSearch.confirmConflictReplace()
+            : undefined
+        }
+        onDismissConflictKeepWaiting={
+          globalSearch?.dismissConflictKeepWaiting
+        }
+        onLoadMore={
+          globalSearch
+            ? () => void globalSearch.loadMore()
+            : handleLoadMoreSearchResults
+        }
         onOpenHit={handleOpenSearchHit}
         onQueryChange={setContentQuery}
         onQuestionToggle={() =>
@@ -1440,11 +1523,25 @@ export function ConversationsPage({
         }
         onSemanticRoleToggle={toggleContentSearchSemanticRole}
         onShowAllCardTypes={showAllContentSearchCardTypes}
-        open={contentSearchDialogOpen}
-        query={contentQuery}
-        result={contentSearchResult}
-        selectedCardKinds={contentSearchCardKinds}
-        selectedSemanticRoles={contentSearchSemanticRoles}
+        onSubmitSearch={
+          globalSearch
+            ? (nextQuery, filters) =>
+                void globalSearch.submitSearch({
+                  query: nextQuery,
+                  recordKind: currentRecordKind,
+                  adapterId: filters.adapterId,
+                  cardKinds: filters.cardKinds,
+                  semanticRoles: filters.semanticRoles,
+                  includeQuestions: filters.includeQuestions,
+                })
+            : undefined
+        }
+        open={effectiveContentSearchDialogOpen}
+        pendingConflict={globalSearch?.pendingConflict ?? null}
+        query={effectiveContentQuery}
+        result={effectiveContentSearchResult}
+        selectedCardKinds={effectiveContentSearchCardKinds}
+        selectedSemanticRoles={effectiveContentSearchSemanticRoles}
         t={t}
       />
       {exportDialog ? (

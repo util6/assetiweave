@@ -168,6 +168,9 @@ impl TaskView {
                         _ => "会话同步".to_string(),
                     }
                 }
+                crate::backend::infrastructure::tasks::TaskKind::ConversationContentSearch => {
+                    "搜索对话内容".to_string()
+                }
                 crate::backend::infrastructure::tasks::TaskKind::ConversationUsageScan => {
                     "用量统计扫描".to_string()
                 }

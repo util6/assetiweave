@@ -314,7 +314,7 @@ pub struct ConversationQuestionListParams {
     pub offset: Option<usize>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct ConversationSearchParams {
     #[serde(default, alias = "recordKind")]
     pub record_kind: Option<String>,
@@ -397,13 +397,13 @@ impl ConversationIncrementalSearchParams {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct ConversationSearchOptions {
     #[serde(default, alias = "retrievalMode")]
     pub retrieval_mode: Option<crate::backend::domain::conversations::SearchRetrievalMode>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ConversationSearchScope {
     pub record_kind: String,
     pub adapter_id: Option<String>,
@@ -422,7 +422,7 @@ pub struct ConversationSearchScope {
     pub offset: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ConversationSearchResult {
     pub query: String,
     pub record_kind: String,
@@ -438,11 +438,26 @@ pub struct ConversationSearchResult {
     pub semantic_role_counts: Option<BTreeMap<String, usize>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ConversationSearchIncrementalScope {
     pub recent_runs: usize,
     pub included_run_count: usize,
     pub changed_session_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationSearchTaskSummary {
+    pub query: String,
+    pub record_kind: String,
+    pub total_count: usize,
+    pub hit_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct ConversationSearchTaskResultGetParams {
+    #[serde(alias = "taskId")]
+    pub task_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

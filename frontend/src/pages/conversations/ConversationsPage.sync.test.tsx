@@ -555,7 +555,7 @@ describe("ConversationsPage sync scope", () => {
   });
 
   it.each(["session", "web"] as const)(
-    "coalesces content card typing before searching on %s pages",
+    "does not auto-search while typing on %s pages, only submits on explicit Enter",
     async (recordKind) => {
       vi.useFakeTimers();
       try {
@@ -577,13 +577,14 @@ describe("ConversationsPage sync scope", () => {
         expect(searchConversationRecordsMock).not.toHaveBeenCalled();
 
         await act(async () => {
-          await vi.advanceTimersByTimeAsync(699);
+          await vi.advanceTimersByTimeAsync(1000);
         });
 
         expect(searchConversationRecordsMock).not.toHaveBeenCalled();
 
+        fireEvent.keyDown(searchInput, { key: "Enter", keyCode: 13 });
         await act(async () => {
-          await vi.advanceTimersByTimeAsync(1);
+          await Promise.resolve();
         });
 
         expect(searchConversationRecordsMock).toHaveBeenCalledWith({
@@ -920,6 +921,7 @@ describe("ConversationsPage sync scope", () => {
     renderConversationsPage("session");
     const searchInput = openContentSearchDialog();
     fireEvent.change(searchInput, { target: { value: "reasoning" } });
+    fireEvent.keyDown(searchInput, { key: "Enter", keyCode: 13 });
     await screen.findByRole(
       "button",
       { name: /Reasoning search result/ },
@@ -994,8 +996,32 @@ describe("ConversationsPage sync scope", () => {
 
         expect(searchInput.value).toBe("中");
 
+        // Single Chinese character should not prematurely trigger search while typing a word
         await act(async () => {
-          await vi.advanceTimersByTimeAsync(700);
+          await vi.advanceTimersByTimeAsync(1500);
+        });
+        expect(searchConversationRecordsMock).not.toHaveBeenCalled();
+
+        fireEvent.compositionStart(searchInput);
+        fireEvent.change(searchInput, {
+          target: { value: "中wen" },
+          nativeEvent: { isComposing: true },
+        });
+        fireEvent.compositionEnd(searchInput, {
+          data: "文",
+          target: { value: "中文" },
+        });
+
+        expect(searchInput.value).toBe("中文");
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1200);
+        });
+        expect(searchConversationRecordsMock).not.toHaveBeenCalled();
+
+        fireEvent.keyDown(searchInput, { key: "Enter", keyCode: 13 });
+        await act(async () => {
+          await Promise.resolve();
         });
 
         expect(searchConversationRecordsMock).toHaveBeenCalledWith({
@@ -1005,7 +1031,7 @@ describe("ConversationsPage sync scope", () => {
           include_questions: true,
           semantic_roles: [],
           limit: 50,
-          query: "中",
+          query: "中文",
           record_kind: recordKind,
         });
       } finally {

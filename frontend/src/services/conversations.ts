@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import repositoryConversationCatalog from "../../../builtin-assets/catalog.json";
+import type { TaskView } from "../types/taskCenter";
+import { normalizeTaskView } from "../types/taskCenter";
 import type {
   ConversationAdapter,
   ConversationAdapterPackage,
@@ -1565,6 +1567,25 @@ export async function getWebRecordSession(
   }
 }
 
+function buildConversationSearchPayload(params: ConversationSearchParams) {
+  const trimmedQuery = params.query.trim();
+  return {
+    ...params,
+    query: trimmedQuery,
+    record_kind: params.record_kind ?? "session",
+    content_types: params.content_types ?? [],
+    card_kinds: params.card_kinds ?? [],
+    semantic_roles: params.semantic_roles ?? [],
+    include_questions: params.include_questions,
+    include_cards: params.include_cards,
+    since: params.since ?? null,
+    until: params.until ?? null,
+    timeline: params.timeline ?? false,
+    limit: params.limit ?? 50,
+    offset: params.offset ?? 0,
+  };
+}
+
 export async function searchConversationRecords(
   params: ConversationSearchParams,
 ): Promise<ConversationSearchResult> {
@@ -1594,21 +1615,7 @@ export async function searchConversationRecords(
     };
   }
 
-  const payload = {
-    ...params,
-    query: trimmedQuery,
-    record_kind: params.record_kind ?? "session",
-    content_types: params.content_types ?? [],
-    card_kinds: params.card_kinds ?? [],
-    semantic_roles: params.semantic_roles ?? [],
-    include_questions: params.include_questions,
-    include_cards: params.include_cards,
-    since: params.since ?? null,
-    until: params.until ?? null,
-    timeline: params.timeline ?? false,
-    limit: params.limit ?? 50,
-    offset: params.offset ?? 0,
-  };
+  const payload = buildConversationSearchPayload(params);
 
   try {
     return await invoke<ConversationSearchResult>(
@@ -1622,6 +1629,26 @@ export async function searchConversationRecords(
 
     return fallbackConversationSearch(payload);
   }
+}
+
+export async function startConversationContentSearchTask(
+  params: ConversationSearchParams,
+): Promise<TaskView> {
+  const payload = buildConversationSearchPayload(params);
+  const raw = await invoke<unknown>(
+    "start_conversation_content_search_task",
+    { params: payload },
+  );
+  return normalizeTaskView(raw);
+}
+
+export async function getConversationContentSearchTaskResult(
+  taskId: string,
+): Promise<ConversationSearchResult | null> {
+  return invoke<ConversationSearchResult | null>(
+    "get_conversation_content_search_task_result",
+    { params: { task_id: taskId } },
+  );
 }
 
 export async function listConversationQuestions(

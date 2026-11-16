@@ -6,6 +6,7 @@ use crate::backend::{
 };
 use arc_swap::ArcSwap;
 use std::{
+    collections::VecDeque,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex, OnceLock},
@@ -45,6 +46,38 @@ pub struct RequestContextSnapshot {
     pub conversation_adapter_catalog: Arc<ConversationAdapterCatalog>,
 }
 
+const CONVERSATION_SEARCH_CACHE_LIMIT: usize = 20;
+
+#[derive(Default)]
+struct ConversationSearchResultCache {
+    entries: VecDeque<(
+        String,
+        crate::backend::application::ConversationSearchResult,
+    )>,
+}
+
+impl ConversationSearchResultCache {
+    fn insert(
+        &mut self,
+        task_id: String,
+        result: crate::backend::application::ConversationSearchResult,
+    ) {
+        self.entries.retain(|(id, _)| id != &task_id);
+        if self.entries.len() >= CONVERSATION_SEARCH_CACHE_LIMIT {
+            self.entries.pop_front();
+        }
+        self.entries.push_back((task_id, result));
+    }
+
+    fn get(&self, task_id: &str) -> Option<crate::backend::application::ConversationSearchResult> {
+        self.entries
+            .iter()
+            .rev()
+            .find(|(id, _)| id == task_id)
+            .map(|(_, result)| result.clone())
+    }
+}
+
 /// 进程级共享资源宿主。所有请求复用其中的数据库池与 tokio Runtime。
 pub struct AppRuntime {
     pub(super) db_path: PathBuf,
@@ -64,6 +97,7 @@ pub struct AppRuntime {
     pub(super) builtin_conversation_adapters: Arc<Vec<ConversationAdapter>>,
     pub(super) config: Arc<super::config::RuntimeConfig>,
     pub(super) settings: ArcSwap<serde_json::Value>,
+    conversation_search_results: Mutex<ConversationSearchResultCache>,
 }
 
 static PROCESS_RUNTIME: OnceLock<Arc<AppRuntime>> = OnceLock::new();
@@ -123,6 +157,7 @@ impl AppRuntime {
             builtin_conversation_adapters: Arc::new(builtin_conversation_adapters),
             config,
             settings: ArcSwap::from_pointee(initial_settings),
+            conversation_search_results: Mutex::new(ConversationSearchResultCache::default()),
         });
 
         Ok(app_runtime)
@@ -208,6 +243,7 @@ impl AppRuntime {
             builtin_conversation_adapters: Arc::new(builtin_conversation_adapters),
             config: Arc::new(super::config::RuntimeConfig::for_isolated_db(db_path)),
             settings: ArcSwap::from_pointee(initial_settings),
+            conversation_search_results: Mutex::new(ConversationSearchResultCache::default()),
         })
     }
 
@@ -366,6 +402,26 @@ impl AppRuntime {
 
     pub fn session_streams(&self) -> &session_streams::SessionStreamRegistry {
         &self.session_streams
+    }
+
+    pub fn store_conversation_search_result(
+        &self,
+        task_id: impl Into<String>,
+        result: crate::backend::application::ConversationSearchResult,
+    ) {
+        if let Ok(mut cache) = self.conversation_search_results.lock() {
+            cache.insert(task_id.into(), result);
+        }
+    }
+
+    pub fn get_conversation_search_result(
+        &self,
+        task_id: &str,
+    ) -> Option<crate::backend::application::ConversationSearchResult> {
+        self.conversation_search_results
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(task_id))
     }
 
     pub fn target_catalog(&self) -> Arc<TargetCatalog> {

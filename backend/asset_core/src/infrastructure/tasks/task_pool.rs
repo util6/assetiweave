@@ -49,7 +49,9 @@ impl TaskKind {
             | Self::ConversationDataMaintenance
             | Self::SearchIndexRebuild => ResourcePool::SqliteWrite,
 
-            Self::Scan | Self::Backup | Self::BatchMount => ResourcePool::DiskIo,
+            Self::ConversationContentSearch | Self::Scan | Self::Backup | Self::BatchMount => {
+                ResourcePool::DiskIo
+            }
 
             Self::RemoteSkillAcquire
             | Self::GitSourcePull

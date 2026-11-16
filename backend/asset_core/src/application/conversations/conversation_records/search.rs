@@ -301,4 +301,134 @@ impl AppService {
             semantic_role_counts,
         })
     }
+
+    pub fn start_conversation_content_search_task(
+        &self,
+        params: ConversationSearchParams,
+    ) -> AppResult<crate::backend::infrastructure::tasks::TaskHandle<ConversationSearchTaskSummary>>
+    {
+        use crate::backend::infrastructure::error::InfraError;
+        use crate::backend::infrastructure::tasks;
+
+        let trimmed_query = params.query.trim().to_string();
+        if trimmed_query.is_empty() {
+            return Err(AppError::Validation(
+                "conversation search query is required".to_string(),
+            ));
+        }
+        if trimmed_query.chars().count() > 512 {
+            return Err(AppError::Validation(
+                "conversation search query must not exceed 512 characters".to_string(),
+            ));
+        }
+        let (record_kind_label, _) =
+            normalize_conversation_record_kind(params.record_kind.as_deref())?;
+
+        let pipeline = tasks::PipelineDescriptor::builder()
+            .stage(tasks::stages::PREPARE, "校验参数与检查全文索引")
+            .stage(tasks::stages::SCAN_FILES, "检索对话内容与水合命中卡片")
+            .stage(tasks::stages::FINALIZE, "缓存搜索结果并生成摘要")
+            .build();
+
+        let spec = tasks::TaskSpec::new(tasks::TaskKind::ConversationContentSearch, None)
+            .with_tenant_id(self.tenant_id())
+            .with_pipeline(pipeline)
+            .with_title("搜索对话内容");
+
+        let service = self.clone();
+        self.spawn_pipeline_task(spec, move |cx| async move {
+            let task_id = cx.progress.task_id.clone();
+
+            {
+                let stage = cx.enter_stage(tasks::stages::PREPARE);
+                stage.progress(
+                    0,
+                    Some(1),
+                    Some(format!("准备检索「{}」({})", trimmed_query, record_kind_label)),
+                );
+                if cx.is_cancelled() {
+                    return Err(InfraError::external("cancelled".to_string()));
+                }
+                let _ = service.get_conversation_search_index_status().await;
+                stage.progress(1, Some(1), Some("参数与索引检查完成".to_string()));
+            }
+
+            if cx.is_cancelled() {
+                return Err(InfraError::external("cancelled".to_string()));
+            }
+
+            let result = {
+                let mut stage = cx.enter_stage(tasks::stages::SCAN_FILES);
+                stage.progress(
+                    0,
+                    None,
+                    Some(format!("正在检索「{}」…", trimmed_query)),
+                );
+                let cancellation = cx.cancellation();
+                let search_fut = service.search_conversation_records(params);
+                let search_result = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => {
+                        return Err(InfraError::external("cancelled".to_string()));
+                    }
+                    res = search_fut => res.map_err(|error| InfraError::external(error.to_string()))?,
+                };
+                stage.record_metric(
+                    "total_count",
+                    u64::try_from(search_result.total_count).unwrap_or(0),
+                );
+                stage.record_metric(
+                    "hit_count",
+                    u64::try_from(search_result.hits.len()).unwrap_or(0),
+                );
+                stage.progress(
+                    1,
+                    Some(1),
+                    Some(format!("命中 {} 个结果", search_result.total_count)),
+                );
+                search_result
+            };
+
+            if cx.is_cancelled() {
+                return Err(InfraError::external("cancelled".to_string()));
+            }
+
+            let (summary_payload, summary_text) = {
+                let stage = cx.enter_stage(tasks::stages::FINALIZE);
+                let payload = ConversationSearchTaskSummary {
+                    query: result.query.clone(),
+                    record_kind: result.record_kind.clone(),
+                    total_count: result.total_count,
+                    hit_count: result.hits.len(),
+                };
+                let summary_text = if result.total_count > 0 {
+                    format!("「{}」共找到 {} 个结果", result.query, result.total_count)
+                } else {
+                    format!("未找到与「{}」匹配的对话内容", result.query)
+                };
+                service
+                    .runtime
+                    .store_conversation_search_result(&task_id, result);
+                stage.progress(1, Some(1), Some(summary_text.clone()));
+                (payload, summary_text)
+            };
+
+            Ok(tasks::TaskOutput::with_summary(summary_payload, summary_text))
+        })
+    }
+
+    pub fn get_conversation_content_search_task_result(
+        &self,
+        params: ConversationSearchTaskResultGetParams,
+    ) -> AppResult<Option<ConversationSearchResult>> {
+        let task_id = params.task_id.trim();
+        if task_id.is_empty() {
+            return Err(AppError::Validation("task_id is required".to_string()));
+        }
+        Ok(self.runtime.get_conversation_search_result(task_id))
+    }
 }
+
+#[cfg(test)]
+#[path = "search_tests.rs"]
+mod tests;

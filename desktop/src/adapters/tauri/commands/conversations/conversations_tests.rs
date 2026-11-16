@@ -63,6 +63,8 @@ fn test_conversations_module_exports_expected_commands() {
     let _ = get_web_record_session;
     let _ = export_web_record_session;
     let _ = search_conversation_records;
+    let _ = start_conversation_content_search_task;
+    let _ = get_conversation_content_search_task_result;
     let _ = search_recent_incremental_conversation_records;
     let _ = get_conversation_search_index_status;
     let _ = start_conversation_search_index_rebuild;

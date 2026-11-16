@@ -11,6 +11,7 @@ pub const TASK_TERMINAL_LIMIT: usize = 50;
 #[serde(rename_all = "PascalCase")]
 pub enum TaskKind {
     ConversationSync,
+    ConversationContentSearch,
     ConversationUsageScan,
     ConversationDataMaintenance,
     SearchIndexRebuild,
@@ -49,6 +50,7 @@ impl TaskKind {
     pub fn default_category_string(&self) -> &'static str {
         match self {
             Self::ConversationSync => "conversation/sync",
+            Self::ConversationContentSearch => "conversation/search",
             Self::ConversationUsageScan => "conversation/usage_scan",
             Self::ConversationDataMaintenance => "conversation/maintenance",
             Self::SearchIndexRebuild => "search/rebuild",
@@ -72,6 +74,7 @@ impl TaskKind {
         match self {
             // 外部进程、网络 IO、递归文件系统扫描、批量软链接建立
             Self::ConversationSync
+            | Self::ConversationContentSearch
             | Self::Scan
             | Self::Backup
             | Self::BatchMount

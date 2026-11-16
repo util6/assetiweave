@@ -1,5 +1,5 @@
 import { type CSSProperties, type ReactNode } from "react";
-import { Search } from "lucide-react";
+import { Loader2, Search } from "lucide-react";
 import clsx from "clsx";
 
 import type { Translator } from "../../i18n/I18nProvider";
@@ -398,6 +398,11 @@ export function ConversationSearchTrigger({
   disabled = false,
   onClick,
   placeholder,
+  resultCount,
+  resultCountLabel,
+  searching = false,
+  searchingLabel = "搜索中…",
+  searchingQuery,
   shortcut = "⌘K",
 }: {
   activeQuery?: string;
@@ -405,14 +410,25 @@ export function ConversationSearchTrigger({
   disabled?: boolean;
   onClick: () => void;
   placeholder: string;
+  resultCount?: number | null;
+  resultCountLabel?: string;
+  searching?: boolean;
+  searchingLabel?: string;
+  searchingQuery?: string;
   shortcut?: string;
 }) {
-  const displayLabel = activeQuery?.trim() ? activeQuery.trim() : placeholder;
+  const effectiveQuery = searching
+    ? (searchingQuery?.trim() || activeQuery?.trim() || "")
+    : (activeQuery?.trim() || "");
+  const displayLabel = effectiveQuery || placeholder;
+  const showResultBadge = !searching && Boolean(effectiveQuery) && resultCount != null;
+
   return (
     <button
       aria-label={placeholder}
       className={clsx(
         "group flex h-10 min-w-[16rem] shrink-0 items-center justify-between gap-2.5 rounded-2xl border border-theme-control-border/80 bg-theme-control/70 px-3.5 text-left text-body-sm text-outline shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md transition-[transform,border-color,background-color,box-shadow,color] duration-200 hover:-translate-y-px hover:border-primary/50 hover:bg-theme-control/95 hover:text-on-surface active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 disabled:cursor-not-allowed disabled:opacity-60",
+        searching && "border-primary/45 bg-primary/8 text-on-surface",
         className,
       )}
       disabled={disabled}
@@ -420,21 +436,36 @@ export function ConversationSearchTrigger({
       type="button"
     >
       <div className="flex min-w-0 items-center gap-2">
-        <Search className="size-4 shrink-0 transition-colors group-hover:text-primary" />
+        {searching ? (
+          <Loader2 className="size-4 shrink-0 animate-spin text-status-update" />
+        ) : (
+          <Search className="size-4 shrink-0 transition-colors group-hover:text-primary" />
+        )}
         <span
           className={clsx(
             "truncate font-medium",
-            activeQuery?.trim() ? "text-on-surface" : "text-outline",
+            effectiveQuery ? "text-on-surface" : "text-outline",
           )}
         >
           {displayLabel}
         </span>
       </div>
-      {shortcut ? (
-        <kbd className="hidden shrink-0 items-center rounded-lg border border-theme-control-border bg-theme-control px-2 py-0.5 font-mono text-[11px] font-medium text-on-surface-variant group-hover:border-primary/30 group-hover:text-primary sm:inline-flex shadow-sm">
-          {shortcut}
-        </kbd>
-      ) : null}
+      <div className="flex shrink-0 items-center gap-1.5">
+        {searching ? (
+          <span className="inline-flex items-center rounded-full bg-status-update/15 px-2 py-0.5 text-[11px] font-semibold text-status-update">
+            {searchingLabel}
+          </span>
+        ) : showResultBadge ? (
+          <span className="inline-flex items-center rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-semibold text-primary">
+            {resultCountLabel ?? `${resultCount} 个结果`}
+          </span>
+        ) : null}
+        {shortcut ? (
+          <kbd className="hidden shrink-0 items-center rounded-lg border border-theme-control-border bg-theme-control px-2 py-0.5 font-mono text-[11px] font-medium text-on-surface-variant group-hover:border-primary/30 group-hover:text-primary sm:inline-flex shadow-sm">
+            {shortcut}
+          </kbd>
+        ) : null}
+      </div>
     </button>
   );
 }

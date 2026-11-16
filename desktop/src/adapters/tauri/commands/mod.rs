@@ -16,7 +16,7 @@ pub(crate) mod mounting;
 #[macro_use]
 pub(crate) mod system;
 
-pub(crate) const BASELINE_COMMAND_COUNT: usize = 203;
+pub(crate) const BASELINE_COMMAND_COUNT: usize = 205;
 
 pub(crate) use self::agents::*;
 pub(crate) use self::catalog::*;
@@ -208,6 +208,8 @@ pub(crate) fn command_handler(
         list_web_record_sessions,
         get_web_record_session,
         search_conversation_records,
+        start_conversation_content_search_task,
+        get_conversation_content_search_task_result,
         search_recent_incremental_conversation_records,
         get_conversation_search_index_status,
         start_conversation_search_index_rebuild,

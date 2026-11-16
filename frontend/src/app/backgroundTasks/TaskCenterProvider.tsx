@@ -20,6 +20,7 @@ import type { TaskView } from "../../types/taskCenter";
 import { useQueryScope } from "../query/QueryScopeProvider";
 import { taskKeys } from "../query/taskKeys";
 import { useAppSettings } from "../../store/settings/useAppSettings";
+import { useAppUiStore } from "../../store/ui/appUiStore";
 import { taskInvalidationRegistry } from "./taskInvalidationRegistry";
 
 export interface TaskNotificationItem {
@@ -47,6 +48,7 @@ export interface TaskCenterContextValue {
   refresh: () => Promise<void>;
   currentNotification: TaskNotificationItem | null;
   dismissNotification: (id: string) => void;
+  suppressTaskNotification: (taskId: string) => void;
 }
 
 const TaskCenterContext = createContext<TaskCenterContextValue | null>(null);
@@ -74,6 +76,11 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
 
   // Track previous task states to detect transitions into terminal
   const prevTasksRef = useRef<Map<string, TaskView>>(new Map());
+  const suppressedNotificationTaskIdsRef = useRef<Set<string>>(new Set());
+
+  const suppressTaskNotification = useCallback((taskId: string) => {
+    suppressedNotificationTaskIdsRef.current.add(taskId);
+  }, []);
 
   const query = useQuery<TaskView[]>({
     queryKey,
@@ -224,7 +231,19 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
       const nowTerminal = isTerminalState(snapshot.state);
 
       if (wasActive && nowTerminal) {
-        enqueueNotification(snapshot);
+        const isSuppressed =
+          suppressedNotificationTaskIdsRef.current.has(snapshot.id);
+        if (isSuppressed) {
+          suppressedNotificationTaskIdsRef.current.delete(snapshot.id);
+        }
+        const isSearchTask = snapshot.kind === "conversationcontentsearch";
+        const shouldSkipSearchNotification =
+          isSearchTask &&
+          (snapshot.state === "canceled" ||
+            useAppUiStore.getState().conversationSearchDialogOpen);
+        if (!isSuppressed && !shouldSkipSearchNotification) {
+          enqueueNotification(snapshot);
+        }
       }
 
       const isStructural =
@@ -335,6 +354,7 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
       refresh,
       currentNotification,
       dismissNotification,
+      suppressTaskNotification,
     }),
     [
       tasks,
@@ -351,6 +371,7 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
       refresh,
       currentNotification,
       dismissNotification,
+      suppressTaskNotification,
     ],
   );
 

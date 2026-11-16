@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { Profiler, useState } from "react";
 import {
   cleanup,
   render,
@@ -127,6 +128,35 @@ describe("ConversationSearchTrigger", () => {
     fireEvent.click(screen.getByRole("button"));
     expect(handleClick).toHaveBeenCalledTimes(1);
   });
+
+  it("renders searching indicator and result count badge", () => {
+    const { rerender } = render(
+      <ConversationSearchTrigger
+        onClick={vi.fn()}
+        placeholder="搜索内容并定位卡片..."
+        searching={true}
+        searchingLabel="搜索中…"
+        searchingQuery="docker"
+      />,
+    );
+
+    expect(screen.getByText("docker")).toBeDefined();
+    expect(screen.getByText("搜索中…")).toBeDefined();
+
+    rerender(
+      <ConversationSearchTrigger
+        activeQuery="docker"
+        onClick={vi.fn()}
+        placeholder="搜索内容并定位卡片..."
+        resultCount={12}
+        resultCountLabel="12 个结果"
+        searching={false}
+      />,
+    );
+
+    expect(screen.getByText("docker")).toBeDefined();
+    expect(screen.getByText("12 个结果")).toBeDefined();
+  });
 });
 
 describe("ConversationSearchDialog", () => {
@@ -195,7 +225,7 @@ describe("ConversationSearchDialog", () => {
     expect(handleQueryChange).toHaveBeenCalledWith("");
   });
 
-  it("coalesces typing before committing query, and submits immediately on Enter or button click", async () => {
+  it("does not auto-commit while typing, and submits on Enter or button click", async () => {
     vi.useFakeTimers();
     try {
       const handleQueryChange = vi.fn();
@@ -227,10 +257,10 @@ describe("ConversationSearchDialog", () => {
       fireEvent.change(searchInput, { target: { value: "deploy" } });
       expect(handleQueryChange).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(699);
+      await vi.advanceTimersByTimeAsync(1500);
       expect(handleQueryChange).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(1);
+      fireEvent.keyDown(searchInput, { target: { value: "deploy" }, key: "Enter" });
       expect(handleQueryChange).toHaveBeenCalledWith("deploy");
 
       fireEvent.change(searchInput, { target: { value: "immediate" } });
@@ -246,7 +276,7 @@ describe("ConversationSearchDialog", () => {
     }
   });
 
-  it("does not trigger search during IME composition, only searches after composition ends", async () => {
+  it("does not auto-trigger search during or after IME composition, only commits on explicit Enter after guard window", async () => {
     vi.useFakeTimers();
     try {
       const handleQueryChange = vi.fn();
@@ -290,8 +320,28 @@ describe("ConversationSearchDialog", () => {
 
       fireEvent.compositionEnd(searchInput, { target: { value: "中" } });
 
-      await vi.advanceTimersByTimeAsync(700);
-      expect(handleQueryChange).toHaveBeenCalledWith("中");
+      // Trailing Enter within WebKit IME confirmation window must not prematurely submit
+      fireEvent.keyDown(searchInput, { key: "Enter", keyCode: 13 });
+      expect(handleQueryChange).not.toHaveBeenCalled();
+
+      // Even after long pauses post-composition, must NOT auto-search
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(handleQueryChange).not.toHaveBeenCalled();
+
+      // User continues typing the second character of the word
+      fireEvent.compositionStart(searchInput);
+      fireEvent.change(searchInput, {
+        target: { value: "中wen" },
+        nativeEvent: { isComposing: true },
+      });
+      fireEvent.compositionEnd(searchInput, { target: { value: "中文" } });
+
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(handleQueryChange).not.toHaveBeenCalled();
+
+      // Explicit Enter after guard window submits cleanly
+      fireEvent.keyDown(searchInput, { key: "Enter", keyCode: 13 });
+      expect(handleQueryChange).toHaveBeenCalledWith("中文");
     } finally {
       vi.useRealTimers();
     }
@@ -338,7 +388,7 @@ describe("ConversationSearchDialog", () => {
     }
   });
 
-  it("does not prematurely commit 8-hex string when user types keystroke by keystroke, but honors debounce and Enter", async () => {
+  it("does not auto-commit 8-hex string when typed keystroke by keystroke, commits on explicit Enter", async () => {
     vi.useFakeTimers();
     try {
       const handleQueryChange = vi.fn();
@@ -375,14 +425,17 @@ describe("ConversationSearchDialog", () => {
       for (let i = 0; i < targetStr.length; i++) {
         currentVal += targetStr[i];
         fireEvent.change(searchInput, { target: { value: currentVal } });
-        // At the 8th character, because length difference is 1, typing flow is NOT abruptly interrupted
         if (i === 7) {
           expect(handleQueryChange).not.toHaveBeenCalled();
         }
       }
 
-      // After 700ms debounce timer expires, it commits cleanly
-      await vi.advanceTimersByTimeAsync(700);
+      // Even after debounce period, typing keystrokes does not auto-submit
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(handleQueryChange).not.toHaveBeenCalled();
+
+      // Explicit Enter commits cleanly
+      fireEvent.keyDown(searchInput, { key: "Enter", keyCode: 13 });
       expect(handleQueryChange).toHaveBeenCalledWith("2e003a42");
     } finally {
       vi.useRealTimers();
@@ -773,5 +826,195 @@ describe("ConversationSearchDialog", () => {
 
     // Staging changes should be discarded back to clean state
     expect(screen.queryByRole("button", { name: "应用筛选" })).toBeNull();
+  });
+
+  it("does not re-render during IME composition or overwrite/re-select draft when committed query flows back", async () => {
+    vi.useFakeTimers();
+    try {
+      const handleQueryChange = vi.fn();
+      let renderCount = 0;
+
+      function ControlledSearchHarness() {
+        const [query, setQuery] = useState("");
+        return (
+          <Profiler
+            id="conversation-search-dialog"
+            onRender={() => {
+              renderCount += 1;
+            }}
+          >
+            <ConversationSearchDialog
+              commitDelayMs={700}
+              contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
+              includeQuestions={true}
+              loading={false}
+              onClose={vi.fn()}
+              onOpenHit={vi.fn()}
+              onQueryChange={(next) => {
+                handleQueryChange(next);
+                setQuery(next);
+              }}
+              open={true}
+              query={query}
+              result={null}
+              selectedCardKinds={[]}
+              selectedSemanticRoles={[]}
+              t={dummyTranslator}
+            />
+          </Profiler>
+        );
+      }
+
+      render(<ControlledSearchHarness />);
+      const searchInput = screen.getByRole("searchbox") as HTMLInputElement;
+
+      // Flush initial open focus timer
+      await vi.advanceTimersByTimeAsync(60);
+      renderCount = 0;
+
+      // 1. IME composition must not trigger React re-renders or premature search
+      fireEvent.compositionStart(searchInput);
+      fireEvent.change(searchInput, {
+        target: { value: "ceshi" },
+        nativeEvent: { isComposing: true },
+      });
+      expect(searchInput.value).toBe("ceshi");
+      expect(renderCount).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(handleQueryChange).not.toHaveBeenCalled();
+
+      // Finish first word -> must NOT auto-commit without explicit Enter/Submit
+      fireEvent.compositionEnd(searchInput, { target: { value: "测试" } });
+      await vi.advanceTimersByTimeAsync(1200);
+      expect(handleQueryChange).not.toHaveBeenCalled();
+
+      // Explicit Enter commits "测试"
+      fireEvent.keyDown(searchInput, { key: "Enter", keyCode: 13 });
+      expect(handleQueryChange).toHaveBeenCalledWith("测试");
+
+      // 2. While dialog remains open and committed query ("测试") flows back via props,
+      // user immediately starts composing the next word. Must NOT reset IME or select text.
+      fireEvent.compositionStart(searchInput);
+      fireEvent.change(searchInput, {
+        target: { value: "测试neirong" },
+        nativeEvent: { isComposing: true },
+      });
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(searchInput.value).toBe("测试neirong");
+      expect(searchInput.selectionStart).toBe(searchInput.selectionEnd);
+
+      // Even after 1s while composing, "测试neirong" must NOT be prematurely committed
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(handleQueryChange).toHaveBeenCalledTimes(1);
+
+      fireEvent.compositionEnd(searchInput, {
+        target: { value: "测试内容" },
+      });
+      await vi.advanceTimersByTimeAsync(1200);
+      expect(handleQueryChange).toHaveBeenCalledTimes(1);
+
+      fireEvent.keyDown(searchInput, { key: "Enter", keyCode: 13 });
+      expect(handleQueryChange).toHaveBeenLastCalledWith("测试内容");
+      expect(handleQueryChange).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders running task banner, conflict confirmation banner, and preserves active task on draft clear", () => {
+    const handleCancelActiveTask = vi.fn();
+    const handleConfirmReplace = vi.fn();
+    const handleKeepWaiting = vi.fn();
+    const handleSubmitSearch = vi.fn();
+
+    const { rerender } = render(
+      <ConversationSearchDialog
+        activeTask={{
+          id: "task-search-1",
+          query: "旧词",
+          recordKind: "session",
+          task: null,
+        }}
+        contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
+        includeQuestions={true}
+        loading={true}
+        onCancelActiveTask={handleCancelActiveTask}
+        onClose={vi.fn()}
+        onOpenHit={vi.fn()}
+        onQueryChange={vi.fn()}
+        onSubmitSearch={handleSubmitSearch}
+        open={true}
+        query="旧词"
+        result={null}
+        selectedCardKinds={[]}
+        selectedSemanticRoles={[]}
+        t={dummyTranslator}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "conversation.search.cancelTask" }));
+    expect(handleCancelActiveTask).toHaveBeenCalledTimes(1);
+
+    // Clearing draft with Escape/X while active task runs must NOT cancel or submit
+    const searchInput = screen.getByRole("searchbox") as HTMLInputElement;
+    fireEvent.click(screen.getByRole("button", { name: "清除" }));
+    expect(searchInput.value).toBe("");
+    expect(handleCancelActiveTask).toHaveBeenCalledTimes(1);
+    expect(handleSubmitSearch).not.toHaveBeenCalled();
+
+    // Render conflict confirmation banner
+    rerender(
+      <ConversationSearchDialog
+        activeTask={{
+          id: "task-search-1",
+          query: "旧词",
+          recordKind: "session",
+          task: null,
+        }}
+        contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
+        includeQuestions={true}
+        loading={true}
+        onCancelActiveTask={handleCancelActiveTask}
+        onClose={vi.fn()}
+        onConfirmConflictReplace={handleConfirmReplace}
+        onDismissConflictKeepWaiting={handleKeepWaiting}
+        onOpenHit={vi.fn()}
+        onQueryChange={vi.fn()}
+        onSubmitSearch={handleSubmitSearch}
+        open={true}
+        pendingConflict={{
+          activeTaskId: "task-search-1",
+          activeQuery: "旧词",
+          nextQuery: "新词",
+          submission: {
+            query: "新词",
+            recordKind: "session",
+            adapterId: null,
+            cardKinds: [],
+            semanticRoles: [],
+            includeQuestions: true,
+          },
+        }}
+        query="旧词"
+        result={null}
+        selectedCardKinds={[]}
+        selectedSemanticRoles={[]}
+        t={dummyTranslator}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "conversation.search.conflictReplace" }),
+    );
+    expect(handleConfirmReplace).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "conversation.search.conflictWait" }),
+    );
+    expect(handleKeepWaiting).toHaveBeenCalledTimes(1);
   });
 });
