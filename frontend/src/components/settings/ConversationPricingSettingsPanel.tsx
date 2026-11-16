@@ -19,8 +19,11 @@ import type {
 import {
   getModelPricingCatalog,
   getModelPricingStatus,
+  rebindModelPricingAlias,
   saveModelPriceEntry,
   setModelPricingExchangeRate,
+  setModelPricingIgnored,
+  setModelPricingLock,
   subscribeModelPricingSyncTask,
   updateModelPricingCatalog,
 } from "@/services/usage";
@@ -166,18 +169,101 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
     }
   };
 
-  // Save updated model entry
+  // Save updated model entry (auto-locks base model)
   const handleSaveModel = async (updated: ModelPriceEntry) => {
     setSavingModel(true);
     setModelNotice(null);
     try {
       await saveModelPriceEntry(updated);
+      const targetName =
+        updated.matchedModelId || updated.rawModel || updated.modelPatterns[0];
       setModelNotice(
-        `模型【${updated.modelPatterns[0]}】单价已保存，已重算历史用量`,
+        `模型【${targetName}】单价已保存并锁定（🔒），已重算历史用量`,
       );
-      const cat = await getModelPricingCatalog();
+      const [cat, st] = await Promise.all([
+        getModelPricingCatalog(),
+        getModelPricingStatus(),
+      ]);
       setCatalog(cat);
-      const st = await getModelPricingStatus();
+      setStatus(st);
+    } catch (err) {
+      setModelNotice(err instanceof Error ? err.message : String(err));
+      throw err;
+    } finally {
+      setSavingModel(false);
+    }
+  };
+
+  const handleRebindModel = async (
+    rawModel: string,
+    targetModelId: string | null,
+  ) => {
+    setSavingModel(true);
+    setModelNotice(null);
+    try {
+      await rebindModelPricingAlias(rawModel, targetModelId);
+      setModelNotice(
+        targetModelId
+          ? `已将【${rawModel}】手动改绑至底座模型【${targetModelId}】，并重算历史用量`
+          : `已解除【${rawModel}】的手动改绑，恢复自动匹配`,
+      );
+      const [cat, st] = await Promise.all([
+        getModelPricingCatalog(),
+        getModelPricingStatus(),
+      ]);
+      setCatalog(cat);
+      setStatus(st);
+    } catch (err) {
+      setModelNotice(err instanceof Error ? err.message : String(err));
+      throw err;
+    } finally {
+      setSavingModel(false);
+    }
+  };
+
+  const handleSetPriceLock = async (modelId: string, locked: boolean) => {
+    setSavingModel(true);
+    setModelNotice(null);
+    try {
+      await setModelPricingLock(modelId, locked);
+      setModelNotice(
+        locked
+          ? `已锁定底座模型【${modelId}】单价`
+          : `已解锁底座模型【${modelId}】，立即回落全网参考单价并重算历史用量`,
+      );
+      const [cat, st] = await Promise.all([
+        getModelPricingCatalog(),
+        getModelPricingStatus(),
+      ]);
+      setCatalog(cat);
+      setStatus(st);
+    } catch (err) {
+      setModelNotice(err instanceof Error ? err.message : String(err));
+      throw err;
+    } finally {
+      setSavingModel(false);
+    }
+  };
+
+  const handleSetModelIgnored = async (
+    rawModel: string,
+    provider: string | null,
+    ignored: boolean,
+  ) => {
+    setSavingModel(true);
+    setModelNotice(null);
+    try {
+      await setModelPricingIgnored(rawModel, provider, ignored);
+      setModelNotice(
+        ignored
+          ? `已将【${rawModel}】标记为忽略（不计费），已重算历史用量`
+          : `已恢复【${rawModel}】参与计价匹配`,
+      );
+      const [cat, st] = await Promise.all([
+        getModelPricingCatalog(),
+        getModelPricingStatus(),
+      ]);
+      setCatalog(cat);
       setStatus(st);
     } catch (err) {
       setModelNotice(err instanceof Error ? err.message : String(err));
@@ -195,9 +281,12 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
     );
   }
 
-  const localCount =
-    status?.localModelsCount ?? catalog?.localModels?.length ?? 0;
-  const totalCount = status?.modelsCount ?? catalog?.models?.length ?? 0;
+  const localCount = catalog?.localModels
+    ? catalog.localModels.length
+    : (status?.localModelsCount ?? 0);
+  const totalCount = catalog?.models
+    ? catalog.models.length
+    : (status?.modelsCount ?? 0);
 
   return (
     <div className="flex flex-col gap-6 w-full">
@@ -328,6 +417,9 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
         localModels={catalog?.localModels || []}
         allModels={catalog?.models || []}
         onSaveModel={handleSaveModel}
+        onRebindModel={handleRebindModel}
+        onSetPriceLock={handleSetPriceLock}
+        onSetModelIgnored={handleSetModelIgnored}
         savingModel={savingModel}
         notice={modelNotice}
       />

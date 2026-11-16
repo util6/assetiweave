@@ -193,7 +193,9 @@ describe("Usage Components", () => {
     expect(screen.getByText("按模型")).toBeDefined();
     expect(screen.getByText("按实例")).toBeDefined();
     expect(screen.getByText("按日期")).toBeDefined();
-    expect(screen.getByText("gpt-5.0-turbo")).toBeDefined();
+    expect(screen.getAllByText("gpt-5.0-turbo").length).toBeGreaterThanOrEqual(
+      1,
+    );
     expect(screen.getByText("默认实例")).toBeDefined();
     expect(screen.getByText("2026-09-14")).toBeDefined();
   });
@@ -518,5 +520,101 @@ describe("Usage Components", () => {
     );
 
     expect(screen.getByText("项目")).toBeDefined();
+  });
+
+  it("renders By Model table full-width with rawModels column, +N expansion, and ¥0.00 free pricing", () => {
+    render(
+      <UsageBreakdownTables
+        models={[
+          {
+            model: "gemini-3.8-flash",
+            matchedModelId: "gemini-3.8-flash",
+            rawModels: [
+              "Flash -N",
+              "Gemini 3.8 Flash (High)",
+              "gemini-3.8-flash-free",
+            ],
+            provider: "google",
+            requestsCount: 3800,
+            totalTokens: 561000000,
+            inputTokens: 561000000,
+            outputTokens: 2135000,
+            reasoningTokens: 40000,
+            cacheTokens: 535000000,
+            cost: 12.34,
+            currency: "CNY",
+            costBasis: "catalog_estimated",
+            unitPricePerMillion: 0.54,
+          },
+          {
+            model: "qwen-2.5-free",
+            matchedModelId: "qwen-2.5-free",
+            rawModels: ["qwen-2.5-free"],
+            provider: "qwen",
+            requestsCount: 100,
+            totalTokens: 1000000,
+            inputTokens: 800000,
+            outputTokens: 200000,
+            reasoningTokens: 0,
+            cacheTokens: 0,
+            cost: 0,
+            currency: "CNY",
+            costBasis: "catalog_estimated",
+            unitPricePerMillion: 0,
+          },
+          {
+            model: "unknown-model",
+            matchedModelId: null,
+            rawModels: ["unknown-model"],
+            provider: "custom",
+            requestsCount: 5,
+            totalTokens: 1000,
+            inputTokens: 800,
+            outputTokens: 200,
+            reasoningTokens: 0,
+            cacheTokens: 0,
+            cost: null,
+            currency: "CNY",
+            costBasis: "none",
+            unitPricePerMillion: 0,
+          },
+        ]}
+        sources={[]}
+        dates={[]}
+      />,
+    );
+
+    // Full-width card (no lg:grid-cols-2 half-width wrapper)
+    const modelHeading = screen.getByText("按模型");
+    const modelCard = modelHeading.closest("div.rounded-2xl");
+    expect(modelCard).not.toBeNull();
+    expect(modelCard?.parentElement?.className).not.toContain("lg:grid-cols-2");
+
+    // Column header and primary raw model
+    expect(screen.getByText("原始模型")).toBeDefined();
+    expect(screen.getByText("gemini-3.8-flash")).toBeDefined();
+    expect(screen.getByText("Flash -N")).toBeDefined();
+
+    // +2 capsule badge with title hover and click toggle
+    const plusBadge = screen.getByRole("button", { name: /\+2/ });
+    expect(plusBadge.getAttribute("title")).toContain(
+      "Gemini 3.8 Flash (High)",
+    );
+    expect(plusBadge.getAttribute("title")).toContain("gemini-3.8-flash-free");
+    expect(screen.queryByText("Gemini 3.8 Flash (High)")).toBeNull();
+
+    fireEvent.click(plusBadge);
+    expect(screen.getByText("Gemini 3.8 Flash (High)")).toBeDefined();
+    expect(screen.getByText("gemini-3.8-flash-free")).toBeDefined();
+
+    fireEvent.click(plusBadge);
+    expect(screen.queryByText("Gemini 3.8 Flash (High)")).toBeNull();
+
+    // ¥0.00/M and ¥0.00 for locked free (costBasis !== "none")
+    expect(screen.getByText("¥0.00/M")).toBeDefined();
+    expect(screen.getByText("¥0.00")).toBeDefined();
+
+    // '-' for costBasis === "none"
+    expect(screen.getAllByText("-").length).toBeGreaterThanOrEqual(2);
   });
 });
