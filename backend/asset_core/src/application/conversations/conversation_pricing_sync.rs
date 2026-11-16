@@ -2,7 +2,10 @@
 
 use crate::backend::application::prelude::*;
 use crate::backend::application::{AppError, AppResult};
-use crate::backend::domain::conversations::pricing::{ModelPriceEntry, PriceCatalog};
+use crate::backend::domain::conversations::pricing::{
+    base_model_id_from_catalog_key, is_dirty_model_name, ModelPriceEntry, PriceCatalog,
+    IGNORE_MODEL_ID_PREFIX, OVERRIDE_MODEL_ID_PREFIX,
+};
 use crate::backend::domain::conversations::usage::ModelPricingSyncResultDto;
 use crate::backend::infrastructure::conversations::pricing_fetcher::{
     fetch_tiered_pricing_catalog, fetch_usd_to_cny_rate, TieredFetchOutcome,
@@ -16,6 +19,12 @@ use crate::backend::store::conversations::usage_repo::get_distinct_usage_models_
 use chrono::Utc;
 use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;
+
+mod sync_stages {
+    pub const FETCH_PRICING: &str = "fetch_pricing";
+    pub const PERSIST_CATALOG: &str = "persist_catalog";
+    pub const RECALCULATE_HISTORY: &str = "recalculate_history";
+}
 
 impl AppService {
     pub async fn sync_model_pricing_catalog(
@@ -108,9 +117,12 @@ impl AppService {
         // Register 3 pipeline stages if task_id is present
         if let Some(tid) = task_id {
             let stages = vec![
-                make_stage("fetch_pricing", "获取最新价格与外汇汇率"),
-                make_stage("persist_catalog", "写入本地价格库持久化缓存"),
-                make_stage("recalculate_history", "全量重新核算历史会话用量费用"),
+                make_stage(sync_stages::FETCH_PRICING, "获取最新价格与外汇汇率"),
+                make_stage(sync_stages::PERSIST_CATALOG, "写入本地价格库持久化缓存"),
+                make_stage(
+                    sync_stages::RECALCULATE_HISTORY,
+                    "全量重新核算历史会话用量费用",
+                ),
             ];
             let _ = task_runtime.set_stages(tid, stages);
         }
@@ -119,10 +131,10 @@ impl AppService {
 
         // Stage 1: Fetch pricing
         on_progress("fetching", "正在获取最新模型价格及汇率...");
-        let (_live_rate, outcome) = {
+        let (channel, rate, catalog_version, unlocked_entries, locked_ref_entries) = {
             let stage_guard = task_ctx
                 .as_ref()
-                .map(|ctx| ctx.enter_stage("fetch_pricing"));
+                .map(|ctx| ctx.enter_stage(sync_stages::FETCH_PRICING));
             if let Some(ref guard) = stage_guard {
                 guard.record_step(
                     "fetch_rate",
@@ -193,6 +205,27 @@ impl AppService {
                 .await
                 .unwrap_or_default();
 
+            let active_locked_base_ids: HashSet<String> = cached_entries
+                .iter()
+                .filter(|e| e.price_locked && !e.is_ignored)
+                .filter_map(|e| e.model_patterns.first())
+                .filter_map(|p| {
+                    let trimmed = p.trim();
+                    if trimmed.is_empty() || trimmed.starts_with(IGNORE_MODEL_ID_PREFIX) {
+                        return None;
+                    }
+                    let base = base_model_id_from_catalog_key(trimmed)
+                        .trim_matches('*')
+                        .trim()
+                        .to_ascii_lowercase();
+                    if base.is_empty() {
+                        None
+                    } else {
+                        Some(base)
+                    }
+                })
+                .collect();
+
             if let Some(c) = cancellation {
                 if c.is_cancelled() {
                     return Err(AppError::Cancelled("模型价格同步已取消".to_string()));
@@ -225,6 +258,22 @@ impl AppService {
                 }
             };
 
+            let mut unlocked_entries = Vec::with_capacity(outcome.entries.len());
+            let mut locked_ref_entries = Vec::new();
+            for entry in outcome.entries {
+                let is_locked_base = canonical_outcome_base_id(&entry)
+                    .is_some_and(|base_id| active_locked_base_ids.contains(&base_id));
+                if is_locked_base {
+                    locked_ref_entries.push(entry);
+                } else {
+                    unlocked_entries.push(entry);
+                }
+            }
+            let unlocked_match_count = unlocked_entries
+                .iter()
+                .filter(|e| e.input_per_million > 0.0 || e.output_per_million > 0.0)
+                .count();
+
             if let Some(ref guard) = stage_guard {
                 guard.record_step(
                     "rate_done",
@@ -234,31 +283,54 @@ impl AppService {
                 );
                 guard.record_step(
                     "fetch_done",
-                    Some(format!(
-                        "按需获取完成: 渠道 [{}] 共匹配 {} 款实际模型价格",
-                        outcome.channel.as_str(),
-                        outcome.entries.len()
-                    )),
+                    Some(if locked_ref_entries.is_empty() {
+                        format!(
+                            "按需获取完成: 渠道 [{}] 共匹配 {} 款实际模型价格",
+                            outcome.channel.as_str(),
+                            unlocked_match_count
+                        )
+                    } else {
+                        format!(
+                            "按需获取完成: 渠道 [{}] 共匹配 {} 款可更新模型价格（已排除 {} 款锁定模型）",
+                            outcome.channel.as_str(),
+                            unlocked_match_count,
+                            locked_ref_entries.len()
+                        )
+                    }),
                     None,
                     None,
                 );
             }
-            (live_rate, outcome)
+            (
+                outcome.channel,
+                outcome.rate,
+                outcome.catalog_version,
+                unlocked_entries,
+                locked_ref_entries,
+            )
         };
 
         // Stage 2: Persist catalog
         on_progress("persisting", "正在写入本地价格库持久化缓存...");
-        let (channel_str, models_count, now) = {
+        let (channel_str, synced_models_count, now) = {
             let stage_guard = task_ctx
                 .as_ref()
-                .map(|ctx| ctx.enter_stage("persist_catalog"));
+                .map(|ctx| ctx.enter_stage(sync_stages::PERSIST_CATALOG));
             if let Some(ref guard) = stage_guard {
                 guard.record_step(
                     "upsert_sqlite",
-                    Some(format!(
-                        "正在批量更新数据库，入库 {} 条模型价格记录",
-                        outcome.entries.len()
-                    )),
+                    Some(if locked_ref_entries.is_empty() {
+                        format!(
+                            "正在批量更新数据库，入库 {} 条模型价格记录",
+                            unlocked_entries.len()
+                        )
+                    } else {
+                        format!(
+                            "正在批量更新数据库，入库 {} 条可更新模型价格记录（另有 {} 款锁定模型仅刷新底层参考价）",
+                            unlocked_entries.len(),
+                            locked_ref_entries.len()
+                        )
+                    }),
                     None,
                     None,
                 );
@@ -270,25 +342,30 @@ impl AppService {
                 }
             }
 
-            let channel_str = outcome.channel.as_str().to_string();
-            let models_count = upsert_pricing_catalog_entries_sqlx(
+            let channel_str = channel.as_str().to_string();
+            let synced_models_count = upsert_pricing_catalog_entries_sqlx(
                 pool,
                 tenant_id,
-                &outcome.entries,
+                &unlocked_entries,
                 &channel_str,
             )
             .await?;
+            if !locked_ref_entries.is_empty() {
+                // Keep underlying native <base> reference rows fresh so unlocking later
+                // falls back to current reference pricing, without counting them as updated.
+                let _ = upsert_pricing_catalog_entries_sqlx(
+                    pool,
+                    tenant_id,
+                    &locked_ref_entries,
+                    &channel_str,
+                )
+                .await?;
+            }
 
             let now = Utc::now().to_rfc3339();
-            set_pricing_metadata_sqlx(
-                pool,
-                tenant_id,
-                "usd_to_cny_rate",
-                &outcome.rate.to_string(),
-            )
-            .await?;
-            set_pricing_metadata_sqlx(pool, tenant_id, "catalog_version", &outcome.catalog_version)
+            set_pricing_metadata_sqlx(pool, tenant_id, "usd_to_cny_rate", &rate.to_string())
                 .await?;
+            set_pricing_metadata_sqlx(pool, tenant_id, "catalog_version", &catalog_version).await?;
             set_pricing_metadata_sqlx(pool, tenant_id, "active_source_channel", &channel_str)
                 .await?;
             set_pricing_metadata_sqlx(pool, tenant_id, "last_synced_at", &now).await?;
@@ -296,12 +373,12 @@ impl AppService {
             if let Some(ref guard) = stage_guard {
                 guard.record_step(
                     "persist_done",
-                    Some(format!("价格库已保存: 活跃模型数 {models_count}")),
+                    Some(format!("价格库已保存: 更新模型数 {synced_models_count}")),
                     None,
                     None,
                 );
             }
-            (channel_str, models_count, now)
+            (channel_str, synced_models_count, now)
         };
 
         // Stage 3: Recalculate historical usage costs
@@ -309,7 +386,7 @@ impl AppService {
         let recalculated_count = {
             let stage_guard = task_ctx
                 .as_ref()
-                .map(|ctx| ctx.enter_stage("recalculate_history"));
+                .map(|ctx| ctx.enter_stage(sync_stages::RECALCULATE_HISTORY));
             if let Some(ref guard) = stage_guard {
                 guard.record_step(
                     "recalc_batch",
@@ -327,9 +404,9 @@ impl AppService {
 
             let effective_entries = load_pricing_catalog_entries_sqlx(pool, tenant_id).await?;
             let catalog = PriceCatalog::new(
-                outcome.catalog_version.clone(),
+                catalog_version.clone(),
                 now.clone(),
-                outcome.rate,
+                rate,
                 effective_entries,
             );
             let recalculated_count =
@@ -350,12 +427,42 @@ impl AppService {
 
         Ok(ModelPricingSyncResultDto {
             channel_used: channel_str,
-            models_count,
-            exchange_rate: outcome.rate,
+            models_count: synced_models_count,
+            exchange_rate: rate,
             recalculated_events_count: recalculated_count,
-            catalog_version: outcome.catalog_version,
+            catalog_version,
             updated_at: now,
         })
+    }
+}
+
+fn canonical_outcome_base_id(entry: &ModelPriceEntry) -> Option<String> {
+    let is_valid_ref = |s: &&str| {
+        !s.is_empty()
+            && !s.starts_with(OVERRIDE_MODEL_ID_PREFIX)
+            && !s.starts_with(IGNORE_MODEL_ID_PREFIX)
+            && !is_dirty_model_name(s)
+    };
+    let chosen = entry
+        .model_patterns
+        .iter()
+        .map(|s| s.trim())
+        .find(|s| is_valid_ref(s) && !s.contains('*'))
+        .or_else(|| {
+            entry
+                .model_patterns
+                .iter()
+                .map(|s| s.trim())
+                .find(is_valid_ref)
+        })?;
+    let base = base_model_id_from_catalog_key(chosen)
+        .trim_matches('*')
+        .trim()
+        .to_ascii_lowercase();
+    if base.is_empty() {
+        None
+    } else {
+        Some(base)
     }
 }
 

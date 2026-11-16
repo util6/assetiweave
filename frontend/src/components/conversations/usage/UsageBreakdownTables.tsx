@@ -207,8 +207,10 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
                             {primaryRaw}
                           </span>
                           {extraCount > 0 && (
-                            <button
+                            <Button
                               type="button"
+                              variant="ghost"
+                              size="sm"
                               title={rawModels.join(", ")}
                               aria-expanded={isExpanded}
                               aria-label={`+${extraCount} 个原始模型（点击${isExpanded ? "收起" : "展开"}全部 ${rawModels.length} 个变体）`}
@@ -217,10 +219,10 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
                                   prev === rowKey ? null : rowKey,
                                 )
                               }
-                              className="inline-flex items-center rounded-full border border-theme-control-border/70 bg-theme-control/70 px-2 py-0.5 text-[11px] font-mono font-medium text-on-surface-variant shadow-[var(--theme-shadow-control-inset)] transition-all duration-200 hover:-translate-y-px hover:border-primary/45 hover:text-primary active:translate-y-0 cursor-pointer"
+                              className="h-auto rounded-full border border-theme-control-border/70 bg-theme-control/70 px-2 py-0.5 text-[11px] font-mono font-medium text-on-surface-variant shadow-[var(--theme-shadow-control-inset)] hover:-translate-y-px hover:border-primary/45 hover:bg-theme-control-hover/70 hover:text-primary active:translate-y-0"
                             >
                               +{extraCount}
-                            </button>
+                            </Button>
                           )}
                         </div>
                         {isExpanded && extraCount > 0 && (

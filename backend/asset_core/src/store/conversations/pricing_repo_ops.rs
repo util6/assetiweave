@@ -10,6 +10,22 @@ use sha2::{Digest, Sha256};
 use sqlx::{Row as SqlxRow, Sqlite, SqlitePool, Transaction};
 use std::collections::BTreeSet;
 
+fn normalize_entry_currencies(entry: &ModelPriceEntry) -> (&str, &str, f64, f64) {
+    let currency = if entry.currency.trim().is_empty() {
+        "CNY"
+    } else {
+        entry.currency.trim()
+    };
+    let raw_currency = entry.raw_currency.as_deref().unwrap_or(currency);
+    let raw_input = entry
+        .raw_input_per_million
+        .unwrap_or(entry.input_per_million);
+    let raw_output = entry
+        .raw_output_per_million
+        .unwrap_or(entry.output_per_million);
+    (currency, raw_currency, raw_input, raw_output)
+}
+
 /// Persists a user-locked override row (`__override__::<base_model_id>`) with `price_locked = 1`
 /// and `source_channel = 'user_override'`, leaving any native reference row `<base_model_id>` untouched.
 pub async fn save_locked_override_sqlx(
@@ -27,18 +43,7 @@ pub async fn save_locked_override_sqlx(
 
     let override_model_id = format!("{OVERRIDE_MODEL_ID_PREFIX}{clean_base_id}");
     let now = Utc::now().to_rfc3339();
-    let currency = if entry.currency.trim().is_empty() {
-        "CNY"
-    } else {
-        entry.currency.trim()
-    };
-    let raw_currency = entry.raw_currency.as_deref().unwrap_or(currency);
-    let raw_input = entry
-        .raw_input_per_million
-        .unwrap_or(entry.input_per_million);
-    let raw_output = entry
-        .raw_output_per_million
-        .unwrap_or(entry.output_per_million);
+    let (currency, raw_currency, raw_input, raw_output) = normalize_entry_currencies(entry);
 
     sqlx::query(
         r#"
@@ -190,18 +195,7 @@ pub async fn set_model_pricing_lock_sqlx(
         )));
     };
 
-    let currency = if snapshot.currency.trim().is_empty() {
-        "CNY"
-    } else {
-        snapshot.currency.trim()
-    };
-    let raw_currency = snapshot.raw_currency.as_deref().unwrap_or(currency);
-    let raw_input = snapshot
-        .raw_input_per_million
-        .unwrap_or(snapshot.input_per_million);
-    let raw_output = snapshot
-        .raw_output_per_million
-        .unwrap_or(snapshot.output_per_million);
+    let (currency, raw_currency, raw_input, raw_output) = normalize_entry_currencies(&snapshot);
 
     sqlx::query(
         r#"
@@ -387,18 +381,8 @@ pub async fn rebind_model_pricing_alias_sqlx(
             .execute(&mut *tx)
             .await?;
         } else {
-            let currency = if target.currency.trim().is_empty() {
-                "CNY"
-            } else {
-                target.currency.trim()
-            };
-            let raw_currency = target.raw_currency.as_deref().unwrap_or(currency);
-            let raw_input = target
-                .raw_input_per_million
-                .unwrap_or(target.input_per_million);
-            let raw_output = target
-                .raw_output_per_million
-                .unwrap_or(target.output_per_million);
+            let (currency, raw_currency, raw_input, raw_output) =
+                normalize_entry_currencies(target);
             let aliases_json =
                 serde_json::to_string(&vec![trimmed_raw]).unwrap_or_else(|_| "[]".to_string());
 
@@ -464,45 +448,7 @@ pub async fn set_model_pricing_ignored_sqlx(
             .execute(&mut *tx)
             .await?;
 
-        let ignore_rows = sqlx::query(
-            r#"
-            SELECT id, usage_aliases
-            FROM model_pricing_catalog
-            WHERE tenant_id = ? AND model_id LIKE ?
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(format!("{IGNORE_MODEL_ID_PREFIX}%"))
-        .fetch_all(&mut *tx)
-        .await?;
-
-        for row in ignore_rows {
-            let row_id: i64 = row.get("id");
-            let aliases_json: String = row.get("usage_aliases");
-            let mut aliases: Vec<String> = serde_json::from_str(&aliases_json).unwrap_or_default();
-            let before_len = aliases.len();
-            aliases.retain(|a| !a.trim().eq_ignore_ascii_case(trimmed_raw));
-            if aliases.len() == before_len {
-                continue;
-            }
-            if aliases.is_empty() {
-                sqlx::query("DELETE FROM model_pricing_catalog WHERE id = ?")
-                    .bind(row_id)
-                    .execute(&mut *tx)
-                    .await?;
-            } else {
-                let updated_json =
-                    serde_json::to_string(&aliases).unwrap_or_else(|_| "[]".to_string());
-                sqlx::query(
-                    "UPDATE model_pricing_catalog SET usage_aliases = ?, updated_at = ? WHERE id = ?",
-                )
-                .bind(&updated_json)
-                .bind(&now)
-                .bind(row_id)
-                .execute(&mut *tx)
-                .await?;
-            }
-        }
+        remove_usage_alias_in_tx(&mut tx, tenant_id, trimmed_raw, true, &now).await?;
 
         tx.commit().await?;
         return Ok(());

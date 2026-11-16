@@ -414,7 +414,10 @@ async fn test_rebind_lock_sync_protection_and_unlock_recalculates_costs() {
         seen_targets.iter().any(|t| t == "gpt-4o"),
         "sync target models must include usage model gpt-4o: {seen_targets:?}"
     );
-    assert_eq!(sync_result.models_count, 2);
+    assert_eq!(
+        sync_result.models_count, 1,
+        "sync_result.models_count must exclude locked model deepseek-chat while updating unlocked gpt-4o"
+    );
 
     // Locked deepseek-chat must stay 5.0 during & after sync!
     let dash3 = app_service

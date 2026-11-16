@@ -305,9 +305,15 @@ pub(super) fn build_local_pricing_entries(
         }
     }
 
+    let is_unpriced = |e: &ModelPriceEntryDto| {
+        !e.is_ignored
+            && (e.matched_model_id.is_none()
+                || (!e.price_locked && e.input_per_million <= 0.0 && e.output_per_million <= 0.0))
+    };
+
     local_entries.sort_by(|a, b| {
-        let a_unpriced = a.matched_model_id.is_none() && !a.is_ignored;
-        let b_unpriced = b.matched_model_id.is_none() && !b.is_ignored;
+        let a_unpriced = is_unpriced(a);
+        let b_unpriced = is_unpriced(b);
         b_unpriced
             .cmp(&a_unpriced)
             .then_with(|| {
