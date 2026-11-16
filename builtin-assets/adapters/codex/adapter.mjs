@@ -9,7 +9,11 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { normalizeSessionPayload } from "./payload-policy.mjs";
+import {
+  captureRawCommands,
+  compactAmbientActions,
+  normalizeSessionPayload,
+} from "./payload-policy.mjs";
 import shellProjector from "./shell-projector.cjs";
 const { projectCommandParts, SHELL_PROJECTOR_VERSION } = shellProjector;
 
@@ -550,29 +554,65 @@ function valueAsDisplayString(value) {
   return null;
 }
 
+function decodeJsStringAt(source, quoteIndex) {
+  const quote = source[quoteIndex];
+  if (quote !== "\"" && quote !== "'" && quote !== "`") return null;
+  let i = quoteIndex + 1;
+  let out = "";
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === "\\") {
+      const next = source[i + 1];
+      if (next === undefined) break;
+      if (next === "n") out += "\n";
+      else if (next === "r") out += "\r";
+      else if (next === "t") out += "\t";
+      else if (next === "0") out += "\0";
+      else out += next;
+      i += 2;
+      continue;
+    }
+    if (quote === "`" && ch === "$" && source[i + 1] === "{") {
+      return null;
+    }
+    if (ch === quote) {
+      return { value: out, endIndex: i + 1 };
+    }
+    out += ch;
+    i += 1;
+  }
+  return null;
+}
+
+function collectJavascriptStringFields(value, names) {
+  const source = String(value ?? "");
+  const results = [];
+  for (const name of names) {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const propertyName = `(?:${escapedName}|\"${escapedName}\"|'${escapedName}')`;
+    const regex = new RegExp(`(?:^|[,{\\s])${propertyName}\\s*:\\s*(?=[\"'\`])`, "g");
+    let match;
+    while ((match = regex.exec(source)) !== null) {
+      const startIndex = match.index + match[0].length;
+      const decoded = decodeJsStringAt(source, startIndex);
+      if (decoded && decoded.value.trim()) {
+        results.push(decoded.value);
+      }
+      regex.lastIndex = decoded ? decoded.endIndex : startIndex + 1;
+    }
+  }
+  return results;
+}
+
 /**
- * 从类似 JavaScript 代码片段的字符串中，通过正则表达式正则匹配提取指定名称的字符串属性值
+ * 从类似 JavaScript 代码片段的字符串中，提取指定名称的字符串属性值（支持双引号、单引号与静态模板字符串）
  * @param {unknown} value - 原始文本或代码段
  * @param {Array<string>} names - 欲提取的字段属性名数组
  * @returns {string|null} 提取到的字符串或 null
  */
 function javascriptStringField(value, names) {
-  const source = String(value ?? "");
-  for (const name of names) {
-    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const propertyName = `(?:${escapedName}|\"${escapedName}\")`;
-    const match = source.match(
-      new RegExp(`(?:^|[,{\\s])${propertyName}\\s*:\\s*(\"(?:\\\\.|[^\"\\\\])*\")`),
-    );
-    if (!match) continue;
-    try {
-      const parsed = JSON.parse(match[1]);
-      if (typeof parsed === "string" && parsed.trim()) return parsed;
-    } catch {
-      // 忽略格式损坏的字符串，按普通数据继续处理
-    }
-  }
-  return null;
+  const matches = collectJavascriptStringFields(value, names);
+  return matches.length > 0 ? matches[0] : null;
 }
 
 /**
@@ -1743,21 +1783,92 @@ function isToolResultPayload(payload) {
   );
 }
 
-/** 获取 Tool 的格式化展示名称与文本 */
+/** 获取 Tool 的格式化展示文本；无真实可执行内容则返回空字符串，避免产生空壳卡片 */
 function toolDisplayText(payload, content) {
   const text = String(content ?? "").trim();
   if (text) return text;
-  const toolName = toolNameFromPayload(payload);
-  const type = String(payload?.type ?? "tool").trim() || "tool";
-  if (toolName?.trim()) return `${type}: ${toolName.trim()}`;
   return "";
 }
 
-/** 判断是否为低信号控制性质的工具调用 (如 `wait` 心跳检测) */
+const LOW_SIGNAL_CONTROL_TOOLS = new Set([
+  "wait",
+  "write_stdin",
+  "create_goal",
+  "get_goal",
+  "list_goals",
+]);
+
+/** 判断是否为低信号控制性质的工具调用 (如 `wait`、`write_stdin`、`create_goal`、`get_goal`) */
 function isLowSignalControlTool(payload) {
-  const type = String(payload?.type ?? "").toLowerCase();
   const name = String(toolNameFromPayload(payload) ?? "").trim().toLowerCase();
-  return type === "function_call" && name === "wait";
+  return LOW_SIGNAL_CONTROL_TOOLS.has(name);
+}
+
+function compactSandboxSnippet(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return "";
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim() && !line.trim().startsWith("//"));
+  if (lines.length === 0) return "";
+  const joined = lines.join("\n").trim();
+  return joined.length > 600 ? `${joined.slice(0, 597)}...` : joined;
+}
+
+function extractExecSandboxAction(payload) {
+  const type = String(payload?.type ?? "").toLowerCase();
+  const toolName = String(toolNameFromPayload(payload) ?? "").trim().toLowerCase();
+  if (type !== "custom_tool_call" && toolName !== "exec") return null;
+  const rawInput = typeof payload?.input === "string"
+    ? payload.input
+    : typeof payload?.arguments === "string"
+      ? payload.arguments
+      : "";
+  const source = rawInput.trim();
+  if (!source) return { kind: "drop" };
+
+  if (/\btools\.web__run\s*\(/i.test(source)) {
+    const queries = collectJavascriptStringFields(source, ["q", "query"]);
+    if (queries.length > 0) {
+      return {
+        kind: "ambient",
+        executionKind: "search",
+        lines: queries.map((q) => `Search "${q}"`),
+      };
+    }
+    const urls = collectJavascriptStringFields(source, ["url", "open_url"]);
+    if (urls.length > 0) {
+      return {
+        kind: "ambient",
+        executionKind: "read",
+        lines: urls.map((u) => `Fetch ${u}`),
+      };
+    }
+  }
+
+  const hasWriteStdinOnly = /\btools\.(?:write_stdin|wait)\s*\(/i.test(source)
+    && !/\btools\.(?!write_stdin\b|wait\b)[a-zA-Z0-9_]+\s*\(/.test(source);
+  if (hasWriteStdinOnly) {
+    return { kind: "drop" };
+  }
+
+  const cmds = collectJavascriptStringFields(source, ["command", "cmd", "shell_command"]);
+  if (cmds.length > 0) {
+    return {
+      kind: "command",
+      command: cmds.join("\n"),
+      label: toolName || "exec",
+    };
+  }
+
+  const snippet = compactSandboxSnippet(source);
+  if (!snippet) return { kind: "drop" };
+  return {
+    kind: "command",
+    command: snippet,
+    label: toolName || "exec",
+  };
 }
 
 /** 判断是否为 update_plan 任务列表工具调用 */
@@ -1867,6 +1978,8 @@ function normalizeTurns(text) {
   let projectPath = patchExecutions.projectPath;
   let pendingSkillRead = null;
   const planCallIds = new Set();
+  const ambientCallIds = new Set();
+  const droppedControlCallIds = new Set();
   let currentModel = null;
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -1925,15 +2038,32 @@ function normalizeTurns(text) {
         && String(toolNameFromPayload(payload) ?? "").toLowerCase() === "exec"
         && patchExecutions.nestedPatchCallIds.has(sourceId);
       const patchInvocation = patchExecution && !isToolResultPayload(payload) && (patchTool || nestedPatchTool);
-      const command = patchInvocation
+      const rawCommand = patchInvocation
         ? patchExecution.files.join("\n")
         : commandFromPayload(payload);
+      const sandboxAction = (!rawCommand?.trim() && !patchInvocation && !patchTool && !nestedPatchTool && !isToolResultPayload(payload))
+        ? extractExecSandboxAction(payload)
+        : null;
+      const command = rawCommand?.trim()
+        ? rawCommand
+        : sandboxAction?.kind === "command"
+          ? sandboxAction.command
+          : null;
       const cwd = patchExecution ? projectPath : cwdFromPayload(payload);
       const text = patchExecution && isToolResultPayload(payload)
         ? patchExecution.diff
         : outputTextFromPayload(payload);
       const status = statusFromPayload(payload) ?? (patchExecution && isToolResultPayload(payload) ? patchExecution.status : null);
       const exitCode = exitCodeFromPayload(payload) ?? (patchExecution && isToolResultPayload(payload) ? patchExecution.exitCode : null);
+      const isFailureResult = /^(error|failed|cancelled|canceled)$/i.test(String(status ?? ""))
+        || (typeof exitCode === "number" && exitCode !== 0);
+      if (isToolResultPayload(payload) && sourceId && (
+        (droppedControlCallIds.has(sourceId) && !isFailureResult)
+        || (ambientCallIds.has(sourceId) && !isFailureResult)
+      )) {
+        current.ended_at = parsed.timestamp ?? payload.timestamp ?? current.ended_at;
+        continue;
+      }
       const executionId = sourceId ?? (
         command?.trim() && text.trim()
           ? `inline-${createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 24)}`
@@ -1990,6 +2120,43 @@ function normalizeTurns(text) {
         if (skillRead) {
           appendDetectedSkill(current, skillDocument, skillPath);
           pendingSkillRead = null;
+        } else if (sandboxAction?.kind === "ambient") {
+          if (sourceId) ambientCallIds.add(sourceId);
+          current.parts.push({
+            role: "tool",
+            kind: "tool",
+            text: sandboxAction.lines.join("\n"),
+            language: null,
+            command: null,
+            cwd: null,
+            status: null,
+            exit_code: null,
+            source_execution_id: executionId,
+            content_card: {
+              schema_version: 1,
+              kind: "codex.ambient",
+              semantic_role: "ambient",
+              renderer: "compact_action",
+            },
+            metadata_json: metadata(
+              compactObject({
+                type: "ambient",
+                format: "plain",
+                tool_name: toolNameFromPayload(payload),
+                execution_kind: sandboxAction.executionKind,
+                signal: "ambient",
+                source_execution_id: executionId,
+              }),
+              compactObject({
+                ...smallMetadata(payload),
+                execution_kind: sandboxAction.executionKind,
+                signal: "ambient",
+              }),
+            ),
+          });
+        } else if (sandboxAction?.kind === "drop" || isLowSignalControlTool(payload)) {
+          // 低信号控制/空工具调用直接丢弃，不写入数据库
+          if (sourceId) droppedControlCallIds.add(sourceId);
         } else if (planCall && planMarkdown) {
           current.parts.push({
             role: "tool",
@@ -2013,20 +2180,6 @@ function normalizeTurns(text) {
                 execution_kind: "plan",
               }),
             ),
-          });
-        } else if (isLowSignalControlTool(payload)) {
-          // 维持隐形的占位 Part，确保重同步时后方 Part 的唯一 ID 保持稳定
-          current.parts.push({
-            role: "tool",
-            kind: "tool",
-            text: null,
-            language: null,
-            command: null,
-            cwd: null,
-            status: null,
-            exit_code: null,
-            source_execution_id: null,
-            metadata_json: null,
           });
         } else if (displayText) {
           const result = isToolResultPayload(payload);
@@ -2831,6 +2984,66 @@ function structuredCardType(part, legacyCard) {
  * @param {object} session - 输入的 Session
  * @returns {object} 契约归一化后的 Session
  */
+function flushCodexAmbientBatch(batch, out) {
+  if (batch.length === 0) return;
+  if (batch.length === 1) {
+    out.push(batch[0]);
+    batch.length = 0;
+    return;
+  }
+  const lines = batch
+    .flatMap((part) => String(part.text ?? "").split(/\r?\n/))
+    .map((line) => line.trim())
+    .filter(Boolean);
+  out.push({
+    role: "tool",
+    kind: "tool",
+    text: lines.join("\n"),
+    language: null,
+    command: null,
+    cwd: null,
+    status: null,
+    exit_code: null,
+    source_execution_id: null,
+    content_card: {
+      schema_version: 1,
+      kind: "codex.ambient",
+      semantic_role: "ambient",
+      renderer: "compact_action",
+    },
+    metadata_json: metadata(
+      compactObject({
+        type: "ambient",
+        format: "plain",
+        signal: "ambient",
+        batch_count: lines.length,
+      }),
+      {
+        signal: "ambient",
+        batch_count: lines.length,
+      },
+    ),
+  });
+  batch.length = 0;
+}
+
+function compactTurnAmbientParts(turn) {
+  if (!Array.isArray(turn?.parts) || turn.parts.length <= 1) return;
+  const compacted = [];
+  const batch = [];
+  for (const part of turn.parts) {
+    const isAmbient = part?.content_card?.kind === "codex.ambient" || part?.content_card?.semantic_role === "ambient";
+    if (isAmbient) {
+      batch.push(part);
+    } else {
+      flushCodexAmbientBatch(batch, compacted);
+      compacted.push(part);
+    }
+  }
+  flushCodexAmbientBatch(batch, compacted);
+  turn.parts = compacted;
+}
+
 function finalizeStructuredContentCards(session) {
   for (const turn of Array.isArray(session?.turns) ? session.turns : []) {
     for (const part of Array.isArray(turn?.parts) ? turn.parts : []) {
@@ -2855,7 +3068,9 @@ function finalizeStructuredContentCards(session) {
       part.metadata_json = Object.keys(metadataValue).length > 0 ? JSON.stringify(metadataValue) : null;
     }
   }
-  return normalizeSessionPayload(session);
+  const rawCommands = captureRawCommands(session);
+  const normalized = normalizeSessionPayload(session);
+  return compactAmbientActions(normalized, { adapterPrefix: "codex", rawCommands });
 }
 
 /**

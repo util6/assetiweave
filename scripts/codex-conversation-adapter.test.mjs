@@ -653,7 +653,7 @@ test("Codex adapter preserves and budgets unpaired structured output as unclassi
   }
 });
 
-test("Codex adapter hides pending runner output and wait controls without shifting Part positions", () => {
+test("Codex adapter hides pending runner output and drops wait controls without empty DB rows", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-control-noise-"));
   try {
     const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
@@ -688,12 +688,9 @@ test("Codex adapter hides pending runner output and wait controls without shifti
     ].join("\n"));
 
     const session = readFixtureSession(fixtureRoot);
-    assert.equal(session.turns[0].parts.length, 2);
+    assert.equal(session.turns[0].parts.length, 1);
     assert.equal(session.turns[0].parts[0].text, null);
     assert.equal(session.turns[0].parts[0].content_card?.kind, "codex.result");
-    assert.equal(session.turns[0].parts[1].text, null);
-    assert.equal(session.turns[0].parts[1].content_card, undefined);
-    assert.equal(session.turns[0].parts[1].metadata_json, null);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -2376,6 +2373,129 @@ test("Codex adapter filters out empty zero-token turns from usage event stream",
   }
 });
 
+test("Codex adapter extracts single-quoted exec_command, batches web__run searches as codex.ambient, and drops empty/control tools", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-exec-clean-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    writeFileSync(rolloutPath, [
+      event("2026-11-10T01:48:00Z", "user", "Search and check"),
+      JSON.stringify({
+        timestamp: "2026-11-10T01:48:05Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "call-single-quote-cmd",
+          input: "const r = await tools.exec_command({\n  cmd: 'git status && echo \\'ok\\'',\n  workdir: '/tmp/repo'\n});\ntext(r.output);\n",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-10T01:48:06Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-single-quote-cmd",
+          output: "On branch main",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-10T01:48:10Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "call-web-1",
+          input: "const r = await tools.web__run({search_query:[{q:\"AssetIWeave Tauri\"}],response_length:\"short\"}); text(r);",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-10T01:48:11Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-web-1",
+          output: "Search results JSON",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-10T01:48:12Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "call-web-2",
+          input: "const r = await tools.web__run({search_query:[{q:\"Codex custom_tool_call\"}]}); text(r);",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-10T01:48:13Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-web-2",
+          output: "More search results",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-10T01:48:15Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "call-empty-exec",
+          input: "",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-10T01:48:16Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "write_stdin",
+          call_id: "call-stdin",
+          arguments: "{\"session_id\":1,\"chars\":\"\"}",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-10T01:48:17Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "create_goal",
+          call_id: "call-goal",
+          arguments: "{}",
+        },
+      }),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-exec-clean', '${sqlString(rolloutPath)}', 'Fixture', '2026-11-10T01:48:20Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    const parts = session.turns[0].parts;
+    const cmdPart = parts.find((p) => p.kind === "command");
+    assert.ok(cmdPart, "single-quoted exec_command should become command part");
+    assert.equal(cmdPart.command, "git status && echo 'ok'");
+    assert.equal(cmdPart.cwd, "/tmp/repo");
+
+    const ambientParts = parts.filter((p) => p.content_card?.kind === "codex.ambient");
+    assert.equal(ambientParts.length, 1, "consecutive web__run calls should batch into one codex.ambient card");
+    assert.equal(ambientParts[0].content_card?.semantic_role, "ambient");
+    assert.equal(ambientParts[0].content_card?.renderer, "compact_action");
+    assert.equal(ambientParts[0].text, 'Search "AssetIWeave Tauri"\nSearch "Codex custom_tool_call"');
+
+    assert.equal(
+      parts.some((p) => /^(?:custom_tool_call|function_call):/.test(String(p.text ?? ""))),
+      false,
+      "empty exec / bare control tool names must not persist",
+    );
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 function readFixtureUsage(location, params = {}) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",
@@ -2393,3 +2513,146 @@ function readFixtureUsage(location, params = {}) {
   const complete = messages.find((message) => message.type === "complete")?.item ?? null;
   return { messages, events, complete };
 }
+
+test("Codex adapter collapses consecutive shell read/search exec_command calls and web__run into one codex.ambient card while keeping unsafe/skill/non-read commands separate", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "codex-ambient-shell-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    writeFileSync(rolloutPath, [
+      JSON.stringify({
+        timestamp: "2026-11-15T10:00:00Z",
+        type: "session_meta",
+        payload: { id: "thread-ambient-shell", cwd: "/tmp/project" },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-15T10:00:01Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Explore project" }],
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-15T10:00:02Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "exec_command",
+          call_id: "call-sed-1",
+          arguments: JSON.stringify({ cmd: "sed -n '1,20p' ./src/a.ts", workdir: "/tmp/project" }),
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-15T10:00:03Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-sed-1",
+          output: "Chunk ID: 1\nProcess exited with code 0\nOutput:\nline1\nline2",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-15T10:00:04Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "exec_command",
+          call_id: "call-rg-1",
+          arguments: JSON.stringify({ cmd: 'rg -n "handler" src', workdir: "/tmp/project" }),
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-15T10:00:05Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-rg-1",
+          output: "Chunk ID: 2\nProcess exited with code 0\nOutput:\nsrc/a.ts:3:handler",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-15T10:00:06Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "call-web-ambient",
+          input: 'const r = await tools.web__run({search_query:[{q:"compact action"}]}); text(r);',
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-15T10:00:07Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-web-ambient",
+          output: "ok",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-15T10:00:08Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "exec_command",
+          call_id: "call-head-1",
+          arguments: JSON.stringify({ cmd: "head -n 30 ./src/b.ts", workdir: "/tmp/project" }),
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-15T10:00:09Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-head-1",
+          output: "Chunk ID: 3\nProcess exited with code 0\nOutput:\nhead lines",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-15T10:00:10Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "exec_command",
+          call_id: "call-git-status",
+          arguments: JSON.stringify({ cmd: "git status", workdir: "/tmp/project" }),
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-11-15T10:00:11Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-git-status",
+          output: "Chunk ID: 4\nProcess exited with code 0\nOutput:\nclean",
+        },
+      }),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('thread-ambient-shell', '${sqlString(rolloutPath)}', 'Fixture', '2026-11-15T10:00:12Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    const parts = session.turns[0].parts;
+
+    const ambientCards = parts.filter((p) => p.content_card?.kind === "codex.ambient");
+    assert.equal(ambientCards.length, 1);
+    assert.deepEqual(ambientCards[0].text.split("\n"), [
+      "Read /tmp/project/src/a.ts#L1-20",
+      'Search "handler" @ /tmp/project/src',
+      'Search "compact action"',
+      "Read /tmp/project/src/b.ts#L1-30",
+    ]);
+    assert.equal(ambientCards[0].content_card?.renderer, "compact_action");
+    assert.equal(JSON.parse(ambientCards[0].metadata_json).batch_count, 4);
+
+    const commands = parts.filter((p) => p.kind === "command");
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0].command, "git status");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});

@@ -201,12 +201,15 @@ Manage conversation adapters.
 ### Examples
 - `aiwc conversation adapter list`
 - `aiwc conversation adapter inspect codex`
+- `aiwc conversation adapter upgrade --developer`
+- `aiwc conversation adapter register --developer --dev --yes`
+- `aiwc conversation adapter unregister <ADAPTER_ID> --yes`
 
 ### Related skills
 - `aiwc skill builtin read assetiweave-conversation-organizer`
 
 ### Risk
-Read-only: Safe, inspects adapter manifest and environment paths.
+Low to Medium: `list` and `inspect` are read-only; `upgrade`, `register`, and `unregister` update active adapter registrations.
 
 ## source
 

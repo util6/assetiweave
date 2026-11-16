@@ -1,5 +1,9 @@
 #!/usr/bin/env node
-import { normalizeSessionPayload } from "./payload-policy.mjs";
+import {
+  captureRawCommands,
+  compactAmbientActions,
+  normalizeSessionPayload,
+} from "./payload-policy.mjs";
 import shellProjector from "./shell-projector.cjs";
 const { projectCommandParts, SHELL_PROJECTOR_VERSION } = shellProjector;
 import { execFileSync } from "node:child_process";
@@ -444,7 +448,7 @@ function toolCallParts(toolCalls, turnId) {
     const toolName = call?.name;
     if (!toolName) continue;
     toolIndex += 1;
-    const executionId = toolCallExecutionId(call, turnId, toolIndex);
+    const executionId = call.execution_id ?? toolCallExecutionId(call, turnId, toolIndex);
     const args = call?.args;
     const argsObj = args && typeof args === "object" ? args : null;
 
@@ -493,13 +497,69 @@ function toolCallParts(toolCalls, turnId) {
     const toolLabel = summary || action || null;
     const displayName = toolLabel || toolName;
 
-    const isRead = /^(view_file|read_file|read_url_content|list_dir|list_directory|read_dir|read_resource)$/i.test(toolName);
-    const isSearch = /^(grep_search|search_web|search_docs|find_files)$/i.test(toolName);
+    const isRead = /^(view_file|read_file|view_file_outline|view_code_item|read_url_content|list_dir|list_directory|read_dir|read_resource)$/i.test(toolName);
+    const isSearch = /^(grep_search|search_web|search_docs|find_by_name|find_files)$/i.test(toolName);
     const executionKind = isRead ? "read" : isSearch ? "search" : null;
+    const isSkillFileCall = argsObj?.IsSkillFile === true
+      || String(argsObj?.IsSkillFile ?? "").toLowerCase() === "true"
+      || argsObj?.isSkillFile === true;
 
-    let targetLocation = argsObj?.AbsolutePath ?? argsObj?.TargetFile ?? argsObj?.Path ?? argsObj?.path ?? argsObj?.Url ?? null;
+    let targetLocation = argsObj?.AbsolutePath
+      ?? argsObj?.TargetFile
+      ?? argsObj?.Path
+      ?? argsObj?.path
+      ?? argsObj?.DirectoryPath
+      ?? argsObj?.SearchPath
+      ?? argsObj?.SearchDirectory
+      ?? argsObj?.Url
+      ?? argsObj?.url
+      ?? argsObj?.Uri
+      ?? argsObj?.uri
+      ?? null;
     if (typeof targetLocation === "string") {
       targetLocation = targetLocation.replace(/^"|"$/g, "");
+    }
+
+    const isSkillTarget = isSkillFileCall
+      || /(?:^|[\\/])skill\.md$/i.test(String(targetLocation || argsObj?.AbsolutePath || argsObj?.TargetFile || argsObj?.Path || argsObj?.path || argsObj?.SearchPath || ""));
+    if (!isSkillTarget && executionKind) {
+      const ambientLine = formatAmbientToolLine(toolName, argsObj, targetLocation);
+      parts.push({
+        role: "tool",
+        kind: "tool",
+        text: ambientLine,
+        language: null,
+        command: null,
+        cwd: null,
+        status: null,
+        exit_code: null,
+        source_execution_id: executionId,
+        command_label: null,
+        content_card: {
+          schema_version: 1,
+          kind: "antigravity.ambient",
+          semantic_role: "ambient",
+          renderer: "compact_action",
+        },
+        metadata_json: metadata(
+          compactObject({
+            type: "ambient",
+            format: "plain",
+            tool_name: toolName,
+            execution_kind: executionKind,
+            signal: "ambient",
+            file_path: targetLocation,
+            source_execution_id: executionId,
+          }),
+          {
+            name: toolName,
+            tool_name: toolName,
+            execution_kind: executionKind,
+            signal: "ambient",
+          },
+        ),
+      });
+      continue;
     }
 
     const argEntries = argsObj
@@ -547,6 +607,71 @@ function toolCallParts(toolCalls, turnId) {
   return parts;
 }
 
+function cleanScalarArg(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/^"|"$/g, "").trim();
+}
+
+function positiveLineNumber(value) {
+  const num = Number(value);
+  return Number.isInteger(num) && num > 0 ? num : null;
+}
+
+function formatAmbientToolLine(toolName, argsObj, targetLocation) {
+  const name = String(toolName ?? "").toLowerCase();
+  const target = cleanScalarArg(targetLocation);
+
+  if (name === "read_file" || name === "view_file") {
+    const startLine = positiveLineNumber(argsObj?.StartLine ?? argsObj?.startLine ?? argsObj?.start_line);
+    const endLine = positiveLineNumber(argsObj?.EndLine ?? argsObj?.endLine ?? argsObj?.end_line);
+    const range = startLine != null && endLine != null
+      ? `#L${startLine}-${endLine}`
+      : startLine != null
+        ? `#L${startLine}`
+        : endLine != null
+          ? `#L1-${endLine}`
+          : "";
+    return target ? `Read ${target}${range}` : `Read file${range}`;
+  }
+  if (name === "view_file_outline") {
+    return target ? `Outline ${target}` : "Outline file";
+  }
+  if (name === "view_code_item") {
+    const rawNodes = Array.isArray(argsObj?.NodePaths) ? argsObj.NodePaths : [argsObj?.NodePath ?? argsObj?.node_path];
+    const nodes = rawNodes.map((n) => cleanScalarArg(n)).filter(Boolean);
+    const sym = nodes.join(", ");
+    if (sym && target) return `Symbol ${sym} @ ${target}`;
+    return target ? `Read ${target}` : `Symbol ${sym || "item"}`;
+  }
+  if (name === "list_dir" || name === "list_directory" || name === "read_dir") {
+    return target ? `List ${target}` : "List directory";
+  }
+  if (name === "read_url_content") {
+    return target ? `Fetch ${target}` : "Fetch URL";
+  }
+  if (name === "read_resource") {
+    return target ? `Read ${target}` : "Read resource";
+  }
+  if (name === "grep_search") {
+    const query = cleanScalarArg(argsObj?.Query ?? argsObj?.query ?? argsObj?.Pattern ?? argsObj?.pattern);
+    const scope = cleanScalarArg(argsObj?.SearchPath ?? argsObj?.SearchDirectory ?? argsObj?.Path ?? argsObj?.path ?? target);
+    if (query && scope) return `Search "${query}" @ ${scope}`;
+    if (query) return `Search "${query}"`;
+    return scope ? `Search @ ${scope}` : "Search";
+  }
+  if (name === "find_by_name" || name === "find_files") {
+    const pattern = cleanScalarArg(argsObj?.Pattern ?? argsObj?.pattern ?? argsObj?.Query ?? argsObj?.query);
+    const scope = cleanScalarArg(argsObj?.SearchDirectory ?? argsObj?.Path ?? argsObj?.path ?? target);
+    if (pattern && scope) return `Find ${pattern} @ ${scope}`;
+    return `Find ${pattern || scope || "*"}`;
+  }
+  if (name === "search_web" || name === "search_docs") {
+    const query = cleanScalarArg(argsObj?.query ?? argsObj?.Query ?? argsObj?.search_query);
+    return query ? `Search "${query}"` : `Search (${name})`;
+  }
+  return target ? `${toolName} ${target}` : String(toolName || "read");
+}
+
 // ---------------------------------------------------------------------------
 // Antigravity-specific: build tool result parts from step output
 // ---------------------------------------------------------------------------
@@ -554,7 +679,8 @@ function toolCallParts(toolCalls, turnId) {
 function toolResultPart(step, fileOperation = null, sourceExecutionId = null, matchedCall = null) {
   const type = step.type ?? "";
   const content = String(step.content ?? "").trim();
-  if (!content) return [];
+  const errorContent = typeof step.error === "string" ? step.error.trim() : "";
+  if (!content && !errorContent) return [];
   const toolName = String(matchedCall?.name ?? "").toLowerCase();
 
   const skillContent = skillContentFromViewFile(step, content, matchedCall);
@@ -626,6 +752,25 @@ function toolResultPart(step, fileOperation = null, sourceExecutionId = null, ma
           source_execution_id: sourceExecutionId,
         }),
         { source_type: type, tool_name: "run_command" },
+      ),
+    }];
+  }
+
+  if (type === "ERROR_MESSAGE" || step.status === "ERROR") {
+    const errorText = step.error ?? content;
+    return [{
+      role: "tool",
+      kind: "tool",
+      text: String(errorText).trim(),
+      language: null,
+      command: null,
+      cwd: null,
+      status: "error",
+      exit_code: 1,
+      source_execution_id: sourceExecutionId,
+      metadata_json: metadata(
+        compactObject({ type: "result", format: "plain", status: "error", exit_code: 1, source_execution_id: sourceExecutionId }),
+        { source_type: type, tool_name: toolName || undefined },
       ),
     }];
   }
@@ -733,25 +878,6 @@ function toolResultPart(step, fileOperation = null, sourceExecutionId = null, ma
           source_execution_id: sourceExecutionId,
         }),
         { source_type: type, tool_name: toolName || "search", signal: "ambient", execution_kind: "search" },
-      ),
-    }];
-  }
-
-  if (type === "ERROR_MESSAGE" || step.status === "ERROR") {
-    const errorText = step.error ?? content;
-    return [{
-      role: "tool",
-      kind: "tool",
-      text: String(errorText).trim(),
-      language: null,
-      command: null,
-      cwd: null,
-      status: "error",
-      exit_code: 1,
-      source_execution_id: sourceExecutionId,
-      metadata_json: metadata(
-        compactObject({ type: "result", format: "plain", status: "error", exit_code: 1, source_execution_id: sourceExecutionId }),
-        { source_type: type, tool_name: toolName || undefined },
       ),
     }];
   }
@@ -1550,9 +1676,10 @@ function buildTurnsFromSteps(steps, options = {}) {
         pendingFileOperations.push(
           ...otherCalls.map((call) => fileOperationFromToolCall(call, knownFileContents)).filter(Boolean),
         );
-        for (const call of otherCalls) {
+        for (let idx = 0; idx < otherCalls.length; idx += 1) {
+          const call = otherCalls[idx];
           if (!call?.name) continue;
-          call.execution_id = toolCallExecutionId(call, current.external_id, current.parts.length + 1);
+          call.execution_id = toolCallExecutionId(call, current.external_id, current.parts.length + idx + 1);
           pendingToolCalls.push({ executionId: call.execution_id, name: call.name, args: call.args });
         }
         current.parts.push(...toolCallParts(otherCalls, current.external_id));
@@ -2244,21 +2371,6 @@ function isUuidDir(name) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name);
 }
 
-function discoverConversationDirs(brainDir) {
-  if (!existsSync(brainDir)) return [];
-  const dirs = [];
-  try {
-    for (const entry of readdirSync(brainDir, { withFileTypes: true })) {
-      if (entry.isDirectory() && isUuidDir(entry.name)) {
-        dirs.push(path.join(brainDir, entry.name));
-      }
-    }
-  } catch {
-    return [];
-  }
-  return dirs;
-}
-
 function detectClientFlavor(targetPath) {
   if (!targetPath) return "antigravity";
   const norm = targetPath.toLowerCase();
@@ -2346,43 +2458,6 @@ function discoverBrainDirs(startLocation) {
     }
   }
   return validBrainDirs;
-}
-
-function discoverConversationDbFiles(startLocation) {
-  if (startLocation) {
-    const resolved = path.resolve(expandPath(startLocation));
-    if (existsSync(resolved) && statSync(resolved).isFile() && resolved.endsWith(".db")) {
-      const metaP = resolved.replace(/\.db$/, ".meta");
-      if (isInternalSessionMeta(metaP) || !hasValidConversationSteps(resolved)) {
-        return [];
-      }
-      return [resolved];
-    }
-  }
-  const roots = resolveCandidateRoots(startLocation);
-  const dbFiles = new Set();
-
-  for (const root of roots) {
-    const convDir = path.join(root, "conversations");
-    const targetDir = existsSync(convDir) ? convDir : root;
-    if (!existsSync(targetDir)) continue;
-    try {
-      const entries = readdirSync(targetDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isFile() && entry.name.endsWith(".db")) {
-          const baseName = entry.name.slice(0, -3);
-          if (isUuidDir(baseName)) {
-            const fullDbPath = path.join(targetDir, entry.name);
-            const metaP = path.join(targetDir, `${baseName}.meta`);
-            if (isInternalSessionMeta(metaP)) continue;
-            if (!hasValidConversationSteps(fullDbPath)) continue;
-            dbFiles.add(fullDbPath);
-          }
-        }
-      }
-    } catch {}
-  }
-  return Array.from(dbFiles);
 }
 
 function inferProjectPath(turns) {
@@ -2671,6 +2746,42 @@ function parseSessionsFromTarget(targetPath, externalIdHint = null) {
   return skipParsedSessions("not_found");
 }
 
+function readConversationSummaryRows(sumDbPath) {
+  if (!existsSync(sumDbPath)) return [];
+  const buildSelectSql = (cols) => {
+    const hasStepCount = Array.isArray(cols) && cols.some((col) => col?.name === "step_count");
+    return hasStepCount
+      ? "SELECT conversation_id, title, last_modified_time, step_count FROM conversation_summaries;"
+      : "SELECT conversation_id, title, last_modified_time FROM conversation_summaries;";
+  };
+  if (DatabaseSync) {
+    let db;
+    try {
+      db = new DatabaseSync(sumDbPath, { readOnly: true });
+      const cols = db.prepare("PRAGMA table_info(conversation_summaries);").all();
+      return db.prepare(buildSelectSql(cols)).all();
+    } catch {
+      return [];
+    } finally {
+      if (db) db.close();
+    }
+  }
+  try {
+    const colsRaw = execFileSync("sqlite3", ["-json", sumDbPath, "PRAGMA table_info(conversation_summaries);"], {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+    });
+    const cols = JSON.parse(colsRaw || "[]");
+    const raw = execFileSync("sqlite3", ["-json", sumDbPath, buildSelectSql(cols)], {
+      encoding: "utf8",
+      maxBuffer: 50 * 1024 * 1024,
+    });
+    return JSON.parse(raw || "[]");
+  } catch {
+    return [];
+  }
+}
+
 function listSessions() {
   emitProgress({ stage: "reading", operation: "list_sessions" });
   let location = expandPath(input.source?.location);
@@ -2686,29 +2797,7 @@ function listSessions() {
 
     // 1. 尝试从 conversation_summaries.db 读取摘要
     if (existsSync(sumDbPath)) {
-      let rows = [];
-      if (DatabaseSync) {
-        let db;
-        try {
-          db = new DatabaseSync(sumDbPath, { readOnly: true });
-          const stmt = db.prepare("SELECT conversation_id, title, last_modified_time FROM conversation_summaries;");
-          rows = stmt.all();
-        } catch {
-          rows = [];
-        } finally {
-          if (db) db.close();
-        }
-      } else {
-        try {
-          const raw = execFileSync("sqlite3", ["-json", sumDbPath, "SELECT conversation_id, title, last_modified_time FROM conversation_summaries;"], {
-            encoding: "utf8",
-            maxBuffer: 50 * 1024 * 1024,
-          });
-          rows = JSON.parse(raw || "[]");
-        } catch {
-          rows = [];
-        }
-      }
+      const rows = readConversationSummaryRows(sumDbPath);
 
       for (const row of rows) {
         const id = row.conversation_id;
@@ -2733,13 +2822,19 @@ function listSessions() {
             break;
           }
         }
+        if (!locator) continue;
+        if (locator.endsWith(".db")) {
+          if (typeof row.step_count === "number" && row.step_count <= 0) continue;
+          const metaP = locator.replace(/\.db$/, ".meta");
+          if (isInternalSessionMeta(metaP) || !hasValidConversationSteps(locator)) continue;
+        }
 
         const updatedAt = row.last_modified_time ? new Date(row.last_modified_time).toISOString() : new Date().toISOString();
         const descriptor = {
           external_id: id,
           title: row.title || undefined,
           updated_at: updatedAt,
-          source_locator: locator || undefined,
+          source_locator: locator,
           version_token: sessionVersionToken(locator, row.last_modified_time || id),
         };
         emit("item", { item: { kind: "session_descriptor", ...descriptor } });
@@ -2812,6 +2907,7 @@ function listSessions() {
 }
 
 function readSession(onSession = null) {
+  lastParseSkipReason = null;
   const requestedLocator = expandPath(input.params?.source_locator);
   const requestedSessionId = input.params?.session_id ?? null;
 
@@ -2822,17 +2918,21 @@ function readSession(onSession = null) {
     return batch;
   };
 
+  let resolvedLocator = null;
   // 1. 如果指定了 source_locator，优先直连定位解析
   if (requestedLocator && existsSync(requestedLocator)) {
+    resolvedLocator = path.resolve(requestedLocator);
     const batch = parseSessionsFromTarget(requestedLocator, requestedSessionId);
     if (batch.length) return emitBatch(batch);
+    if (!requestedSessionId) return [];
   }
 
   const location = expandPath(input.source?.location);
   const roots = resolveCandidateRoots(location);
 
-  // 2. 如果指定了 session_id，尝试快速候选探测（跨所有 candidate roots）
+  // 2. 如果指定了 session_id，尝试跨所有 candidate roots 定向候选探测
   if (requestedSessionId) {
+    let specificSkipReason = lastParseSkipReason;
     const candidates = [];
     if (location) {
       candidates.push(
@@ -2841,6 +2941,11 @@ function readSession(onSession = null) {
         path.join(location, "conversations", `${requestedSessionId}.db`),
         path.join(location, `${requestedSessionId}.db`),
       );
+      try {
+        if (existsSync(location) && (statSync(location).isFile() || Boolean(findTranscriptFile(location)))) {
+          candidates.push(location);
+        }
+      } catch {}
     }
     for (const root of roots) {
       candidates.push(
@@ -2850,155 +2955,34 @@ function readSession(onSession = null) {
         path.join(root, "conversations", `${requestedSessionId}.db`),
       );
     }
+
+    const seenCandidates = new Set(resolvedLocator ? [resolvedLocator] : []);
     for (const candidate of candidates) {
+      const canonical = path.resolve(candidate);
+      if (seenCandidates.has(canonical)) continue;
+      seenCandidates.add(canonical);
       if (!existsSync(candidate)) continue;
       const batch = parseSessionsFromTarget(candidate, requestedSessionId);
       if (batch.length) return emitBatch(batch);
+      if (!specificSkipReason || (lastParseSkipReason && lastParseSkipReason !== "not_found")) {
+        specificSkipReason = lastParseSkipReason;
+      }
     }
+    if (specificSkipReason) {
+      lastParseSkipReason = specificSkipReason;
+    } else if (!lastParseSkipReason) {
+      lastParseSkipReason = "not_found";
+    }
+    return [];
   }
 
-  // 3. 判断 location 本身是否直接指向单条记录
-  if (location) {
-    const batch = parseSessionsFromTarget(location, requestedSessionId);
+  // 3. 未指定 session_id / source_locator 时，仅当 location 本身直接指向单条会话文件/目录时解析
+  if (location && !requestedLocator) {
+    const batch = parseSessionsFromTarget(location, null);
     if (batch.length) return emitBatch(batch);
   }
 
-  // 4. 全量遍历发现的所有脑区与 DB
-  emitProgress({
-    stage: "scan",
-    operation: "discovering_sessions",
-    path: path.basename(location || "all_flavors"),
-  });
-  const brainDirs = discoverBrainDirs(location);
-  const seenDirPaths = new Set();
-  const seenExternalIds = new Set();
-  const sessions = [];
-
-  const allConvDirs = [];
-  for (const bDir of brainDirs) {
-    const conversationDirs = discoverConversationDirs(bDir);
-    for (const convDir of conversationDirs) {
-      const canonicalConvDir = path.resolve(convDir);
-      if (seenDirPaths.has(canonicalConvDir)) continue;
-      seenDirPaths.add(canonicalConvDir);
-      allConvDirs.push(convDir);
-    }
-  }
-
-  const dbFiles = discoverConversationDbFiles(location);
-  const totalItems = allConvDirs.length + dbFiles.length;
-  let currentItemIdx = 0;
-
-  // 先解析普通会话（父会话会把自己名下的子代理会话一并产出），
-  // 再兜底解析"父会话不在本次扫描范围内"的孤立子代理目录。
-  const primaryDirs = [];
-  const standaloneChildDirs = [];
-  for (const convDir of allConvDirs) {
-    if (subagentLinkFor(convDir)) standaloneChildDirs.push(convDir);
-    else primaryDirs.push(convDir);
-  }
-
-  const processConversationDir = (convDir) => {
-    currentItemIdx += 1;
-    const externalId = path.basename(convDir);
-    if (seenExternalIds.has(externalId)) return [];
-    if (detectClientFlavor(convDir) === "antigravity-acp") {
-      lastParseSkipReason = "internal_execution";
-      return [];
-    }
-    const transcriptPath = findTranscriptFile(convDir);
-    if (!transcriptPath) return [];
-
-    emitProgress({
-      stage: "parse",
-      operation: "parsing_transcript",
-      path: `${externalId}/transcript.jsonl`,
-      current: currentItemIdx,
-      total: totalItems,
-    });
-
-    const batch = buildSessionsForConversationDir(convDir, externalId);
-    const fresh = batch.filter((session) => !seenExternalIds.has(session.external_id));
-    fresh.forEach((session) => {
-      seenExternalIds.add(session.external_id);
-      if (onSession) onSession(session, currentItemIdx, totalItems);
-      sessions.push(session);
-    });
-    return fresh;
-  };
-
-  for (const convDir of primaryDirs) {
-    const externalId = path.basename(convDir);
-    if (requestedSessionId && externalId !== requestedSessionId) {
-      // 请求的可能是某个父会话名下的子会话，父会话仍要解析出来。
-      processConversationDir(convDir);
-      if (seenExternalIds.has(requestedSessionId)) return sessions;
-      continue;
-    }
-    const fresh = processConversationDir(convDir);
-    if (requestedSessionId && fresh.some((session) => session.external_id === requestedSessionId)) {
-      return sessions;
-    }
-  }
-
-  for (const convDir of standaloneChildDirs) {
-    const externalId = path.basename(convDir);
-    if (requestedSessionId && externalId !== requestedSessionId) continue;
-    processConversationDir(convDir);
-    if (requestedSessionId && seenExternalIds.has(requestedSessionId)) return sessions;
-  }
-
-  // Conversation DB files (e.g. Antigravity ACP or standalone sqlite conversations)
-  for (const dbPath of dbFiles) {
-    currentItemIdx += 1;
-    const externalId = path.basename(dbPath, ".db");
-    if (requestedSessionId && externalId !== requestedSessionId) continue;
-    if (seenExternalIds.has(externalId)) continue;
-
-    emitProgress({
-      stage: "parse",
-      operation: "syncing_session_db",
-      path: `${externalId} (${path.basename(dbPath)})`,
-      current: currentItemIdx,
-      total: totalItems,
-    });
-
-    try {
-      const parsed = parseSqliteDb(dbPath);
-      const turns = displayTurns(parsed.turns);
-      if (!turns.length) {
-        lastParseSkipReason = "no_turns";
-        continue;
-      }
-      if (isInternalExecutionPath(parsed.projectPath)) {
-        lastParseSkipReason = "internal_execution";
-        continue;
-      }
-      if (isSyntheticWorkOrderText(turns[0]?.user_text)) {
-        lastParseSkipReason = "synthetic_work_order";
-        continue;
-      }
-      seenExternalIds.add(externalId);
-      const s = applyTextBudgets(finalizeStructuredContentCards({
-        external_id: externalId,
-        title: getSummaryTitle(externalId) || titleFromUserText(turns[0]?.user_text),
-        project_path: resolveProjectPath(parsed.projectPath ?? inferProjectPath(turns), externalId),
-        started_at: turns[0]?.started_at ?? null,
-        updated_at: turns.at(-1)?.ended_at ?? turns.at(-1)?.started_at ?? null,
-        source_locator: dbPath,
-        source_fingerprint: sessionVersionToken(dbPath, externalId),
-        execution_origin: detectClientFlavor(dbPath),
-        turns,
-      }));
-      if (onSession) onSession(s, currentItemIdx, totalItems);
-      sessions.push(s);
-      if (requestedSessionId && externalId === requestedSessionId) {
-        return [s];
-      }
-    } catch {}
-  }
-
-  return sessions;
+  return [];
 }
 
 function executionTextValue(value, depth = 0) {
@@ -3101,8 +3085,130 @@ function structuredCardType(part, legacyCard) {
   return typeof kind === "string" ? kind.slice(kind.lastIndexOf(".") + 1) : null;
 }
 
+const EDIT_INVOCATION_TOOLS = new Set([
+  "edit_file",
+  "replace_file_content",
+  "multi_replace_file_content",
+  "write_to_file",
+  "write_file",
+  "apply_patch",
+]);
+
+function partExecutionId(part) {
+  if (typeof part?.source_execution_id === "string" && part.source_execution_id.trim()) {
+    return part.source_execution_id.trim();
+  }
+  const meta = parseStructuredMetadata(part?.metadata_json);
+  const legacyCard = meta.content_card ?? meta.contentCard;
+  const candidate = meta.source_execution_id ?? legacyCard?.source_execution_id;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
+}
+
+function isPartFailed(part) {
+  const status = String(part?.status ?? "").trim().toLowerCase();
+  if (status === "error" || status === "failed" || status === "cancelled" || status === "canceled") return true;
+  if (typeof part?.exit_code === "number" && part.exit_code !== 0) return true;
+  const kind = String(part?.content_card?.kind ?? "").toLowerCase();
+  return kind.endsWith(".error");
+}
+
+function isFileChangePart(part) {
+  if (!part || typeof part !== "object") return false;
+  return part.kind === "file_change"
+    || part.content_card?.kind === "antigravity.file-change"
+    || part.content_card?.semantic_role === "file-change";
+}
+
+function isResultPart(part) {
+  if (!part || typeof part !== "object") return false;
+  if (part.content_card?.kind === "antigravity.result" || part.content_card?.semantic_role === "result") return true;
+  const meta = parseStructuredMetadata(part.metadata_json);
+  const legacyCard = meta.content_card ?? meta.contentCard;
+  return legacyCard?.type === "result";
+}
+
+function isEditInvocationPart(part) {
+  if (!part || typeof part !== "object" || part.kind !== "tool" || isFileChangePart(part) || isResultPart(part)) {
+    return false;
+  }
+  const meta = parseStructuredMetadata(part.metadata_json);
+  const legacyCard = meta.content_card ?? meta.contentCard;
+  const toolName = String(meta.tool_name ?? meta.name ?? legacyCard?.tool_name ?? "").trim().toLowerCase();
+  if (EDIT_INVOCATION_TOOLS.has(toolName)) return true;
+  const text = String(part.text ?? "").trimStart();
+  const match = text.match(/^Tool:\s*([^\s\n]+)/i);
+  return Boolean(match && EDIT_INVOCATION_TOOLS.has(match[1].toLowerCase()));
+}
+
+function isAmbientActionPart(part) {
+  if (!part || typeof part !== "object") return false;
+  return part.content_card?.kind === "antigravity.ambient" || part.content_card?.semantic_role === "ambient";
+}
+
+function flushAmbientBatch(batch, out) {
+  if (batch.length === 0) return;
+  if (batch.length === 1) {
+    out.push(batch[0]);
+    batch.length = 0;
+    return;
+  }
+  const lines = batch
+    .map((p) => String(p.text ?? "").trim())
+    .filter(Boolean);
+  out.push({
+    role: "tool",
+    kind: "tool",
+    text: lines.join("\n"),
+    language: null,
+    command: null,
+    cwd: null,
+    status: null,
+    exit_code: null,
+    source_execution_id: null,
+    command_label: null,
+    content_card: {
+      schema_version: 1,
+      kind: "antigravity.ambient",
+      semantic_role: "ambient",
+      renderer: "compact_action",
+    },
+    metadata_json: metadata(
+      compactObject({
+        type: "ambient",
+        format: "plain",
+        signal: "ambient",
+        batch_count: lines.length,
+      }),
+      {
+        signal: "ambient",
+        batch_count: lines.length,
+      },
+    ),
+  });
+  batch.length = 0;
+}
+
+function deduplicateEditPartsWithFileChange(turn) {
+  if (!Array.isArray(turn?.parts) || turn.parts.length === 0) return;
+
+  const fileChangeExecIds = new Set();
+  for (const part of turn.parts) {
+    const execId = partExecutionId(part);
+    if (execId && isFileChangePart(part)) {
+      fileChangeExecIds.add(execId);
+    }
+  }
+  if (fileChangeExecIds.size === 0) return;
+
+  turn.parts = turn.parts.filter((part) => {
+    const execId = partExecutionId(part);
+    return !(execId && fileChangeExecIds.has(execId) && isEditInvocationPart(part));
+  });
+}
+
 function finalizeStructuredContentCards(session) {
   for (const turn of Array.isArray(session?.turns) ? session.turns : []) {
+    deduplicateEditPartsWithFileChange(turn);
     for (const part of Array.isArray(turn?.parts) ? turn.parts : []) {
       const metadataValue = parseStructuredMetadata(part.metadata_json);
       const legacyCard = metadataValue.content_card ?? metadataValue.contentCard;
@@ -3125,7 +3231,9 @@ function finalizeStructuredContentCards(session) {
       part.metadata_json = Object.keys(metadataValue).length > 0 ? JSON.stringify(metadataValue) : null;
     }
   }
-  return normalizeSessionPayload(session);
+  const rawCommands = captureRawCommands(session);
+  const normalized = normalizeSessionPayload(session);
+  return compactAmbientActions(normalized, { adapterPrefix: "antigravity", rawCommands });
 }
 
 function parseStructuredMetadata(value) {

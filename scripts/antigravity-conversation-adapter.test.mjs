@@ -481,18 +481,57 @@ test("Antigravity automatically discovers sibling IDE and CLI brain directories"
       }),
     ].join("\n"));
 
-    // Pointing to antigravity-ide/brain should discover both ide and cli sessions
+    // Pointing to antigravity-ide/brain should discover both ide and cli sessions via list_sessions
     const ideBrainPath = path.join(fixtureRoot, "antigravity-ide", "brain");
-    const result = spawnSync(process.execPath, [adapterPath], {
+    const listResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({ method: "list_sessions", source: { location: ideBrainPath }, params: {} }),
+    });
+    assert.equal(listResult.status, 0, listResult.stderr);
+    const descriptorItems = listResult.stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((message) => message.type === "item" && message.item.kind === "session_descriptor");
+    assert.equal(descriptorItems.length, 2);
+
+    const sessions = descriptorItems.flatMap((descItem) => {
+      const desc = descItem.item;
+      const readResult = spawnSync(process.execPath, [adapterPath], {
+        encoding: "utf8",
+        input: JSON.stringify({
+          method: "read_session",
+          source: { location: ideBrainPath },
+          params: { session_id: desc.external_id, source_locator: desc.source_locator },
+        }),
+      });
+      assert.equal(readResult.status, 0, readResult.stderr);
+      return readResult.stdout
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .filter((message) => message.type === "item" && message.item.kind === "session")
+        .map((message) => message.item.session);
+    });
+    assert.equal(sessions.length, 2);
+    const titles = sessions.map((s) => s.title).sort();
+    assert.deepEqual(titles, ["CLI session request", "IDE session request"]);
+
+    // Untargeted read_session on a multi-session brain directory should no longer trigger a full scan
+    const untargetedResult = spawnSync(process.execPath, [adapterPath], {
       encoding: "utf8",
       input: JSON.stringify({ method: "read_session", source: { location: ideBrainPath }, params: {} }),
     });
-    assert.equal(result.status, 0, result.stderr);
-    const messages = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
-    const items = messages.filter((message) => message.type === "item");
-    assert.equal(items.length, 2);
-    const titles = items.map((i) => i.item.session.title).sort();
-    assert.deepEqual(titles, ["CLI session request", "IDE session request"]);
+    assert.equal(untargetedResult.status, 0, untargetedResult.stderr);
+    const untargetedItems = untargetedResult.stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((message) => message.type === "item");
+    assert.equal(untargetedItems.length, 0);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -588,24 +627,194 @@ test("Antigravity automatically discovers sibling ACP SQLite conversation databa
        INSERT INTO steps VALUES (1, 15, X'${asstHex}');`,
     ]);
 
-    // Pointing to antigravity-ide/brain should discover all 3 environments: IDE, CLI, and ACP
+    // Pointing to antigravity-ide/brain: list_sessions discovers IDE & CLI while skipping internal ACP,
+    // and targeted read_session by session_id resolves all 3 environments (IDE, CLI, ACP) across candidate roots
     const ideBrainPath = path.join(fixtureRoot, "antigravity-ide", "brain");
-    const result = spawnSync(process.execPath, [adapterPath], {
+    const listResult = spawnSync(process.execPath, [adapterPath], {
       encoding: "utf8",
-      input: JSON.stringify({ method: "read_session", source: { location: ideBrainPath }, params: {} }),
+      input: JSON.stringify({ method: "list_sessions", source: { location: ideBrainPath }, params: {} }),
     });
-    assert.equal(result.status, 0, result.stderr);
-    const messages = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
-    const items = messages.filter((message) => message.type === "item");
-    assert.equal(items.length, 3);
-    const ids = items.map((i) => i.item.session.external_id).sort();
-    assert.deepEqual(ids, [
+    assert.equal(listResult.status, 0, listResult.stderr);
+    const listIds = listResult.stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((message) => message.type === "item" && message.item.kind === "session_descriptor")
+      .map((message) => message.item.external_id)
+      .sort();
+    assert.deepEqual(listIds, [
+      "11111111-1111-1111-1111-111111111111",
+      "22222222-2222-2222-2222-222222222222",
+    ]);
+
+    const expectedIds = [
       "11111111-1111-1111-1111-111111111111",
       "22222222-2222-2222-2222-222222222222",
       "33333333-3333-3333-3333-333333333333",
-    ]);
+    ];
+    const resolvedIds = expectedIds
+      .flatMap((id) => {
+        const result = spawnSync(process.execPath, [adapterPath], {
+          encoding: "utf8",
+          input: JSON.stringify({
+            method: "read_session",
+            source: { location: ideBrainPath },
+            params: { session_id: id },
+          }),
+        });
+        assert.equal(result.status, 0, result.stderr);
+        return result.stdout
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+          .filter((message) => message.type === "item" && message.item.kind === "session")
+          .map((message) => message.item.session.external_id);
+      })
+      .sort();
+    assert.deepEqual(resolvedIds, expectedIds);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity list_sessions filters zero-step ghost sessions from conversation_summaries.db and empty conversation dbs", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-ghost-filter-"));
+  try {
+    const cliRoot = path.join(fixtureRoot, "antigravity-cli");
+    const convDir = path.join(cliRoot, "conversations");
+    mkdirSync(convDir, { recursive: true });
+
+    const validId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const ghostZeroStepsId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    const ghostStaleCountId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    const ghostMissingLocatorId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    const ghostUnindexedDbId = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+
+    const validLogsDir = path.join(cliRoot, "brain", validId, ".system_generated", "logs");
+    mkdirSync(validLogsDir, { recursive: true });
+    writeFileSync(
+      path.join(validLogsDir, "transcript.jsonl"),
+      [
+        JSON.stringify({
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          created_at: "2026-10-03T16:00:00Z",
+          content: "<USER_REQUEST>Valid session</USER_REQUEST>",
+        }),
+        JSON.stringify({
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          created_at: "2026-10-03T16:00:01Z",
+          content: "Done.",
+        }),
+      ].join("\n") + "\n",
+    );
+
+    for (const id of [ghostZeroStepsId, ghostStaleCountId, ghostUnindexedDbId]) {
+      spawnSync("sqlite3", [
+        path.join(convDir, `${id}.db`),
+        "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB);",
+      ]);
+    }
+
+    const sumDbPath = path.join(cliRoot, "conversation_summaries.db");
+    spawnSync("sqlite3", [
+      sumDbPath,
+      [
+        "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT, last_modified_time INTEGER, step_count INTEGER);",
+        `INSERT INTO conversation_summaries VALUES ('${validId}', 'Valid CLI session', 1760000000000, 2);`,
+        `INSERT INTO conversation_summaries VALUES ('${ghostZeroStepsId}', '', 1760000000000, 0);`,
+        `INSERT INTO conversation_summaries VALUES ('${ghostStaleCountId}', '', 1760000000000, 2);`,
+        `INSERT INTO conversation_summaries VALUES ('${ghostMissingLocatorId}', 'Dangling summary', 1760000000000, 1);`,
+      ].join(" "),
+    ]);
+
+    const result = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({ method: "list_sessions", source: { location: cliRoot }, params: {} }),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const messages = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    const descriptors = messages.filter((m) => m.type === "item" && m.item.kind === "session_descriptor");
+    assert.deepEqual(descriptors.map((d) => d.item.external_id), [validId]);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("Antigravity read_session emits session_skipped instead of scanning unrelated sessions when target is empty or missing", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-no-fallback-"));
+  try {
+    const ideBrainPath = path.join(fixtureRoot, "antigravity-ide", "brain");
+    const unrelatedId = "12121212-1212-1212-1212-121212121212";
+    const unrelatedLogsDir = path.join(ideBrainPath, unrelatedId, ".system_generated", "logs");
+    mkdirSync(unrelatedLogsDir, { recursive: true });
+    writeFileSync(
+      path.join(unrelatedLogsDir, "transcript.jsonl"),
+      [
+        JSON.stringify({
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          created_at: "2026-10-03T16:00:00Z",
+          content: "<USER_REQUEST>Unrelated populated session</USER_REQUEST>",
+        }),
+        JSON.stringify({
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          created_at: "2026-10-03T16:00:01Z",
+          content: "Should never be returned when reading another session.",
+        }),
+      ].join("\n") + "\n",
+    );
+
+    const cliConvDir = path.join(fixtureRoot, "antigravity-cli", "conversations");
+    mkdirSync(cliConvDir, { recursive: true });
+    const emptyId = "34343434-3434-3434-3434-343434343434";
+    const emptyDbPath = path.join(cliConvDir, `${emptyId}.db`);
+    spawnSync("sqlite3", [
+      emptyDbPath,
+      "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB);",
+    ]);
+
+    const emptyResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "read_session",
+        source: { location: ideBrainPath },
+        params: { session_id: emptyId, source_locator: emptyDbPath },
+      }),
+    });
+    assert.equal(emptyResult.status, 0, emptyResult.stderr);
+    const emptyMessages = emptyResult.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    const emptySessions = emptyMessages.filter((m) => m.type === "item" && m.item.kind === "session");
+    assert.equal(emptySessions.length, 0);
+    const skippedItems = emptyMessages.filter((m) => m.type === "item" && m.item.kind === "session_skipped");
+    assert.equal(skippedItems.length, 1);
+    assert.equal(skippedItems[0].item.external_id, emptyId);
+    assert.equal(skippedItems[0].item.reason, "no_valid_steps");
+    const emptyComplete = emptyMessages.find((m) => m.type === "complete");
+    assert.equal(emptyComplete.item.session_count, 0);
+
+    const missingId = "56565656-5656-5656-5656-565656565656";
+    const missingResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "read_session",
+        source: { location: ideBrainPath },
+        params: { session_id: missingId },
+      }),
+    });
+    assert.equal(missingResult.status, 0, missingResult.stderr);
+    const missingMessages = missingResult.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    assert.equal(missingMessages.filter((m) => m.type === "item" && m.item.kind === "session").length, 0);
+    const missingSkipped = missingMessages.filter((m) => m.type === "item" && m.item.kind === "session_skipped");
+    assert.equal(missingSkipped.length, 1);
+    assert.equal(missingSkipped[0].item.external_id, missingId);
+    assert.equal(missingSkipped[0].item.reason, "not_found");
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });
 
@@ -1481,9 +1690,9 @@ test("Antigravity inlines every registered subagent as its own turn with a resol
     assert.equal(leaf.user_visible, false);
     assert.equal(leaf.turns.length, 1);
     assert.equal(leaf.turns[0].user_text, "Review module for Rust Core Reviewer 1");
-    const commandPart = leaf.turns[0].parts.find((part) => part.kind === "command");
-    assert.ok(commandPart, "子会话必须暴露它执行的命令");
-    assert.match(commandPart.command, /rg "module 1" src/);
+    const ambientPart = leaf.turns[0].parts.find((part) => part.content_card?.kind === "antigravity.ambient");
+    assert.ok(ambientPart, "子会话必须暴露它执行的环境探查动作");
+    assert.match(ambientPart.text ?? "", /Search "module 1" @ \/tmp\/project\/src/);
     const lastPart = leaf.turns[0].parts.at(-1);
     assert.equal(lastPart.role, "assistant");
     assert.match(lastPart.text, /Module 1 review complete/);
@@ -2409,6 +2618,295 @@ test("Antigravity supports incremental cursor skipping for unchanged transcript 
     assert.equal(run3.events[1].turn_id, "turn-1");
     const cursor3 = JSON.parse(run3.complete.next_cursor);
     assert.ok(cursor3.last_mtime > cursor1.last_mtime);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity batches consecutive non-failed read/search calls into one ambient compact_action card while isolating failures", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-ag-ambient-batch-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-11-14T10:00:00Z",
+        content: "<USER_REQUEST>Inspect files</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-11-14T10:00:01Z",
+        tool_calls: [
+          {
+            id: "call-read-1",
+            name: "read_file",
+            args: { Path: "/repo/src/Search.tsx", StartLine: 65, EndLine: 275 },
+          },
+          {
+            id: "call-grep-1",
+            name: "grep_search",
+            args: { Query: "Dialog", SearchPath: "/repo/src" },
+          },
+        ],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "VIEW_FILE",
+        status: "DONE",
+        created_at: "2026-11-14T10:00:02Z",
+        content: "File Path: `file:///repo/src/Search.tsx`\n65: code",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GREP_SEARCH",
+        status: "DONE",
+        created_at: "2026-11-14T10:00:03Z",
+        content: "Search.tsx:100: Dialog",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-11-14T10:00:04Z",
+        tool_calls: [
+          {
+            id: "call-list-1",
+            name: "list_dir",
+            args: { DirectoryPath: "/repo/src" },
+          },
+          {
+            id: "call-read-err",
+            name: "read_file",
+            args: { Path: "/repo/src/Missing.tsx" },
+          },
+        ],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "LIST_DIRECTORY",
+        status: "DONE",
+        created_at: "2026-11-14T10:00:05Z",
+        content: "Search.tsx\n",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "VIEW_FILE",
+        status: "ERROR",
+        created_at: "2026-11-14T10:00:06Z",
+        error: "ENOENT: no such file /repo/src/Missing.tsx",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    const parts = session.turns[0].parts;
+    const ambientParts = parts.filter((p) => p.content_card?.kind === "antigravity.ambient");
+    assert.equal(ambientParts.length, 2, "3 succeeded ambient steps merge into 1 batch, failed read stays isolated");
+
+    assert.equal(ambientParts[0].content_card?.semantic_role, "ambient");
+    assert.equal(ambientParts[0].content_card?.renderer, "compact_action");
+    assert.equal(
+      ambientParts[0].text,
+      [
+        "Read /repo/src/Search.tsx#L65-275",
+        'Search "Dialog" @ /repo/src',
+        "List /repo/src",
+      ].join("\n"),
+    );
+
+    assert.equal(ambientParts[1].text, "Read /repo/src/Missing.tsx");
+    const errResult = parts.find((p) => p.status === "error");
+    assert.ok(errResult);
+    assert.match(errResult.text, /ENOENT/);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity drops redundant edit tool card when file_change diff exists, and retains it when edit failed", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-ag-edit-dedup-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    const targetFile = "/tmp/repo/src/app.ts";
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-11-14T11:00:00Z",
+        content: "<USER_REQUEST>Update app.ts</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-11-14T11:00:01Z",
+        tool_calls: [
+          {
+            id: "call-edit-ok",
+            name: "edit_file",
+            args: {
+              Path: targetFile,
+              Target: "const a = 1;",
+              Replacement: "const a = 2;",
+            },
+          },
+          {
+            id: "call-edit-fail",
+            name: "edit_file",
+            args: {
+              Path: targetFile,
+              Target: "const nonexistent = 99;",
+              Replacement: "const nonexistent = 100;",
+            },
+          },
+        ],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-14T11:00:02Z",
+        content: `Made 1 replacement in ${targetFile} starting at line 10 (+1/-1 lines).`,
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "ERROR_MESSAGE",
+        status: "ERROR",
+        created_at: "2026-11-14T11:00:03Z",
+        error: "target content not found in the file",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    const parts = session.turns[0].parts;
+    const diffs = parts.filter((p) => p.kind === "file_change");
+    assert.equal(diffs.length, 1);
+
+    const remainingEditToolCalls = parts.filter(
+      (p) => p.content_card?.kind === "antigravity.tool" && /^Tool:\s*edit_file/i.test(String(p.text ?? "")),
+    );
+    assert.equal(remainingEditToolCalls.length, 1, "only failed edit_file invocation remains");
+    assert.match(remainingEditToolCalls[0].text, /nonexistent = 99/);
+    assert.doesNotMatch(remainingEditToolCalls[0].text, /const a = 1/);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity merges consecutive read_file, run_command search, grep_search with toolSummary, and read_file into a single ambient card across unmatched read outputs", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "agy-ambient-chain-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-11-15T10:00:00Z",
+        content: "<USER_REQUEST>Inspect module layout</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-11-15T10:00:01Z",
+        tool_calls: [
+          { id: "c-r1", name: "read_file", args: { Path: "/tmp/repo/a.ts", StartLine: 1, EndLine: 20 } },
+          { id: "c-r2", name: "read_file", args: { Path: "/tmp/repo/b.ts", StartLine: 5, EndLine: 25 } },
+          { id: "c-rg", name: "run_command", args: { CommandLine: 'rg -n "needle" src', Cwd: "/tmp/repo" } },
+          { id: "c-gs", name: "grep_search", args: { SearchPath: "/tmp/repo/src", Query: "needle", toolSummary: "Find needle usage" } },
+          { id: "c-r3", name: "read_file", args: { Path: "/tmp/repo/c.ts", StartLine: 10, EndLine: 40 } },
+          { id: "c-r4", name: "read_file", args: { Path: "/tmp/repo/d.ts", StartLine: 1, EndLine: 30 } },
+        ],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-15T10:00:02Z",
+        content: "Showing lines 1-20 of 50\nconst a = 1;",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-15T10:00:02Z",
+        content: "Showing lines 5-25 of 50\nconst b = 1;",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-15T10:00:02Z",
+        content: "Process exited with code 0\nOutput:\nsrc/a.ts:1:needle",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-15T10:00:02Z",
+        content: "Found 1 result",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-15T10:00:02Z",
+        content: "Showing lines 10-40 of 50\nconst c = 1;",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-15T10:00:02Z",
+        content: "Showing lines 1-30 of 50\nconst d = 1;",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-11-15T10:00:03Z",
+        tool_calls: [
+          {
+            id: "c-edit",
+            name: "edit_file",
+            args: { Path: "/tmp/repo/a.ts", Target: "const a = 1;", Replacement: "const a = 2;" },
+          },
+          { id: "c-r-fail", name: "read_file", args: { Path: "/tmp/repo/missing.ts" } },
+        ],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-15T10:00:04Z",
+        content: "Made 1 replacement in /tmp/repo/a.ts starting at line 1 (+1/-1 lines).",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "ERROR_MESSAGE",
+        status: "ERROR",
+        created_at: "2026-11-15T10:00:04Z",
+        error: "File not found: /tmp/repo/missing.ts",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    const parts = session.turns[0].parts;
+    const ambientCards = parts.filter((p) => p.content_card?.kind === "antigravity.ambient");
+    assert.equal(ambientCards.length, 2, "initial exploration merges into 1 ambient card, isolated from failed read after edit");
+    assert.deepEqual(ambientCards[0].text.split("\n"), [
+      "Read /tmp/repo/a.ts#L1-20",
+      "Read /tmp/repo/b.ts#L5-25",
+      'Search "needle" @ /tmp/repo/src',
+      'Search "needle" @ /tmp/repo/src',
+      "Read /tmp/repo/c.ts#L10-40",
+      "Read /tmp/repo/d.ts#L1-30",
+    ]);
+    assert.equal(ambientCards[0].content_card?.renderer, "compact_action");
+    assert.equal(JSON.parse(ambientCards[0].metadata_json).batch_count, 6);
+    assert.equal(ambientCards[1].text, "Read /tmp/repo/missing.ts");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

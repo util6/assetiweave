@@ -115,6 +115,16 @@
       "allowed_renderers": [
         "subagent_tree"
       ]
+    },
+    {
+      "id": "codex.ambient",
+      "semantic_role": "ambient",
+      "label": "环境探查",
+      "default_renderer": "compact_action",
+      "allowed_renderers": [
+        "compact_action",
+        "plain"
+      ]
     }
   ]
 }

@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  captureRawCommands,
+  compactAmbientActions,
   normalizeSessionPayload,
   classifyExecution,
   extractLocation,
+  reprojectStoredSession,
   PAYLOAD_POLICY_VERSION,
 } from "../builtin-assets/adapters/common/payload-policy.mjs";
 
@@ -481,4 +484,189 @@ test("payload policy retains error diagnostic and focus signal for failed read",
 
   assert.equal(resPart.text, "Error: No such file or directory");
   assert.equal(resMeta.signal, "focus");
+});
+
+test("compactAmbientActions collapses mixed read/search tools and shell commands into one ambient card while guarding unsafe/skill/failed steps", () => {
+  const session = {
+    turns: [{
+      parts: [
+        {
+          role: "tool",
+          kind: "tool",
+          tool_name: "read_file",
+          text: "Read /tmp/project/src/a.ts#L1-20",
+          source_execution_id: "r-1",
+          content_card: { schema_version: 1, kind: "antigravity.ambient", semantic_role: "ambient", renderer: "compact_action" },
+          metadata_json: JSON.stringify({ type: "ambient", signal: "ambient", execution_kind: "read", file_path: "/tmp/project/src/a.ts", source_execution_id: "r-1" }),
+        },
+        part({
+          cardType: "result",
+          text: "const a = 1;",
+          source_execution_id: "r-1",
+          metadata: { execution_kind: "read", signal: "ambient", file_path: "/tmp/project/src/a.ts" },
+        }),
+        part({
+          cardType: "result",
+          text: "[VIEW_FILE] unmatched snapshot",
+          metadata: { execution_kind: "read", file_path: "/tmp/project/src/a.ts" },
+        }),
+        part({
+          cardType: "command",
+          command: 'rg -n "foo" ./src',
+          cwd: "/tmp/project",
+          source_execution_id: "rg-1",
+        }),
+        part({
+          cardType: "result",
+          text: "src/a.ts:1:foo",
+          source_execution_id: "rg-1",
+        }),
+        part({
+          cardType: "command",
+          command: "sed -n '10,30p' ./src/b.ts",
+          cwd: "/tmp/project",
+          source_execution_id: "sed-1",
+        }),
+        part({
+          cardType: "result",
+          text: "line 10..30",
+          source_execution_id: "sed-1",
+        }),
+        part({
+          cardType: "command",
+          command: "cat ./skills/demo/SKILL.md",
+          cwd: "/tmp/project",
+          source_execution_id: "skill-cat",
+        }),
+        part({
+          cardType: "command",
+          command: "sed -i 's/a/b/' ./src/a.ts",
+          cwd: "/tmp/project",
+          source_execution_id: "mutating-sed",
+        }),
+        part({
+          cardType: "command",
+          command: "rg foo src && pnpm test",
+          cwd: "/tmp/project",
+          source_execution_id: "chained-cmd",
+        }),
+      ],
+    }],
+  };
+
+  const rawCommands = captureRawCommands(session);
+  normalizeSessionPayload(session);
+  compactAmbientActions(session, { adapterPrefix: "antigravity", rawCommands });
+
+  const parts = session.turns[0].parts;
+  assert.equal(parts[0].content_card?.kind, "antigravity.ambient");
+  assert.equal(parts[0].content_card?.renderer, "compact_action");
+  assert.deepEqual(parts[0].text.split("\n"), [
+    "Read /tmp/project/src/a.ts#L1-20",
+    'Search "foo" @ /tmp/project/src',
+    "Read /tmp/project/src/b.ts#L10-30",
+  ]);
+  assert.equal(parts.length, 4);
+  assert.equal(parts[1].command, "/tmp/project/skills/demo/SKILL.md");
+  assert.equal(parts[2].content_card?.kind, "opencode.command");
+  assert.notEqual(parts[2].content_card?.semantic_role, "ambient");
+  assert.equal(parts[3].command, "rg foo src && pnpm test");
+});
+
+test("reprojectStoredSession converts legacy DB tool & shell parts while preserving SKILL.md and edits", () => {
+  const stored = {
+    id: "session-legacy-1",
+    adapter_id: "antigravity",
+    workspace_path: "/Users/util6/code-space/util6-agents",
+    turns: [
+      {
+        id: "turn-1",
+        turn_index: 0,
+        prompt: "/assetiweave-memory query",
+        response: "Found the matching sessions.",
+        parts: [
+          {
+            part_index: 0,
+            role: "user",
+            kind: "text",
+            text: "/assetiweave-memory query",
+          },
+          {
+            part_index: 1,
+            role: "tool",
+            kind: "tool",
+            text: "Tool: read_file\nPath: /Users/util6/.gemini/config/skills/assetiweave-memory/SKILL.md",
+            content_card: { schema_version: 1, kind: "antigravity.tool", renderer: "card" },
+          },
+          {
+            part_index: 2,
+            role: "tool",
+            kind: "tool",
+            text: "Tool: read_file\nPath: /tmp/project/src/a.ts\nStartLine: 1\nEndLine: 40",
+            content_card: { schema_version: 1, kind: "antigravity.tool", renderer: "card" },
+          },
+          {
+            part_index: 3,
+            role: "tool",
+            kind: "tool",
+            text: "Tool: grep_search\nQuery: reproject\nSearchPath: /tmp/project/src",
+            content_card: { schema_version: 1, kind: "antigravity.tool", renderer: "card" },
+          },
+          {
+            part_index: 4,
+            role: "assistant",
+            kind: "command",
+            command: "ls -la /Users/util6/code-space/util6-agents/cursor",
+            content_card: { schema_version: 1, kind: "antigravity.command", renderer: "command" },
+          },
+          {
+            part_index: 5,
+            role: "tool",
+            kind: "tool",
+            text: "Tool: write_file\nTargetFile: /tmp/project/src/out.py\nContent: import json",
+            content_card: { schema_version: 1, kind: "antigravity.tool", renderer: "card" },
+          },
+          {
+            part_index: 6,
+            role: "tool",
+            kind: "tool",
+            text: "Tool: edit_file\nTargetFile: /tmp/project/src/a.ts",
+            content_card: { schema_version: 1, kind: "antigravity.tool", renderer: "card" },
+          },
+          {
+            part_index: 7,
+            role: "assistant",
+            kind: "diff",
+            text: "/tmp/project/src/a.ts",
+            content_card: { schema_version: 1, kind: "antigravity.file_change", semantic_role: "file-change", renderer: "diff" },
+          },
+          {
+            part_index: 8,
+            role: "assistant",
+            kind: "text",
+            text: "Found the matching sessions.",
+          },
+        ],
+      },
+    ],
+  };
+
+  const reprojected = reprojectStoredSession(stored);
+  assert.equal(reprojected.turns[0].prompt, "/assetiweave-memory query");
+  assert.equal(reprojected.turns[0].response, "Found the matching sessions.");
+
+  const kinds = reprojected.turns[0].parts.map((p) => p.content_card?.kind || p.kind);
+  assert.deepEqual(kinds, [
+    "text",
+    "antigravity.tool", // SKILL.md untouched
+    "antigravity.ambient", // read_file + grep_search + ls -la collapsed into 1 part!
+    "antigravity.tool", // write_file kept (no matching file_change)
+    "antigravity.file_change", // edit_file dropped because duplicate of file_change
+    "text",
+  ]);
+  assert.deepEqual(reprojected.turns[0].parts[2].text.split("\n"), [
+    "Read /tmp/project/src/a.ts#L1-40",
+    'Search "reproject" @ /tmp/project/src',
+    "List /Users/util6/code-space/util6-agents/cursor",
+  ]);
 });
