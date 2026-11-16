@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render } from "@testing-library/react";
 import { createRef, type MutableRefObject } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RenderActivityProvider } from "./RenderActivityProvider";
@@ -15,36 +15,14 @@ const items = Array.from({ length: 30 }, (_, index) => ({
   label: `Item ${index + 1}`,
 }));
 
-function setupDom() {
+interface ResizeObserverStub {
+  callback: ResizeObserverCallback;
+  targets: Element[];
+}
+
+function stubRenderGlobals() {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(224);
-  const scrollElement = document.createElement("div");
-  Object.defineProperty(scrollElement, "clientHeight", {
-    configurable: true,
-    value: 240,
-  });
-  Object.defineProperty(scrollElement, "offsetHeight", {
-    configurable: true,
-    value: 240,
-  });
-  Object.defineProperty(scrollElement, "offsetWidth", {
-    configurable: true,
-    value: 800,
-  });
-  Object.defineProperty(scrollElement, "scrollTop", {
-    configurable: true,
-    value: 0,
-    writable: true,
-  });
-  vi.spyOn(scrollElement, "getBoundingClientRect").mockReturnValue({
-    top: 0,
-    bottom: 240,
-    height: 240,
-  } as DOMRect);
-  const scrollElementRef = {
-    current: scrollElement,
-  } as MutableRefObject<HTMLDivElement | null>;
-  document.body.append(scrollElement);
   const rafCallbacks = new Map<number, FrameRequestCallback>();
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
     const id = rafCallbacks.size + 1;
@@ -54,16 +32,25 @@ function setupDom() {
   vi.stubGlobal("cancelAnimationFrame", (id: number) =>
     rafCallbacks.delete(id),
   );
+  const resizeObservers: ResizeObserverStub[] = [];
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      constructor(private readonly callback: ResizeObserverCallback) {}
+      readonly stub: ResizeObserverStub;
+      constructor(callback: ResizeObserverCallback) {
+        this.stub = { callback, targets: [] };
+        resizeObservers.push(this.stub);
+      }
       observe(target: Element) {
-        this.callback(
+        this.stub.targets.push(target);
+        this.stub.callback(
           [
             {
               target,
-              contentRect: { width: 800, height: 240 },
+              contentRect: {
+                width: (target as HTMLElement).clientWidth,
+                height: (target as HTMLElement).clientHeight,
+              },
             } as ResizeObserverEntry,
           ],
           this as unknown as ResizeObserver,
@@ -79,7 +66,109 @@ function setupDom() {
       rafCallbacks.clear();
       callbacks.forEach((callback) => callback(16));
     });
-  return { flush, rafCallbacks, scrollElement, scrollElementRef };
+  const notifyResize = () =>
+    act(() => {
+      for (const stub of resizeObservers) {
+        stub.callback(
+          stub.targets.map(
+            (target) =>
+              ({
+                target,
+                contentRect: {
+                  width: (target as HTMLElement).clientWidth,
+                  height: (target as HTMLElement).clientHeight,
+                },
+              }) as ResizeObserverEntry,
+          ),
+          {} as ResizeObserver,
+        );
+      }
+    });
+  return { flush, notifyResize, rafCallbacks, resizeObservers };
+}
+
+function setupDom({ clientHeight = 240, clientWidth = 800 } = {}) {
+  const { flush, notifyResize, rafCallbacks, resizeObservers } =
+    stubRenderGlobals();
+  const scrollElement = document.createElement("div");
+  let measuredHeight = clientHeight;
+  Object.defineProperty(scrollElement, "clientHeight", {
+    configurable: true,
+    get: () => measuredHeight,
+  });
+  Object.defineProperty(scrollElement, "offsetHeight", {
+    configurable: true,
+    get: () => measuredHeight,
+  });
+  Object.defineProperty(scrollElement, "clientWidth", {
+    configurable: true,
+    value: clientWidth,
+  });
+  Object.defineProperty(scrollElement, "offsetWidth", {
+    configurable: true,
+    value: clientWidth,
+  });
+  Object.defineProperty(scrollElement, "scrollTop", {
+    configurable: true,
+    value: 0,
+    writable: true,
+  });
+  vi.spyOn(scrollElement, "getBoundingClientRect").mockReturnValue({
+    top: 0,
+    bottom: 240,
+    height: 240,
+  } as DOMRect);
+  const scrollElementRef = {
+    current: scrollElement,
+  } as MutableRefObject<HTMLDivElement | null>;
+  document.body.append(scrollElement);
+  const resize = (height: number) => {
+    measuredHeight = height;
+    notifyResize();
+  };
+  return {
+    flush,
+    notifyResize,
+    rafCallbacks,
+    resize,
+    resizeObservers,
+    scrollElement,
+    scrollElementRef,
+  };
+}
+
+function collectionElement({
+  collectionItems = items,
+  eagerKeys,
+  enabled = true,
+  minItems = 12,
+  pinnedKeys,
+  ref,
+  scrollElementRef,
+}: {
+  collectionItems?: typeof items;
+  eagerKeys?: ReadonlySet<string>;
+  enabled?: boolean;
+  minItems?: number;
+  pinnedKeys?: ReadonlySet<string>;
+  ref?: React.Ref<VirtualizedCollectionHandle>;
+  scrollElementRef: MutableRefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <RenderActivityProvider scrollElementRef={scrollElementRef}>
+      <VirtualizedCollection
+        eagerKeys={eagerKeys}
+        enabled={enabled}
+        getItemKey={(item) => item.id}
+        items={collectionItems}
+        minItems={minItems}
+        pinnedKeys={pinnedKeys}
+        ref={ref}
+        renderItem={(item) => <span>{item.label}</span>}
+        scrollElementRef={scrollElementRef}
+      />
+    </RenderActivityProvider>
+  );
 }
 
 function renderCollection({
@@ -99,22 +188,31 @@ function renderCollection({
 } = {}) {
   const { flush, rafCallbacks, scrollElement, scrollElementRef } = setupDom();
   render(
-    <RenderActivityProvider scrollElementRef={scrollElementRef}>
-      <VirtualizedCollection
-        eagerKeys={eagerKeys}
-        enabled={enabled}
-        getItemKey={(item) => item.id}
-        items={collectionItems}
-        minItems={minItems}
-        pinnedKeys={pinnedKeys}
-        ref={ref}
-        renderItem={(item) => <span>{item.label}</span>}
-        scrollElementRef={scrollElementRef}
-      />
-    </RenderActivityProvider>,
+    collectionElement({
+      collectionItems,
+      eagerKeys,
+      enabled,
+      minItems,
+      pinnedKeys,
+      ref,
+      scrollElementRef,
+    }),
   );
   flush();
   return { flush, rafCallbacks, scrollElement, scrollElementRef };
+}
+
+function virtualItemIndices(): number[] {
+  return [...document.querySelectorAll("[data-virtual-item-key]")].map(
+    (element) => Number(element.getAttribute("data-index")),
+  );
+}
+
+function collectionTotalHeight(): number {
+  const container = document.querySelector<HTMLElement>(
+    "[data-virtualized-collection]",
+  );
+  return Number.parseFloat(container?.style.height ?? "0");
 }
 
 afterEach(() => {
@@ -136,6 +234,96 @@ describe("VirtualizedCollection", () => {
       expect(Math.max(...indices)).toBeGreaterThan(12);
       expect(Math.min(...indices)).toBeGreaterThan(0);
     });
+  });
+
+  it("renders row shells when the scroll element ref binds after the first render", async () => {
+    const { flush, scrollElement } = setupDom();
+    const scrollElementRef = {
+      current: null,
+    } as MutableRefObject<HTMLDivElement | null>;
+    const handle = createRef<VirtualizedCollectionHandle>();
+    const { rerender } = render(
+      collectionElement({ ref: handle, scrollElementRef }),
+    );
+    flush();
+    expect(virtualItemIndices()).toHaveLength(0);
+
+    scrollElementRef.current = scrollElement;
+    rerender(collectionElement({ ref: handle, scrollElementRef }));
+    await act(async () => {});
+
+    expect(collectionTotalHeight()).toBeGreaterThan(0);
+    expect(virtualItemIndices().length).toBeGreaterThan(0);
+    expect(handle.current?.scrollToKey("item-30")).toBe(true);
+  });
+
+  it("renders row shells in the first frame when the parent ref binds after child layout effects", async () => {
+    stubRenderGlobals();
+    const scrollElementRef = {
+      current: null,
+    } as MutableRefObject<HTMLDivElement | null>;
+    const handle = createRef<VirtualizedCollectionHandle>();
+
+    function Harness() {
+      return (
+        <div
+          ref={(node) => {
+            scrollElementRef.current = node;
+            if (!node) return;
+            Object.defineProperty(node, "clientHeight", {
+              configurable: true,
+              value: 480,
+            });
+            Object.defineProperty(node, "offsetHeight", {
+              configurable: true,
+              value: 480,
+            });
+            Object.defineProperty(node, "clientWidth", {
+              configurable: true,
+              value: 800,
+            });
+            node.scrollTop = 4000;
+          }}
+        >
+          <RenderActivityProvider scrollElementRef={scrollElementRef}>
+            <VirtualizedCollection
+              getItemKey={(item) => item.id}
+              items={items}
+              ref={handle}
+              renderItem={(item) => <span>{item.label}</span>}
+              scrollElementRef={scrollElementRef}
+            />
+          </RenderActivityProvider>
+        </div>
+      );
+    }
+
+    render(<Harness />);
+    await act(async () => {});
+
+    expect(collectionTotalHeight()).toBeGreaterThan(0);
+    const indices = virtualItemIndices();
+    expect(indices.length).toBeGreaterThan(0);
+    // The retained scroll offset is restored, so the viewport is not at the top.
+    expect(Math.max(...indices)).toBeGreaterThan(12);
+    expect(handle.current?.scrollToKey("item-1", { align: "start" })).toBe(
+      true,
+    );
+  });
+
+  it("restores row shells when the viewport recovers from zero height", () => {
+    const { flush, resize, scrollElementRef } = setupDom({
+      clientHeight: 0,
+    });
+    render(collectionElement({ scrollElementRef }));
+    flush();
+    expect(collectionTotalHeight()).toBeGreaterThan(0);
+    expect(virtualItemIndices()).toHaveLength(0);
+
+    resize(480);
+
+    expect(collectionTotalHeight()).toBeGreaterThan(0);
+    expect(virtualItemIndices().length).toBeGreaterThan(0);
   });
 
   it("uses coarse overscan values for each scroll phase", () => {
