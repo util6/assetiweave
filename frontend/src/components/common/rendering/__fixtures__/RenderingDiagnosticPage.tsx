@@ -11,9 +11,11 @@ import {
   fallbackAssets,
 } from "../../../../mock/catalog";
 import {
+  AppSessionBrowser,
   ConversationShell,
   ConversationContentSearchResults,
   SessionQuestionWorkspace,
+  type ConversationAppSessionGroup,
 } from "../../../../pages/conversations/ConversationsPage";
 import { DEFAULT_CONVERSATION_CONTENT_VISIBILITY } from "../../../conversations/ConversationContentCards";
 import { DEFAULT_CONVERSATION_CONTENT_CARD_COLORS } from "../../../../store/settings/settingsSchema";
@@ -22,7 +24,10 @@ import { RenderSafeScrollSurface } from "../RenderSafeScrollSurface";
 import { createConversationRenderingStressFixture } from "./conversationRenderingStressFixture";
 import { readScrollCoverage, sampleScrollCoverage } from "./scrollCoverage";
 import { applyThemeToElement } from "../../../../theme/cssVars";
-import type { ConversationSessionDetail } from "../../../../types";
+import type {
+  ConversationSessionDetail,
+  ConversationSessionListItem,
+} from "../../../../types";
 import "../../../../styles/index.css";
 
 const question = createConversationRenderingStressFixture();
@@ -40,7 +45,49 @@ const session: ConversationSessionDetail = {
   },
   questions: [question],
 };
+const BROWSER_SESSION_COUNT = 130;
+const BROWSER_PROJECT_KEY = "/fixture/browser-project";
 const noop = () => {};
+
+function createBrowserSession(index: number): ConversationSessionListItem {
+  return {
+    adapter_id: "codex",
+    created_at: "2026-08-16T00:00:00.000Z",
+    external_id: `browser-${index + 1}`,
+    id: `browser-session-${index + 1}`,
+    imported_at: "2026-08-16T00:00:00.000Z",
+    missing: false,
+    project_path: BROWSER_PROJECT_KEY,
+    question_count: 1,
+    source_id: "fixture",
+    title: `Browser session ${String(index + 1).padStart(3, "0")}`,
+    turn_count: 1,
+    updated_at: "2026-08-16T00:00:00.000Z",
+  };
+}
+
+function createBrowserGroups(): ConversationAppSessionGroup[] {
+  const sessions = Array.from({ length: BROWSER_SESSION_COUNT }, (_, index) =>
+    createBrowserSession(index),
+  );
+  return [
+    {
+      app: { appKind: "codex", id: "codex", name: "Codex" },
+      projectGroups: [
+        {
+          key: BROWSER_PROJECT_KEY,
+          projectPath: BROWSER_PROJECT_KEY,
+          sessions,
+          questionCount: sessions.length,
+          turnCount: sessions.length,
+        },
+      ],
+      sessions,
+      questionCount: sessions.length,
+      turnCount: sessions.length,
+    },
+  ];
+}
 
 function DiagnosticPage() {
   const { t } = useI18n();
@@ -48,8 +95,13 @@ function DiagnosticPage() {
   const [count, setCount] = useState(130);
   const [grid, setGrid] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [browserDetailOpen, setBrowserDetailOpen] = useState(false);
+  const [browserAppId, setBrowserAppId] = useState("codex");
+  const [browserProjectKey, setBrowserProjectKey] =
+    useState(BROWSER_PROJECT_KEY);
   const [report, setReport] = useState("");
   const [running, setRunning] = useState(false);
+  const browserGroups = useMemo(createBrowserGroups, []);
   const assets = useMemo(
     () =>
       Array.from({ length: count }, (_, index) => ({
@@ -61,12 +113,25 @@ function DiagnosticPage() {
       })),
     [count],
   );
-  const surface = () =>
-    [
+  const surface = () => {
+    const surfaces = [
       ...document.querySelectorAll<HTMLElement>(
         "[data-diagnostic-content] [data-render-safe-scroll-surface]",
       ),
-    ].slice(-1)[0];
+    ];
+    if (mode === "browser") {
+      // 只有会话列挂了虚拟化集合；应用/项目列是普通列面板。
+      return surfaces
+        .filter(
+          (element) => element.closest("[data-diagnostic-browse]") !== null,
+        )
+        .filter((element) =>
+          element.querySelector("[data-virtualized-collection]"),
+        )
+        .slice(-1)[0];
+    }
+    return surfaces.slice(-1)[0];
+  };
   async function run() {
     const target = surface();
     if (!target) return;
@@ -136,10 +201,41 @@ function DiagnosticPage() {
       }}
     />
   );
+  const workspace = (
+    <SessionQuestionWorkspace
+      session={session}
+      question={question}
+      questions={[question]}
+      selectedQuestionId={question.question.id}
+      selectedQuestionIds={new Set()}
+      onQuestionSelect={noop}
+      onQuestionSelectionChange={noop}
+      onExport={noop}
+      onPickOutputRoot={async () => null}
+      outputRoot=""
+      setOutputRoot={noop}
+      t={t}
+      visibility={DEFAULT_CONVERSATION_CONTENT_VISIBILITY}
+      contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
+    />
+  );
   const controls = (
     <div className="flex flex-wrap gap-3 text-body-sm">
       <button onClick={() => setMode("conversation")}>Conversation</button>
       <button onClick={() => setMode("search")}>Search 50</button>
+      <button
+        onClick={() => {
+          setMode("browser");
+          setBrowserDetailOpen(false);
+        }}
+      >
+        Session browser 130
+      </button>
+      {mode === "browser" ? (
+        <button onClick={() => setBrowserDetailOpen((value) => !value)}>
+          {browserDetailOpen ? "Back to browser" : "Open session detail"}
+        </button>
+      ) : null}
       <button
         onClick={() => {
           setMode("assets");
@@ -180,7 +276,11 @@ function DiagnosticPage() {
         Measure
       </button>
       <button
-        disabled={running || (mode === "assets" && grid)}
+        disabled={
+          running ||
+          (mode === "assets" && grid) ||
+          (mode === "browser" && browserDetailOpen)
+        }
         onClick={() => void run()}
       >
         Run coverage
@@ -216,23 +316,40 @@ function DiagnosticPage() {
             onManualOpen={noop}
             headerActions={controls}
           >
+            {mode === "browser" ? (
+              <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1">
+                {/* 与 ConversationsPage 的保活结构一致：隐藏态只切 visibility，
+                    布局盒与滚动偏移都保留，避免虚拟测量在返回后归零。 */}
+                <div
+                  aria-hidden={browserDetailOpen}
+                  className="col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col"
+                  data-diagnostic-browse=""
+                  inert={browserDetailOpen}
+                  style={
+                    browserDetailOpen ? { visibility: "hidden" } : undefined
+                  }
+                >
+                  <AppSessionBrowser
+                    active={!browserDetailOpen}
+                    appShortcuts={fallbackAppShortcuts}
+                    groups={browserGroups}
+                    onAppSelect={setBrowserAppId}
+                    onProjectSelect={setBrowserProjectKey}
+                    onSessionOpen={() => setBrowserDetailOpen(true)}
+                    selectedAppId={browserAppId}
+                    selectedProjectKey={browserProjectKey}
+                    t={t}
+                  />
+                </div>
+                {browserDetailOpen ? (
+                  <div className="col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col">
+                    {workspace}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {mode === "search" ? searchResults : null}
-            <SessionQuestionWorkspace
-              session={session}
-              question={question}
-              questions={[question]}
-              selectedQuestionId={question.question.id}
-              selectedQuestionIds={new Set()}
-              onQuestionSelect={noop}
-              onQuestionSelectionChange={noop}
-              onExport={noop}
-              onPickOutputRoot={async () => null}
-              outputRoot=""
-              setOutputRoot={noop}
-              t={t}
-              visibility={DEFAULT_CONVERSATION_CONTENT_VISIBILITY}
-              contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
-            />
+            {mode !== "browser" ? workspace : null}
           </ConversationShell>
         ) : (
           <section className="app-bounded-route flex flex-col gap-4 p-6">
