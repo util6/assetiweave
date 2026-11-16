@@ -160,6 +160,9 @@ get_model_pricing_catalog
 get_model_pricing_sync_task
 set_model_pricing_exchange_rate
 save_model_price_entry
+rebind_model_pricing_alias
+set_model_pricing_lock
+set_model_pricing_ignored
 audit_conversation_data
 repair_conversation_data
 get_conversation_data_maintenance_task

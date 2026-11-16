@@ -222,3 +222,40 @@ pub(crate) async fn save_model_price_entry(
         .await
         .map_err(Into::into)
 }
+
+#[tauri::command]
+pub(crate) async fn rebind_model_pricing_alias(
+    state: State<'_, AppState>,
+    raw_model: String,
+    target_model_id: Option<String>,
+) -> RuntimeAppResult<ModelPricingStatusDto> {
+    AppService::from_runtime(&state.runtime)
+        .rebind_model_pricing_alias(raw_model, target_model_id)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) async fn set_model_pricing_lock(
+    state: State<'_, AppState>,
+    model_id: String,
+    locked: bool,
+) -> RuntimeAppResult<ModelPricingStatusDto> {
+    AppService::from_runtime(&state.runtime)
+        .set_model_pricing_lock(model_id, locked)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) async fn set_model_pricing_ignored(
+    state: State<'_, AppState>,
+    raw_model: String,
+    provider: Option<String>,
+    ignored: bool,
+) -> RuntimeAppResult<ModelPricingStatusDto> {
+    AppService::from_runtime(&state.runtime)
+        .set_model_pricing_ignored(raw_model, provider, ignored)
+        .await
+        .map_err(Into::into)
+}
