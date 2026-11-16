@@ -1011,3 +1011,246 @@ async fn test_ignore_unignore_model_pricing_and_rebind_target_ids() {
     drop(database);
     std::fs::remove_file(path).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_migration_purges_display_and_wildcard_rows_and_merges_aliases() {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("connect memory sqlite");
+
+    for migration in [
+        include_str!("../../../migrations/20261005000001_model_pricing_catalog.sql"),
+        include_str!("../../../migrations/20261116000001_model_pricing_lock_and_aliases.sql"),
+    ] {
+        sqlx::raw_sql(migration)
+            .execute(&pool)
+            .await
+            .expect("apply pre-migration schema");
+    }
+
+    let seed_rows = [
+        (
+            "claude-3-5-sonnet",
+            "litellm",
+            0,
+            3.0,
+            15.0,
+            r#"["existing-alias"]"#,
+        ),
+        (
+            "claude-3-5-sonnet-20241022",
+            "litellm",
+            0,
+            1.0,
+            2.0,
+            r#"["legacy-alias"]"#,
+        ),
+        ("claude-3-5*", "litellm", 0, 1.0, 2.0, "[]"),
+        ("Claude 3.5 Sonnet (latest)", "litellm", 0, 1.0, 2.0, "[]"),
+        (
+            "__override__::claude-3-5-sonnet",
+            "user_override",
+            1,
+            9.0,
+            9.0,
+            "[]",
+        ),
+        (
+            "deepseek-chat",
+            "litellm",
+            1,
+            5.0,
+            9.0,
+            r#"["locked-alias"]"#,
+        ),
+    ];
+    for (model_id, channel, locked, input, output, aliases) in seed_rows {
+        sqlx::query(
+            r#"
+            INSERT INTO model_pricing_catalog (
+                tenant_id, model_id, provider, currency,
+                input_per_million, cache_read_per_million, cache_write_per_million,
+                reasoning_per_million, output_per_million,
+                raw_currency, raw_input_per_million, raw_output_per_million,
+                source_channel, price_locked, usage_aliases, created_at, updated_at
+            ) VALUES ('t1', ?, 'anthropic', 'CNY', ?, 0.0, 0.0, 0.0, ?, 'USD', ?, ?, ?, ?, ?, 'now', 'now')
+            "#,
+        )
+        .bind(model_id)
+        .bind(input)
+        .bind(output)
+        .bind(input)
+        .bind(output)
+        .bind(channel)
+        .bind(locked)
+        .bind(aliases)
+        .execute(&pool)
+        .await
+        .expect("seed pricing row");
+    }
+
+    let migration_sql =
+        include_str!("../../../migrations/20261116000002_purge_dirty_pricing_catalog_rows.sql");
+    for _ in 0..2 {
+        sqlx::raw_sql(migration_sql)
+            .execute(&pool)
+            .await
+            .expect("apply purge migration twice (idempotent)");
+    }
+
+    let rows = sqlx::query(
+        "SELECT model_id, source_channel, price_locked, usage_aliases FROM model_pricing_catalog ORDER BY model_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("query migrated rows");
+
+    let model_ids: Vec<String> = rows
+        .iter()
+        .map(|r| r.get::<String, _>("model_id"))
+        .collect();
+    assert_eq!(
+        model_ids,
+        vec![
+            "__override__::claude-3-5-sonnet".to_string(),
+            "claude-3-5-sonnet".to_string(),
+            "deepseek-chat".to_string(),
+        ],
+        "display-name, wildcard and dated variant rows must be purged; override and locked rows kept"
+    );
+
+    let base = rows
+        .iter()
+        .find(|r| r.get::<String, _>("model_id") == "claude-3-5-sonnet")
+        .expect("canonical base row");
+    let aliases: Vec<String> =
+        serde_json::from_str(&base.get::<String, _>("usage_aliases")).expect("aliases json");
+    assert!(
+        aliases.iter().any(|a| a == "existing-alias"),
+        "base row keeps its own aliases"
+    );
+    assert!(
+        aliases.iter().any(|a| a == "legacy-alias"),
+        "removed display row aliases must be migrated onto the base row"
+    );
+
+    let locked = rows
+        .iter()
+        .find(|r| r.get::<String, _>("model_id") == "deepseek-chat")
+        .expect("locked row");
+    assert_eq!(locked.get::<i64, _>("price_locked"), 1);
+    assert_eq!(
+        locked.get::<String, _>("usage_aliases"),
+        r#"["locked-alias"]"#
+    );
+
+    let override_row = rows
+        .iter()
+        .find(|r| r.get::<String, _>("model_id") == "__override__::claude-3-5-sonnet")
+        .expect("override row");
+    assert_eq!(
+        override_row.get::<String, _>("source_channel"),
+        "user_override"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_sync_prunes_superseded_display_rows_so_resolve_model_hits_new_price() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-pricing-sync-prune-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+    let tenant_id = "test-tenant";
+
+    sqlx::query(
+        r#"
+        INSERT INTO model_pricing_catalog (
+            tenant_id, model_id, provider, currency,
+            input_per_million, cache_read_per_million, cache_write_per_million,
+            reasoning_per_million, output_per_million,
+            raw_currency, raw_input_per_million, raw_output_per_million,
+            source_channel, price_locked, usage_aliases, created_at, updated_at
+        ) VALUES
+            (?, 'claude-3-5-sonnet-20241022', 'anthropic', 'CNY', 1.0, 0.0, 0.0, 0.0, 2.0, 'USD', 0.1, 0.2, 'litellm', 0, '["legacy-sonnet-alias"]', 'now', 'now'),
+            (?, 'claude-3-5*', 'anthropic', 'CNY', 1.0, 0.0, 0.0, 0.0, 2.0, 'USD', 0.1, 0.2, 'litellm', 0, '[]', 'now', 'now'),
+            (?, 'gpt-4o-mini', 'openai', 'CNY', 0.5, 0.0, 0.0, 0.0, 1.0, 'USD', 0.1, 0.2, 'litellm', 0, '[]', 'now', 'now')
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(tenant_id)
+    .bind(tenant_id)
+    .execute(pool)
+    .await
+    .expect("seed legacy display rows");
+
+    let synced = vec![
+        ModelPriceEntry {
+            provider: "anthropic".to_string(),
+            model_patterns: vec!["claude-3-5-sonnet".to_string()],
+            currency: "CNY".to_string(),
+            input_per_million: 3.0,
+            output_per_million: 15.0,
+            ..Default::default()
+        },
+        ModelPriceEntry {
+            provider: "openai".to_string(),
+            model_patterns: vec!["gpt-4o".to_string()],
+            currency: "CNY".to_string(),
+            input_per_million: 2.0,
+            output_per_million: 8.0,
+            ..Default::default()
+        },
+    ];
+    upsert_pricing_catalog_entries_sqlx(pool, tenant_id, &synced, "litellm")
+        .await
+        .expect("sync remote catalog");
+
+    let loaded = load_pricing_catalog_entries_sqlx(pool, tenant_id)
+        .await
+        .expect("load catalog");
+    assert!(
+        !loaded
+            .iter()
+            .any(|e| e.model_patterns == vec!["claude-3-5-sonnet-20241022"]),
+        "superseded display row must be pruned on successful remote sync"
+    );
+    assert!(
+        loaded
+            .iter()
+            .any(|e| e.model_patterns == vec!["gpt-4o-mini"]),
+        "distinct sibling model must survive base-model sync"
+    );
+
+    let base = loaded
+        .iter()
+        .find(|e| e.model_patterns == vec!["claude-3-5-sonnet"])
+        .expect("canonical base row");
+    assert!((base.input_per_million - 3.0).abs() < 1e-9);
+    assert_eq!(base.usage_aliases, vec!["legacy-sonnet-alias"]);
+
+    let catalog = PriceCatalog::new("v1".into(), "now".into(), 7.25, loaded);
+    let resolved_base = catalog
+        .resolve_model("anthropic", "claude-3-5-sonnet")
+        .expect("resolve canonical base");
+    assert!((resolved_base.entry.input_per_million - 3.0).abs() < 1e-9);
+    assert_eq!(resolved_base.entry.source_channel, "litellm");
+
+    let resolved_dated = catalog
+        .resolve_model("anthropic", "claude-3-5-sonnet-20241022")
+        .expect("resolve dated model name");
+    assert!(
+        (resolved_dated.entry.input_per_million - 3.0).abs() < 1e-9,
+        "dated model must now resolve to the freshly synced base price, not the stale display row"
+    );
+
+    drop(database);
+    std::fs::remove_file(path).ok();
+}
