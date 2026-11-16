@@ -374,13 +374,13 @@ export async function scanConversationUsage(
       sourceDiagnostics: [],
     };
   }
-  const snapshot = await invoke<{ id: string }>("scan_conversation_usage", {
+  const task = await invoke<{ id: string }>("scan_conversation_usage", {
     options: options ?? {},
   });
   const status = await getConversationUsageScanStatus();
   return {
     ...status,
-    activeScanTaskId: snapshot?.id || status.activeScanTaskId,
+    activeScanTaskId: task?.id || status.activeScanTaskId,
   };
 }
 
