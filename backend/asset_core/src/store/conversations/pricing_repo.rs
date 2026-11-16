@@ -130,6 +130,7 @@ pub async fn load_pricing_catalog_entries_sqlx(
             raw_currency: r.get("raw_currency"),
             raw_input_per_million: r.get("raw_input_per_million"),
             raw_output_per_million: r.get("raw_output_per_million"),
+            ..Default::default()
         })
         .collect())
 }

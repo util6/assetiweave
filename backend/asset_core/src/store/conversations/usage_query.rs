@@ -516,6 +516,7 @@ pub async fn query_usage_dashboard_sqlx(
             let unit_price = catalog
                 .find_model(&agg.provider, &model)
                 .map(|entry| (entry.input_per_million * 100.0).round() / 100.0);
+            let raw_models = vec![model.clone()];
             UsageModelBreakdownDto {
                 model,
                 provider: agg.provider,
@@ -533,6 +534,8 @@ pub async fn query_usage_dashboard_sqlx(
                 currency: agg.currency,
                 cost_basis: agg.cost_basis,
                 unit_price_per_million: unit_price,
+                raw_models,
+                matched_model_id: None,
             }
         })
         .collect::<Vec<_>>();

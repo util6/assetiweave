@@ -37,6 +37,7 @@ async fn test_pricing_catalog_persistence_and_metadata() {
         raw_currency: Some("USD".to_string()),
         raw_input_per_million: Some(3.0),
         raw_output_per_million: Some(15.0),
+        ..Default::default()
     };
 
     let count = upsert_pricing_catalog_entries_sqlx(pool, tenant_id, &[entry], "litellm")
@@ -318,4 +319,121 @@ async fn test_recalculate_usage_costs_batch_multi_model() {
 
     drop(database);
     std::fs::remove_file(path).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_migration_adds_lock_and_aliases_and_cleans_dirty_rows() {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-pricing-migration-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+
+    // 1. Verify full Database::open_initialized_async applies the migration cleanly
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open migrated database");
+    let cols = sqlx::query("PRAGMA table_info(model_pricing_catalog)")
+        .fetch_all(database.pool())
+        .await
+        .expect("pragma table_info");
+    let col_names: Vec<String> = cols.iter().map(|r| r.get::<String, _>("name")).collect();
+    assert!(col_names.contains(&"price_locked".to_string()));
+    assert!(col_names.contains(&"usage_aliases".to_string()));
+    drop(database);
+    std::fs::remove_file(&path).ok();
+
+    // 2. Verify data backfill & dirty-row cleanup on pre-migration schema
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("connect memory sqlite");
+
+    let initial_sql = include_str!("../../../migrations/20261005000001_model_pricing_catalog.sql");
+    sqlx::raw_sql(initial_sql)
+        .execute(&pool)
+        .await
+        .expect("apply initial pricing table migration");
+
+    let seed_rows = [
+        ("user_override", "gpt-4o"),
+        ("user_override", "{custom-override}"),
+        ("litellm", "claude-3-7-sonnet"),
+        ("litellm", r#"dirty"quote"#),
+        ("litellm", "dirty'single"),
+        ("litellm", "dirty{brace"),
+        ("litellm", "dirty}brace"),
+        ("litellm", "dirty\nnewline"),
+        ("litellm", "dirty\rcr"),
+    ];
+    for (channel, model_id) in seed_rows {
+        sqlx::query(
+            r#"
+            INSERT INTO model_pricing_catalog (
+                tenant_id, model_id, provider, currency,
+                input_per_million, cache_read_per_million, cache_write_per_million,
+                reasoning_per_million, output_per_million,
+                raw_currency, raw_input_per_million, raw_output_per_million,
+                source_channel, created_at, updated_at
+            ) VALUES ('t1', ?, 'openai', 'CNY', 1.0, 0.0, 0.0, 0.0, 2.0, 'USD', 0.1, 0.2, ?, 'now', 'now')
+            "#,
+        )
+        .bind(model_id)
+        .bind(channel)
+        .execute(&pool)
+        .await
+        .expect("seed row");
+    }
+
+    let migration_sql =
+        include_str!("../../../migrations/20261116000001_model_pricing_lock_and_aliases.sql");
+    sqlx::raw_sql(migration_sql)
+        .execute(&pool)
+        .await
+        .expect("apply lock & aliases migration");
+
+    let rows = sqlx::query(
+        "SELECT model_id, source_channel, price_locked, usage_aliases FROM model_pricing_catalog ORDER BY model_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("query migrated rows");
+
+    let actual: Vec<(String, String, i64, String)> = rows
+        .into_iter()
+        .map(|r| {
+            (
+                r.get("model_id"),
+                r.get("source_channel"),
+                r.get("price_locked"),
+                r.get("usage_aliases"),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (
+                "claude-3-7-sonnet".to_string(),
+                "litellm".to_string(),
+                0,
+                "[]".to_string()
+            ),
+            (
+                "gpt-4o".to_string(),
+                "user_override".to_string(),
+                1,
+                "[]".to_string()
+            ),
+            (
+                "{custom-override}".to_string(),
+                "user_override".to_string(),
+                1,
+                "[]".to_string()
+            ),
+        ]
+    );
 }

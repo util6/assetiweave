@@ -36,6 +36,10 @@ pub struct UsageModelBreakdownDto {
     pub cost_basis: String,
     #[serde(default)]
     pub unit_price_per_million: Option<f64>,
+    #[serde(default)]
+    pub raw_models: Vec<String>,
+    #[serde(default)]
+    pub matched_model_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -75,6 +79,18 @@ pub struct ModelPriceEntryDto {
     pub raw_currency: Option<String>,
     pub raw_input_per_million: Option<f64>,
     pub raw_output_per_million: Option<f64>,
+    #[serde(default)]
+    pub raw_model: String,
+    #[serde(default)]
+    pub matched_model_id: Option<String>,
+    #[serde(default)]
+    pub match_source: String,
+    #[serde(default)]
+    pub price_locked: bool,
+    #[serde(default)]
+    pub is_ignored: bool,
+    #[serde(default)]
+    pub is_manual_rebind: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
