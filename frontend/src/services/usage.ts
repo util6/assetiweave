@@ -375,10 +375,8 @@ export async function scanConversationUsage(
     };
   }
   const snapshot = await invoke<{ id: string }>("scan_conversation_usage", {
-    {
-      options: options ?? {},
-    },
-  );
+    options: options ?? {},
+  });
   const status = await getConversationUsageScanStatus();
   return {
     ...status,

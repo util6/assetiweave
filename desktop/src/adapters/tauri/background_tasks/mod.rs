@@ -225,7 +225,6 @@ impl BackgroundTaskRegistry {
             task_id,
             None,
             None,
-            None,
             dedup_key,
             conflict_keys,
             projection,

@@ -69,9 +69,11 @@ pub(crate) fn get_model_pricing_sync_task(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Option<crate::backend::application::system::TaskView>> {
     let tenant_id = state.runtime.context().tenant.id.clone();
-    Ok(state
+    let task_runtime = state
         .background_tasks
         .task_runtime()
+        .ok_or_else(|| AppError::Conflict("TaskRuntime 未初始化".to_string()))?;
+    Ok(task_runtime
         .list_for_tenant(
             &tenant_id,
             crate::backend::infrastructure::tasks::TaskFilter {
