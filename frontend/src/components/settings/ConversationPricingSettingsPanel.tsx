@@ -169,17 +169,15 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
     }
   };
 
-  // Save updated model entry (auto-locks base model)
-  const handleSaveModel = async (updated: ModelPriceEntry) => {
+  const runModelMutation = async (
+    mutation: () => Promise<unknown>,
+    successNotice: string,
+  ) => {
     setSavingModel(true);
     setModelNotice(null);
     try {
-      await saveModelPriceEntry(updated);
-      const targetName =
-        updated.matchedModelId || updated.rawModel || updated.modelPatterns[0];
-      setModelNotice(
-        `模型【${targetName}】单价已保存并锁定（🔒），已重算历史用量`,
-      );
+      await mutation();
+      setModelNotice(successNotice);
       const [cat, st] = await Promise.all([
         getModelPricingCatalog(),
         getModelPricingStatus(),
@@ -192,57 +190,37 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
     } finally {
       setSavingModel(false);
     }
+  };
+
+  // Save updated model entry (auto-locks base model)
+  const handleSaveModel = async (updated: ModelPriceEntry) => {
+    const targetName =
+      updated.matchedModelId || updated.rawModel || updated.modelPatterns[0];
+    await runModelMutation(
+      () => saveModelPriceEntry(updated),
+      `模型【${targetName}】单价已保存并锁定（🔒），已重算历史用量`,
+    );
   };
 
   const handleRebindModel = async (
     rawModel: string,
     targetModelId: string | null,
   ) => {
-    setSavingModel(true);
-    setModelNotice(null);
-    try {
-      await rebindModelPricingAlias(rawModel, targetModelId);
-      setModelNotice(
-        targetModelId
-          ? `已将【${rawModel}】手动改绑至底座模型【${targetModelId}】，并重算历史用量`
-          : `已解除【${rawModel}】的手动改绑，恢复自动匹配`,
-      );
-      const [cat, st] = await Promise.all([
-        getModelPricingCatalog(),
-        getModelPricingStatus(),
-      ]);
-      setCatalog(cat);
-      setStatus(st);
-    } catch (err) {
-      setModelNotice(err instanceof Error ? err.message : String(err));
-      throw err;
-    } finally {
-      setSavingModel(false);
-    }
+    await runModelMutation(
+      () => rebindModelPricingAlias(rawModel, targetModelId),
+      targetModelId
+        ? `已将【${rawModel}】手动改绑至底座模型【${targetModelId}】，并重算历史用量`
+        : `已解除【${rawModel}】的手动改绑，恢复自动匹配`,
+    );
   };
 
   const handleSetPriceLock = async (modelId: string, locked: boolean) => {
-    setSavingModel(true);
-    setModelNotice(null);
-    try {
-      await setModelPricingLock(modelId, locked);
-      setModelNotice(
-        locked
-          ? `已锁定底座模型【${modelId}】单价`
-          : `已解锁底座模型【${modelId}】，立即回落全网参考单价并重算历史用量`,
-      );
-      const [cat, st] = await Promise.all([
-        getModelPricingCatalog(),
-        getModelPricingStatus(),
-      ]);
-      setCatalog(cat);
-      setStatus(st);
-    } catch (err) {
-      setModelNotice(err instanceof Error ? err.message : String(err));
-      throw err;
-    } finally {
-      setSavingModel(false);
-    }
+    await runModelMutation(
+      () => setModelPricingLock(modelId, locked),
+      locked
+        ? `已锁定底座模型【${modelId}】单价`
+        : `已解锁底座模型【${modelId}】，立即回落全网参考单价并重算历史用量`,
+    );
   };
 
   const handleSetModelIgnored = async (
@@ -250,27 +228,12 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
     provider: string | null,
     ignored: boolean,
   ) => {
-    setSavingModel(true);
-    setModelNotice(null);
-    try {
-      await setModelPricingIgnored(rawModel, provider, ignored);
-      setModelNotice(
-        ignored
-          ? `已将【${rawModel}】标记为忽略（不计费），已重算历史用量`
-          : `已恢复【${rawModel}】参与计价匹配`,
-      );
-      const [cat, st] = await Promise.all([
-        getModelPricingCatalog(),
-        getModelPricingStatus(),
-      ]);
-      setCatalog(cat);
-      setStatus(st);
-    } catch (err) {
-      setModelNotice(err instanceof Error ? err.message : String(err));
-      throw err;
-    } finally {
-      setSavingModel(false);
-    }
+    await runModelMutation(
+      () => setModelPricingIgnored(rawModel, provider, ignored),
+      ignored
+        ? `已将【${rawModel}】标记为忽略（不计费），已重算历史用量`
+        : `已恢复【${rawModel}】参与计价匹配`,
+    );
   };
 
   if (loading && !catalog) {
