@@ -78,6 +78,11 @@ import {
   type ConversationTranslationTaskController,
   type TranslationAvailabilityStatus,
 } from "./useConversationContentController";
+import {
+  isAmbientActionBlock,
+  parseCompactActionItems,
+  type ParsedCompactAction,
+} from "./compactActionParser";
 
 export type {
   ConversationTranslationTaskController,
@@ -268,83 +273,8 @@ function conversationContentNodeToBlock(
   };
 }
 
-interface ParsedCompactAction {
-  action: string;
-  target: string;
-  icon: "search" | "read" | "tool";
-  hasDetails: boolean;
-  details?: string;
-}
-
-function parseCompactActionText(
-  text: string,
-  block: ConversationContentBlock,
-): ParsedCompactAction {
-  const trimmed = text.trim();
-  const colonMatch = trimmed.match(/^([a-zA-Z0-9_-]+):\s*(.+)$/s);
-  if (colonMatch) {
-    const act = colonMatch[1];
-    const rest = colonMatch[2].trim();
-    const isSearch = /grep|search|find/i.test(act);
-    const isRead = /view|read|cat|head|tail/i.test(act);
-    return {
-      action: act,
-      target: rest.split("\n", 1)[0],
-      icon: isSearch ? "search" : isRead ? "read" : "tool",
-      hasDetails: rest.includes("\n"),
-      details: rest.includes("\n")
-        ? rest.slice(rest.indexOf("\n") + 1).trim()
-        : undefined,
-    };
-  }
-
-  if (trimmed.startsWith("Tool: ")) {
-    const lines = trimmed.split("\n").filter(Boolean);
-    const firstLine = lines[0].replace(/^Tool:\s*/, "").trim();
-    const details = lines.slice(1).join("\n").trim();
-    const isSearch = /grep|search|find/i.test(firstLine);
-    const isRead = /view|read|cat|head|tail/i.test(firstLine);
-    const pathMatch = details.match(
-      /(?:AbsolutePath|path|TargetFile):\s*(.+)$/m,
-    );
-    const target = pathMatch
-      ? pathMatch[1].trim()
-      : block.filePath || firstLine;
-    return {
-      action: block.toolName || firstLine,
-      target,
-      icon: isSearch ? "search" : isRead ? "read" : "tool",
-      hasDetails: details.length > 0,
-      details: details.length > 0 ? details : undefined,
-    };
-  }
-
-  const isSearch =
-    /grep|search|find|rg/i.test(trimmed) || /search/i.test(block.kind || "");
-  return {
-    action: block.commandLabel || (isSearch ? "search" : "read"),
-    target: block.filePath || trimmed.split("\n", 1)[0],
-    icon: isSearch ? "search" : "read",
-    hasDetails: trimmed.includes("\n"),
-    details: trimmed.includes("\n")
-      ? trimmed.slice(trimmed.indexOf("\n") + 1).trim()
-      : undefined,
-  };
-}
-
 function isAmbientBlock(block: ConversationContentBlock): boolean {
-  if (block.renderer === "compact_action") return true;
-  if (block.signal === "ambient") return true;
-  const kind = (block.kind || "").toLowerCase();
-  const cmd = (block.text || "").toLowerCase();
-  if (kind.includes("read") || kind.includes("search")) return true;
-  if (
-    /^(?:view_file|read_file|grep_search|list_directory|read_url_content):/i.test(
-      cmd,
-    )
-  )
-    return true;
-  return false;
+  return isAmbientActionBlock(block);
 }
 
 function isAmbientNode(node: ConversationDisplayNode): boolean {
@@ -358,95 +288,187 @@ function isAmbientNode(node: ConversationDisplayNode): boolean {
   );
 }
 
+function isBlockHighlighted(
+  block: ConversationContentBlock,
+  activeBlockId?: string | null,
+): boolean {
+  if (!activeBlockId) return false;
+  return (
+    activeBlockId === block.id ||
+    block.legacyAnchorIds?.includes(activeBlockId) === true
+  );
+}
+
+function isDisplayNodeHighlighted(
+  node: ConversationDisplayNode,
+  activeBlockId?: string | null,
+): boolean {
+  if (!activeBlockId) return false;
+  if (node.type === "card") {
+    return isBlockHighlighted(node.block, activeBlockId);
+  }
+  return (
+    node.commands.some((b) => isBlockHighlighted(b, activeBlockId)) ||
+    node.results.some((b) => isBlockHighlighted(b, activeBlockId))
+  );
+}
+
+function CompactActionRowSummary({ item }: { item: ParsedCompactAction }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      {item.icon === "search" ? (
+        <Search className="h-3.5 w-3.5 shrink-0 text-on-surface-muted group-hover:text-primary transition-colors" />
+      ) : (
+        <Eye className="h-3.5 w-3.5 shrink-0 text-on-surface-muted group-hover:text-primary transition-colors" />
+      )}
+      <span className="shrink-0 rounded-full bg-theme-control/60 px-2 py-0.5 text-label-caps font-mono text-on-surface-variant">
+        {item.action}
+      </span>
+      <span
+        className="truncate font-mono text-code-xs text-on-surface/90"
+        title={item.rawTarget ?? item.target}
+      >
+        {item.target}
+      </span>
+      {item.lineRange ? (
+        <span className="shrink-0 rounded-full border border-theme-card-border/50 bg-theme-control/45 px-2 py-0.5 font-mono text-code-xs text-on-surface-muted">
+          {item.lineRange}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+const COMPACT_BATCH_PREVIEW_LIMIT = 4;
+
 function CompactActionCard({
   block,
   copied,
+  highlighted,
   onCopy,
   t,
 }: {
   block: ConversationContentBlock;
   copied?: boolean;
+  highlighted?: boolean;
   onCopy?: () => void;
   t: Translator;
 }) {
   const [detailsExpanded, setDetailsExpanded] = useState(false);
-  const parsed = parseCompactActionText(
+  const [batchExpanded, setBatchExpanded] = useState(Boolean(highlighted));
+  const items = parseCompactActionItems(
     block.text || block.commandLabel || "",
     block,
+    t,
   );
+  const firstItem = items[0];
+  const isBatch = items.length > 1;
+  const hiddenCount =
+    isBatch && !batchExpanded
+      ? Math.max(0, items.length - COMPACT_BATCH_PREVIEW_LIMIT)
+      : 0;
+  const visibleItems =
+    hiddenCount > 0 ? items.slice(0, COMPACT_BATCH_PREVIEW_LIMIT) : items;
   const isSuccess =
     block.status !== "failed" && (!block.exitCode || block.exitCode === 0);
 
   return (
     <div
-      className="group relative flex flex-col rounded-xl border border-theme-card-border/60 bg-theme-card/50 backdrop-blur-xs transition-all hover:border-theme-control-border hover:bg-theme-card/80 shadow-xs"
+      className={`group relative flex scroll-mt-32 flex-col rounded-xl border border-theme-card-border/60 bg-theme-card/50 backdrop-blur-xs transition-all hover:border-theme-control-border hover:bg-theme-card/80 shadow-xs ${
+        highlighted
+          ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]"
+          : ""
+      }`}
       data-content-type="compact_action"
       data-conversation-card-id={block.id}
       id={conversationCardDomId(block.id)}
     >
-      <div className="flex h-9 items-center justify-between gap-2.5 px-3">
-        <div className="flex min-w-0 items-center gap-2">
-          {parsed.icon === "search" ? (
-            <Search className="h-3.5 w-3.5 shrink-0 text-on-surface-muted group-hover:text-primary transition-colors" />
-          ) : (
-            <Eye className="h-3.5 w-3.5 shrink-0 text-on-surface-muted group-hover:text-primary transition-colors" />
-          )}
-          <span className="shrink-0 rounded-full bg-theme-control/60 px-2 py-0.5 text-label-caps font-mono text-on-surface-variant">
-            {parsed.action}
-          </span>
-          <span
-            className="truncate font-mono text-code-xs text-on-surface/90"
-            title={parsed.target}
+      {visibleItems.map((item, idx) => (
+        <div
+          className={`flex items-center justify-between gap-2.5 px-3 ${
+            isBatch ? "h-8" : "h-9"
+          }`}
+          key={`${block.id}-row-${idx}`}
+        >
+          <CompactActionRowSummary item={item} />
+          {idx === 0 ? (
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span
+                className="hidden select-text font-mono text-code-xs text-on-surface-muted opacity-0 transition-opacity group-hover:opacity-100 sm:inline"
+                title={block.partId ?? block.id}
+              >
+                {conversationIdFragment(block.partId ?? block.id)}
+              </span>
+              {isSuccess ? (
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-status-create"
+                  title="Success"
+                />
+              ) : (
+                <span className="flex items-center gap-1 font-mono text-label-caps text-status-remove">
+                  <span className="h-1.5 w-1.5 rounded-full bg-status-remove" />
+                  error
+                </span>
+              )}
+              {onCopy && (
+                <button
+                  className="opacity-0 group-hover:opacity-100 rounded-lg p-1 text-on-surface-muted hover:text-on-surface hover:bg-theme-control/50 transition-all"
+                  onClick={onCopy}
+                  title={
+                    copied ? t("conversation.content.copied") : t("common.copy")
+                  }
+                  type="button"
+                >
+                  {copied ? (
+                    <Check className="h-3 w-3 text-status-create" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                </button>
+              )}
+              {!isBatch && firstItem?.hasDetails && (
+                <button
+                  className="rounded-lg p-1 text-on-surface-muted hover:text-on-surface hover:bg-theme-control/50 transition-all"
+                  onClick={() => setDetailsExpanded((prev) => !prev)}
+                  type="button"
+                >
+                  {detailsExpanded ? (
+                    <ChevronUp className="h-3 w-3" />
+                  ) : (
+                    <ChevronDown className="h-3 w-3" />
+                  )}
+                </button>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ))}
+      {isBatch && items.length > COMPACT_BATCH_PREVIEW_LIMIT ? (
+        <div className="flex items-center border-t border-theme-card-border/40 px-3 py-1">
+          <button
+            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-code-xs font-medium text-on-surface-muted hover:bg-theme-control/45 hover:text-on-surface transition-colors"
+            onClick={() => setBatchExpanded((prev) => !prev)}
+            type="button"
           >
-            {parsed.target}
-          </span>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {isSuccess ? (
-            <span
-              className="h-1.5 w-1.5 rounded-full bg-status-create"
-              title="Success"
-            />
-          ) : (
-            <span className="flex items-center gap-1 font-mono text-label-caps text-status-remove">
-              <span className="h-1.5 w-1.5 rounded-full bg-status-remove" />
-              error
-            </span>
-          )}
-          {onCopy && (
-            <button
-              className="opacity-0 group-hover:opacity-100 rounded p-1 text-on-surface-muted hover:text-on-surface hover:bg-theme-control/50 transition-all"
-              onClick={onCopy}
-              title={
-                copied ? t("conversation.content.copied") : t("common.copy")
-              }
-              type="button"
-            >
-              {copied ? (
-                <Check className="h-3 w-3 text-status-create" />
-              ) : (
-                <Copy className="h-3 w-3" />
-              )}
-            </button>
-          )}
-          {parsed.hasDetails && (
-            <button
-              className="rounded p-1 text-on-surface-muted hover:text-on-surface hover:bg-theme-control/50 transition-all"
-              onClick={() => setDetailsExpanded((prev) => !prev)}
-              type="button"
-            >
-              {detailsExpanded ? (
+            {batchExpanded ? (
+              <>
                 <ChevronUp className="h-3 w-3" />
-              ) : (
+                <span>{t("common.collapse")}</span>
+              </>
+            ) : (
+              <>
                 <ChevronDown className="h-3 w-3" />
-              )}
-            </button>
-          )}
+                <span>
+                  {t("common.expand")} (+{hiddenCount})
+                </span>
+              </>
+            )}
+          </button>
         </div>
-      </div>
-      {detailsExpanded && parsed.details ? (
+      ) : null}
+      {!isBatch && detailsExpanded && firstItem?.details ? (
         <div className="border-t border-theme-card-border/40 px-3 py-2 text-code-xs font-mono text-on-surface-variant bg-theme-card/30 whitespace-pre-wrap break-all">
-          {parsed.details}
+          {firstItem.details}
         </div>
       ) : null}
     </div>
@@ -454,16 +476,24 @@ function CompactActionCard({
 }
 
 function AmbientActionGroup({
+  hasHighlightedNode = false,
   nodes,
   renderNode,
   t,
 }: {
+  hasHighlightedNode?: boolean;
   nodes: ConversationDisplayNode[];
   renderNode: (node: ConversationDisplayNode) => ReactNode;
   t: Translator;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(hasHighlightedNode);
   const count = nodes.length;
+
+  useEffect(() => {
+    if (hasHighlightedNode) {
+      setExpanded(true);
+    }
+  }, [hasHighlightedNode]);
 
   return (
     <div className="flex flex-col gap-1.5 overflow-hidden rounded-2xl border border-theme-card-border/70 bg-theme-card/35 p-2 backdrop-blur-xs transition-all shadow-xs">
@@ -478,7 +508,7 @@ function AmbientActionGroup({
           </span>
         </div>
         <button
-          className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-body-xs font-medium text-theme-control-fg hover:bg-theme-control/40 transition-colors"
+          className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-body-xs font-medium text-theme-control-fg hover:bg-theme-control/40 transition-colors"
           onClick={(e) => {
             e.stopPropagation();
             setExpanded((prev) => !prev);
@@ -677,6 +707,9 @@ export function ConversationContentCards({
         if (item.type === "ambient_group") {
           return (
             <AmbientActionGroup
+              hasHighlightedNode={item.nodes.some((node) =>
+                isDisplayNodeHighlighted(node, activeBlockId),
+              )}
               key={item.key}
               nodes={item.nodes}
               renderNode={renderDisplayNode}
@@ -727,6 +760,7 @@ export function ConversationContentCards({
           <CompactActionCard
             block={node.block}
             copied={contentController.isCopied(node.block.id)}
+            highlighted={isBlockHighlighted(node.block, activeBlockId)}
             key={node.block.id}
             onCopy={() => void contentController.copyBlock(node.block)}
             t={t}
@@ -743,6 +777,7 @@ export function ConversationContentCards({
           <CompactActionCard
             block={firstCommand}
             copied={contentController.isCopied(firstCommand.id)}
+            highlighted={isDisplayNodeHighlighted(node, activeBlockId)}
             key={executionKey}
             onCopy={() => void contentController.copyBlock(firstCommand)}
             t={t}
@@ -767,10 +802,7 @@ export function ConversationContentCards({
         colors={colors}
         copied={contentController.isCopied(block.id)}
         expanded={contentController.expandedBlockIds.has(block.id)}
-        highlighted={
-          activeBlockId === block.id ||
-          block.legacyAnchorIds?.includes(activeBlockId ?? "") === true
-        }
+        highlighted={isBlockHighlighted(block, activeBlockId)}
         key={block.id}
         onCopy={() => void contentController.copyBlock(block)}
         onCancelTranslation={() =>

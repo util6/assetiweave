@@ -365,6 +365,9 @@ export const conversationsEn = {
   "conversation.content.loadMoreActivities": "Load more activity",
   "conversation.content.ambientActionCount":
     "{{count}} read & search operations",
+  "conversation.content.lineRange": "lines {{start}}-{{end}}",
+  "conversation.content.lineFrom": "from line {{start}}",
+  "conversation.content.lineUntil": "up to line {{end}}",
   "conversation.content.projectionFailed":
     "Command display projection failed; raw command retained: {{message}}",
   "conversation.content.hidden": "All response blocks are currently hidden.",

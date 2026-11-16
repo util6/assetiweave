@@ -1795,6 +1795,194 @@ describe("ConversationContentCards", () => {
     expect(screen.queryByText("src/main.rs")).toBeNull();
     expect(screen.queryByText("fn main")).toBeNull();
   });
+
+  it("renders Tool: read_file cards (like 86080376) as concise Read + path + line range capsules without redundant details toggle", () => {
+    const block: ConversationContentBlock = {
+      id: "conversation-part-860803763b539a0f",
+      partId: "conversation-part-860803763b539a0f",
+      role: "tool",
+      type: "tool",
+      kind: "antigravity.tool",
+      renderer: "plain",
+      text: "Tool: read_file\n\nEndLine: 150\nPath: /Users/util6/code-space/assetiweave/frontend/src/pages/conversations/ConversationsPage.tsx\nStartLine: 1",
+    };
+
+    render(
+      <ConversationContentCards
+        blocks={[block]}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    const compactCard = document.querySelector(
+      '[data-content-type="compact_action"]',
+    );
+    expect(compactCard).not.toBeNull();
+    expect(screen.getByText("Read")).toBeDefined();
+    expect(
+      screen.getByText(
+        "~/code-space/assetiweave/frontend/src/pages/conversations/ConversationsPage.tsx",
+      ),
+    ).toBeDefined();
+    expect(screen.getByText("第 1-150 行")).toBeDefined();
+    expect(screen.queryByText("Tool: read_file")).toBeNull();
+    // Copy button only; no redundant expand details button when all args are summarized
+    expect(compactCard?.querySelectorAll("button")).toHaveLength(1);
+  });
+
+  it("renders start-only, JSON Read, and path:range ambient cards concisely", () => {
+    const blocks: ConversationContentBlock[] = [
+      {
+        id: "part-read-start-only",
+        role: "tool",
+        type: "tool",
+        kind: "antigravity.tool",
+        renderer: "plain",
+        text: "Tool: view_file\n\nAbsolutePath: /Users/util6/repo/src/lib.rs\nStartLine: 25",
+      },
+      {
+        id: "part-read-json",
+        role: "tool",
+        type: "tool",
+        kind: "claude-code.tool",
+        renderer: "plain",
+        text: 'Tool: Read\n\n{"file_path":"/Users/util6/repo/src/main.rs","offset":10,"limit":21}',
+      },
+      {
+        id: "part-read-cmd",
+        role: "tool",
+        type: "command",
+        kind: "claude-code.command",
+        renderer: "command",
+        signal: "ambient",
+        commandLabel: "Read",
+        text: "/Users/util6/repo/src/app.ts:5-40",
+      },
+    ];
+
+    render(
+      <ConversationContentCards
+        activeBlockId="part-read-json"
+        blocks={blocks}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    // Auto-expanded because activeBlockId targets a card inside the group
+    expect(screen.getAllByText("Read")).toHaveLength(3);
+    expect(screen.getByText("~/repo/src/lib.rs")).toBeDefined();
+    expect(screen.getByText("第 25 行起")).toBeDefined();
+    expect(screen.getByText("~/repo/src/main.rs")).toBeDefined();
+    expect(screen.getByText("第 10-30 行")).toBeDefined();
+    expect(screen.getByText("~/repo/src/app.ts")).toBeDefined();
+    expect(screen.getByText("第 5-40 行")).toBeDefined();
+    const highlighted = document.querySelector(
+      '[data-conversation-card-id="part-read-json"]',
+    );
+    expect(highlighted?.className).toContain("ring-2");
+  });
+
+  it("keeps non-read Tool blocks like edit_file and delete_file as standard cards", () => {
+    const blocks: ConversationContentBlock[] = [
+      {
+        id: "part-edit",
+        role: "tool",
+        type: "tool",
+        kind: "antigravity.tool",
+        renderer: "plain",
+        text: "Tool: edit_file\n\nPath: /Users/util6/repo/a.ts\nTarget: foo\nReplacement: bar",
+      },
+      {
+        id: "part-delete",
+        role: "tool",
+        type: "tool",
+        kind: "antigravity.tool",
+        renderer: "plain",
+        text: "Tool: delete_file\n\nPath: /Users/util6/repo/b.ts",
+      },
+    ];
+
+    render(
+      <ConversationContentCards
+        blocks={blocks}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    expect(
+      document.querySelector('[data-content-type="compact_action"]'),
+    ).toBeNull();
+    expect(
+      document.querySelectorAll('[data-content-type="tool"]'),
+    ).toHaveLength(2);
+  });
+
+  it("renders a multi-line antigravity.ambient batch inside one dense container and expands overflow rows", async () => {
+    const blocks: ConversationContentBlock[] = [
+      {
+        id: "part-ambient-batch",
+        role: "tool",
+        type: "tool",
+        kind: "antigravity.ambient",
+        renderer: "compact_action",
+        signal: "ambient",
+        text: [
+          "Read /Users/util6/repo/src/A.tsx#L65-275",
+          'Search "Dialog" @ /Users/util6/repo/src',
+          "List /Users/util6/repo/components",
+          "Read /Users/util6/repo/src/B.tsx#L1-50",
+          "Find *.test.tsx @ /Users/util6/repo/src",
+        ].join("\n"),
+      },
+    ];
+
+    render(
+      <ConversationContentCards
+        blocks={blocks}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    const cards = document.querySelectorAll(
+      '[data-content-type="compact_action"]',
+    );
+    expect(cards).toHaveLength(1);
+    expect(screen.getByText("~/repo/src/A.tsx")).toBeDefined();
+    expect(screen.getByText("第 65-275 行")).toBeDefined();
+    expect(screen.getByText('"Dialog" @ ~/repo/src')).toBeDefined();
+    expect(screen.queryByText("*.test.tsx @ ~/repo/src")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /\(\+1\)/ }));
+    expect(screen.getByText("*.test.tsx @ ~/repo/src")).toBeDefined();
+  });
 });
 
 const t: Translator = (key, params) =>
