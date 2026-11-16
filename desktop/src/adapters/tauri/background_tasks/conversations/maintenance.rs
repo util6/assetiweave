@@ -29,38 +29,6 @@ use std::time::Duration;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub(crate) struct ConversationUsageScanTaskProgress {
-    pub(crate) phase: ConversationUsageScanProgressPhase,
-    pub(crate) completed_source_count: usize,
-    pub(crate) total_source_count: usize,
-    pub(crate) current_source_name: Option<String>,
-    pub(crate) total_events_ingested: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ConversationUsageScanProgressPhase {
-    Preparing,
-    Scanning,
-    Completed,
-    Failed,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub(crate) struct ConversationUsageScanTaskSnapshot {
-    pub(crate) id: String,
-    pub(crate) status: BackgroundTaskStatus,
-    pub(crate) source_id: Option<String>,
-    pub(crate) mode: String,
-    pub(crate) progress: ConversationUsageScanTaskProgress,
-    pub(crate) started_at: String,
-    pub(crate) finished_at: Option<String>,
-    pub(crate) result: Option<Value>,
-    pub(crate) error: Option<AppErrorView>,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct ConversationDataMaintenanceTaskProgress {
     pub(crate) phase: String,
     pub(crate) completed_stage: usize,
@@ -160,89 +128,6 @@ impl BackgroundTaskRegistry {
             )?
             .into_iter()
             .max_by(|left, right| left.started_at.cmp(&right.started_at)))
-    }
-
-    pub(crate) fn begin_conversation_usage_scan_for_tenant(
-        &self,
-        tenant_id: &str,
-        source_id: Option<String>,
-        mode: &str,
-    ) -> AppResult<(ConversationUsageScanTaskSnapshot, bool)> {
-        let snapshot = ConversationUsageScanTaskSnapshot {
-            id: Uuid::new_v4().to_string(),
-            status: BackgroundTaskStatus::Running,
-            source_id: source_id.clone(),
-            mode: mode.to_string(),
-            progress: ConversationUsageScanTaskProgress {
-                phase: ConversationUsageScanProgressPhase::Preparing,
-                completed_source_count: 0,
-                total_source_count: 0,
-                current_source_name: None,
-                total_events_ingested: 0,
-            },
-            started_at: Utc::now().to_rfc3339(),
-            finished_at: None,
-            result: None,
-            error: None,
-        };
-        let dedup_key = format!(
-            "{tenant_id}:conversation_usage_scan:{}",
-            source_id.as_deref().unwrap_or("all")
-        );
-        let conflict_key = format!("{tenant_id}:conversation_usage_scan");
-        let registration = self.register_projection_for_tenant_with_meta(
-            Some(tenant_id),
-            TaskKind::ConversationUsageScan,
-            &snapshot.id,
-            Some("用量统计扫描".to_string()),
-            Some("conversation/usage_scan".to_string()),
-            Some(dedup_key),
-            std::iter::once(conflict_key),
-            &snapshot,
-        )?;
-        match registration {
-            ExternalRegistrationOutcome::Started(ref runtime)
-            | ExternalRegistrationOutcome::Existing(ref runtime)
-            | ExternalRegistrationOutcome::Conflict(ref runtime) => Ok((
-                self.projection_from_runtime(runtime)?,
-                matches!(&registration, ExternalRegistrationOutcome::Started(_)),
-            )),
-        }
-    }
-
-    pub(crate) fn update_conversation_usage_scan_progress(
-        &self,
-        task_id: &str,
-        completed_source_count: usize,
-        total_source_count: usize,
-        current_source_name: Option<String>,
-        total_events_ingested: usize,
-    ) -> AppResult<ConversationUsageScanTaskSnapshot> {
-        let runtime = self.external_task_snapshot(task_id)?;
-        let mut snapshot: ConversationUsageScanTaskSnapshot = self.decode(&runtime)?;
-        if runtime.state == TaskState::Running {
-            snapshot.progress = ConversationUsageScanTaskProgress {
-                phase: ConversationUsageScanProgressPhase::Scanning,
-                completed_source_count: completed_source_count.min(total_source_count),
-                total_source_count,
-                current_source_name,
-                total_events_ingested,
-            };
-        }
-        self.write_projection(task_id, &snapshot)?;
-        self.projection(task_id)
-    }
-
-    pub(crate) fn finish_conversation_usage_scan(
-        &self,
-        task_id: &str,
-        result: AppResult<Value>,
-    ) -> AppResult<ConversationUsageScanTaskSnapshot> {
-        let runtime = self.finish_external_task(task_id, result)?;
-        let mut snapshot: ConversationUsageScanTaskSnapshot = self.decode(&runtime)?;
-        snapshot.result = runtime.result.clone();
-        self.write_projection(task_id, &snapshot)?;
-        self.projection(task_id)
     }
 
     pub(crate) fn begin_conversation_data_maintenance_for_tenant(
@@ -356,20 +241,7 @@ impl BackgroundTaskRegistry {
         self.cancel_external_task_for_tenant(tenant_id, task_id)?;
         self.projection_for_tenant(tenant_id, task_id)
     }
-
-    pub(crate) fn active_conversation_usage_scan_id(&self, tenant_id: &str) -> Option<String> {
-        self.task_runtime
-            .list(crate::backend::infrastructure::tasks::TaskFilter {
-                kind: Some(TaskKind::ConversationUsageScan),
-                active_only: true,
-                ..Default::default()
-            })
-            .into_iter()
-            .find(|task| task.tenant_id.as_deref() == Some(tenant_id))
-            .map(|task| task.task_id)
-    }
 }
 
 impl_basic_projection!(ConversationDataMaintenanceTaskSnapshot);
 impl_basic_projection!(ConversationSearchIndexTaskSnapshot);
-impl_basic_projection!(ConversationUsageScanTaskSnapshot);
