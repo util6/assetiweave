@@ -51,6 +51,12 @@ pub struct ModelPricingSyncResultDto {
     pub recalculated_events_count: usize,
     pub catalog_version: String,
     pub updated_at: String,
+    /// 所有远端渠道均不可达、回落到本地缓存或内置目录时为 true。
+    #[serde(default)]
+    pub downgraded: bool,
+    /// 降级原因说明，供任务详情/前端提示展示。
+    #[serde(default)]
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]

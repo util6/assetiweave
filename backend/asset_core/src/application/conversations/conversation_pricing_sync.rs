@@ -8,11 +8,11 @@ use crate::backend::domain::conversations::pricing::{
 };
 use crate::backend::domain::conversations::usage::ModelPricingSyncResultDto;
 use crate::backend::infrastructure::conversations::pricing_fetcher::{
-    fetch_tiered_pricing_catalog, fetch_usd_to_cny_rate, TieredFetchOutcome,
+    fetch_tiered_pricing_catalog, fetch_usd_to_cny_rate, PricingSourceChannel, TieredFetchOutcome,
 };
 use crate::backend::infrastructure::tasks::{
-    stages, InfraError, PipelineDescriptor, TaskCapabilities, TaskHandle, TaskKind, TaskOutput,
-    TaskSpec,
+    stages, ConflictPolicy, InfraError, PipelineDescriptor, TaskCapabilities, TaskHandle, TaskKind,
+    TaskOutput, TaskSpec,
 };
 use crate::backend::store::conversations::pricing_repo::{
     get_pricing_metadata_sqlx, get_rebind_target_model_ids_sqlx, load_pricing_catalog_entries_sqlx,
@@ -39,11 +39,16 @@ impl AppService {
         force: bool,
         target_models: Option<Vec<String>>,
     ) -> AppResult<TaskHandle<ModelPricingSyncResultDto>> {
-        self.start_model_pricing_sync_with(force, target_models, |cached_rate, cached_entries, targets| {
-            let rate = fetch_usd_to_cny_rate().unwrap_or(cached_rate);
-            let outcome = fetch_tiered_pricing_catalog(rate, cached_entries, targets.as_deref());
-            (rate, outcome)
-        })
+        self.start_model_pricing_sync_with(
+            force,
+            target_models,
+            |cached_rate, cached_entries, targets| {
+                let rate = fetch_usd_to_cny_rate().unwrap_or(cached_rate);
+                let outcome =
+                    fetch_tiered_pricing_catalog(rate, cached_entries, targets.as_deref());
+                (rate, outcome)
+            },
+        )
     }
 
     #[cfg(test)]
@@ -72,7 +77,7 @@ impl AppService {
             + 'static,
     {
         let tenant_id = self.tenant_id().to_string();
-        let spec = TaskSpec::new(
+        let mut spec = TaskSpec::new(
             TaskKind::ModelPricingSync,
             Some(format!("{tenant_id}:model_pricing_sync")),
         )
@@ -86,6 +91,12 @@ impl AppService {
         .with_conflict_key(format!("{tenant_id}:model_pricing_sync"))
         .with_pipeline(Self::pricing_sync_pipeline());
 
+        if force {
+            // 显式强制刷新：取消同去重键下仍在运行的历史任务并启动新一轮同步，
+            // 避免一次异常卡死的旧任务让同步入口永久被去重拒绝。
+            spec = spec.with_conflict_policy(ConflictPolicy::CancelExisting);
+        }
+
         let service = self.clone();
         self.spawn_pipeline_task(spec, move |cx| async move {
             let cancellation = cx.cancellation();
@@ -93,7 +104,6 @@ impl AppService {
             let mut noop_progress = |_phase: &str, _message: &str| {};
             let result = service
                 .sync_model_pricing_catalog_inner(
-                    force,
                     target_models,
                     Some(&cancellation),
                     Some(&task_id),
@@ -102,31 +112,36 @@ impl AppService {
                 )
                 .await
                 .map_err(InfraError::external)?;
-            let summary = format!(
+            let mut summary = format!(
                 "价格同步完成：渠道 {}，更新 {} 款模型，重算 {} 条记录（汇率 {:.4}）",
                 result.channel_used,
                 result.models_count,
                 result.recalculated_events_count,
                 result.exchange_rate
             );
+            if let Some(reason) = result.warning.as_deref() {
+                summary.push_str(&format!("；{reason}"));
+            }
             Ok(TaskOutput::with_summary(result, summary))
         })
     }
 }
 
 impl AppService {
+    /// `force` 语义由任务准入层落地（`TaskSpec` 冲突策略），此处为无去重的单次执行。
     pub async fn sync_model_pricing_catalog(
         &self,
-        force: bool,
+        _force: bool,
     ) -> AppResult<ModelPricingSyncResultDto> {
         let mut noop_progress = |_phase: &str, _msg: &str| {};
-        self.sync_model_pricing_catalog_with_control(force, None, None, None, &mut noop_progress)
+        self.sync_model_pricing_catalog_with_control(false, None, None, None, &mut noop_progress)
             .await
     }
 
+    /// `force` 语义由任务准入层落地（`TaskSpec` 冲突策略），此处为无去重的单次执行。
     pub async fn sync_model_pricing_catalog_with_control<F>(
         &self,
-        force: bool,
+        _force: bool,
         target_models: Option<Vec<String>>,
         cancellation: Option<&CancellationToken>,
         task_id: Option<&str>,
@@ -136,7 +151,6 @@ impl AppService {
         F: FnMut(&str, &str) + Send,
     {
         self.sync_model_pricing_catalog_inner(
-            force,
             target_models,
             cancellation,
             task_id,
@@ -154,7 +168,7 @@ impl AppService {
     #[cfg(test)]
     pub(crate) async fn sync_model_pricing_catalog_with_fetcher<Fetch>(
         &self,
-        force: bool,
+        _force: bool,
         target_models: Option<Vec<String>>,
         cancellation: Option<&CancellationToken>,
         task_id: Option<&str>,
@@ -167,7 +181,6 @@ impl AppService {
     {
         let mut noop_progress = |_phase: &str, _msg: &str| {};
         self.sync_model_pricing_catalog_inner(
-            force,
             target_models,
             cancellation,
             task_id,
@@ -179,7 +192,6 @@ impl AppService {
 
     async fn sync_model_pricing_catalog_inner<F, Fetch>(
         &self,
-        _force: bool,
         target_models: Option<Vec<String>>,
         cancellation: Option<&CancellationToken>,
         task_id: Option<&str>,
@@ -218,7 +230,7 @@ impl AppService {
 
         // Stage 1: Fetch pricing
         on_progress("fetching", "正在获取最新模型价格及汇率...");
-        let (channel, rate, catalog_version, unlocked_entries, locked_ref_entries) = {
+        let fetch_outcome = {
             let stage_guard = task_ctx
                 .as_ref()
                 .map(|ctx| ctx.enter_stage(stages::FETCH_PRICING));
@@ -361,6 +373,9 @@ impl AppService {
                 .filter(|e| e.input_per_million > 0.0 || e.output_per_million > 0.0)
                 .count();
 
+            let downgraded = outcome.downgraded;
+            let warning = outcome.warning.clone();
+
             if let Some(ref guard) = stage_guard {
                 guard.record_step(
                     "rate_done",
@@ -368,34 +383,45 @@ impl AppService {
                     None,
                     None,
                 );
-                guard.record_step(
-                    "fetch_done",
-                    Some(if locked_ref_entries.is_empty() {
-                        format!(
-                            "按需获取完成: 渠道 [{}] 共匹配 {} 款实际模型价格",
-                            outcome.channel.as_str(),
-                            unlocked_match_count
-                        )
-                    } else {
-                        format!(
-                            "按需获取完成: 渠道 [{}] 共匹配 {} 款可更新模型价格（已排除 {} 款锁定模型）",
-                            outcome.channel.as_str(),
-                            unlocked_match_count,
-                            locked_ref_entries.len()
-                        )
-                    }),
-                    None,
-                    None,
-                );
+                let mut message = if locked_ref_entries.is_empty() {
+                    format!(
+                        "按需获取完成: 渠道 [{}] 共匹配 {} 款实际模型价格",
+                        outcome.channel.as_str(),
+                        unlocked_match_count
+                    )
+                } else {
+                    format!(
+                        "按需获取完成: 渠道 [{}] 共匹配 {} 款可更新模型价格（已排除 {} 款锁定模型）",
+                        outcome.channel.as_str(),
+                        unlocked_match_count,
+                        locked_ref_entries.len()
+                    )
+                };
+                if let Some(reason) = warning.as_deref() {
+                    message.push_str(&format!("；{reason}"));
+                }
+                guard.record_step("fetch_done", Some(message), None, None);
             }
-            (
-                outcome.channel,
-                outcome.rate,
-                outcome.catalog_version,
+            FetchPhaseOutcome {
+                channel: outcome.channel,
+                rate: outcome.rate,
+                catalog_version: outcome.catalog_version,
                 unlocked_entries,
                 locked_ref_entries,
-            )
+                downgraded,
+                warning,
+            }
         };
+
+        let FetchPhaseOutcome {
+            channel,
+            rate,
+            catalog_version,
+            unlocked_entries,
+            locked_ref_entries,
+            downgraded,
+            warning,
+        } = fetch_outcome;
 
         // Stage 2: Persist catalog
         on_progress("persisting", "正在写入本地价格库持久化缓存...");
@@ -519,8 +545,21 @@ impl AppService {
             recalculated_events_count: recalculated_count,
             catalog_version,
             updated_at: now,
+            downgraded,
+            warning,
         })
     }
+}
+
+/// 抓取阶段产出：锁定模型参考行已从可更新条目中拆出，并携带降级标记。
+struct FetchPhaseOutcome {
+    channel: PricingSourceChannel,
+    rate: f64,
+    catalog_version: String,
+    unlocked_entries: Vec<ModelPriceEntry>,
+    locked_ref_entries: Vec<ModelPriceEntry>,
+    downgraded: bool,
+    warning: Option<String>,
 }
 
 fn canonical_outcome_base_id(entry: &ModelPriceEntry) -> Option<String> {
