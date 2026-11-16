@@ -31,6 +31,18 @@ pub mod stages {
     pub const AGENT_INSTALL: &str = "install";
     pub const AGENT_VERIFY: &str = "verify";
     pub const AGENT_CLEANUP: &str = "cleanup";
+
+    // 用量统计扫描 (ConversationUsageScan)
+    pub const PREPARE_SOURCES: &str = "prepare_sources";
+    pub const COLLECT_USAGE: &str = "collect_usage";
+    pub const PERSIST_EVENTS: &str = "persist_events";
+    pub const RESOLVE_PRICING: &str = "resolve_pricing";
+    pub const CALCULATE_COSTS: &str = "calculate_costs";
+
+    // 模型价格同步与重算 (ModelPricingSync)
+    pub const FETCH_PRICING: &str = "fetch_pricing";
+    pub const PERSIST_CATALOG: &str = "persist_catalog";
+    pub const RECALCULATE_HISTORY: &str = "recalculate_history";
 }
 
 /// 开放任务分类。
