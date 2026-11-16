@@ -1,12 +1,12 @@
 use crate::backend::{
     domain::conversations::pricing::{
-        is_dirty_model_name, ModelPriceEntry, PriceCatalog, IGNORE_MODEL_ID_PREFIX,
-        OVERRIDE_MODEL_ID_PREFIX,
+        candidate_model_names, is_dirty_model_name, ModelPriceEntry, PriceCatalog,
+        IGNORE_MODEL_ID_PREFIX, OVERRIDE_MODEL_ID_PREFIX,
     },
     store::StoreResult,
 };
 use chrono::Utc;
-use sqlx::{Row as SqlxRow, SqlitePool};
+use sqlx::{Row as SqlxRow, Sqlite, SqlitePool, Transaction};
 
 #[path = "pricing_repo_ops.rs"]
 pub mod pricing_repo_ops;
@@ -26,6 +26,8 @@ pub async fn upsert_pricing_catalog_entries_sqlx(
     let now = Utc::now().to_rfc3339();
     let mut count = 0usize;
     let is_user_override = source_channel == "user_override";
+    let prune_superseded_variants = matches!(source_channel, "litellm" | "openrouter");
+    let mut written_references: Vec<(String, String)> = Vec::new();
 
     // Prune historical zero-priced ghost entries without aliases or locks
     let _ = sqlx::query(
@@ -174,11 +176,139 @@ pub async fn upsert_pricing_catalog_entries_sqlx(
             };
 
             count += res.rows_affected() as usize;
+            if prune_superseded_variants
+                && res.rows_affected() > 0
+                && !written_references
+                    .iter()
+                    .any(|(written_id, _)| written_id == model_id)
+            {
+                written_references.push((model_id.to_string(), entry.provider.clone()));
+            }
         }
+    }
+
+    if prune_superseded_variants {
+        prune_superseded_reference_rows(&mut tx, tenant_id, &written_references, &now).await?;
     }
 
     tx.commit().await?;
     Ok(count)
+}
+
+/// True when `stale_model_id` is a historical variant (dated / decorated display name)
+/// of `base_model_id` rather than a distinct model. `candidate_model_names` already
+/// normalizes case, date suffixes, gateway prefixes and alias suffixes, so distinct
+/// siblings such as `gpt-4o-mini` never collapse into `gpt-4o`.
+fn is_superseded_variant(stale_model_id: &str, base_model_id: &str) -> bool {
+    let base = base_model_id.trim().to_ascii_lowercase();
+    if base.is_empty() || stale_model_id.trim().eq_ignore_ascii_case(&base) {
+        return false;
+    }
+    candidate_model_names(stale_model_id)
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(&base))
+}
+
+async fn merge_usage_aliases_into_row(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    base_model_id: &str,
+    aliases: &[String],
+    now: &str,
+) -> StoreResult<()> {
+    let Some(row) = sqlx::query(
+        "SELECT id, usage_aliases FROM model_pricing_catalog WHERE tenant_id = ? AND model_id = ? LIMIT 1",
+    )
+    .bind(tenant_id)
+    .bind(base_model_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    else {
+        return Ok(());
+    };
+
+    let row_id: i64 = row.get("id");
+    let existing_json: String = row.get("usage_aliases");
+    let mut merged: Vec<String> = serde_json::from_str(&existing_json).unwrap_or_default();
+    let mut changed = false;
+    for alias in aliases {
+        let trimmed = alias.trim();
+        if trimmed.is_empty()
+            || merged
+                .iter()
+                .any(|existing| existing.trim().eq_ignore_ascii_case(trimmed))
+        {
+            continue;
+        }
+        merged.push(trimmed.to_string());
+        changed = true;
+    }
+    if !changed {
+        return Ok(());
+    }
+
+    let merged_json = serde_json::to_string(&merged).unwrap_or_else(|_| "[]".to_string());
+    sqlx::query("UPDATE model_pricing_catalog SET usage_aliases = ?, updated_at = ? WHERE id = ?")
+        .bind(&merged_json)
+        .bind(now)
+        .bind(row_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Drops non-override, unlocked rows that are historical variants of a freshly synced
+/// canonical base row, so their higher specificity score can no longer shadow the new price.
+/// Their `usage_aliases` are merged onto the base row before deletion.
+async fn prune_superseded_reference_rows(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    written_references: &[(String, String)],
+    now: &str,
+) -> StoreResult<()> {
+    if written_references.is_empty() {
+        return Ok(());
+    }
+
+    let rows = sqlx::query(
+        r#"
+        SELECT id, model_id, provider, usage_aliases
+        FROM model_pricing_catalog
+        WHERE tenant_id = ?
+          AND source_channel != 'user_override'
+          AND price_locked = 0
+        "#,
+    )
+    .bind(tenant_id)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    for row in rows {
+        let row_id: i64 = row.get("id");
+        let model_id: String = row.get("model_id");
+        let provider = row.get::<String, _>("provider").trim().to_ascii_lowercase();
+
+        let superseded_by = written_references.iter().find(|(base_id, base_provider)| {
+            let base_provider = base_provider.trim().to_ascii_lowercase();
+            let provider_matches =
+                base_provider.is_empty() || provider.is_empty() || base_provider == provider;
+            provider_matches && is_superseded_variant(&model_id, base_id)
+        });
+        let Some((base_model_id, _)) = superseded_by else {
+            continue;
+        };
+
+        let aliases_json: String = row.get("usage_aliases");
+        let aliases: Vec<String> = serde_json::from_str(&aliases_json).unwrap_or_default();
+        merge_usage_aliases_into_row(tx, tenant_id, base_model_id, &aliases, now).await?;
+
+        sqlx::query("DELETE FROM model_pricing_catalog WHERE id = ?")
+            .bind(row_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+
+    Ok(())
 }
 
 pub async fn load_pricing_catalog_entries_sqlx(
