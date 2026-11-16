@@ -1,10 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getConversationUsageDashboard,
   getConversationUsageScanStatus,
+  normalizeUsageScanResult,
   scanConversationUsage,
   isTauriRuntime,
 } from "./usage";
+
+const invokeMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: invokeMock,
+}));
 
 describe("usage service in browser / mock mode", () => {
   it("detects non-tauri runtime correctly in node/vitest", () => {
@@ -29,10 +36,9 @@ describe("usage service in browser / mock mode", () => {
     expect(status.totalEventsCount).toBeGreaterThan(0);
   });
 
-  it("returns mock scan status on scan trigger when outside tauri", async () => {
+  it("returns mock scan task handle on scan trigger when outside tauri", async () => {
     const started = await scanConversationUsage({ mode: "full" });
-    expect(started).toBeDefined();
-    expect(started.activeScanTaskId).toBe("mock-task-usage-scan");
+    expect(started).toEqual({ id: "mock-task-usage-scan", mode: "full" });
   });
 
   it("returns mock model pricing catalog outside tauri", async () => {
@@ -217,5 +223,74 @@ describe("usage service in browser / mock mode", () => {
     )!;
     expect(rebound.isIgnored).toBe(false);
     expect(rebound.matchSource).toBe("unmatched");
+  });
+});
+
+describe("usage scan trigger passes selected mode and source filter", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue({ id: "task-usage-scan" });
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends incremental mode with the current source id", async () => {
+    const started = await scanConversationUsage({
+      mode: "incremental",
+      sourceId: "src-instance-1",
+    });
+
+    expect(started).toEqual({ id: "task-usage-scan", mode: "incremental" });
+    expect(invokeMock).toHaveBeenCalledWith("scan_conversation_usage", {
+      options: { mode: "incremental", sourceId: "src-instance-1" },
+    });
+  });
+
+  it("sends full mode with the current source id", async () => {
+    const started = await scanConversationUsage({
+      mode: "full",
+      sourceId: "src-instance-1",
+    });
+
+    expect(started).toEqual({ id: "task-usage-scan", mode: "full" });
+    expect(invokeMock).toHaveBeenCalledWith("scan_conversation_usage", {
+      options: { mode: "full", sourceId: "src-instance-1" },
+    });
+  });
+
+  it("defaults to incremental mode when no mode is provided", async () => {
+    await scanConversationUsage({ sourceId: "src-instance-2" });
+
+    expect(invokeMock).toHaveBeenCalledWith("scan_conversation_usage", {
+      options: { mode: "incremental", sourceId: "src-instance-2" },
+    });
+  });
+
+  it("normalizes usage scan task result summaries", () => {
+    expect(
+      normalizeUsageScanResult({
+        mode: "full",
+        total_sources: 3,
+        completed_sources: 3,
+        successful_sources: 2,
+        failed_sources: 1,
+        total_events_ingested: 12,
+        recalculated_events_count: 12,
+      }),
+    ).toEqual({
+      mode: "full",
+      totalSources: 3,
+      completedSources: 3,
+      successfulSources: 2,
+      failedSources: 1,
+      totalEventsIngested: 12,
+      recalculatedEventsCount: 12,
+    });
+
+    expect(normalizeUsageScanResult({ total_sources: 1 })).toBeNull();
+    expect(normalizeUsageScanResult(null)).toBeNull();
   });
 });
