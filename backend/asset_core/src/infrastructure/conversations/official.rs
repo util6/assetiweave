@@ -16,6 +16,9 @@ struct OfficialAdapterAsset {
 
 const PAYLOAD_POLICY_SCRIPT: &str =
     include_str!("../../../../../builtin-assets/adapters/common/payload-policy.mjs");
+const REPROJECT_RUNNER_SCRIPT: &str =
+    include_str!("../../../../../builtin-assets/adapters/common/reproject-runner.mjs");
+const REPROJECT_RUNNER_RUNTIME_VERSION: &str = "reproject-runner-v1";
 const SHELL_PROJECTOR_SCRIPT: &str =
     include_str!("../../../../../builtin-assets/adapters/common/shell-projector.cjs");
 const SHELL_PROJECTOR_ADAPTER_SCRIPT: &str =
@@ -25,6 +28,7 @@ const SHELL_PROJECTOR_MANIFEST: &str =
 const SHELL_PROJECTOR_RUNTIME_VERSION: &str = "shell-projector-v1";
 static OFFICIAL_ADAPTER_MATERIALIZE_LOCK: Mutex<()> = Mutex::new(());
 static SHELL_PROJECTOR_MATERIALIZE_LOCK: Mutex<()> = Mutex::new(());
+static REPROJECT_RUNNER_MATERIALIZE_LOCK: Mutex<()> = Mutex::new(());
 
 const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
     OfficialAdapterAsset {
@@ -100,6 +104,7 @@ fn should_refresh_official_adapter(
     bundled_manifest_text: &str,
     target_dir: &Path,
     bundled_script: &str,
+    bundled_payload_policy_script: Option<&str>,
 ) -> bool {
     let Ok(existing_text) = fs::read_to_string(manifest_path) else {
         return true;
@@ -110,6 +115,14 @@ fn should_refresh_official_adapter(
     };
     if existing_script != bundled_script {
         return true;
+    }
+    if let Some(bundled_policy) = bundled_payload_policy_script {
+        let Ok(existing_policy) = fs::read_to_string(target_dir.join("payload-policy.mjs")) else {
+            return true;
+        };
+        if existing_policy != bundled_policy {
+            return true;
+        }
     }
     let Ok(existing): Result<serde_json::Value, _> = serde_json::from_str(&existing_text) else {
         return true;
@@ -159,6 +172,7 @@ pub fn sync_official_adapter_to_package_dir(
         asset.manifest_text,
         target_dir,
         asset.script,
+        asset.payload_policy_script,
     ) {
         return Ok(false);
     }
@@ -201,6 +215,7 @@ pub fn ensure_official_conversation_adapters() -> InfraResult<Vec<ConversationAd
             asset.manifest_text,
             adapter_dir,
             asset.script,
+            asset.payload_policy_script,
         );
         let write_fn = if refresh {
             write_managed_runtime_file
@@ -261,6 +276,61 @@ pub fn ensure_shell_command_projector() -> InfraResult<ConversationAdapter> {
         .join("runtime")
         .join(SHELL_PROJECTOR_RUNTIME_VERSION);
     materialize_shell_command_projector(&root)
+}
+
+pub fn ensure_reproject_runner_scripts() -> InfraResult<std::path::PathBuf> {
+    let _guard = REPROJECT_RUNNER_MATERIALIZE_LOCK
+        .lock()
+        .map_err(|_| InfraError::external("reproject runner materialization lock poisoned"))?;
+    let root = conversation_adapter_dir()?
+        .join("runtime")
+        .join(REPROJECT_RUNNER_RUNTIME_VERSION);
+    fs::create_dir_all(&root)?;
+    let policy_path = root.join("payload-policy.mjs");
+    let runner_path = root.join("reproject-runner.mjs");
+    write_managed_runtime_file(&policy_path, PAYLOAD_POLICY_SCRIPT.as_bytes())?;
+    write_managed_runtime_file(&runner_path, REPROJECT_RUNNER_SCRIPT.as_bytes())?;
+    make_executable(&runner_path)?;
+    Ok(runner_path)
+}
+
+pub async fn run_reproject_runner(
+    runner_path: &Path,
+    node_program: &Path,
+    payload_json: &[u8],
+) -> InfraResult<Vec<u8>> {
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+
+    let mut command = tokio::process::Command::new(node_program);
+    command
+        .arg(runner_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|err| {
+        InfraError::external(format!(
+            "failed to spawn reproject runner with {}: {err}",
+            node_program.display()
+        ))
+    })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(payload_json)
+            .await
+            .map_err(InfraError::from)?;
+        stdin.shutdown().await.map_err(InfraError::from)?;
+    }
+    let output = child.wait_with_output().await.map_err(InfraError::from)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(InfraError::external(format!(
+            "reproject runner failed ({}): {}",
+            output.status,
+            stderr.trim()
+        )));
+    }
+    Ok(output.stdout)
 }
 
 fn materialize_shell_command_projector(root: &Path) -> InfraResult<ConversationAdapter> {

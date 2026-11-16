@@ -130,7 +130,16 @@ pub fn validate_external_adapter_manifest(
         None
     };
     let manifest_hash = hash_bytes(manifest_text.as_bytes());
-    let content_hash = adapter_content_hash(&manifest_hash, executable_hash.as_deref());
+    let policy_path = manifest_dir.join("payload-policy.mjs");
+    let policy_hash = if policy_path.is_file() {
+        Some(hash_file(&policy_path)?)
+    } else {
+        None
+    };
+    let mut content_hash = adapter_content_hash(&manifest_hash, executable_hash.as_deref());
+    if let Some(policy_hash) = policy_hash {
+        content_hash = hash_bytes(format!("{content_hash}\npolicy:{policy_hash}").as_bytes());
+    }
     let mut warnings = Vec::new();
     if executable_hash.is_none() {
         warnings.push(format!(

@@ -408,7 +408,7 @@ impl AppService {
                         &sync_stage_id,
                         sync_status,
                         Vec::new(),
-                        task_failures.clone(),
+                        task_failures,
                         Vec::new(),
                     );
 
@@ -439,7 +439,7 @@ impl AppService {
                             &persist_stage_id,
                             persist_status,
                             Vec::new(),
-                            task_failures,
+                            Vec::new(),
                             Vec::new(),
                         );
                     } else {
@@ -544,6 +544,55 @@ impl AppService {
             }
         }
 
+        let mut legacy_reprojection = crate::backend::store::LegacyReprojectionReport::default();
+        if !params.dry_run
+            && matches!(params.mode, ConversationSyncMode::Full)
+            && !matches!(
+                record_kind,
+                Some(crate::backend::domain::conversations::ConversationRecordKind::Web)
+            )
+            && !cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
+        {
+            let mut visited_ids = std::collections::BTreeSet::new();
+            for item in &results {
+                let Some(source_id) = item.get("source_id").and_then(Value::as_str) else {
+                    continue;
+                };
+                if let Some(ext_ids) = item.get("succeeded_external_ids").and_then(Value::as_array)
+                {
+                    for ext in ext_ids.iter().filter_map(Value::as_str) {
+                        visited_ids.insert(crate::backend::domain::stable_id(
+                            "conversation-session",
+                            &[source_id, ext],
+                        ));
+                    }
+                }
+            }
+            match self
+                .reproject_legacy_stored_sessions(
+                    params.source_id.as_deref(),
+                    params.adapter_id.as_deref(),
+                    &visited_ids,
+                    cancellation,
+                )
+                .await
+            {
+                Ok(report) => {
+                    if report.updated_sessions > 0 {
+                        self.runtime.notify_domain_events();
+                    }
+                    legacy_reprojection = report;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        action = "conversation.legacy_reproject",
+                        error = %error,
+                        "legacy stored session reprojection failed after full sync"
+                    );
+                }
+            }
+        }
+
         if !params.dry_run
             && params.source_id.is_none()
             && params.adapter_id.is_none()
@@ -565,6 +614,7 @@ impl AppService {
         tracing::info!(
             action = "conversation.sync",
             legacy_cards_upgraded = %legacy_cards_upgraded,
+            reprojected_legacy_sessions = %legacy_reprojection.updated_sessions,
             source_count = %results.len(),
             error_count = %errors.len(),
             dry_run = %params.dry_run,
@@ -580,7 +630,90 @@ impl AppService {
             }),
             "results": results,
             "errors": errors,
-            "legacy_cards_upgraded": legacy_cards_upgraded
+            "legacy_cards_upgraded": legacy_cards_upgraded,
+            "reprojected_legacy_sessions": legacy_reprojection.updated_sessions,
+            "scanned_legacy_sessions": legacy_reprojection.scanned_sessions
         }))
     }
+
+    pub(crate) async fn reproject_legacy_stored_sessions(
+        &self,
+        source_id: Option<&str>,
+        adapter_id: Option<&str>,
+        exclude_session_ids: &std::collections::BTreeSet<String>,
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
+    ) -> AppResult<crate::backend::store::LegacyReprojectionReport> {
+        ensure_conversation_sync_not_cancelled(cancellation)?;
+        let origins = crate::backend::store::load_sessions_for_reprojection_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+            source_id,
+            adapter_id,
+            exclude_session_ids,
+        )
+        .await
+        .map_err(conversation_storage_error)?;
+        if origins.is_empty() {
+            return Ok(crate::backend::store::LegacyReprojectionReport::default());
+        }
+
+        let runner_path =
+            crate::backend::infrastructure::conversations::ensure_reproject_runner_scripts()
+                .map_err(|error| AppError::External(error.to_string()))?;
+        let settings = self.app_settings_value();
+        let node_program =
+            crate::backend::infrastructure::conversations::runtime_requirements::configured_runtime_program(
+                &crate::backend::infrastructure::conversations::ConversationAdapterRuntimeKind::Node,
+                &settings,
+            );
+
+        #[derive(serde::Serialize)]
+        struct BatchInput<'a> {
+            sessions: Vec<&'a crate::backend::store::ReprojectStoredSessionPayload>,
+        }
+        #[derive(serde::Deserialize)]
+        struct BatchOutput {
+            sessions: Vec<crate::backend::store::ReprojectStoredSessionPayload>,
+        }
+
+        let mut total_report = crate::backend::store::LegacyReprojectionReport::default();
+        const REPROJECT_BATCH_SIZE: usize = 64;
+
+        for chunk in origins.chunks(REPROJECT_BATCH_SIZE) {
+            ensure_conversation_sync_not_cancelled(cancellation)?;
+            let batch_input = BatchInput {
+                sessions: chunk.iter().map(|o| &o.payload).collect(),
+            };
+            let input_bytes = serde_json::to_vec(&batch_input)
+                .map_err(|err| AppError::External(err.to_string()))?;
+            let output_bytes = crate::backend::infrastructure::conversations::run_reproject_runner(
+                &runner_path,
+                &node_program,
+                &input_bytes,
+            )
+            .await
+            .map_err(|err| AppError::External(err.to_string()))?;
+            let parsed: BatchOutput = serde_json::from_slice(&output_bytes).map_err(|err| {
+                AppError::External(format!("invalid reproject runner output: {err}"))
+            })?;
+            let report = crate::backend::store::apply_reprojected_sessions_sqlx(
+                self.db.pool(),
+                self.tenant_id(),
+                chunk,
+                &parsed.sessions,
+            )
+            .await
+            .map_err(conversation_storage_error)?;
+            total_report.scanned_sessions += report.scanned_sessions;
+            total_report.updated_sessions += report.updated_sessions;
+            total_report.skipped_unchanged_sessions += report.skipped_unchanged_sessions;
+            total_report.failed_sessions += report.failed_sessions;
+        }
+
+        Ok(total_report)
+    }
 }
+
+#[cfg(test)]
+#[path = "conversation_sync_pipeline_tests.rs"]
+mod tests;

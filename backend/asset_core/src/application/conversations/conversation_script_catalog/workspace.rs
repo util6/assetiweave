@@ -284,6 +284,85 @@ impl AppService {
         }))
     }
 
+    pub async fn register_conversation_adapter_dev(
+        &self,
+        package_dir: Option<String>,
+        developer: bool,
+        dry_run: bool,
+        yes: bool,
+    ) -> AppResult<Value> {
+        if developer && package_dir.is_some() {
+            return Err(AppError::Validation(
+                "developer conversation adapter registration cannot be combined with target path"
+                    .to_string(),
+            ));
+        }
+        let (source_root, package_dirs) = if developer {
+            let current_dir = env::current_dir().map_err(AppError::external)?;
+            let adapter_root = find_developer_conversation_adapter_root(&current_dir)?;
+            let dirs = current_dir
+                .ancestors()
+                .find(|candidate| {
+                    candidate
+                        .join("conversation-adapter-package.json")
+                        .is_file()
+                        && candidate.parent() == Some(adapter_root.as_path())
+                })
+                .map(|dir| vec![dir.to_path_buf()])
+                .unwrap_or(discover_conversation_adapter_workspace_dirs(&adapter_root)?);
+            (adapter_root, dirs)
+        } else {
+            let raw = package_dir.ok_or_else(|| {
+                AppError::Validation(
+                    "dev conversation adapter registration requires target directory or --developer"
+                        .to_string(),
+                )
+            })?;
+            let expanded = crate::backend::infrastructure::path_utils::expand_path(&raw)?;
+            let resolved_dir = if expanded.is_file() {
+                expanded
+                    .parent()
+                    .ok_or_else(|| {
+                        AppError::Validation("adapter manifest has no parent directory".to_string())
+                    })?
+                    .to_path_buf()
+            } else {
+                expanded
+            };
+            (resolved_dir.clone(), vec![resolved_dir])
+        };
+
+        if package_dirs.is_empty() {
+            return Err(AppError::Validation(format!(
+                "no conversation adapter package directories found under {}",
+                source_root.display()
+            )));
+        }
+
+        let mut registered = Vec::with_capacity(package_dirs.len());
+        for dir in package_dirs {
+            registered.push(
+                self.register_conversation_adapter_local(ConversationAdapterLocalRegisterParams {
+                    package_dir: dir.to_string_lossy().to_string(),
+                    origin: ConversationAdapterPackageOrigin::DevOverride,
+                    source_url: None,
+                    git_ref: None,
+                    git_commit: None,
+                    dry_run,
+                    yes,
+                })
+                .await?,
+            );
+        }
+        Ok(json!({
+            "dry_run": dry_run,
+            "developer": developer,
+            "origin": "dev_override",
+            "source_root": source_root,
+            "registered": registered,
+        }))
+    }
+
     pub async fn prepare_conversation_adapter_package_change(
         &self,
         params: ConversationAdapterPackageChangeParams,

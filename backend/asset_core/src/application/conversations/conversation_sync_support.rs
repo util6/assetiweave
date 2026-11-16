@@ -49,7 +49,7 @@ impl AppService {
         on_progress_detail: &mut (dyn FnMut(String) + Send),
     ) -> AppResult<Option<Value>> {
         ensure_conversation_sync_not_cancelled(cancellation)?;
-        let adapter = super::conversation_storage::load_adapter(
+        let mut adapter = super::conversation_storage::load_adapter(
             self.db.pool(),
             self.tenant_id(),
             &source.adapter_id,
@@ -58,6 +58,24 @@ impl AppService {
         .map_err(conversation_storage_error)?;
         if !sync_source_matches_record_kind(adapter.as_ref(), &source.adapter_id, record_kind) {
             return Ok(None);
+        }
+        let ready_check = match adapter.as_ref() {
+            Some(current_adapter) => self
+                .ensure_conversation_adapter_package_runtime_ready(current_adapter)
+                .await
+                .map_err(|error| AppError::External(error.to_string())),
+            None => Ok(()),
+        };
+        if ready_check.is_ok() && adapter.is_some() {
+            if let Ok(Some(refreshed)) = super::conversation_storage::load_adapter(
+                self.db.pool(),
+                self.tenant_id(),
+                &source.adapter_id,
+            )
+            .await
+            {
+                adapter = Some(refreshed);
+            }
         }
         let web_record_source = is_web_record_adapter(adapter.as_ref(), &source.adapter_id);
         let source_record_kind = if web_record_source {
@@ -95,13 +113,6 @@ impl AppService {
         if !params.dry_run && web_record_source {
             on_progress_detail(format!("{} · 采集网页记录", source.name));
         }
-        let ready_check = match adapter.as_ref() {
-            Some(adapter) => self
-                .ensure_conversation_adapter_package_runtime_ready(adapter)
-                .await
-                .map_err(|error| AppError::External(error.to_string())),
-            None => Ok(()),
-        };
         let mut on_read_progress = |done: usize, total: usize| {
             on_progress_detail(format!("{} · 读取会话 {done}/{total}", source.name));
         };

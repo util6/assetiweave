@@ -303,7 +303,8 @@ impl AppService {
         let is_official = crate::backend::infrastructure::conversations::is_official_adapter_id(
             &package.adapter_id,
         );
-        if is_official {
+        let is_dev_override = package.origin == ConversationAdapterPackageOrigin::DevOverride;
+        if is_official && !is_dev_override {
             let _ =
                 crate::backend::infrastructure::conversations::sync_official_adapter_to_package_dir(
                     &package.adapter_id,
@@ -366,7 +367,7 @@ impl AppService {
                     }
                 }
             }
-            Ok(validation.content_hash)
+            Ok((validation.content_hash, validation.adapter_validation.content_hash, validation.adapter_manifest_path))
         });
 
         let previous_ready = package.runtime_ready;
@@ -377,11 +378,20 @@ impl AppService {
         let previous_error_message = package.error_message.clone();
 
         let now = Utc::now().to_rfc3339();
+        let mut refreshed_adapter_manifest: Option<String> = None;
         match evaluated {
-            Ok(content_hash) => {
+            Ok((content_hash, adapter_hash, adapter_manifest_path)) => {
                 package.runtime_ready = true;
                 package.runtime_gate_status = ConversationAdapterRuntimeGateStatus::Ready;
-                package.installed_content_hash = Some(content_hash);
+                package.installed_content_hash = Some(content_hash.clone());
+                if is_dev_override {
+                    package.trusted_package_hash = Some(content_hash);
+                    if adapter.and_then(|a| a.content_hash.as_deref())
+                        != Some(adapter_hash.as_str())
+                    {
+                        refreshed_adapter_manifest = Some(adapter_manifest_path);
+                    }
+                }
                 package.error_message = None;
             }
             Err(error) => {
@@ -403,6 +413,38 @@ impl AppService {
         if changed {
             package.updated_at = now;
             self.save_conversation_adapter_package(package).await?;
+        }
+        if let Some(manifest_path) = refreshed_adapter_manifest {
+            let settings = self.app_settings_value();
+            if let Ok(preview) =
+                crate::backend::infrastructure::conversations::register_external_adapter_with_settings(
+                    crate::backend::infrastructure::conversations::ExternalAdapterRegisterParams {
+                        manifest_path,
+                        dry_run: true,
+                        yes: true,
+                    },
+                    &settings,
+                )
+                .await
+            {
+                if let Ok(mut updated_adapter) =
+                    crate::backend::infrastructure::conversations::adapter_from_registration_preview(
+                        preview,
+                    )
+                {
+                    let _ = crate::backend::infrastructure::path_utils::normalize_conversation_adapter_paths(
+                        &mut updated_adapter,
+                    );
+                    crate::backend::store::set_app_conversation_adapter_projection_sqlx(
+                        self.db.pool(),
+                        self.tenant_id(),
+                        &package.adapter_id,
+                        Some(&updated_adapter),
+                    )
+                    .await?;
+                    self.runtime.refresh_conversation_adapter_catalog().await?;
+                }
+            }
         }
         Ok(())
     }

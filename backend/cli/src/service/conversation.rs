@@ -212,4 +212,55 @@ impl<'a> ConversationOperations<'a> {
             .context("failed to upgrade conversation adapter workspace")?;
         Ok(serde_json::to_value(result)?)
     }
+
+    pub async fn register_adapter(
+        &self,
+        manifest_path: String,
+        dry_run: bool,
+        yes: bool,
+    ) -> Result<Value> {
+        let result = self
+            .app_service
+            .register_conversation_adapter(
+                asset_core::infrastructure::conversations::ExternalAdapterRegisterParams {
+                    manifest_path,
+                    dry_run,
+                    yes,
+                },
+            )
+            .await
+            .context("failed to register conversation adapter")?;
+        Ok(result)
+    }
+
+    pub async fn register_adapter_dev(
+        &self,
+        package_dir: Option<String>,
+        developer: bool,
+        dry_run: bool,
+        yes: bool,
+    ) -> Result<Value> {
+        self.app_service
+            .register_conversation_adapter_dev(package_dir, developer, dry_run, yes)
+            .await
+            .context("failed to register developer conversation adapter")
+    }
+
+    pub async fn unregister_adapter(
+        &self,
+        adapter_id: String,
+        dry_run: bool,
+        yes: bool,
+    ) -> Result<Value> {
+        self.app_service
+            .unregister_conversation_adapter(
+                asset_core::application::ConversationAdapterUnregisterParams {
+                    adapter_id,
+                    dry_run,
+                    yes,
+                },
+            )
+            .await
+            .context("failed to unregister conversation adapter")
+    }
 }

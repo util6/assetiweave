@@ -1102,3 +1102,132 @@ async fn refresh_conversation_adapter_package_runtime_skips_write_when_state_unc
     );
     let _ = fs::remove_dir_all(&root);
 }
+
+#[tokio::test]
+async fn dev_override_official_adapter_is_not_clobbered_and_refreshes_hash() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-dev-override-test-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let package_dir = root.join("antigravity");
+    fs::create_dir_all(&package_dir).expect("create package dir");
+    fs::write(
+        package_dir.join("conversation-adapter-package.json"),
+        r#"{
+  "schema_version": 1,
+  "package_id": "io.github.util6.antigravity-session",
+  "adapter_id": "antigravity",
+  "name": "Antigravity Dev",
+  "version": "1.5.3-dev",
+  "min_core_version": "0.1.0",
+  "record_kind": "session",
+  "adapter_manifest": "conversation-adapter.json",
+  "capabilities": ["probe", "read_session"],
+  "runtime": { "protocol": "stdio-ndjson-v1" },
+  "changelog": []
+}"#,
+    )
+    .expect("write pkg manifest");
+    fs::write(
+        package_dir.join("conversation-adapter.json"),
+        r#"{
+  "schema_version": 1,
+  "id": "antigravity",
+  "name": "Antigravity Dev",
+  "version": "1.5.3-dev",
+  "protocol_version": 1,
+  "command": ["adapter.sh"],
+  "capabilities": ["probe", "read_session"],
+  "input_kinds": ["directory"]
+}"#,
+    )
+    .expect("write adapter manifest");
+    let script_path = package_dir.join("adapter.sh");
+    fs::write(
+        &script_path,
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"ok\":true}}'\n",
+    )
+    .expect("write adapter script v1");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&script_path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("set permissions");
+    }
+
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
+
+    let reg = service
+        .register_conversation_adapter_dev(
+            Some(package_dir.to_string_lossy().to_string()),
+            false,
+            false,
+            true,
+        )
+        .await
+        .expect("register dev_override");
+    assert_eq!(reg["origin"], "dev_override");
+
+    let pkg = service
+        .load_conversation_adapter_package("io.github.util6.antigravity-session")
+        .await
+        .expect("load pkg")
+        .expect("pkg exists");
+    assert_eq!(pkg.origin, ConversationAdapterPackageOrigin::DevOverride);
+
+    let hash_v1 = service
+        .list_conversation_adapters()
+        .expect("list adapters")
+        .into_iter()
+        .find(|a| a.id == "antigravity")
+        .and_then(|a| a.content_hash)
+        .expect("content hash v1");
+
+    // Reconcile must not overwrite our live dev_override folder with bundled official files
+    crate::backend::application::system::conversation_adapters::reconcile_app_conversation_adapters(
+        service.db.pool(),
+        service.tenant_id(),
+    )
+    .await
+    .expect("reconcile adapters");
+    let disk_after_reconcile =
+        fs::read_to_string(&script_path).expect("read script after reconcile");
+    assert!(
+        disk_after_reconcile.contains("#!/bin/sh"),
+        "DevOverride files must NEVER be overwritten by official bundled assets"
+    );
+
+    // Edit dev script on disk -> refresh runtime -> hash in conversation_adapters updates automatically
+    fs::write(
+        &script_path,
+        "#!/bin/sh\n# dev edit v2\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"ok\":true}}'\n",
+    )
+    .expect("write adapter script v2");
+    let adapter = service
+        .list_conversation_adapters()
+        .expect("list adapters")
+        .into_iter()
+        .find(|a| a.id == "antigravity")
+        .expect("antigravity adapter");
+    service
+        .ensure_conversation_adapter_package_runtime_ready(&adapter)
+        .await
+        .expect("refresh runtime");
+    let hash_v2 = service
+        .list_conversation_adapters()
+        .expect("list adapters")
+        .into_iter()
+        .find(|a| a.id == "antigravity")
+        .and_then(|a| a.content_hash)
+        .expect("content hash v2");
+    assert_ne!(
+        hash_v1, hash_v2,
+        "DevOverride hash must update on disk edits"
+    );
+
+    drop(service);
+    let _ = fs::remove_dir_all(&root);
+}

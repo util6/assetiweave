@@ -2526,3 +2526,109 @@ fn test_conversation_batch_outline_and_qa_digest_cli() {
     let ans_val = out_digest["data"]["turns"]["rows"][0][3].as_str().unwrap();
     assert!(ans_val.contains("... [省略 50 字] ..."));
 }
+
+#[test]
+fn cli_conversation_adapter_register_dev_and_unregister() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("app.db");
+    let pkg_dir = dir.path().join("custom-dev-adapter");
+    std::fs::create_dir_all(&pkg_dir).unwrap();
+    std::fs::write(
+        pkg_dir.join("conversation-adapter-package.json"),
+        r#"{
+  "schema_version": 1,
+  "package_id": "com.example.custom-dev",
+  "adapter_id": "custom-dev",
+  "name": "Custom Dev Adapter",
+  "version": "0.1.0",
+  "min_core_version": "0.1.0",
+  "record_kind": "session",
+  "adapter_manifest": "conversation-adapter.json",
+  "capabilities": ["probe", "read_session"],
+  "runtime": { "protocol": "stdio-ndjson-v1" },
+  "changelog": []
+}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        pkg_dir.join("conversation-adapter.json"),
+        r#"{
+  "schema_version": 1,
+  "id": "custom-dev",
+  "name": "Custom Dev Adapter",
+  "version": "0.1.0",
+  "protocol_version": 1,
+  "command": ["adapter.sh"],
+  "capabilities": ["probe", "read_session"],
+  "input_kinds": ["directory"]
+}"#,
+    )
+    .unwrap();
+    let script_path = pkg_dir.join("adapter.sh");
+    std::fs::write(
+        &script_path,
+        "#!/bin/sh\necho '{\"type\":\"complete\",\"item\":{\"ok\":true}}'\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).unwrap();
+    }
+
+    // 1. Register without --yes or --dry-run must fail cleanly
+    aiwc_command()
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args([
+            "conversation",
+            "adapter",
+            "register",
+            "--dev",
+            pkg_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+
+    // 2. Register in dev_override mode with --yes
+    let reg_assert = aiwc_command()
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args([
+            "conversation",
+            "adapter",
+            "register",
+            "--dev",
+            pkg_dir.to_str().unwrap(),
+            "--yes",
+        ])
+        .assert()
+        .success();
+    let reg_json: Value = serde_json::from_slice(&reg_assert.get_output().stdout).unwrap();
+    assert_eq!(reg_json["ok"], true);
+    assert_eq!(reg_json["data"]["origin"], "dev_override");
+
+    // 3. Inspect shows dev_override origin
+    let inspect_assert = aiwc_command()
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args(["conversation", "adapter", "inspect", "custom-dev"])
+        .assert()
+        .success();
+    let inspect_json: Value = serde_json::from_slice(&inspect_assert.get_output().stdout).unwrap();
+    assert_eq!(inspect_json["data"]["origin"], "dev_override");
+
+    // 4. Unregister with --yes
+    let unreg_assert = aiwc_command()
+        .env("ASSETIWEAVE_DB_PATH", &db_path)
+        .args([
+            "conversation",
+            "adapter",
+            "unregister",
+            "custom-dev",
+            "--yes",
+        ])
+        .assert()
+        .success();
+    let unreg_json: Value = serde_json::from_slice(&unreg_assert.get_output().stdout).unwrap();
+    assert_eq!(unreg_json["ok"], true);
+}

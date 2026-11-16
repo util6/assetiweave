@@ -187,6 +187,59 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                     .await?;
                 render::render_json_value(&res);
             }
+            ConversationAdapterCommands::Register(r) => {
+                if !r.dry_run && !r.yes {
+                    return Err(CliError::new_with_hint(
+                        "CONFIRMATION_REQUIRED",
+                        "conversation adapter register requires --yes or --dry-run",
+                        "pass --yes to confirm trusting this adapter or --dry-run to preview",
+                    )
+                    .into());
+                }
+                let res = if r.developer || r.dev {
+                    service
+                        .conversation()
+                        .register_adapter_dev(r.target, r.developer, r.dry_run, r.yes)
+                        .await?
+                } else {
+                    let target = r.target.ok_or_else(|| {
+                        CliError::new_with_hint(
+                            "INVALID_PARAMETER",
+                            "missing adapter manifest path",
+                            "pass <manifest> or use --developer --dev to mount repo adapters",
+                        )
+                    })?;
+                    let expanded = asset_core::infrastructure::path_utils::expand_path(&target)?;
+                    let manifest_path = if expanded.is_dir() {
+                        expanded
+                            .join("conversation-adapter.json")
+                            .to_string_lossy()
+                            .to_string()
+                    } else {
+                        target
+                    };
+                    service
+                        .conversation()
+                        .register_adapter(manifest_path, r.dry_run, r.yes)
+                        .await?
+                };
+                render::render_json_value(&res);
+            }
+            ConversationAdapterCommands::Unregister(u) => {
+                if !u.dry_run && !u.yes {
+                    return Err(CliError::new_with_hint(
+                        "CONFIRMATION_REQUIRED",
+                        "conversation adapter unregister requires --yes or --dry-run",
+                        "pass --yes to confirm or --dry-run to preview",
+                    )
+                    .into());
+                }
+                let res = service
+                    .conversation()
+                    .unregister_adapter(u.adapter_id, u.dry_run, u.yes)
+                    .await?;
+                render::render_json_value(&res);
+            }
         },
         ConversationCommands::Source(s) => match s.command {
             ConversationSourceCommands::List => {

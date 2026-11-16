@@ -287,6 +287,53 @@ pub enum ConversationAdapterCommands {
         about = "Validate and promote editable adapter scripts to the runtime package store"
     )]
     Upgrade(ConversationAdapterUpgradeArgs),
+
+    #[command(
+        about = "Register an external adapter manifest or mount a live dev adapter directory"
+    )]
+    Register(ConversationAdapterRegisterArgs),
+
+    #[command(about = "Unregister a conversation adapter")]
+    Unregister(ConversationAdapterUnregisterArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ConversationAdapterRegisterArgs {
+    #[arg(
+        help = "Adapter manifest path (conversation-adapter.json) or package directory with --dev"
+    )]
+    pub target: Option<String>,
+
+    #[arg(
+        long,
+        help = "Register adapter package directory in live dev_override mode (no copy to packages/)"
+    )]
+    pub dev: bool,
+
+    #[arg(
+        short = 'd',
+        long,
+        help = "Register all adapters from this repository's builtin-assets/adapters directory in dev_override mode"
+    )]
+    pub developer: bool,
+
+    #[arg(long, help = "Preview without registering")]
+    pub dry_run: bool,
+
+    #[arg(long, help = "Confirm trusting and registering this adapter")]
+    pub yes: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ConversationAdapterUnregisterArgs {
+    #[arg(help = "Adapter ID")]
+    pub adapter_id: String,
+
+    #[arg(long, help = "Preview without unregistering")]
+    pub dry_run: bool,
+
+    #[arg(long, help = "Confirm unregistering this adapter")]
+    pub yes: bool,
 }
 
 #[derive(Args, Debug)]
