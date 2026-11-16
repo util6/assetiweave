@@ -3,8 +3,7 @@ import { useEffect, useState, type ComponentType, type SVGProps } from "react";
 import clsx from "clsx";
 import {
   appWindowIconAsset,
-  observeAppWindowIconState,
-  type AppWindowIconState,
+  setAppWindowIcon,
 } from "../../services/appWindowIcon";
 import {
   runWindowAction,
@@ -55,8 +54,6 @@ export function WindowTitleBar({
   const [detectedMode, setDetectedMode] = useState<WindowChromeMode>(
     () => controlledMode ?? detectWindowChromeMode(),
   );
-  const [windowIconState, setWindowIconState] =
-    useState<AppWindowIconState>("display");
   const mode = controlledMode ?? detectedMode;
   const customControls = mode === "windows-frameless";
 
@@ -67,25 +64,7 @@ export function WindowTitleBar({
   }, [controlledMode]);
 
   useEffect(() => {
-    let disposed = false;
-    let stopObserving: (() => void) | undefined;
-
-    void observeAppWindowIconState((state) => {
-      if (!disposed) {
-        setWindowIconState(state);
-      }
-    }).then((stop) => {
-      if (disposed) {
-        stop();
-      } else {
-        stopObserving = stop;
-      }
-    });
-
-    return () => {
-      disposed = true;
-      stopObserving?.();
-    };
+    void setAppWindowIcon();
   }, []);
 
   if (mode === "native") {
@@ -108,8 +87,8 @@ export function WindowTitleBar({
         <img
           alt=""
           className="size-4 overflow-hidden rounded-[22%] border border-theme-nav-active-border object-cover"
-          data-app-window-icon={windowIconState}
-          src={appWindowIconAsset(windowIconState)}
+          data-app-window-icon="display"
+          src={appWindowIconAsset("display")}
         />
         <span className="truncate">AssetIWeave</span>
       </div>

@@ -1,5 +1,3 @@
-import { setAppWindowIcon } from "./appWindowIcon";
-
 export type WindowAction = "close" | "minimize" | "toggleMaximize";
 
 export async function runWindowAction(action: WindowAction) {
@@ -12,7 +10,6 @@ export async function runWindowAction(action: WindowAction) {
     const currentWindow = getCurrentWindow();
 
     if (action === "minimize") {
-      await setAppWindowIcon("minimized");
       await currentWindow.minimize();
       return;
     }

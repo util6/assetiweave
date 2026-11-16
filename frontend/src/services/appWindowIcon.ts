@@ -1,106 +1,65 @@
-export type AppWindowIconState = "display" | "minimized";
+export type AppWindowIconState = "display";
 
-const appWindowIconAssets: Record<AppWindowIconState, string> = {
-  display: new URL(
-    "../../../assets/assetiweave/app-icon-display.png",
-    import.meta.url,
-  ).href,
-  minimized: new URL(
-    "../../../assets/assetiweave/app-icon-minimized.png",
-    import.meta.url,
-  ).href,
-};
+const mainAppWindowIconAsset = new URL(
+  "../../../assets/assetiweave/app-icon-display.png",
+  import.meta.url,
+).href;
 
-let appliedState: AppWindowIconState | null = null;
+let iconApplied = false;
 let iconUpdateQueue = Promise.resolve();
 
-export function appWindowIconAsset(state: AppWindowIconState) {
-  return appWindowIconAssets[state];
+export function appWindowIconAsset(_state: AppWindowIconState = "display") {
+  return mainAppWindowIconAsset;
 }
 
 export function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-export function setAppWindowIcon(state: AppWindowIconState) {
-  if (!isTauriRuntime() || appliedState === state) {
+function isMacOsRuntime() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  const platform =
+    `${navigator.platform ?? ""} ${navigator.userAgent ?? ""}`.toLowerCase();
+  return platform.includes("mac");
+}
+
+export function setAppWindowIcon() {
+  if (!isTauriRuntime() || iconApplied) {
     return Promise.resolve();
   }
 
   iconUpdateQueue = iconUpdateQueue.then(async () => {
-    if (appliedState === state) {
+    if (iconApplied) {
       return;
     }
 
     try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      const response = await fetch(appWindowIconAsset(state));
+      const response = await fetch(appWindowIconAsset("display"));
       if (!response.ok) {
         throw new Error(`Failed to load app icon (${response.status})`);
       }
 
       const iconBytes = new Uint8Array(await response.arrayBuffer());
-      await getCurrentWindow().setIcon(iconBytes);
+
+      // macOS window.setIcon is a no-op and requires desktop-only window icon updates on Windows/Linux.
+      if (!isMacOsRuntime()) {
+        try {
+          const { getCurrentWindow } = await import("@tauri-apps/api/window");
+          await getCurrentWindow().setIcon(iconBytes);
+        } catch (error) {
+          console.error("Failed to update native window icon", error);
+        }
+      }
+
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("set_app_window_icon", { icon: Array.from(iconBytes) });
-      appliedState = state;
+      iconApplied = true;
     } catch (error) {
       console.error("Failed to update AssetIWeave window icon", error);
     }
   });
 
   return iconUpdateQueue;
-}
-
-export async function observeAppWindowIconState(
-  onStateChange: (state: AppWindowIconState) => void,
-) {
-  if (!isTauriRuntime()) {
-    return () => undefined;
-  }
-
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  const currentWindow = getCurrentWindow();
-  let disposed = false;
-  let syncing = false;
-
-  const sync = async () => {
-    if (disposed || syncing) {
-      return;
-    }
-
-    syncing = true;
-    try {
-      const state: AppWindowIconState = (await currentWindow.isMinimized())
-        ? "minimized"
-        : "display";
-      if (!disposed) {
-        onStateChange(state);
-        await setAppWindowIcon(state);
-      }
-    } catch (error) {
-      console.error("Failed to read AssetIWeave window state", error);
-    } finally {
-      syncing = false;
-    }
-  };
-
-  const unlistenResized = await currentWindow.onResized(() => {
-    void sync();
-  });
-  const unlistenFocusChanged = await currentWindow.onFocusChanged(() => {
-    void sync();
-  });
-  const poll = window.setInterval(() => {
-    void sync();
-  }, 750);
-
-  void sync();
-
-  return () => {
-    disposed = true;
-    window.clearInterval(poll);
-    unlistenResized();
-    unlistenFocusChanged();
-  };
 }

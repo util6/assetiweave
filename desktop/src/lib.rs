@@ -288,6 +288,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            if let Err(error) =
+                crate::adapters::tauri::app_icon::apply_default_application_icon(app.handle())
+            {
+                tracing::warn!(
+                    action = "app.startup.icon",
+                    error = %error,
+                    "failed to apply default application icon"
+                );
+            }
             #[cfg(desktop)]
             {
                 app.handle()

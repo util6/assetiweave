@@ -1,5 +1,25 @@
 use tauri::AppHandle;
 
+#[cfg(target_os = "macos")]
+const DEFAULT_MACOS_APP_ICON: &[u8] =
+    include_bytes!("../../../../assets/assetiweave/app-icon-display.png");
+
+pub(crate) fn apply_default_application_icon(app: &AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(marker) = objc2::MainThreadMarker::new() {
+            return set_macos_application_icon_on_main_thread(marker, DEFAULT_MACOS_APP_ICON);
+        }
+        return set_application_icon(app.clone(), DEFAULT_MACOS_APP_ICON.to_vec());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Ok(())
+    }
+}
+
 pub(crate) fn set_application_icon(app: AppHandle, icon: Vec<u8>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -25,11 +45,20 @@ pub(crate) fn set_application_icon(app: AppHandle, icon: Vec<u8>) -> Result<(), 
 
 #[cfg(target_os = "macos")]
 fn set_macos_application_icon(icon: &[u8]) -> Result<(), String> {
-    use objc2::{AllocAnyThread, MainThreadMarker};
+    let marker = objc2::MainThreadMarker::new()
+        .ok_or_else(|| "application icon must be updated on the macOS main thread".to_string())?;
+    set_macos_application_icon_on_main_thread(marker, icon)
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_application_icon_on_main_thread(
+    marker: objc2::MainThreadMarker,
+    icon: &[u8],
+) -> Result<(), String> {
+    use objc2::AllocAnyThread;
     use objc2_app_kit::{NSApplication, NSImage};
     use objc2_foundation::NSData;
 
-    let marker = unsafe { MainThreadMarker::new_unchecked() };
     let application = NSApplication::sharedApplication(marker);
     let data = NSData::with_bytes(icon);
     let image = NSImage::initWithData(NSImage::alloc(), &data)
