@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { TaskView } from "../types/taskCenter";
 import type {
   ModelPriceEntry,
   ModelPricingCatalog,
   ModelPricingStatus,
   ModelPricingSyncResult,
-  ModelPricingSyncTaskSnapshot,
   UsageDashboardDto,
   UsageDashboardFilter,
   UsageScanOptions,
@@ -375,10 +375,8 @@ export async function scanConversationUsage(
     };
   }
   const snapshot = await invoke<{ id: string }>("scan_conversation_usage", {
-    {
-      options: options ?? {},
-    },
-  );
+    options: options ?? {},
+  });
   const status = await getConversationUsageScanStatus();
   return {
     ...status,
@@ -708,36 +706,19 @@ function buildMockPricingStatus(): ModelPricingStatus {
   };
 }
 
+export interface PricingSyncTaskHandle {
+  id: string;
+  state: string;
+}
+
 export async function updateModelPricingCatalog(
   force = false,
   models?: string[],
-): Promise<ModelPricingSyncTaskSnapshot> {
+): Promise<PricingSyncTaskHandle> {
   if (!isTauriRuntime()) {
-    return {
-      id: "mock-task-pricing-sync",
-      status: "completed",
-      force,
-      progress: {
-        phase: "completed",
-        message: "价格同步完成",
-        channel: "litellm",
-        modelsCount: models ? models.length : MOCK_REFERENCE_MODELS.length,
-        recalculatedEventsCount: 22938,
-        exchangeRate: mockPricingState.exchangeRate,
-      },
-      startedAt: new Date().toISOString(),
-      finishedAt: new Date().toISOString(),
-      result: {
-        channelUsed: "litellm",
-        modelsCount: models ? models.length : MOCK_REFERENCE_MODELS.length,
-        exchangeRate: mockPricingState.exchangeRate,
-        recalculatedEventsCount: 22938,
-        catalogVersion: mockPricingState.catalogVersion,
-        updatedAt: new Date().toISOString(),
-      },
-    };
+    return { id: "mock-task-pricing-sync", state: "succeeded" };
   }
-  return invoke<ModelPricingSyncTaskSnapshot>("update_model_pricing_catalog", {
+  return invoke<PricingSyncTaskHandle>("update_model_pricing_catalog", {
     force,
     models,
   });
@@ -764,18 +745,17 @@ export async function getModelPricingCatalog(): Promise<ModelPricingCatalog> {
   return invoke<ModelPricingCatalog>("get_model_pricing_catalog");
 }
 
-export function subscribeModelPricingSyncTask(
-  listener: (snapshot: ModelPricingSyncTaskSnapshot) => void,
+export function subscribePricingSyncTask(
+  listener: (task: TaskView) => void,
 ): Promise<() => void> {
   if (!isTauriRuntime()) {
     return Promise.resolve(() => undefined);
   }
-  return listen<ModelPricingSyncTaskSnapshot>(
-    "model-pricing-sync-task-updated",
-    (event) => {
+  return listen<TaskView>("task-updated", (event) => {
+    if (event.payload.kind === "modelpricingsync") {
       listener(event.payload);
-    },
-  );
+    }
+  });
 }
 
 export async function setModelPricingExchangeRate(

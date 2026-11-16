@@ -237,23 +237,7 @@ describe("ConversationPricingSettingsPanel", () => {
       .spyOn(usageService, "updateModelPricingCatalog")
       .mockResolvedValue({
         id: "task-sync-1",
-        status: "completed",
-        force: true,
-        progress: {
-          phase: "completed",
-          modelsCount: 42,
-          recalculatedEventsCount: 15,
-          exchangeRate: 7.25,
-        },
-        startedAt: new Date().toISOString(),
-        result: {
-          channelUsed: "litellm",
-          modelsCount: 42,
-          exchangeRate: 7.25,
-          recalculatedEventsCount: 15,
-          catalogVersion: "v1",
-          updatedAt: new Date().toISOString(),
-        },
+        state: "running",
       });
 
     render(<ConversationPricingSettingsPanel />);

@@ -11,8 +11,8 @@ use crate::backend::{
         PackageIdentity, PackageKind, ResourceKey,
     },
     infrastructure::tasks::{
-        ExternalRegistrationOutcome, TaskFn, TaskKind, TaskRuntime, TaskSnapshot, TaskSpec,
-        TaskState,
+        ExternalRegistrationOutcome, TaskFn, TaskKind, TaskRuntime, TaskSnapshot,
+        TaskSpec, TaskState,
     },
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
