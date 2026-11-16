@@ -206,10 +206,23 @@ export interface UsageDashboardFilter {
   timezoneOffsetMinutes?: number | null;
 }
 
+export type UsageScanMode = "incremental" | "full";
+
 export interface UsageScanOptions {
   mode?: "incremental" | "full" | null;
   sourceId?: string | null;
   adapterId?: string | null;
+}
+
+/** 扫描任务终态结果投影（后端 `TaskView.result`）。 */
+export interface UsageScanResultSummary {
+  mode: UsageScanMode;
+  totalSources: number;
+  completedSources: number;
+  successfulSources: number;
+  failedSources: number;
+  totalEventsIngested: number;
+  recalculatedEventsCount: number;
 }
 
 export function formatChineseTokens(tokens: number, precision = 2): string {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import type {
   UsageProjectBreakdown,
+  UsageScanMode,
   UsageScanStatus,
   UsageSourceBreakdown,
 } from "../../../types/usage";
@@ -12,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../ui/select";
+import { PillTabs } from "../../common/PillTabs";
 import { RefreshCw, RotateCw, AlertTriangle } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { DateRangePicker } from "./DateRangePicker";
@@ -38,6 +40,9 @@ interface UsageToolbarProps {
   sources: UsageSourceBreakdown[];
   onRefresh: () => void;
   onScan: () => void;
+  scanMode: UsageScanMode;
+  onScanModeChange: (mode: UsageScanMode) => void;
+  scanning: boolean;
   scanStatus: UsageScanStatus;
   totalRequests: number;
   refreshing: boolean;
@@ -58,6 +63,9 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
   sources,
   onRefresh,
   onScan,
+  scanMode,
+  onScanModeChange,
+  scanning,
   scanStatus,
   totalRequests,
   refreshing,
@@ -73,10 +81,8 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
     return () => clearInterval(timer);
   }, [cooldownSecs]);
 
-  const isScanning = Boolean(scanStatus.activeScanTaskId);
-
   const handleScanClick = () => {
-    if (isScanning || cooldownSecs > 0) return;
+    if (scanning || cooldownSecs > 0) return;
     onScan();
     setCooldownSecs(30);
   };
@@ -226,25 +232,42 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
             <span>刷新</span>
           </Button>
 
+          <PillTabs
+            activeId={scanMode}
+            ariaLabel="扫描模式"
+            items={[
+              { id: "incremental", label: "增量扫描", disabled: scanning },
+              { id: "full", label: "全量重扫", disabled: scanning },
+            ]}
+            onSelect={(id) => onScanModeChange(id)}
+            size="sm"
+          />
+
+          {scanMode === "full" && !scanning ? (
+            <span className="hidden max-w-[190px] text-caption leading-tight text-status-conflict xl:inline">
+              忽略历史游标，重读全部记录并清理失效事件
+            </span>
+          ) : null}
+
           <Button
             variant="outline"
             size="sm"
             onClick={handleScanClick}
-            disabled={isScanning || cooldownSecs > 0}
+            disabled={scanning || cooldownSecs > 0}
             className="h-9 gap-1.5 rounded-xl border-theme-control-border/80 bg-theme-control/60 px-3 text-caption text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] cursor-pointer transition-all hover:border-theme-nav-active-border/60 hover:text-on-surface"
           >
             <RotateCw
               className={cn(
                 "h-3.5 w-3.5",
-                isScanning && "animate-spin text-primary",
+                scanning && "animate-spin text-primary",
               )}
             />
             <span>
-              {isScanning
+              {scanning
                 ? "正在扫描..."
                 : cooldownSecs > 0
-                  ? `重新扫描 (${cooldownSecs}s)`
-                  : "重新扫描"}
+                  ? `开始扫描 (${cooldownSecs}s)`
+                  : "开始扫描"}
             </span>
           </Button>
         </div>

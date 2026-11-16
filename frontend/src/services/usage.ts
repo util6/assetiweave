@@ -8,7 +8,9 @@ import type {
   ModelPricingSyncResult,
   UsageDashboardDto,
   UsageDashboardFilter,
+  UsageScanMode,
   UsageScanOptions,
+  UsageScanResultSummary,
   UsageScanStatus,
 } from "../types/usage";
 
@@ -362,25 +364,54 @@ export async function getConversationUsageScanStatus(): Promise<UsageScanStatus>
   return invoke<UsageScanStatus>("get_conversation_usage_scan_status");
 }
 
+export interface UsageScanTaskHandle {
+  id: string;
+  mode: UsageScanMode;
+}
+
+function normalizeUsageScanMode(value: unknown): UsageScanMode | null {
+  return value === "full" || value === "incremental" ? value : null;
+}
+
+/**
+ * 触发用量扫描任务。
+ *
+ * 任务由任务中心托管（`conversation/usage_scan`），运行/终态统一走
+ * `TaskCenterProvider` 的 `task-updated` 与任务列表，服务层只返回启动态句柄。
+ */
 export async function scanConversationUsage(
   options: UsageScanOptions = {},
-): Promise<UsageScanStatus> {
+): Promise<UsageScanTaskHandle> {
+  const mode = normalizeUsageScanMode(options.mode) ?? "incremental";
   if (!isTauriRuntime()) {
-    return {
-      scannedSourcesCount: 464,
-      totalEventsCount: 22938,
-      lastScannedAt: new Date().toISOString(),
-      activeScanTaskId: "mock-task-usage-scan",
-      sourceDiagnostics: [],
-    };
+    return { id: "mock-task-usage-scan", mode };
   }
   const task = await invoke<{ id: string }>("scan_conversation_usage", {
-    options: options ?? {},
+    options: { ...options, mode },
   });
-  const status = await getConversationUsageScanStatus();
+  return { id: task?.id ?? "", mode };
+}
+
+/** 解析任务终态投影中的扫描统计；无法识别 mode 时返回 null。 */
+export function normalizeUsageScanResult(
+  raw: unknown,
+): UsageScanResultSummary | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as Record<string, unknown>;
+  const mode = normalizeUsageScanMode(data.mode);
+  if (!mode) return null;
+
+  const count = (value: unknown): number =>
+    typeof value === "number" && Number.isFinite(value) ? value : 0;
+
   return {
-    ...status,
-    activeScanTaskId: task?.id || status.activeScanTaskId,
+    mode,
+    totalSources: count(data.total_sources),
+    completedSources: count(data.completed_sources),
+    successfulSources: count(data.successful_sources),
+    failedSources: count(data.failed_sources),
+    totalEventsIngested: count(data.total_events_ingested),
+    recalculatedEventsCount: count(data.recalculated_events_count),
   };
 }
 
