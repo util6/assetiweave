@@ -54,19 +54,43 @@ pub async fn import_conversation_sessions_advanced_sqlx(
     }
 
     let now = Utc::now().to_rfc3339();
-    // 源级载荷策略版本与当前版本不一致时，本轮必须强制重读存量会话：
-    // 会话的 unchanged 判定只看源文件指纹与内容，策略升级不会改变指纹，
-    // 若不强制，升级后的第一轮会把所有会话判为未变更并写回新版本，导致永久跳过。
-    let stored_payload_policy_version = sqlx::query_scalar::<_, Option<i64>>(
-        "SELECT synced_payload_policy_version FROM conversation_sources WHERE tenant_id = ?1 AND id = ?2",
+    use sqlx::Row;
+
+    let contract_row = sqlx::query(
+        "SELECT synced_adapter_hash, synced_card_contract_version, synced_payload_policy_version, synced_projection_version \
+         FROM conversation_sources WHERE tenant_id = ?1 AND id = ?2",
     )
     .bind(tenant_id)
     .bind(&source.id)
     .fetch_optional(pool)
     .await
-    .map_err(StoreError::external)?
-    .flatten();
-    let force_reparse = stored_payload_policy_version != Some(i64::from(payload_policy_version));
+    .map_err(StoreError::external)?;
+    let (
+        stored_adapter_hash,
+        stored_card_contract_version,
+        stored_payload_policy_version,
+        stored_projection_version,
+    ) = match contract_row {
+        Some(row) => (
+            row.try_get::<Option<String>, _>("synced_adapter_hash")
+                .map_err(StoreError::external)?,
+            row.try_get::<Option<i64>, _>("synced_card_contract_version")
+                .map_err(StoreError::external)?,
+            row.try_get::<Option<i64>, _>("synced_payload_policy_version")
+                .map_err(StoreError::external)?,
+            row.try_get::<Option<i64>, _>("synced_projection_version")
+                .map_err(StoreError::external)?,
+        ),
+        None => (None, None, None, None),
+    };
+    let contract_drifted = stored_payload_policy_version != Some(i64::from(payload_policy_version))
+        || stored_adapter_hash.as_deref() != adapter_content_hash
+        || stored_card_contract_version != card_contract_version.map(i64::from)
+        || stored_projection_version != projection_version.map(i64::from);
+    let force_reparse = matches!(
+        sync_mode,
+        crate::backend::domain::ConversationSyncMode::Full
+    ) || contract_drifted;
     let sync_run_id = stable_id("conversation-sync", &[&source.id, &now]);
     let mut skipped_session_count = 0usize;
     let mut changed_session_count = 0usize;

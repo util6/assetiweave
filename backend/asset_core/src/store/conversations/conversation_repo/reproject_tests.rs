@@ -252,3 +252,229 @@ async fn test_reproject_conversation_session_materializes_parts_and_derives_exec
     let _ = std::fs::remove_file(format!("{}-wal", db_path.display()));
     let _ = std::fs::remove_file(format!("{}-shm", db_path.display()));
 }
+
+#[tokio::test]
+async fn test_apply_reprojected_sessions_preserves_qa_missing_flag_and_translations() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-reproject-legacy-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_async(&db_path)
+        .await
+        .unwrap();
+    let pool = database.pool();
+    let tenant_id = "test-tenant-legacy-reproject";
+    let now = Utc::now().to_rfc3339();
+
+    sqlx::query("INSERT OR IGNORE INTO tenants (id, created_at, updated_at) VALUES (?1, ?2, ?2)")
+        .bind(tenant_id)
+        .bind(&now)
+        .execute(pool)
+        .await
+        .unwrap();
+
+    let source = ConversationSource {
+        id: "source-legacy-reproject".to_string(),
+        adapter_id: "antigravity".to_string(),
+        name: "Antigravity".to_string(),
+        kind: ConversationSourceKind::Directory,
+        location: "/tmp/nonexistent".to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+    upsert_conversation_source_sqlx(pool, tenant_id, &source)
+        .await
+        .unwrap();
+
+    let legacy_session = NormalizedConversationSession {
+        external_id: "missing-session-1".to_string(),
+        title: Some("Legacy Missing Session".to_string()),
+        project_path: Some("/tmp/project".to_string()),
+        user_visible: Some(true),
+        execution_origin: None,
+        execution_purpose: None,
+        started_at: Some("2026-01-01T00:00:00Z".to_string()),
+        updated_at: Some("2026-01-01T00:01:00Z".to_string()),
+        source_locator: None,
+        source_fingerprint: Some("fp-legacy-1".to_string()),
+        turns: vec![NormalizedConversationTurn {
+            external_id: Some("t-1".to_string()),
+            turn_index: 0,
+            user_text: "Original user prompt line".to_string(),
+            started_at: Some("2026-01-01T00:00:00Z".to_string()),
+            ended_at: Some("2026-01-01T00:00:30Z".to_string()),
+            model: Some("gemini-test".to_string()),
+            parts: vec![
+                NormalizedConversationPart {
+                    role: ConversationPartRole::Tool,
+                    kind: ConversationPartKind::Tool,
+                    text: Some("Tool: read_file\nPath: /tmp/project/src/a.ts".to_string()),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: Some(ConversationContentCardDescriptor {
+                        schema_version: 1,
+                        kind: "antigravity.tool".to_string(),
+                        semantic_role: None,
+                        renderer: Some("card".to_string()),
+                    }),
+                    metadata_json: None,
+                },
+                NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Text,
+                    text: Some("Original final assistant response".to_string()),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                },
+            ],
+            ..Default::default()
+        }],
+    };
+
+    import_conversation_sessions_sqlx(pool, tenant_id, &source, &[legacy_session], false)
+        .await
+        .unwrap();
+
+    let session_id = stable_id("conversation-session", &[&source.id, "missing-session-1"]);
+    // Mark session as missing = 1 AND attach response_translated_text in TurnProcess
+    sqlx::query("UPDATE conversation_sessions SET missing = 1 WHERE tenant_id = ?1 AND id = ?2")
+        .bind(tenant_id)
+        .bind(&session_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        r#"UPDATE conversation_turns
+           SET process = '{"response_translated_text":"原始回答翻译"}'
+           WHERE tenant_id = ?1 AND session_id = ?2"#,
+    )
+    .bind(tenant_id)
+    .bind(&session_id)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let origins = load_sessions_for_reprojection_sqlx(
+        pool,
+        tenant_id,
+        None,
+        None,
+        &std::collections::BTreeSet::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(origins.len(), 1);
+    assert_eq!(origins[0].session.id, session_id);
+
+    // 1. Invariant guard rejects tampering with prompt/response or turn count.
+    let mut bad_payload = origins[0].payload.clone();
+    bad_payload.turns[0].prompt = "Tampered prompt".to_string();
+    let bad_report = apply_reprojected_sessions_sqlx(pool, tenant_id, &origins, &[bad_payload])
+        .await
+        .unwrap();
+    assert_eq!(bad_report.failed_sessions, 1);
+    assert_eq!(bad_report.updated_sessions, 0);
+
+    // 2. Valid transformation updates `antigravity.tool` -> `antigravity.ambient` while keeping QA + missing + translation.
+    let mut valid_payload = origins[0].payload.clone();
+    let tool_part = valid_payload.turns[0]
+        .parts
+        .iter_mut()
+        .find(|p| p.kind == ConversationPartKind::Tool)
+        .unwrap();
+    tool_part.text = Some("Read /tmp/project/src/a.ts".to_string());
+    tool_part.content_card = Some(ConversationContentCardDescriptor {
+        schema_version: 1,
+        kind: "antigravity.ambient".to_string(),
+        semantic_role: Some("ambient".to_string()),
+        renderer: Some("compact_action".to_string()),
+    });
+
+    let ok_report = apply_reprojected_sessions_sqlx(
+        pool,
+        tenant_id,
+        &origins,
+        std::slice::from_ref(&valid_payload),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ok_report.updated_sessions, 1);
+    assert_eq!(ok_report.failed_sessions, 0);
+
+    // Verify missing = 1 intact & prompt/response intact & translation intact & ambient card persisted
+    let missing_after: i64 = sqlx::query_scalar(
+        "SELECT missing FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(&session_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(missing_after, 1);
+
+    let detail = load_conversation_session_detail_sqlx(pool, tenant_id, &session_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        detail.questions[0].turns[0].prompt,
+        "Original user prompt line"
+    );
+    assert_eq!(
+        detail.questions[0].turns[0].response.as_deref(),
+        Some("Original final assistant response")
+    );
+    assert!(detail.questions[0].turns[0]
+        .process
+        .as_deref()
+        .unwrap_or("")
+        .contains("原始回答翻译"));
+    assert_eq!(
+        detail.questions[0].parts[0]
+            .content_card
+            .as_ref()
+            .map(|c| c.kind.as_str()),
+        Some("antigravity.ambient")
+    );
+
+    // 3. Re-running with identical transformed state skips SQLite writes cleanly.
+    let origins_second = load_sessions_for_reprojection_sqlx(
+        pool,
+        tenant_id,
+        None,
+        None,
+        &std::collections::BTreeSet::new(),
+    )
+    .await
+    .unwrap();
+    let second_report = apply_reprojected_sessions_sqlx(
+        pool,
+        tenant_id,
+        &origins_second,
+        &[origins_second[0].payload.clone()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(second_report.updated_sessions, 0);
+    assert_eq!(second_report.skipped_unchanged_sessions, 1);
+
+    drop(database);
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{}-wal", db_path.display()));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path.display()));
+}

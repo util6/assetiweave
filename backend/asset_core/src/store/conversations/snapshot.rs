@@ -195,6 +195,234 @@ pub(crate) fn prepare_session_snapshot(
     prepared
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ExistingTurnSnapshot {
+    pub turn: ConversationTurn,
+    pub parts: Vec<TriadPart>,
+}
+
+pub(crate) async fn load_existing_session_snapshot_sqlx_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_id: &str,
+    kind: ConversationRecordKind,
+    session_id: &str,
+) -> StoreResult<(Option<String>, Vec<ExistingTurnSnapshot>)> {
+    use sqlx::Row;
+
+    let tables = kind.record_tables();
+    let existing_fp = if matches!(kind, ConversationRecordKind::Session) {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT source_fingerprint FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2",
+        )
+        .bind(tenant_id)
+        .bind(session_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(StoreError::external)?
+        .flatten()
+    } else {
+        None
+    };
+
+    let turn_sql = format!(
+        "SELECT id, session_id, turn_index, prompt, process, response, \
+                started_at, ended_at, model, imported_at \
+         FROM {turns} WHERE tenant_id = ?1 AND session_id = ?2 ORDER BY turn_index ASC",
+        turns = tables.turns,
+    );
+    let turn_rows = sqlx::query(sqlx::AssertSqlSafe(turn_sql))
+        .bind(tenant_id)
+        .bind(session_id)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(StoreError::external)?;
+
+    let mut turns = Vec::with_capacity(turn_rows.len());
+    for row in turn_rows {
+        let turn_id: String = row.try_get("id").map_err(StoreError::external)?;
+        let part_sql = if tables.parts_have_attrs {
+            format!(
+                "SELECT part_index, kind, content, attrs_json, translated_text \
+                 FROM {parts} WHERE tenant_id = ?1 AND turn_id = ?2 ORDER BY part_index ASC",
+                parts = tables.parts,
+            )
+        } else {
+            format!(
+                "SELECT part_index, kind, content, NULL AS attrs_json, translated_text \
+                 FROM {parts} WHERE tenant_id = ?1 AND turn_id = ?2 ORDER BY part_index ASC",
+                parts = tables.parts,
+            )
+        };
+        let part_rows = sqlx::query(sqlx::AssertSqlSafe(part_sql))
+            .bind(tenant_id)
+            .bind(&turn_id)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(StoreError::external)?;
+
+        let mut parts = Vec::with_capacity(part_rows.len());
+        for prow in part_rows {
+            parts.push(TriadPart {
+                part_index: prow.try_get("part_index").map_err(StoreError::external)?,
+                kind: prow.try_get("kind").map_err(StoreError::external)?,
+                content: prow.try_get("content").map_err(StoreError::external)?,
+                attrs_json: prow.try_get("attrs_json").map_err(StoreError::external)?,
+                translated_text: prow
+                    .try_get("translated_text")
+                    .map_err(StoreError::external)?,
+            });
+        }
+
+        let process_raw: Option<String> = row.try_get("process").map_err(StoreError::external)?;
+        let parsed_process = process_raw
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<TurnProcess>(json).ok());
+        turns.push(ExistingTurnSnapshot {
+            turn: ConversationTurn {
+                id: turn_id,
+                session_id: row.try_get("session_id").map_err(StoreError::external)?,
+                turn_index: row.try_get("turn_index").map_err(StoreError::external)?,
+                prompt: row.try_get("prompt").map_err(StoreError::external)?,
+                title: parsed_process.as_ref().and_then(|p| p.title.clone()),
+                started_at: row.try_get("started_at").map_err(StoreError::external)?,
+                ended_at: row.try_get("ended_at").map_err(StoreError::external)?,
+                imported_at: row.try_get("imported_at").map_err(StoreError::external)?,
+                model: row.try_get("model").map_err(StoreError::external)?,
+                process: process_raw,
+                response: row.try_get("response").map_err(StoreError::external)?,
+                turn_kind: parsed_process.as_ref().and_then(|p| p.turn_kind.clone()),
+                agent_role: parsed_process.as_ref().and_then(|p| p.agent_role.clone()),
+                parent_turn_id: parsed_process
+                    .as_ref()
+                    .and_then(|p| p.parent_turn_id.clone()),
+            },
+            parts,
+        });
+    }
+
+    Ok((existing_fp, turns))
+}
+
+pub(crate) fn preserve_qa_and_translations(
+    existing_source_fp: Option<&str>,
+    new_source_fp: Option<&str>,
+    force_reparse: bool,
+    existing_turns: &[ExistingTurnSnapshot],
+    prepared: &mut Vec<PreparedTurn>,
+) {
+    if existing_turns.is_empty() {
+        return;
+    }
+
+    let same_source_content =
+        force_reparse && existing_source_fp.is_some() && existing_source_fp == new_source_fp;
+
+    // Guardrail: re-parsing the same underlying source snapshot must never lose turns.
+    if same_source_content && prepared.len() < existing_turns.len() {
+        tracing::warn!(
+            session_id = %existing_turns[0].turn.session_id,
+            existing_turns = existing_turns.len(),
+            reparsed_turns = prepared.len(),
+            "force_reparse yielded fewer turns for identical source_fingerprint; preserving tail turns"
+        );
+        for existing in &existing_turns[prepared.len()..] {
+            prepared.push(PreparedTurn {
+                turn: existing.turn.clone(),
+                parts: existing.parts.clone(),
+            });
+        }
+    }
+
+    for (idx, entry) in prepared.iter_mut().enumerate() {
+        let Some(existing) = existing_turns.get(idx) else {
+            continue;
+        };
+        if entry.turn.prompt.trim().is_empty() && !existing.turn.prompt.trim().is_empty() {
+            entry.turn.prompt = existing.turn.prompt.clone();
+        }
+        let new_resp_empty = entry
+            .turn
+            .response
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty();
+        let old_resp_nonempty = existing
+            .turn
+            .response
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty());
+        if new_resp_empty && old_resp_nonempty && entry.turn.prompt == existing.turn.prompt {
+            entry.turn.response = existing.turn.response.clone();
+        }
+
+        // Migrate TurnProcess response translation & command item translations when content matches.
+        if let Some(old_proc) = existing
+            .turn
+            .process
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<TurnProcess>(json).ok())
+        {
+            let mut new_proc = entry
+                .turn
+                .process
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<TurnProcess>(json).ok())
+                .unwrap_or_default();
+            let mut proc_dirty = false;
+
+            if new_proc.response_translated_text.is_none()
+                && old_proc.response_translated_text.is_some()
+                && entry.turn.response == existing.turn.response
+            {
+                new_proc.response_translated_text = old_proc.response_translated_text.clone();
+                proc_dirty = true;
+            }
+            for item in &mut new_proc.items {
+                if item.translated_text.is_some() {
+                    continue;
+                }
+                if let Some(old_item) = old_proc
+                    .items
+                    .iter()
+                    .find(|oi| oi.translated_text.is_some() && oi.content == item.content)
+                {
+                    item.translated_text = old_item.translated_text.clone();
+                    proc_dirty = true;
+                }
+            }
+            if proc_dirty && !new_proc.is_empty() {
+                entry.turn.process = serde_json::to_string(&new_proc).ok();
+            }
+        }
+
+        // Migrate intermediate part translations by (kind, content), fallback by non-empty content.
+        for part in &mut entry.parts {
+            if part.translated_text.is_some() {
+                continue;
+            }
+            if let Some(matched) = existing.parts.iter().find(|op| {
+                op.translated_text.is_some() && op.kind == part.kind && op.content == part.content
+            }) {
+                part.translated_text = matched.translated_text.clone();
+            } else if part
+                .content
+                .as_deref()
+                .is_some_and(|c| !c.trim().is_empty())
+            {
+                if let Some(matched) = existing
+                    .parts
+                    .iter()
+                    .find(|op| op.translated_text.is_some() && op.content == part.content)
+                {
+                    part.translated_text = matched.translated_text.clone();
+                }
+            }
+        }
+    }
+}
+
 /// 在单事务内完成一个会话的整包替换。
 ///
 /// 顺序固定为：清内容事实 → 清交互轮次 → 批量写新快照。派生索引与子会话清理不在此边界内：
@@ -356,7 +584,7 @@ async fn insert_parts_sqlx_tx(
 /// 契约见 ADR-0020。`process` 是 `conversation_turns` / `web_record_turns` 里唯一
 /// 承载结构化路径的 JSON 列，折叠只在写库前这一步发生，读取侧按原样投影给前端，
 /// 由展示层还原 `~`。命令输出（`items[].content`）里的路径属于记录原貌，不在此处理。
-fn fold_turn_process_paths(process: &mut TurnProcess) {
+pub(crate) fn fold_turn_process_paths(process: &mut TurnProcess) {
     process.cwd = fold_cwd(process.cwd.as_deref());
     for item in &mut process.items {
         item.cwd = fold_cwd(item.cwd.as_deref());
@@ -378,7 +606,7 @@ fn fold_cwd(raw: Option<&str>) -> Option<String> {
 ///
 /// `attrs_json` 由 adapter 原样透传，其中 `file_path` 表示工具调用涉及的文件。
 /// 前端只用它做展示与复制、不做文件 I/O，因此存储侧折叠即可，无需读取侧展开。
-fn fold_part_attrs_paths(parts: Vec<TriadPart>) -> Vec<TriadPart> {
+pub(crate) fn fold_part_attrs_paths(parts: Vec<TriadPart>) -> Vec<TriadPart> {
     parts
         .into_iter()
         .map(|mut part| {

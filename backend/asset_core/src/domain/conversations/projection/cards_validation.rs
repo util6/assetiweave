@@ -102,7 +102,7 @@ pub fn validate_normalized_content_card(
             || (legacy.kind == "tool"
                 && matches!(
                     effective_semantic_role.as_deref(),
-                    Some("command" | "result" | "file_change" | "file-change")
+                    Some("command" | "result" | "file_change" | "file-change" | "ambient")
                 ));
         if !kind_matches || legacy.renderer != renderer {
             return Err(ProjectionError::LegacyConflict {
@@ -408,6 +408,7 @@ pub fn default_renderer_for_semantic_role(semantic_role: Option<&str>) -> Conver
         Some("command") => ConversationCardRenderer::Command,
         Some("result") => ConversationCardRenderer::TerminalOutput,
         Some("file_change" | "file-change") => ConversationCardRenderer::Diff,
+        Some("ambient") => ConversationCardRenderer::CompactAction,
         Some("code") => ConversationCardRenderer::Code,
         Some("subagent") => ConversationCardRenderer::SubagentTree,
         Some("tool") => ConversationCardRenderer::Plain,
@@ -425,6 +426,9 @@ pub fn renderer_from_legacy_format(
     }
     if kind == "code" {
         return Ok(ConversationCardRenderer::Code);
+    }
+    if kind == "ambient" || kind.ends_with(".ambient") {
+        return Ok(ConversationCardRenderer::CompactAction);
     }
     match format {
         Some("markdown") => Ok(ConversationCardRenderer::Markdown),

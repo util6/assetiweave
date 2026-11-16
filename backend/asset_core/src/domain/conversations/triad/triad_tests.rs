@@ -928,3 +928,70 @@ fn test_turn_process_sparse_fields_and_is_empty() {
     );
     assert_eq!(deserialized.title, None);
 }
+
+#[test]
+fn test_split_does_not_rebind_tool_or_ambient_parts_to_prior_command_seq() {
+    let raw_parts = vec![
+        NormalizedConversationPart {
+            role: ConversationPartRole::Tool,
+            kind: ConversationPartKind::Command,
+            text: None,
+            language: None,
+            command: Some("git status".to_string()),
+            cwd: Some("/repo".to_string()),
+            status: Some("completed".to_string()),
+            exit_code: Some(0),
+            command_label: Some("Git status".to_string()),
+            source_execution_id: Some("cmd-1".to_string()),
+            content_card: Some(ConversationContentCardDescriptor {
+                schema_version: 1,
+                kind: "antigravity.command".to_string(),
+                renderer: Some("command".to_string()),
+                semantic_role: Some("command".to_string()),
+            }),
+            metadata_json: None,
+        },
+        NormalizedConversationPart {
+            role: ConversationPartRole::Tool,
+            kind: ConversationPartKind::Tool,
+            text: Some("Read /repo/src/lib.rs#L1-50".to_string()),
+            language: None,
+            command: None,
+            cwd: None,
+            status: Some("completed".to_string()),
+            exit_code: Some(0),
+            command_label: None,
+            source_execution_id: Some("ambient-batch-1".to_string()),
+            content_card: Some(ConversationContentCardDescriptor {
+                schema_version: 1,
+                kind: "antigravity.ambient".to_string(),
+                renderer: Some("compact_action".to_string()),
+                semantic_role: Some("ambient".to_string()),
+            }),
+            metadata_json: Some(r#"{"signal":"ambient","tool_name":"read_file"}"#.to_string()),
+        },
+    ];
+
+    let triad = split_normalized_turn("antigravity", "检查", &raw_parts);
+    assert_eq!(triad.parts.len(), 1);
+    let ambient = &triad.parts[0];
+    assert_eq!(ambient.kind, "antigravity.ambient");
+    let attrs: serde_json::Value =
+        serde_json::from_str(ambient.attrs_json.as_deref().unwrap()).unwrap();
+    assert!(
+        attrs.get("cmd_seq").is_none(),
+        "ambient/tool part must not inherit prior shell cmd_seq"
+    );
+    assert_eq!(
+        attrs.get("signal").and_then(|v| v.as_str()),
+        Some("ambient")
+    );
+    assert_eq!(
+        attrs.get("renderer").and_then(|v| v.as_str()),
+        Some("compact_action")
+    );
+    assert_eq!(
+        attrs.get("semantic_role").and_then(|v| v.as_str()),
+        Some("ambient")
+    );
+}

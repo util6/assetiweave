@@ -1,6 +1,7 @@
 use super::*;
 use crate::backend::store::conversations::snapshot::{
-    prepare_session_snapshot, replace_session_snapshot_sqlx_tx,
+    load_existing_session_snapshot_sqlx_tx, prepare_session_snapshot, preserve_qa_and_translations,
+    replace_session_snapshot_sqlx_tx,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -12,8 +13,8 @@ pub(super) async fn import_single_session_sqlx_tx(
     session: &ConversationSession,
     now: &str,
     _sync_run_id: &str,
-    // 载荷解析策略版本发生上移时，源文件指纹不会变化，仅靠会话级 unchanged 判定会永久跳过存量会话。
-    // 该标记只在本轮有效：源级版本尚未与当前策略版本对齐时为 true，强制重读一次。
+    // 载荷解析策略版本发生上移、契约变化或 Full 同步时，源文件指纹不会变化，
+    // 仅靠会话级 unchanged 判定会跳过存量会话，此时强制重解析并写回新结构。
     force_reparse: bool,
 ) -> StoreResult<Option<String>> {
     if is_droppable_internal_session(normalized, session) {
@@ -25,7 +26,15 @@ pub(super) async fn import_single_session_sqlx_tx(
         return Ok(None);
     }
 
-    let prepared = prepare_session_snapshot(
+    let (existing_source_fp, existing_turns) = load_existing_session_snapshot_sqlx_tx(
+        &mut *tx,
+        tenant_id,
+        ConversationRecordKind::Session,
+        &session.id,
+    )
+    .await?;
+
+    let mut prepared = prepare_session_snapshot(
         ConversationRecordKind::Session,
         &source.id,
         &session.id,
@@ -35,6 +44,13 @@ pub(super) async fn import_single_session_sqlx_tx(
         session.updated_at.as_deref(),
         &normalized.turns,
         now,
+    );
+    preserve_qa_and_translations(
+        existing_source_fp.as_deref(),
+        session.source_fingerprint.as_deref(),
+        force_reparse,
+        &existing_turns,
+        &mut prepared,
     );
 
     upsert_conversation_session_sqlx_tx(&mut *tx, tenant_id, session).await?;

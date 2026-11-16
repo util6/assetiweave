@@ -173,6 +173,17 @@ impl AppService {
             cancellation,
         )
         .await?;
+        if params.record_kind.as_deref() != Some("web") && !params.resync {
+            let empty_excludes = std::collections::BTreeSet::new();
+            let _ = self
+                .reproject_legacy_stored_sessions(
+                    params.source_id.as_deref(),
+                    None,
+                    &empty_excludes,
+                    cancellation,
+                )
+                .await;
+        }
 
         on_progress(6, AUDIT_STAGE_COUNT, Some("reindex".to_string()));
         ensure_maintenance_not_cancelled(cancellation)?;

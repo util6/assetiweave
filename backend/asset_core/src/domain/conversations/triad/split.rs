@@ -155,22 +155,21 @@ pub fn split_turn_triad(
 
         if is_result_part(part) {
             let body = part.text.or(part.command).unwrap_or("").trim();
+            let matched_seq = match part
+                .source_execution_id
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            {
+                Some(id) => exec_to_cmd_seq.get(id).copied(),
+                None => last_cmd_seq,
+            };
             if body.is_empty() {
                 // 空壳 .result：准备吸收并丢弃
-                let matched_seq = part
-                    .source_execution_id
-                    .and_then(|id| exec_to_cmd_seq.get(id.trim()).copied())
-                    .or(last_cmd_seq);
                 empty_results_to_absorb.push((matched_seq, part.exit_code, part.status));
                 continue;
             }
 
-            // 非空 .result：保留在 parts 中，通过 cmd_seq 关联
-            let matched_seq = part
-                .source_execution_id
-                .and_then(|id| exec_to_cmd_seq.get(id.trim()).copied())
-                .or(last_cmd_seq);
-
+            // 非空 .result：保留在 parts 中，通过 cmd_seq 关联（仅匹配真实存在的命令，不劫持无关 execution_id）
             let mut attrs_map = serde_json::Map::new();
             if let Some(cmd_seq) = matched_seq {
                 attrs_map.insert("cmd_seq".to_string(), serde_json::json!(cmd_seq));
@@ -238,6 +237,22 @@ pub fn split_turn_triad(
             if !lbl.trim().is_empty() {
                 attrs_map.insert("command_label".to_string(), serde_json::json!(lbl));
             }
+        }
+        if let Some(role_val) = part
+            .semantic_role
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            attrs_map.insert("semantic_role".to_string(), serde_json::json!(role_val));
+        }
+        if let Some(renderer_val) = part
+            .renderer
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            attrs_map.insert("renderer".to_string(), serde_json::json!(renderer_val));
         }
 
         let attrs_json = if attrs_map.is_empty() {

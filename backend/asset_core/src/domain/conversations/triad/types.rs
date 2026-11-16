@@ -277,10 +277,24 @@ pub(crate) fn is_command_part(part: &TriadRawPart<'_>) -> bool {
 }
 
 pub(crate) fn is_result_part(part: &TriadRawPart<'_>) -> bool {
-    if let Some(kind) = part.custom_kind.as_deref() {
+    if part.semantic_role.as_deref() == Some("result") {
+        return true;
+    }
+    if let Some(kind) = part
+        .custom_kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+    {
         if kind == "result" || kind.ends_with(".result") {
             return true;
         }
+        // Explicitly typed non-result cards (tool invocations, ambient batches, diffs, plans, subagents)
+        // must never be hijacked into shell command results or rebound to an unrelated command's cmd_seq.
+        return false;
+    }
+    if part.semantic_role.is_some() {
+        return false;
     }
     part.role == ConversationPartRole::Tool
         && part.command.is_none()
