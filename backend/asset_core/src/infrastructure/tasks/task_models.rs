@@ -84,12 +84,14 @@ impl TaskKind {
             | Self::RemoteSkillAcquire
             | Self::ExtensionLifecycle => TaskAdmission::Managed,
 
+            // 长耗时后台扫描 / 网络同步：已升级为任务中心全量托管 (Issue #194)，
+            // 显式 `.with_admission(TaskAdmission::Shadow)` 仍可退回影子观测语义。
+            Self::ConversationUsageScan | Self::ModelPricingSync => TaskAdmission::Managed,
+
             // 观察期或后台维护操作
-            Self::ConversationUsageScan
-            | Self::ConversationDataMaintenance
-            | Self::AgentMarketRefresh
-            | Self::Memory
-            | Self::ModelPricingSync => TaskAdmission::Shadow,
+            Self::ConversationDataMaintenance | Self::AgentMarketRefresh | Self::Memory => {
+                TaskAdmission::Shadow
+            }
 
             // 纯内联计算或其它操作
             Self::ScriptInstall | Self::Other => TaskAdmission::Direct,
@@ -489,3 +491,7 @@ pub struct TaskFilter {
 pub struct ShutdownReport {
     pub unfinished_task_ids: Vec<String>,
 }
+
+#[cfg(test)]
+#[path = "task_models_tests.rs"]
+mod tests;

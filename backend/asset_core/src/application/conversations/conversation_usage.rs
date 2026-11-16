@@ -3,7 +3,10 @@ use super::usage_dto::{
     UsageSourceDiagnosticDto,
 };
 use crate::backend::application::prelude::*;
-use crate::backend::infrastructure::tasks::{StageStatus, TaskStage};
+use crate::backend::infrastructure::tasks::{
+    stages, InfraError, PipelineDescriptor, TaskCapabilities, TaskHandle, TaskKind, TaskOutput,
+    TaskSpec,
+};
 use crate::backend::{
     domain::{conversations::pricing::PriceCatalog, ConversationAdapter, ConversationSource},
     infrastructure::conversations::{
@@ -22,6 +25,64 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 impl AppService {
+    /// 用量统计扫描流水线骨架（阶段 id 全部来自 `stages::*` 编译期常量）。
+    fn usage_scan_pipeline() -> PipelineDescriptor {
+        PipelineDescriptor::builder()
+            .stage(stages::PREPARE_SOURCES, "检索匹配会话数据源")
+            .stage(stages::COLLECT_USAGE, "采集与解码用量记录")
+            .stage(stages::PERSIST_EVENTS, "入库用量事件与游标")
+            .stage(stages::RESOLVE_PRICING, "加载模型价格与计费规则")
+            .stage(stages::CALCULATE_COSTS, "核算会话用量费用")
+            .build()
+    }
+
+    /// 启动任务中心全量托管的用量统计扫描任务。
+    pub fn start_conversation_usage_scan(
+        &self,
+        options: UsageScanOptions,
+    ) -> AppResult<TaskHandle<Value>> {
+        let tenant_id = self.tenant_id().to_string();
+        let source_key = options
+            .source_id
+            .clone()
+            .unwrap_or_else(|| "all".to_string());
+        let spec = TaskSpec::new(
+            TaskKind::ConversationUsageScan,
+            Some(format!("{tenant_id}:conversation_usage_scan:{source_key}")),
+        )
+        .with_tenant_id(tenant_id.clone())
+        .with_title("用量统计扫描")
+        .with_capabilities(TaskCapabilities {
+            cancellable: true,
+            retryable: false,
+            clearable: true,
+        })
+        .with_conflict_key(format!("{tenant_id}:conversation_usage_scan"))
+        .with_pipeline(Self::usage_scan_pipeline());
+
+        let service = self.clone();
+        self.spawn_pipeline_task(spec, move |cx| async move {
+            let cancellation = cx.cancellation();
+            let task_id = cx.task_id().to_string();
+            let mut noop_progress =
+                |_completed: usize, _total: usize, _name: Option<String>, _events: usize| {};
+            let result = service
+                .scan_conversation_usage_with_control(
+                    options,
+                    Some(&cancellation),
+                    Some(&task_id),
+                    &mut noop_progress,
+                )
+                .await
+                .map_err(InfraError::external)?;
+            let summary = format!(
+                "用量扫描完成：共 {} 个来源，写入 {} 条用量事件（模式: {}）",
+                result["total_sources"], result["total_events_ingested"], result["mode"]
+            );
+            Ok(TaskOutput::with_summary(result, summary))
+        })
+    }
+
     pub async fn get_conversation_usage_dashboard(
         &self,
         filter: UsageDashboardFilter,
@@ -113,14 +174,14 @@ impl AppService {
 
         let task_runtime = self.runtime.task_runtime();
         if let Some(tid) = task_id {
-            let stages = vec![
-                make_stage("prepare_sources", "检索匹配会话数据源"),
-                make_stage("collect_usage", "采集与解码用量记录"),
-                make_stage("persist_events", "入库用量事件与游标"),
-                make_stage("resolve_pricing", "加载模型价格与计费规则"),
-                make_stage("calculate_costs", "核算会话用量费用"),
-            ];
-            let _ = task_runtime.set_stages(tid, stages);
+            // 托管流水线在提交时已前置声明阶段骨架，此处仅补齐外部注册路径的阶段名称。
+            let already_declared = task_runtime
+                .get(tid)
+                .is_some_and(|snapshot| !snapshot.stages.is_empty());
+            if !already_declared {
+                let _ =
+                    task_runtime.set_stages(tid, Self::usage_scan_pipeline().to_initial_stages());
+            }
         }
 
         let task_ctx = task_id.and_then(|tid| task_runtime.task_context(tid).ok());
@@ -129,7 +190,7 @@ impl AppService {
         let (target_sources, adapter_map) = {
             let stage_guard = task_ctx
                 .as_ref()
-                .map(|ctx| ctx.enter_stage("prepare_sources"));
+                .map(|ctx| ctx.enter_stage(stages::PREPARE_SOURCES));
             if let Some(ref guard) = stage_guard {
                 guard.record_step(
                     "find_sources",
@@ -231,7 +292,7 @@ impl AppService {
             let scan_result = {
                 let stage_guard = task_ctx
                     .as_ref()
-                    .map(|ctx| ctx.enter_stage("collect_usage"));
+                    .map(|ctx| ctx.enter_stage(stages::COLLECT_USAGE));
                 if let Some(ref guard) = stage_guard {
                     guard.record_step(
                         "read_external",
@@ -248,7 +309,7 @@ impl AppService {
                 Ok(run_result) => {
                     let stage_guard = task_ctx
                         .as_ref()
-                        .map(|ctx| ctx.enter_stage("persist_events"));
+                        .map(|ctx| ctx.enter_stage(stages::PERSIST_EVENTS));
                     let events_count = run_result.usage_events.len();
                     if events_count > 0 {
                         let inserted = upsert_usage_events_sqlx(
@@ -340,7 +401,7 @@ impl AppService {
         let catalog = {
             let stage_guard = task_ctx
                 .as_ref()
-                .map(|ctx| ctx.enter_stage("resolve_pricing"));
+                .map(|ctx| ctx.enter_stage(stages::RESOLVE_PRICING));
             if let Some(ref guard) = stage_guard {
                 guard.record_step(
                     "load_pricing",
@@ -391,7 +452,7 @@ impl AppService {
         let recalculated_events_count = {
             let stage_guard = task_ctx
                 .as_ref()
-                .map(|ctx| ctx.enter_stage("calculate_costs"));
+                .map(|ctx| ctx.enter_stage(stages::CALCULATE_COSTS));
             if let Some(ref guard) = stage_guard {
                 guard.record_step(
                     "calculate_costs",
@@ -422,24 +483,6 @@ impl AppService {
             "recalculated_events_count": recalculated_events_count,
             "mode": mode,
         }))
-    }
-}
-
-fn make_stage(id: &str, name: &str) -> TaskStage {
-    TaskStage {
-        id: id.to_string(),
-        name: name.to_string(),
-        status: StageStatus::Pending,
-        started_at: None,
-        finished_at: None,
-        duration_ms: None,
-        progress: None,
-        current_activities: Vec::new(),
-        metrics: Vec::new(),
-        failures: Vec::new(),
-        skipped: Vec::new(),
-        agent_session_ref: None,
-        steps: Vec::new(),
     }
 }
 
@@ -486,3 +529,7 @@ fn build_usage_source_state(
         updated_at: now.to_string(),
     }
 }
+
+#[cfg(test)]
+#[path = "conversation_usage_tests.rs"]
+mod tests;
