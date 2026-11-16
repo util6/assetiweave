@@ -209,13 +209,13 @@ async fn test_zero_host_cost_falls_back_to_catalog_estimation() {
         .await
         .expect("query dashboard");
 
-    let model = dashboard
-        .models
-        .iter()
-        .find(|m| m.model == "mimo-v2.5-free");
+    let model = dashboard.models.iter().find(|m| m.model == "mimo-v2.5");
     assert!(model.is_some());
-    assert!(model.unwrap().cost.is_some());
-    assert!(model.unwrap().cost.unwrap() > 0.0);
+    let model = model.unwrap();
+    assert_eq!(model.matched_model_id.as_deref(), Some("mimo-v2.5"));
+    assert_eq!(model.raw_models, vec!["mimo-v2.5-free".to_string()]);
+    assert!(model.cost.is_some());
+    assert!(model.cost.unwrap() > 0.0);
 
     drop(database);
     std::fs::remove_file(path).ok();
@@ -1531,6 +1531,320 @@ async fn test_adversarial_migration_boundary_and_fuzz() {
             "All source cursors must be reset to None"
         );
     }
+
+    drop(database);
+    std::fs::remove_file(path).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_usage_dashboard_merges_base_model_variants_and_rebinds_and_isolates_unmatched_and_ignored(
+) {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-usage-merge-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+    let tenant_id = "default";
+
+    // Seed a manual rebind: "Flash -N" -> "gemini-3.8-flash"
+    let gemini_target = crate::backend::domain::conversations::pricing::ModelPriceEntry {
+        provider: "google".to_string(),
+        model_patterns: vec!["gemini-3.8-flash".to_string()],
+        currency: "CNY".to_string(),
+        input_per_million: 0.725,
+        cache_read_per_million: 0.18125,
+        cache_write_per_million: 0.725,
+        reasoning_per_million: 2.9,
+        output_per_million: 2.9,
+        raw_currency: Some("USD".to_string()),
+        raw_input_per_million: Some(0.10),
+        raw_output_per_million: Some(0.40),
+        ..Default::default()
+    };
+    crate::backend::store::conversations::pricing_repo::rebind_model_pricing_alias_sqlx(
+        pool,
+        tenant_id,
+        "Flash -N",
+        Some(&gemini_target),
+    )
+    .await
+    .expect("rebind Flash -N to gemini-3.8-flash");
+
+    // Mark a dirty/noise raw string as ignored
+    let ignored_raw = r#"noisy "log" line"#;
+    crate::backend::store::conversations::pricing_repo::set_model_pricing_ignored_sqlx(
+        pool,
+        tenant_id,
+        ignored_raw,
+        Some("custom"),
+        true,
+    )
+    .await
+    .expect("ignore dirty model");
+
+    let make_ev =
+        |id: &str, provider: &str, model: &str, input: i64, output: i64| RawUsageEventInput {
+            external_event_id: id.to_string(),
+            session_id: Some("sess-merge".to_string()),
+            turn_id: Some(format!("turn-{id}")),
+            logical_request_id: None,
+            attempt_index: None,
+            timestamp: "2026-10-15T10:00:00Z".to_string(),
+            provider: provider.to_string(),
+            model: model.to_string(),
+            status: Some("success".to_string()),
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: 0,
+            host_reported_cost: None,
+            currency: Some("CNY".to_string()),
+        };
+
+    // Counts per raw variant resolving to gemini-3.8-flash:
+    // "Flash -N": 4 requests
+    // "Gemini 3.8 Flash (High)": 2 requests
+    // "gemini-3.8-flash": 1 request (lex tie-break check against "gemini-3.8-flash-tail")
+    // "gemini-3.8-flash-tail": 1 request
+    let events = vec![
+        make_ev("e1", "antigravity", "Flash -N", 1000, 500),
+        make_ev("e2", "antigravity", "Flash -N", 1000, 500),
+        make_ev("e3", "antigravity", "Flash -N", 1000, 500),
+        make_ev("e4", "antigravity", "Flash -N", 1000, 500),
+        make_ev("e5", "google", "Gemini 3.8 Flash (High)", 2000, 1000),
+        make_ev("e6", "google", "Gemini 3.8 Flash (High)", 2000, 1000),
+        make_ev("e7", "google", "gemini-3.8-flash-tail", 500, 500),
+        make_ev("e8", "google", "gemini-3.8-flash", 500, 500),
+        // Unmatched model
+        make_ev("e9", "private-gw", "my-custom-unmatched-v1", 300, 200),
+        // Ignored model
+        make_ev("e10", "custom", ignored_raw, 400, 100),
+    ];
+
+    let inserted =
+        upsert_usage_events_sqlx(pool, tenant_id, "src-merge", "antigravity", &events, None)
+            .await
+            .expect("ingest events");
+    assert_eq!(inserted, 10);
+
+    let filter = UsageDashboardFilter {
+        time_range: Some("all_time".to_string()),
+        ..Default::default()
+    };
+    let dashboard = query_usage_dashboard_sqlx(pool, tenant_id, &filter)
+        .await
+        .expect("query dashboard");
+
+    // Expect exactly 3 buckets:
+    // 1. Merged "gemini-3.8-flash"
+    // 2. Unmatched "my-custom-unmatched-v1"
+    // 3. Ignored noisy raw model
+    assert_eq!(dashboard.models.len(), 3);
+
+    let gemini_row = dashboard
+        .models
+        .iter()
+        .find(|m| m.model == "gemini-3.8-flash")
+        .expect("merged gemini-3.8-flash row");
+    assert_eq!(
+        gemini_row.matched_model_id.as_deref(),
+        Some("gemini-3.8-flash")
+    );
+    assert_eq!(gemini_row.provider, "google");
+    assert_eq!(gemini_row.requests_count, 8);
+    assert_eq!(gemini_row.input_tokens, 9000);
+    assert_eq!(gemini_row.output_tokens, 5000);
+    assert_eq!(gemini_row.total_tokens, 14000);
+    assert_eq!(
+        gemini_row.raw_models,
+        vec![
+            "Flash -N".to_string(),
+            "Gemini 3.8 Flash (High)".to_string(),
+            "gemini-3.8-flash".to_string(),
+            "gemini-3.8-flash-tail".to_string(),
+        ]
+    );
+    assert_eq!(gemini_row.cost_basis, "catalog_estimated");
+    assert!(gemini_row.cost.is_some());
+    assert_eq!(gemini_row.unit_price_per_million, Some(0.73)); // 0.725 rounded to 2 decimals
+
+    let unmatched_row = dashboard
+        .models
+        .iter()
+        .find(|m| m.model == "my-custom-unmatched-v1")
+        .expect("unmatched row");
+    assert_eq!(unmatched_row.matched_model_id, None);
+    assert_eq!(unmatched_row.provider, "private-gw");
+    assert_eq!(unmatched_row.requests_count, 1);
+    assert_eq!(unmatched_row.total_tokens, 500);
+    assert_eq!(unmatched_row.cost, None);
+    assert_eq!(unmatched_row.cost_basis, "none");
+    assert_eq!(unmatched_row.unit_price_per_million, None);
+    assert_eq!(
+        unmatched_row.raw_models,
+        vec!["my-custom-unmatched-v1".to_string()]
+    );
+
+    let ignored_row = dashboard
+        .models
+        .iter()
+        .find(|m| m.model == ignored_raw)
+        .expect("ignored row isolated by raw string");
+    assert_eq!(ignored_row.matched_model_id, None);
+    assert_eq!(ignored_row.requests_count, 1);
+    assert_eq!(ignored_row.cost, Some(0.0));
+    assert_eq!(ignored_row.cost_basis, "catalog_estimated");
+    assert_eq!(ignored_row.unit_price_per_million, Some(0.0));
+    assert_eq!(ignored_row.raw_models, vec![ignored_raw.to_string()]);
+
+    drop(database);
+    std::fs::remove_file(path).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_usage_dashboard_locked_zero_override_merges_and_reports_zero_cost() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-usage-locked-zero-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::backend::store::Database::open_initialized_async(&path)
+        .await
+        .expect("open test database");
+    let pool = database.pool();
+    let tenant_id = "default";
+
+    let events = vec![
+        RawUsageEventInput {
+            external_event_id: "lz-1".to_string(),
+            session_id: Some("sess-lz".to_string()),
+            turn_id: Some("turn-1".to_string()),
+            logical_request_id: None,
+            attempt_index: None,
+            timestamp: "2026-10-16T08:00:00Z".to_string(),
+            provider: "opencode".to_string(),
+            model: "mimo-v2.5-free".to_string(),
+            status: Some("success".to_string()),
+            input_tokens: 1_000_000,
+            output_tokens: 500_000,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: 0,
+            host_reported_cost: None,
+            currency: Some("CNY".to_string()),
+        },
+        RawUsageEventInput {
+            external_event_id: "lz-2".to_string(),
+            session_id: Some("sess-lz".to_string()),
+            turn_id: Some("turn-2".to_string()),
+            logical_request_id: None,
+            attempt_index: None,
+            timestamp: "2026-10-16T08:01:00Z".to_string(),
+            provider: "xiaomi".to_string(),
+            model: "mimo-v2.5-tail".to_string(),
+            status: Some("success".to_string()),
+            input_tokens: 500_000,
+            output_tokens: 250_000,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: 0,
+            host_reported_cost: None,
+            currency: Some("CNY".to_string()),
+        },
+        RawUsageEventInput {
+            external_event_id: "lz-3".to_string(),
+            session_id: Some("sess-lz".to_string()),
+            turn_id: Some("turn-3".to_string()),
+            logical_request_id: None,
+            attempt_index: None,
+            timestamp: "2026-10-16T08:02:00Z".to_string(),
+            provider: "xiaomi".to_string(),
+            model: "mimo-v2.5-tail".to_string(),
+            status: Some("success".to_string()),
+            input_tokens: 500_000,
+            output_tokens: 250_000,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: 0,
+            host_reported_cost: None,
+            currency: Some("CNY".to_string()),
+        },
+    ];
+
+    upsert_usage_events_sqlx(pool, tenant_id, "src-lz", "opencode", &events, None)
+        .await
+        .expect("ingest initial events");
+
+    // Apply locked ¥0 override to base model "mimo-v2.5" and recalculate costs
+    let locked_zero = crate::backend::domain::conversations::pricing::ModelPriceEntry {
+        provider: "xiaomi".to_string(),
+        model_patterns: vec!["mimo-v2.5".to_string()],
+        currency: "CNY".to_string(),
+        input_per_million: 0.0,
+        cache_read_per_million: 0.0,
+        cache_write_per_million: 0.0,
+        reasoning_per_million: 0.0,
+        output_per_million: 0.0,
+        raw_currency: Some("CNY".to_string()),
+        raw_input_per_million: Some(0.0),
+        raw_output_per_million: Some(0.0),
+        ..Default::default()
+    };
+    crate::backend::store::conversations::pricing_repo::save_locked_override_sqlx(
+        pool,
+        tenant_id,
+        "mimo-v2.5",
+        &locked_zero,
+    )
+    .await
+    .expect("save locked zero override");
+
+    let loaded_entries =
+        crate::backend::store::conversations::pricing_repo::load_pricing_catalog_entries_sqlx(
+            pool, tenant_id,
+        )
+        .await
+        .expect("load catalog entries");
+    let catalog = crate::backend::domain::conversations::pricing::PriceCatalog::new(
+        "v-locked-zero".to_string(),
+        "2026-10-16T09:00:00Z".to_string(),
+        7.25,
+        loaded_entries,
+    );
+    let recalc = crate::backend::store::conversations::pricing_repo::recalculate_usage_costs_sqlx(
+        pool, tenant_id, &catalog,
+    )
+    .await
+    .expect("recalculate usage costs");
+    assert_eq!(recalc, 3);
+
+    let dashboard = query_usage_dashboard_sqlx(
+        pool,
+        tenant_id,
+        &UsageDashboardFilter {
+            time_range: Some("all_time".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("query dashboard");
+
+    assert_eq!(dashboard.models.len(), 1);
+    let row = &dashboard.models[0];
+    assert_eq!(row.model, "mimo-v2.5");
+    assert_eq!(row.matched_model_id.as_deref(), Some("mimo-v2.5"));
+    assert_eq!(row.provider, "xiaomi");
+    assert_eq!(row.requests_count, 3);
+    assert_eq!(row.cost, Some(0.0));
+    assert_eq!(row.cost_basis, "catalog_estimated");
+    assert_eq!(row.unit_price_per_million, Some(0.0));
+    assert_eq!(
+        row.raw_models,
+        vec!["mimo-v2.5-tail".to_string(), "mimo-v2.5-free".to_string()]
+    );
 
     drop(database);
     std::fs::remove_file(path).ok();

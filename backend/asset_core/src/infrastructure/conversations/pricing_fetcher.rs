@@ -136,6 +136,10 @@ pub fn parse_litellm_json(raw_json: &str, rate: f64) -> InfraResult<Vec<ModelPri
             raw_currency: Some(raw_currency.to_string()),
             raw_input_per_million: Some(input_per_token * raw_multiplier),
             raw_output_per_million: Some(output_per_token * raw_multiplier),
+            price_locked: false,
+            usage_aliases: Vec::new(),
+            source_channel: "litellm".to_string(),
+            is_ignored: false,
         });
     }
 
@@ -148,11 +152,11 @@ pub fn extract_patterns_from_remote_key(key: &str) -> Vec<String> {
     if k_lower.is_empty() {
         return patterns;
     }
-    patterns.push(k_lower.clone());
-    patterns.push(format!("{}*", k_lower));
 
     let parts: Vec<&str> = k_lower.split('/').filter(|p| !p.is_empty()).collect();
     if parts.is_empty() {
+        patterns.push(k_lower.clone());
+        patterns.push(format!("{}*", k_lower));
         return patterns;
     }
 
@@ -173,7 +177,18 @@ pub fn extract_patterns_from_remote_key(key: &str) -> Vec<String> {
         }
     }
 
-    for item in [last, clean_last] {
+    // Ensure model_patterns[0] is the canonical native base model_id
+    if clean_last.len() >= 2 && clean_last != "*" {
+        patterns.push(clean_last.to_string());
+        if clean_last.len() > 2 {
+            patterns.push(format!("{}*", clean_last));
+        }
+    }
+
+    patterns.push(k_lower.clone());
+    patterns.push(format!("{}*", k_lower));
+
+    for item in [clean_last, last] {
         if item.len() > 2 && item != "*" {
             patterns.push(item.to_string());
             patterns.push(format!("{}*", item));
@@ -260,6 +275,10 @@ pub fn parse_openrouter_json(raw_json: &str, rate: f64) -> InfraResult<Vec<Model
             raw_currency: Some("USD".to_string()),
             raw_input_per_million: Some(prompt_cost * 1_000_000.0),
             raw_output_per_million: Some(completion_cost * 1_000_000.0),
+            price_locked: false,
+            usage_aliases: Vec::new(),
+            source_channel: "openrouter".to_string(),
+            is_ignored: false,
         });
     }
 
@@ -274,12 +293,12 @@ pub fn filter_entries_for_target_models(
     target_models: &[String],
     bundled_catalog: &PriceCatalog,
 ) -> Vec<ModelPriceEntry> {
-    let raw_catalog = PriceCatalog::new(
-        "temp".to_string(),
-        "".to_string(),
-        1.0,
-        raw_entries.to_vec(),
-    );
+    let raw_catalog = PriceCatalog {
+        catalog_version: "temp".to_string(),
+        updated_at: String::new(),
+        usd_to_cny_rate: 1.0,
+        models: raw_entries.to_vec(),
+    };
     let mut selected = Vec::new();
     let mut seen_keys = std::collections::HashSet::new();
 
@@ -289,40 +308,51 @@ pub fn filter_entries_for_target_models(
             continue;
         }
 
-        let raw_match = raw_catalog.find_model_with_score("", trimmed);
-        let bundled_match = bundled_catalog.find_model_with_score("", trimmed);
+        let raw_match = raw_catalog
+            .find_model_with_score("", trimmed)
+            .and_then(|(_, score)| raw_catalog.resolve_model("", trimmed).map(|r| (r, score)));
+        let bundled_match =
+            bundled_catalog
+                .find_model_with_score("", trimmed)
+                .and_then(|(_, score)| {
+                    bundled_catalog
+                        .resolve_model("", trimmed)
+                        .map(|r| (r, score))
+                });
 
         let chosen = match (raw_match, bundled_match) {
-            (Some((raw_entry, raw_score)), Some((bundled_entry, bundled_score))) => {
+            (Some((raw_res, raw_score)), Some((bundled_res, bundled_score))) => {
                 let raw_has_price =
-                    raw_entry.input_per_million > 0.0 || raw_entry.output_per_million > 0.0;
-                let bundled_has_price =
-                    bundled_entry.input_per_million > 0.0 || bundled_entry.output_per_million > 0.0;
+                    raw_res.entry.input_per_million > 0.0 || raw_res.entry.output_per_million > 0.0;
+                let bundled_has_price = bundled_res.entry.input_per_million > 0.0
+                    || bundled_res.entry.output_per_million > 0.0;
 
                 if raw_has_price && bundled_has_price {
                     if bundled_score > raw_score {
-                        bundled_entry
+                        bundled_res
                     } else {
-                        raw_entry
+                        raw_res
                     }
                 } else if raw_has_price {
-                    raw_entry
+                    raw_res
                 } else if bundled_has_price {
-                    bundled_entry
+                    bundled_res
                 } else {
                     continue;
                 }
             }
-            (Some((raw_entry, _)), None) => {
-                if raw_entry.input_per_million > 0.0 || raw_entry.output_per_million > 0.0 {
-                    raw_entry
+            (Some((raw_res, _)), None) => {
+                if raw_res.entry.input_per_million > 0.0 || raw_res.entry.output_per_million > 0.0 {
+                    raw_res
                 } else {
                     continue;
                 }
             }
-            (None, Some((bundled_entry, _))) => {
-                if bundled_entry.input_per_million > 0.0 || bundled_entry.output_per_million > 0.0 {
-                    bundled_entry
+            (None, Some((bundled_res, _))) => {
+                if bundled_res.entry.input_per_million > 0.0
+                    || bundled_res.entry.output_per_million > 0.0
+                {
+                    bundled_res
                 } else {
                     continue;
                 }
@@ -330,27 +360,37 @@ pub fn filter_entries_for_target_models(
             (None, None) => continue,
         };
 
-        let key = format!("{}:{}", chosen.provider, trimmed.to_ascii_lowercase());
-        if !seen_keys.contains(&key) {
-            seen_keys.insert(key);
-            let mut customized = chosen.clone();
-            // Ensure exact target model is at the head of model_patterns
-            let lower_trimmed = trimmed.to_ascii_lowercase();
-            if !customized
-                .model_patterns
-                .iter()
-                .any(|p| p.eq_ignore_ascii_case(trimmed))
-            {
-                customized.model_patterns.insert(0, lower_trimmed.clone());
-                if lower_trimmed != trimmed {
-                    customized.model_patterns.insert(0, trimmed.to_string());
-                }
-            } else if !customized
-                .model_patterns
-                .iter()
-                .any(|p| p == &lower_trimmed)
-            {
-                customized.model_patterns.insert(0, lower_trimmed);
+        let first_pattern = chosen
+            .entry
+            .model_patterns
+            .first()
+            .map(String::as_str)
+            .unwrap_or("");
+        let primary_is_exact = !first_pattern.is_empty() && !first_pattern.contains('*');
+        let canonical_base_id = if primary_is_exact {
+            first_pattern.to_string()
+        } else if !chosen.matched_model_id.is_empty() && !chosen.matched_model_id.contains('*') {
+            chosen.matched_model_id.clone()
+        } else {
+            first_pattern.trim_matches('*').to_string()
+        };
+
+        if canonical_base_id.is_empty() {
+            continue;
+        }
+
+        let key = format!(
+            "{}:{}",
+            chosen.entry.provider.to_ascii_lowercase(),
+            canonical_base_id.to_ascii_lowercase()
+        );
+        if seen_keys.insert(key) {
+            let mut customized = chosen.entry.clone();
+            if !primary_is_exact {
+                customized
+                    .model_patterns
+                    .retain(|p| !p.eq_ignore_ascii_case(&canonical_base_id));
+                customized.model_patterns.insert(0, canonical_base_id);
             }
             selected.push(customized);
         }

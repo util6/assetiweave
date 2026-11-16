@@ -11,6 +11,7 @@ mod normalized;
 pub mod outline;
 mod outline_semantics;
 pub mod pricing;
+pub mod pricing_normalize;
 pub mod projection;
 pub mod read_models;
 mod search;

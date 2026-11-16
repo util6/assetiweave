@@ -85,6 +85,7 @@ fn test_fallback_chain_to_cache_and_bundled() {
         raw_currency: Some("CNY".to_string()),
         raw_input_per_million: Some(5.0),
         raw_output_per_million: Some(10.0),
+        ..Default::default()
     };
 
     // If cache is empty, fallback returns Bundled
@@ -114,18 +115,21 @@ fn test_on_demand_filtering_for_target_models() {
 #[test]
 fn test_extract_patterns_from_remote_key_cleans_prefixes() {
     let p1 = extract_patterns_from_remote_key("azure_ai/FW-GLM-5");
-    assert!(p1.contains(&"glm-5".to_string()));
+    assert_eq!(p1.first().map(String::as_str), Some("glm-5"));
     assert!(p1.contains(&"glm5".to_string()));
 
     let p2 = extract_patterns_from_remote_key("openrouter/xiaomi/mimo-v2.5");
-    assert!(p2.contains(&"mimo-v2.5".to_string()));
+    assert_eq!(p2.first().map(String::as_str), Some("mimo-v2.5"));
     assert!(p2.contains(&"xiaomi/mimo-v2.5".to_string()));
 
     let p3 = extract_patterns_from_remote_key("bedrock/ap-northeast-1/minimax.minimax-m2.5");
-    assert!(p3.contains(&"minimax-m2.5".to_string()));
+    assert_eq!(p3.first().map(String::as_str), Some("minimax-m2.5"));
 
     let p4 = extract_patterns_from_remote_key("sail/zai-org/GLM-5.3-Flash");
-    assert!(p4.contains(&"glm-5.3-flash".to_string()));
+    assert_eq!(p4.first().map(String::as_str), Some("glm-5.3-flash"));
+
+    let p5 = extract_patterns_from_remote_key("anthropic/claude-3.7-sonnet:free");
+    assert_eq!(p5.first().map(String::as_str), Some("claude-3.7-sonnet"));
 }
 
 #[test]
@@ -143,6 +147,7 @@ fn test_filter_entries_resolves_promotional_and_vendor_models() {
             raw_currency: Some("USD".to_string()),
             raw_input_per_million: Some(1.1),
             raw_output_per_million: Some(3.52),
+            ..Default::default()
         },
         ModelPriceEntry {
             provider: "bedrock".to_string(),
@@ -158,6 +163,7 @@ fn test_filter_entries_resolves_promotional_and_vendor_models() {
             raw_currency: Some("USD".to_string()),
             raw_input_per_million: Some(0.33),
             raw_output_per_million: Some(1.32),
+            ..Default::default()
         },
     ];
 
@@ -166,10 +172,87 @@ fn test_filter_entries_resolves_promotional_and_vendor_models() {
 
     let selected = filter_entries_for_target_models(&raw, &targets, &bundled);
     assert_eq!(selected.len(), 2);
-    assert!(selected
+
+    let glm = selected
         .iter()
-        .any(|s| s.model_patterns.iter().any(|p| p == "zhipuai/glm-5")));
-    assert!(selected
+        .find(|s| s.model_patterns.first().map(String::as_str) == Some("glm-5"))
+        .expect("must keep canonical native base model_id glm-5");
+    assert!(!glm.model_patterns.iter().any(|p| p == "zhipuai/glm-5"));
+    assert!(!glm.model_patterns.iter().any(|p| p == "ZhipuAI/GLM-5"));
+
+    let minimax = selected
         .iter()
-        .any(|s| s.model_patterns.iter().any(|p| p == "minimax-m2.5-free")));
+        .find(|s| s.model_patterns.first().map(String::as_str) == Some("minimax-m2.5"))
+        .expect("must keep canonical native base model_id minimax-m2.5");
+    assert!(!minimax
+        .model_patterns
+        .iter()
+        .any(|p| p == "minimax-m2.5-free"));
+}
+
+#[test]
+fn test_filter_entries_matches_display_names_without_injecting_duplicates() {
+    let raw = vec![
+        ModelPriceEntry {
+            provider: "anthropic".to_string(),
+            model_patterns: extract_patterns_from_remote_key("anthropic/claude-3.7-sonnet"),
+            currency: "CNY".to_string(),
+            input_per_million: 21.75,
+            output_per_million: 108.75,
+            ..Default::default()
+        },
+        ModelPriceEntry {
+            provider: "google".to_string(),
+            model_patterns: extract_patterns_from_remote_key("google/flash"),
+            currency: "CNY".to_string(),
+            input_per_million: 0.725,
+            output_per_million: 2.9,
+            ..Default::default()
+        },
+    ];
+    let bundled = PriceCatalog::bundled();
+    let targets = vec![
+        "Claude 3.7 Sonnet (Thinking)".to_string(),
+        "anthropic/claude-3.7-sonnet".to_string(),
+        "Flash -N".to_string(),
+        "Gemini 3.8 Flash (High)".to_string(),
+    ];
+
+    let selected = filter_entries_for_target_models(&raw, &targets, &bundled);
+    assert_eq!(
+        selected.len(),
+        3,
+        "Claude variants must deduplicate to 1 entry, plus flash and gemini-3.8-flash"
+    );
+
+    let claude = selected
+        .iter()
+        .find(|s| s.provider == "anthropic")
+        .expect("claude entry");
+    assert_eq!(
+        claude.model_patterns.first().map(String::as_str),
+        Some("claude-3.7-sonnet")
+    );
+    assert!(!claude
+        .model_patterns
+        .iter()
+        .any(|p| p.contains("Thinking") || p.contains("thinking") || p.contains(' ')));
+
+    let flash = selected
+        .iter()
+        .find(|s| s.model_patterns.first().map(String::as_str) == Some("flash"))
+        .expect("flash entry");
+    assert!(!flash
+        .model_patterns
+        .iter()
+        .any(|p| p.eq_ignore_ascii_case("Flash -N") || p.eq_ignore_ascii_case("flash-n")));
+
+    let gemini = selected
+        .iter()
+        .find(|s| s.model_patterns.first().map(String::as_str) == Some("gemini-3.8-flash"))
+        .expect("gemini-3.8-flash entry");
+    assert!(!gemini
+        .model_patterns
+        .iter()
+        .any(|p| p.contains("High") || p.contains(' ')));
 }

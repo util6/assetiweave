@@ -1,8 +1,8 @@
 use crate::backend::{
     domain::conversations::{
         CurrencyCostDto, UsageDailyTrendBucketDto, UsageDashboardDto, UsageDashboardFilter,
-        UsageDateBreakdownDto, UsageHeroOverviewDto, UsageModelBreakdownDto,
-        UsageProjectBreakdownDto, UsageScanStatusDto, UsageSourceBreakdownDto,
+        UsageDateBreakdownDto, UsageHeroOverviewDto, UsageProjectBreakdownDto, UsageScanStatusDto,
+        UsageSourceBreakdownDto,
     },
     infrastructure::project_path::{resolve_project_directory, UNASSIGNED_PROJECT_KEY},
     store::StoreResult,
@@ -13,7 +13,11 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::usage_repo::load_all_usage_source_states_sqlx;
 
-struct LoadedUsageRow {
+#[path = "usage_query_models.rs"]
+mod usage_query_models;
+use usage_query_models::ModelBreakdownAccumulator;
+
+pub(super) struct LoadedUsageRow {
     timestamp: String,
     adapter_id: String,
     source_id: String,
@@ -144,6 +148,7 @@ pub async fn query_usage_dashboard_sqlx(
     if filter.source_id.is_some() {
         sql.push_str(" AND u.source_id = ?");
     }
+    // Exact raw `u.model` SQL filter when explicitly requested.
     if filter.model.is_some() {
         sql.push_str(" AND u.model = ?");
     }
@@ -270,20 +275,8 @@ pub async fn query_usage_dashboard_sqlx(
         }
     }
 
-    // Model breakdown (model -> stats)
-    struct ModelAgg {
-        provider: String,
-        requests: i64,
-        total_tokens: i64,
-        input_tokens: i64,
-        output_tokens: i64,
-        reasoning_tokens: i64,
-        cache_tokens: i64,
-        cost: f64,
-        currency: String,
-        cost_basis: String,
-    }
-    let mut model_map: HashMap<String, ModelAgg> = HashMap::new();
+    // Model breakdown (merged by resolved base model; ignored & unmatched keep raw model key)
+    let mut model_acc = ModelBreakdownAccumulator::new();
 
     // Source breakdown (source_id -> stats)
     struct SourceAgg {
@@ -407,31 +400,8 @@ pub async fn query_usage_dashboard_sqlx(
             *day_entry.5.entry("CNY".to_string()).or_insert(0.0) += ev_cny_cost;
         }
 
-        // Model agg
-        let m_entry = model_map
-            .entry(ev.model.clone())
-            .or_insert_with(|| ModelAgg {
-                provider: ev.provider.clone(),
-                requests: 0,
-                total_tokens: 0,
-                input_tokens: 0,
-                output_tokens: 0,
-                reasoning_tokens: 0,
-                cache_tokens: 0,
-                cost: 0.0,
-                currency: "CNY".to_string(),
-                cost_basis: ev.cost_basis.clone(),
-            });
-        m_entry.requests += 1;
-        m_entry.total_tokens += ev.total_tokens;
-        m_entry.input_tokens += ev.input_tokens + ev.cache_read_tokens + ev.cache_write_tokens;
-        m_entry.output_tokens += ev.reasoning_tokens + ev.output_tokens;
-        m_entry.reasoning_tokens += ev.reasoning_tokens;
-        m_entry.cache_tokens += ev.cache_read_tokens + ev.cache_write_tokens;
-        if ev.cost_basis != "none" {
-            m_entry.cost += ev_cny_cost;
-            m_entry.cost_basis = ev.cost_basis.clone();
-        }
+        // Model agg (merged by resolved base model)
+        model_acc.record_event(&catalog, ev, ev_cny_cost);
 
         // Source agg
         let s_entry = source_map
@@ -510,33 +480,7 @@ pub async fn query_usage_dashboard_sqlx(
         )
         .collect::<Vec<_>>();
 
-    let mut models = model_map
-        .into_iter()
-        .map(|(model, agg)| {
-            let unit_price = catalog
-                .find_model(&agg.provider, &model)
-                .map(|entry| (entry.input_per_million * 100.0).round() / 100.0);
-            UsageModelBreakdownDto {
-                model,
-                provider: agg.provider,
-                requests_count: agg.requests,
-                total_tokens: agg.total_tokens,
-                input_tokens: agg.input_tokens,
-                output_tokens: agg.output_tokens,
-                reasoning_tokens: agg.reasoning_tokens,
-                cache_tokens: agg.cache_tokens,
-                cost: if agg.cost_basis == "none" {
-                    None
-                } else {
-                    Some((agg.cost * 1000.0).round() / 1000.0)
-                },
-                currency: agg.currency,
-                cost_basis: agg.cost_basis,
-                unit_price_per_million: unit_price,
-            }
-        })
-        .collect::<Vec<_>>();
-    models.sort_by(|a, b| b.total_tokens.cmp(&a.total_tokens));
+    let models = model_acc.into_sorted_dtos();
 
     let mut sources = source_map
         .into_iter()
