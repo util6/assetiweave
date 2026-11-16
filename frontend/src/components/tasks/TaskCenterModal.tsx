@@ -404,11 +404,7 @@ function TaskCenterModalContent({
                 >
                   {filteredTasks.map((task) => {
                     const isSelected = selectedTask?.id === task.id;
-                    const percent = task.progress?.total
-                      ? Math.round(
-                          (task.progress.current / task.progress.total) * 100,
-                        )
-                      : null;
+                    const percent = calculateProgressPercent(task.progress);
                     const startedAt = task.startedAt ?? task.started_at;
                     return (
                       <button
@@ -495,19 +491,7 @@ function TaskCenterModalContent({
                             className="pointer-events-none absolute inset-x-3 bottom-0 h-[2.5px] overflow-hidden rounded-full bg-theme-control/50"
                             data-testid={`task-row-progress-rail-${task.id}`}
                           >
-                            {percent !== null ? (
-                              <div
-                                className="h-full rounded-full bg-primary transition-all duration-300"
-                                style={{
-                                  width: `${Math.min(100, Math.max(0, percent))}%`,
-                                }}
-                              />
-                            ) : (
-                              <div
-                                className="ui-indeterminate-bar h-full w-2/5 rounded-full bg-primary/80"
-                                data-indeterminate="true"
-                              />
-                            )}
+                            <ProgressTrackFill percent={percent} />
                           </div>
                         ) : null}
                       </button>
@@ -578,6 +562,10 @@ function TaskCenterModalContent({
                       cancellable: false,
                       retryable: false,
                     };
+                    const isTaskActive =
+                      selectedTask.state === "running" ||
+                      selectedTask.state === "pending" ||
+                      selectedTask.state === "cancelling";
 
                     return (
                       <>
@@ -595,6 +583,10 @@ function TaskCenterModalContent({
                                 <h2 className="truncate text-title-lg font-semibold text-on-surface">
                                   {selectedTask.title}
                                 </h2>
+                                <TaskStateBadge
+                                  outcome={selectedTask.outcome}
+                                  state={selectedTask.state}
+                                />
                               </div>
                               <div
                                 className="flex items-center gap-2.5 overflow-x-auto whitespace-nowrap text-caption text-on-surface-variant"
@@ -700,54 +692,46 @@ function TaskCenterModalContent({
 
                           {/* 终态结果/错误摘要（紧凑单行防撑高槽位） */}
                           {errorSummary ? (
-                            <div
-                              className="flex items-center gap-2 rounded-xl border border-status-conflict/30 bg-status-conflict/10 px-3 py-2 text-body-sm text-status-conflict"
-                              title={errorSummary}
-                            >
-                              <AlertCircle className="size-4 shrink-0" />
-                              <span className="shrink-0 font-medium">
-                                异常信息
-                              </span>
-                              <span className="min-w-0 flex-1 truncate text-caption text-on-surface-variant">
-                                {errorSummary}
-                              </span>
-                            </div>
+                            <TaskSummaryBanner
+                              label="异常信息"
+                              message={errorSummary}
+                              tone="error"
+                            />
                           ) : null}
 
                           {resultSummary && selectedTask.state !== "failed" ? (
-                            <div
-                              className="flex items-center gap-2 rounded-xl border border-status-create/30 bg-status-create/10 px-3 py-2 text-body-sm text-status-create"
-                              title={resultSummary}
-                            >
-                              <Check className="size-4 shrink-0" />
-                              <span className="shrink-0 font-medium">
-                                执行结果
-                              </span>
-                              <span className="min-w-0 flex-1 truncate text-caption text-on-surface-variant">
-                                {resultSummary}
-                              </span>
-                            </div>
+                            <TaskSummaryBanner
+                              label="执行结果"
+                              message={resultSummary}
+                              tone="success"
+                            />
                           ) : null}
 
-                          {/* 总体指标展示（单行紧凑横向滚动条带） */}
-                          {metrics.length > 0 ? (
+                          {/* 总体指标展示（单行紧凑横向滚动条带，运行期无指标时预留等高 h-7 槽位） */}
+                          {metrics.length > 0 || isTaskActive ? (
                             <div
-                              className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-0.5"
+                              className="flex h-7 flex-nowrap items-center gap-2 overflow-x-auto"
                               data-testid="task-detail-metrics-strip"
                             >
-                              {metrics.map((metric) => (
-                                <div
-                                  className="flex shrink-0 items-center gap-2 rounded-xl border border-theme-control-border/60 bg-theme-control/20 px-3 py-1.5"
-                                  key={metric.code}
-                                >
-                                  <span className="text-caption text-on-surface-variant">
-                                    {metric.code}
-                                  </span>
-                                  <span className="font-mono text-body-sm font-semibold tabular-nums text-on-surface">
-                                    {metric.value}
-                                  </span>
-                                </div>
-                              ))}
+                              {metrics.length > 0 ? (
+                                metrics.map((metric) => (
+                                  <div
+                                    className="flex h-full shrink-0 items-center gap-2 rounded-xl border border-theme-control-border/60 bg-theme-control/20 px-2.5"
+                                    key={metric.code}
+                                  >
+                                    <span className="text-caption text-on-surface-variant">
+                                      {metric.code}
+                                    </span>
+                                    <span className="font-mono text-body-sm font-semibold tabular-nums text-on-surface">
+                                      {metric.value}
+                                    </span>
+                                  </div>
+                                ))
+                              ) : (
+                                <span className="text-code-xs italic text-on-surface-muted">
+                                  等待阶段指标上报...
+                                </span>
+                              )}
                             </div>
                           ) : null}
 
@@ -910,9 +894,7 @@ function StageCard({
     setTimeout(() => setCopied(null), 1500);
   };
 
-  const percent = stage.progress?.total
-    ? Math.round((stage.progress.current / stage.progress.total) * 100)
-    : null;
+  const percent = calculateProgressPercent(stage.progress);
 
   const durationMs = stage.durationMs ?? stage.duration_ms;
   const currentActivities =
@@ -990,7 +972,9 @@ function StageCard({
             <Minus className="size-3.5 stroke-[2.5]" />
           )}
           {stage.status === "pending" && (
-            <span className="text-code-xs font-semibold">{index}</span>
+            <span className="text-code-xs font-semibold tabular-nums">
+              {index}
+            </span>
           )}
         </div>
 
@@ -1085,19 +1069,7 @@ function StageCard({
               )}
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-theme-control/60">
-              {percent !== null ? (
-                <div
-                  className="h-full rounded-full bg-primary transition-all duration-300"
-                  style={{
-                    width: `${Math.min(100, Math.max(0, percent))}%`,
-                  }}
-                />
-              ) : (
-                <div
-                  className="ui-indeterminate-bar h-full w-2/5 rounded-full bg-primary/80"
-                  data-indeterminate="true"
-                />
-              )}
+              <ProgressTrackFill percent={percent} />
             </div>
           </div>
         ) : null}
@@ -1108,7 +1080,7 @@ function StageCard({
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 font-medium">
                 <AlertCircle className="size-4 shrink-0 text-status-conflict" />
-                <span className="font-semibold text-status-conflict">
+                <span className="font-semibold tabular-nums text-status-conflict">
                   阶段异常报错 ({failures.length})
                 </span>
               </div>
@@ -1154,20 +1126,23 @@ function StageCard({
                       >
                         {fail.path ?? fail.identity}
                       </span>
-                      <button
-                        className="shrink-0 p-1 hover:text-on-surface transition-colors"
+                      <Button
+                        aria-label="复制路径/标识"
+                        className="size-6 shrink-0 rounded-full p-0 text-on-surface-muted transition-all duration-200 hover:-translate-y-px hover:text-on-surface active:translate-y-0"
                         onClick={() =>
                           copyPath(fail.path ?? fail.identity ?? "")
                         }
+                        size="icon-sm"
                         title="复制路径/标识"
                         type="button"
+                        variant="ghost"
                       >
                         {copied === (fail.path ?? fail.identity) ? (
                           <Check className="size-3 text-status-create" />
                         ) : (
                           <Copy className="size-3" />
                         )}
-                      </button>
+                      </Button>
                     </div>
                   ) : null}
                 </div>
@@ -1193,7 +1168,9 @@ function StageCard({
           <div className="flex flex-col gap-2 rounded-xl border border-theme-control-border/60 bg-surface-base/60 p-3 text-body-sm">
             <div className="flex items-center gap-2 font-medium text-on-surface-variant">
               <Minus className="size-4 shrink-0" />
-              <span>已跳过项目分组 ({skipped.length})</span>
+              <span className="tabular-nums">
+                已跳过项目分组 ({skipped.length})
+              </span>
             </div>
             <div className="flex flex-col gap-1.5">
               {skipped.map((group, gIdx) => {
@@ -1291,18 +1268,21 @@ function StageCard({
                               <span className="min-w-0 truncate" title={path}>
                                 {path}
                               </span>
-                              <button
-                                className="shrink-0 p-0.5 transition-colors hover:text-on-surface"
+                              <Button
+                                aria-label="复制路径"
+                                className="size-4 shrink-0 rounded-full p-0 text-on-surface-muted transition-all duration-200 hover:-translate-y-px hover:text-on-surface active:translate-y-0"
                                 onClick={() => copyPath(path)}
+                                size="icon-sm"
                                 title="复制路径"
                                 type="button"
+                                variant="ghost"
                               >
                                 {copied === path ? (
                                   <Check className="size-2.5 text-status-create" />
                                 ) : (
                                   <Copy className="size-2.5 text-on-surface-muted" />
                                 )}
-                              </button>
+                              </Button>
                             </>
                           ) : (
                             <span className="truncate text-on-surface-muted/70">
@@ -1321,12 +1301,17 @@ function StageCard({
 
         {/* 展开/收起流程历史记录 (默认折叠；运行中折叠态展示最新步骤单行预览，终态保留纯按钮回放) */}
         {steps.length > 0 ? (
-          <div className="flex flex-col gap-2 pt-1">
+          <div
+            className="flex flex-col gap-2 pt-1"
+            data-testid={`stage-steps-wrapper-${stage.id}`}
+          >
             <div className="flex h-7 min-w-0 items-center gap-2.5">
-              <button
-                className="flex shrink-0 items-center gap-1.5 text-caption font-medium text-primary hover:text-primary-hover transition-colors"
+              <Button
+                className="h-7 shrink-0 gap-1.5 rounded-full px-2 text-caption font-medium text-primary transition-all duration-200 hover:-translate-y-px hover:text-primary-hover active:translate-y-0"
                 onClick={() => setExpanded(!expanded)}
+                size="sm"
                 type="button"
+                variant="ghost"
               >
                 <ChevronDown
                   className={clsx(
@@ -1339,7 +1324,7 @@ function StageCard({
                     ? "收起流程明细"
                     : `查看详细流程 (${steps.length} 个子节点步骤)`}
                 </span>
-              </button>
+              </Button>
 
               {stage.status === "running" && !expanded && latestStep ? (
                 <div
@@ -1349,7 +1334,10 @@ function StageCard({
                     .filter(Boolean)
                     .join(": ")}
                 >
-                  <span className="shrink-0 font-mono font-medium text-primary">
+                  <span
+                    className="max-w-[40%] shrink-0 truncate font-mono font-medium text-primary"
+                    title={latestStep.operation}
+                  >
                     {latestStep.operation}
                   </span>
                   {latestStep.detail ? (
@@ -1434,12 +1422,17 @@ function StageCard({
           </div>
         ) : null}
 
-        {/* 当无子步骤且阶段处于活动/终态时的友好提示 */}
+        {/* 当无子步骤且阶段处于活动/终态时的友好提示（与展开态保持完全一致的 pt-1 + h-7 高度） */}
         {steps.length === 0 &&
         stage.status !== "pending" &&
         stage.status !== "skipped" ? (
-          <div className="flex h-7 items-center gap-1.5 pt-1 text-code-xs italic text-on-surface-muted">
-            <span>暂无子节点明细步骤记录</span>
+          <div
+            className="flex flex-col gap-2 pt-1"
+            data-testid={`stage-steps-wrapper-${stage.id}`}
+          >
+            <div className="flex h-7 min-w-0 items-center gap-1.5 text-code-xs italic text-on-surface-muted">
+              <span>暂无子节点明细步骤记录</span>
+            </div>
           </div>
         ) : null}
 
@@ -1527,7 +1520,7 @@ function TaskStateBadge({
 }) {
   if (state === "pending") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/40 px-2.5 py-0.5 text-caption font-medium text-on-surface-variant">
+      <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-theme-control-border bg-theme-control/40 px-2.5 py-0.5 text-caption font-medium text-on-surface-variant">
         <Clock className="size-3" />
         排队中
       </span>
@@ -1536,7 +1529,7 @@ function TaskStateBadge({
 
   if (state === "running" || state === "cancelling") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-caption font-medium text-primary">
+      <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-caption font-medium text-primary">
         <Loader2 className="size-3 animate-spin" />
         {state === "cancelling" ? "取消中" : "运行中"}
       </span>
@@ -1545,7 +1538,7 @@ function TaskStateBadge({
 
   if (outcome === "partial_success") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-status-warning/30 bg-status-warning/10 px-2.5 py-0.5 text-caption font-medium text-status-warning">
+      <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-status-warning/30 bg-status-warning/10 px-2.5 py-0.5 text-caption font-medium text-status-warning">
         <AlertTriangle className="size-3" />
         部分成功
       </span>
@@ -1554,7 +1547,7 @@ function TaskStateBadge({
 
   if (state === "succeeded" || outcome === "success") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-status-create/30 bg-status-create/10 px-2.5 py-0.5 text-caption font-medium text-status-create">
+      <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-status-create/30 bg-status-create/10 px-2.5 py-0.5 text-caption font-medium text-status-create">
         <Check className="size-3" />
         成功
       </span>
@@ -1563,7 +1556,7 @@ function TaskStateBadge({
 
   if (state === "canceled" || outcome === "canceled") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/40 px-2.5 py-0.5 text-caption text-on-surface-variant">
+      <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-theme-control-border bg-theme-control/40 px-2.5 py-0.5 text-caption text-on-surface-variant">
         <Ban className="size-3" />
         已取消
       </span>
@@ -1571,10 +1564,76 @@ function TaskStateBadge({
   }
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-status-conflict/30 bg-status-conflict/10 px-2.5 py-0.5 text-caption font-medium text-status-conflict">
+    <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-status-conflict/30 bg-status-conflict/10 px-2.5 py-0.5 text-caption font-medium text-status-conflict">
       <AlertCircle className="size-3" />
       失败
     </span>
+  );
+}
+
+function calculateProgressPercent(
+  progress?: {
+    current?: number | null;
+    total?: number | null;
+  } | null,
+): number | null {
+  const total = progress?.total;
+  if (total == null) return null;
+  if (total <= 0) return 0;
+  const current = progress?.current ?? 0;
+  return Math.round((current / total) * 100);
+}
+
+function ProgressTrackFill({ percent }: { percent: number | null }) {
+  if (percent !== null) {
+    return (
+      <div
+        className="h-full rounded-full bg-primary transition-all duration-300"
+        style={{
+          width: `${Math.min(100, Math.max(0, percent))}%`,
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      className="ui-indeterminate-bar h-full w-2/5 rounded-full bg-primary/80"
+      data-indeterminate="true"
+    />
+  );
+}
+
+function TaskSummaryBanner({
+  tone,
+  label,
+  message,
+}: {
+  tone: "error" | "success";
+  label: string;
+  message: string;
+}) {
+  const isError = tone === "error";
+  return (
+    <div
+      className={clsx(
+        "flex items-center gap-2 rounded-xl border px-3 py-2 text-body-sm",
+        isError
+          ? "border-status-conflict/30 bg-status-conflict/10 text-status-conflict"
+          : "border-status-create/30 bg-status-create/10 text-status-create",
+      )}
+      title={message}
+    >
+      {isError ? (
+        <AlertCircle className="size-4 shrink-0" />
+      ) : (
+        <Check className="size-4 shrink-0" />
+      )}
+      <span className="shrink-0 font-medium">{label}</span>
+      <span className="min-w-0 flex-1 truncate text-caption text-on-surface-variant">
+        {message}
+      </span>
+    </div>
   );
 }
 

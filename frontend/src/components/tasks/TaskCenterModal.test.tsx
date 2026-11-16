@@ -1395,4 +1395,259 @@ describe("TaskCenterModal", () => {
       screen.getByTestId("stage-activities-container-ingest-stage"),
     ).toBeTruthy();
   });
+
+  it("在右侧摘要卡标题旁展示状态徽章，并在运行中 0 指标时预留等高 h-7 指标占位条带而终态收起", async () => {
+    const runningNoMetrics: TaskView = {
+      id: "task-summary-stability",
+      kind: "ConversationSync",
+      title: "摘要卡状态与指标稳定性任务",
+      state: "running",
+      stages: [],
+      metrics: [],
+      failures: [],
+      capabilities: { cancellable: true, retryable: false, clearable: false },
+      revision: 1,
+    };
+
+    mockSelectedTaskId = "task-summary-stability";
+    mockTasks = [runningNoMetrics];
+
+    const { rerender } = render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    const summaryHeader = await screen.findByTestId(
+      "task-detail-summary-header",
+    );
+    expect(within(summaryHeader).getByText("运行中")).toBeTruthy();
+
+    const reservedStrip = within(summaryHeader).getByTestId(
+      "task-detail-metrics-strip",
+    );
+    expect(reservedStrip.className).toContain("h-7");
+    expect(within(reservedStrip).getByText("等待阶段指标上报...")).toBeTruthy();
+
+    // 指标上报后保持 h-7，不触发跳动
+    mockTasks = [
+      {
+        ...runningNoMetrics,
+        revision: 2,
+        metrics: [{ code: "synced", value: 12 }],
+      },
+    ];
+    rerender(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    const populatedStrip = within(summaryHeader).getByTestId(
+      "task-detail-metrics-strip",
+    );
+    expect(populatedStrip.className).toContain("h-7");
+    expect(
+      within(populatedStrip).queryByText("等待阶段指标上报..."),
+    ).toBeNull();
+    expect(within(populatedStrip).getByText("12")).toBeTruthy();
+
+    // 终态且无指标时收起指标条带，并更新标题旁状态徽章
+    mockTasks = [
+      {
+        ...runningNoMetrics,
+        state: "succeeded",
+        outcome: "success",
+        revision: 3,
+        metrics: [],
+      },
+    ];
+    rerender(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    expect(within(summaryHeader).getByText("成功")).toBeTruthy();
+    expect(
+      within(summaryHeader).queryByTestId("task-detail-metrics-strip"),
+    ).toBeNull();
+  });
+
+  it("将 progress.total === 0 视为确定态 0% 而非不确定态或 NaN", async () => {
+    mockSelectedTaskId = "task-zero-total";
+    mockTasks = [
+      {
+        id: "task-zero-total",
+        kind: "Scan",
+        title: "零总数任务",
+        state: "running",
+        progress: { current: 0, total: 0, note: "空目录扫描" },
+        stages: [
+          {
+            id: "scan-stage",
+            name: "扫描文件",
+            status: "running",
+            progress: { current: 0, total: 0, note: "待发现项目" },
+            steps: [],
+            metrics: [],
+            failures: [],
+            skipped: [],
+          },
+        ],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: true, retryable: false, clearable: false },
+        revision: 1,
+      },
+    ];
+
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    const taskList = await screen.findByTestId("task-list");
+    const row = within(taskList).getByText("零总数任务").closest("button")!;
+    expect(within(row).getByText("0%")).toBeTruthy();
+    expect(within(row).queryByText("NaN%")).toBeNull();
+
+    const rail = within(row).getByTestId(
+      "task-row-progress-rail-task-zero-total",
+    );
+    expect(rail.querySelector("[data-indeterminate='true']")).toBeNull();
+
+    const stageProgress = screen.getByTestId("stage-progress-scan-stage");
+    expect(within(stageProgress).getByText("0 / 0")).toBeTruthy();
+    expect(within(stageProgress).getByText("0%")).toBeTruthy();
+    expect(
+      stageProgress.querySelector("[data-indeterminate='true']"),
+    ).toBeNull();
+  });
+
+  it("约束运行态最新步骤预览中超长 operation 宽度，保持 0→1 步骤容器高度一致且数字对齐", async () => {
+    const longOp =
+      "very_long_operation_identifier_that_should_be_clamped_within_preview_pill";
+    const baseStage: TaskView["stages"][number] = {
+      id: "step-parity-stage",
+      name: "步骤稳态阶段",
+      status: "running",
+      steps: [],
+      metrics: [],
+      failures: [
+        {
+          code: "warn_code",
+          message: "模拟报错",
+          stage: "step-parity-stage",
+          path: "/err/path.ts",
+          retryable: true,
+          timestamp: "2026-09-10T03:00:00Z",
+        },
+      ],
+      currentActivities: [
+        {
+          stageId: "step-parity-stage",
+          workerId: "w-parity",
+          operation: "scan",
+          path: "/worker/path.ts",
+        },
+      ],
+      skipped: [{ reasonCode: "dup", count: 2, samples: ["a"] }],
+    };
+
+    mockSelectedTaskId = "task-step-parity";
+    mockTasks = [
+      {
+        id: "task-step-parity",
+        kind: "ConversationSync",
+        title: "步骤稳态验证",
+        state: "running",
+        stages: [baseStage],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: true, retryable: false, clearable: false },
+        revision: 1,
+      },
+    ];
+
+    const { rerender } = render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    // 0 步骤态：外层 pt-1 与内层 h-7 分离（h-7 元素自身不带 pt-1）
+    const emptyWrapper = await screen.findByTestId(
+      "stage-steps-wrapper-step-parity-stage",
+    );
+    expect(emptyWrapper.className).toContain("pt-1");
+    const emptyNotice =
+      within(emptyWrapper).getByText("暂无子节点明细步骤记录");
+    const emptyRow = emptyNotice.closest("div")!;
+    expect(emptyRow.className).toContain("h-7");
+    expect(emptyRow.className).not.toContain("pt-1");
+
+    // 报错和跳过计数均使用 tabular-nums，复制路径按钮使用 Button 原语及微动效
+    expect(screen.getByText("阶段异常报错 (1)").className).toContain(
+      "tabular-nums",
+    );
+    expect(screen.getByText("已跳过项目分组 (1)").className).toContain(
+      "tabular-nums",
+    );
+    const failCopyBtn = screen.getByRole("button", { name: "复制路径/标识" });
+    expect(failCopyBtn.className).toContain("rounded-full");
+    expect(failCopyBtn.className).toContain("duration-200");
+    expect(failCopyBtn.className).toContain("hover:-translate-y-px");
+    const workerCopyBtn = screen.getByRole("button", { name: "复制路径" });
+    expect(workerCopyBtn.className).toContain("rounded-full");
+    expect(workerCopyBtn.className).toContain("duration-200");
+    expect(workerCopyBtn.className).toContain("hover:-translate-y-px");
+
+    // 1 步骤态：外层保持同一 pt-1 + 内层 h-7，且长 operation 被 max-w-[40%] truncate 约束
+    mockTasks = [
+      {
+        ...mockTasks[0],
+        revision: 2,
+        stages: [
+          {
+            ...baseStage,
+            steps: [
+              {
+                timestamp: "2026-09-10T03:00:01Z",
+                operation: longOp,
+                detail: "不应被超长 operation 挤出视野的关键明细",
+                current: 1,
+                total: 3,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    rerender(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    const populatedWrapper = screen.getByTestId(
+      "stage-steps-wrapper-step-parity-stage",
+    );
+    expect(populatedWrapper.className).toContain("pt-1");
+    const toggleBtn = within(populatedWrapper).getByRole("button", {
+      name: /查看详细流程 \(1 个子节点步骤\)/,
+    });
+    expect(toggleBtn.className).toContain("duration-200");
+    expect(toggleBtn.className).toContain("hover:-translate-y-px");
+
+    const preview = screen.getByTestId(
+      "stage-latest-step-preview-step-parity-stage",
+    );
+    const opEl = within(preview).getByText(longOp);
+    expect(opEl.className).toContain("max-w-[40%]");
+    expect(opEl.className).toContain("truncate");
+    expect(opEl.className).toContain("shrink-0");
+    expect(opEl.getAttribute("title")).toBe(longOp);
+  });
 });
