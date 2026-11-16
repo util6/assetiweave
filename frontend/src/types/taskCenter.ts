@@ -175,6 +175,8 @@ export interface TaskView {
   error_summary?: string | null;
   resultSummary?: string | null;
   result_summary?: string | null;
+  /** 终态结果投影（任务成功结束后由 TaskRuntime 统一回写）。 */
+  result?: unknown;
   capabilities: TaskCapabilitiesView;
   revision: number;
   changeClass?: TaskChangeClass;
@@ -342,6 +344,7 @@ export function normalizeTaskView(raw: unknown): TaskView {
     error_summary: errorSummary,
     resultSummary,
     result_summary: resultSummary,
+    result: data.result ?? null,
     capabilities: (data.capabilities ?? {
       cancellable: false,
       retryable: false,

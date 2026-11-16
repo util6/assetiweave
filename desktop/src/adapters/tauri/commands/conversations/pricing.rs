@@ -8,10 +8,9 @@ use crate::backend::application::conversations::{
 };
 use crate::backend::application::AppResult as RuntimeAppResult;
 use crate::backend::application::{AppError, AppService};
-use tauri::{AppHandle, Emitter, State};
+use tauri::State;
 
 fn start_model_pricing_sync_background(
-    app: AppHandle,
     runtime: std::sync::Arc<crate::backend::infrastructure::runtime::AppRuntime>,
     background_tasks: std::sync::Arc<
         crate::adapters::tauri::background_tasks::BackgroundTaskRegistry,
@@ -35,62 +34,12 @@ fn start_model_pricing_sync_background(
         .map(|task| task.detail)
         .ok_or_else(|| AppError::NotFound(format!("background task not found: {task_id}")))?;
     let task_background_tasks = background_tasks.clone();
-    let task_app = app.clone();
     let task_id_for_runtime = task_id.clone();
     let target_models = models;
     let outcome =
         task_runtime.start_external_with_async(&task_id, task_detail, move |context| async move {
-            let progress_app = task_app.clone();
-            let progress_tasks = task_background_tasks.clone();
-            let progress_task_id = task_id_for_runtime.clone();
-
-            let mut on_progress = move |phase_str: &str, msg: &str| {
-                let phase = match phase_str {
-                    "fetching" => {
-                        crate::adapters::tauri::background_tasks::ModelPricingSyncProgressPhase::Fetching
-                    }
-                    "persisting" => {
-                        crate::adapters::tauri::background_tasks::ModelPricingSyncProgressPhase::Persisting
-                    }
-                    "recalculating" => {
-                        crate::adapters::tauri::background_tasks::ModelPricingSyncProgressPhase::Recalculating
-                    }
-                    "completed" => {
-                        crate::adapters::tauri::background_tasks::ModelPricingSyncProgressPhase::Completed
-                    }
-                    _ => {
-                        crate::adapters::tauri::background_tasks::ModelPricingSyncProgressPhase::Preparing
-                    }
-                };
-                match progress_tasks.update_model_pricing_sync_progress(
-                    &progress_task_id,
-                    phase,
-                    Some(msg.to_string()),
-                    None,
-                    0,
-                    0,
-                    7.25,
-                ) {
-                    Ok(snapshot) => {
-                        if let Err(error) =
-                            progress_app.emit("model-pricing-sync-task-updated", &snapshot)
-                        {
-                            tracing::error!(
-                                action = "conversation.pricing.sync",
-                                task_id = %progress_task_id,
-                                error = %error,
-                                "推送后台价格同步进度失败"
-                            );
-                        }
-                    }
-                    Err(error) => tracing::error!(
-                        action = "conversation.pricing.sync",
-                        task_id = %progress_task_id,
-                        error = %error,
-                        "更新后台价格同步进度失败"
-                    ),
-                }
-            };
+            // 进度由 TaskRuntime 的阶段 / 步骤统一表达，宿主不再维护私有进度事件与占位数值。
+            let mut on_progress = |_phase: &str, _msg: &str| {};
 
             let cancellation = context.cancellation();
             if context.is_cancelled() {
@@ -128,23 +77,8 @@ fn start_model_pricing_sync_background(
             let json_result =
                 result.map(|dto| serde_json::to_value(dto).unwrap_or(serde_json::Value::Null));
 
-            match task_background_tasks
-                .finish_model_pricing_sync(&task_id_for_runtime, json_result)
-            {
-                Ok(snapshot) => {
-                    if let Err(error) = task_app.emit("model-pricing-sync-task-updated", &snapshot)
-                    {
-                        tracing::error!(
-                            action = "conversation.pricing.sync",
-                            task_id = %task_id_for_runtime,
-                            error = %error,
-                            "推送后台价格同步任务状态失败"
-                        );
-                    }
-                    Ok(serde_json::Value::Null)
-                }
-                Err(error) => Err(error),
-            }
+            task_background_tasks.finish_model_pricing_sync(&task_id_for_runtime, json_result)?;
+            Ok(serde_json::Value::Null)
         });
 
     if let Err(error) = outcome {
@@ -156,13 +90,11 @@ fn start_model_pricing_sync_background(
 
 #[tauri::command]
 pub(crate) fn update_model_pricing_catalog(
-    app: AppHandle,
     state: State<'_, AppState>,
     force: Option<bool>,
     models: Option<Vec<String>>,
 ) -> RuntimeAppResult<crate::adapters::tauri::background_tasks::ModelPricingSyncTaskSnapshot> {
     start_model_pricing_sync_background(
-        app,
         state.runtime.clone(),
         state.background_tasks.clone(),
         force.unwrap_or(false),

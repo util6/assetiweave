@@ -15,6 +15,7 @@ import type {
   ModelPriceEntry,
   ModelPricingCatalog,
   ModelPricingStatus,
+  ModelPricingSyncResult,
 } from "@/types/usage";
 import {
   getModelPricingCatalog,
@@ -24,7 +25,7 @@ import {
   setModelPricingExchangeRate,
   setModelPricingIgnored,
   setModelPricingLock,
-  subscribeModelPricingSyncTask,
+  subscribePricingSyncTask,
   updateModelPricingCatalog,
 } from "@/services/usage";
 import { ModelPricingTable } from "./ModelPricingTable";
@@ -77,33 +78,36 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
     void loadData();
   }, [loadData]);
 
-  // Subscribe to real-time pricing sync task events
+  // Subscribe to task center updates for the pricing sync task
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
 
-    void subscribeModelPricingSyncTask((snapshot) => {
+    void subscribePricingSyncTask((task) => {
       if (cancelled) return;
-      const isRunning =
-        snapshot.status === "running" || snapshot.status === "cancelling";
+      const isRunning = task.state === "running" || task.state === "cancelling";
 
       setSyncing(isRunning);
-      if (!isRunning) {
-        if (snapshot.status === "completed") {
-          const detail = snapshot.result;
-          setSyncNotice({
-            type: "success",
-            text: detail
-              ? `价格同步完成：更新 ${detail.modelsCount} 款模型，重算 ${detail.recalculatedEventsCount} 条会话用量（汇率 1 USD = ¥${detail.exchangeRate.toFixed(2)}）`
-              : "价格同步完成，已重算历史用量",
-          });
-          void loadData();
-        } else if (snapshot.status === "failed") {
-          setSyncNotice({
-            type: "error",
-            text: snapshot.error?.message || "网络同步模型价格失败",
-          });
-        }
+      if (isRunning) return;
+
+      if (task.state === "succeeded") {
+        const detail = (task.result ?? null) as ModelPricingSyncResult | null;
+        setSyncNotice({
+          type: "success",
+          text: detail
+            ? `价格同步完成：更新 ${detail.modelsCount} 款模型，重算 ${detail.recalculatedEventsCount} 条会话用量（汇率 1 USD = ¥${detail.exchangeRate.toFixed(2)}）`
+            : "价格同步完成，已重算历史用量",
+        });
+        void loadData();
+      } else if (task.state === "failed" || task.state === "canceled") {
+        setSyncNotice({
+          type: "error",
+          text:
+            task.errorSummary ||
+            (task.state === "canceled"
+              ? "价格同步已取消"
+              : "网络同步模型价格失败"),
+        });
       }
     })
       .then((cleanup) => {

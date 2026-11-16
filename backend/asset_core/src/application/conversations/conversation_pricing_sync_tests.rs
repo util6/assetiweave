@@ -1,10 +1,10 @@
 use super::*;
-use crate::backend::application::system::{TaskListParams, TaskView};
+use crate::backend::application::system::{TaskCancelParams, TaskListParams, TaskView};
 use crate::backend::domain::conversations::pricing::ModelPriceEntry;
 use crate::backend::infrastructure::conversations::pricing_fetcher::{
     PricingSourceChannel, TieredFetchOutcome,
 };
-use crate::backend::infrastructure::tasks::stages;
+use crate::backend::infrastructure::tasks::{stages, TaskState};
 
 fn list_visible(service: &AppService) -> Vec<TaskView> {
     service
@@ -95,4 +95,89 @@ async fn pricing_sync_pipeline_is_managed_visible_and_projects_result() {
     assert_eq!(result["modelsCount"].as_u64(), Some(1));
     assert_eq!(result["recalculatedEventsCount"].as_u64(), Some(0));
     assert_eq!(result["exchangeRate"].as_f64(), Some(7.31));
+    assert_eq!(result["catalogVersion"].as_str(), Some("litellm-test-1"));
+    assert!(
+        result["updatedAt"].as_str().is_some_and(|v| !v.is_empty()),
+        "TaskView.result 必须携带同步完成时间"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pricing_sync_cancel_before_persist_keeps_catalog_untouched() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-pricing-pipeline-cancel-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let service = AppService::open_with_db_path(db_path)
+        .await
+        .expect("open app service");
+
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id().to_string();
+    let before = load_pricing_catalog_entries_sqlx(pool, &tenant_id)
+        .await
+        .expect("load pricing catalog")
+        .len();
+
+    let (entered_tx, entered_rx) = mpsc::channel::<()>();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+
+    let handle = service
+        .start_model_pricing_sync_with_fetcher(false, move |_cached_rate, _cached, _targets| {
+            let _ = entered_tx.send(());
+            let _ = release_rx.recv_timeout(Duration::from_secs(30));
+            (
+                7.31,
+                TieredFetchOutcome {
+                    channel: PricingSourceChannel::LiteLlm,
+                    entries: vec![ModelPriceEntry {
+                        provider: "openai".to_string(),
+                        model_patterns: vec!["cancel-guard-model".to_string()],
+                        currency: "CNY".to_string(),
+                        input_per_million: 1.0,
+                        output_per_million: 2.0,
+                        source_channel: "litellm".to_string(),
+                        ..Default::default()
+                    }],
+                    rate: 7.31,
+                    catalog_version: "litellm-cancel-test".to_string(),
+                },
+            )
+        })
+        .expect("start pricing sync pipeline");
+
+    // 等待抓取阶段真正进入，此时尚未写入任何价格条目。
+    let entered =
+        tokio::task::spawn_blocking(move || entered_rx.recv_timeout(Duration::from_secs(30)))
+            .await
+            .expect("join pricing fetch gate");
+    entered.expect("pricing fetch must have started");
+
+    let requested = service
+        .cancel_public_task(TaskCancelParams {
+            task_id: handle.task_id().to_string(),
+        })
+        .expect("cancel pricing sync task");
+    assert_eq!(
+        requested.state, "cancelling",
+        "运行中的价格同步任务取消后先进入 cancelling"
+    );
+
+    release_tx.send(()).expect("release pricing fetch");
+
+    let snapshot = handle
+        .wait_until_finished(service.runtime.task_runtime())
+        .await
+        .expect("terminal pricing sync snapshot");
+    assert_eq!(snapshot.state, TaskState::Canceled);
+    assert!(snapshot.result.is_none(), "取消的任务不得回写成功结果");
+
+    let after = load_pricing_catalog_entries_sqlx(pool, &tenant_id)
+        .await
+        .expect("load pricing catalog")
+        .len();
+    assert_eq!(before, after, "取消后不得写入价格库");
 }

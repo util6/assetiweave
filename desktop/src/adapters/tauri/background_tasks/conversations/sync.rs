@@ -162,6 +162,7 @@ impl BackgroundTaskRegistry {
             &snapshot.id,
             Some(title.to_string()),
             Some(category.to_string()),
+            None,
             Some(format!("{tenant_id}:{}", scope.dedup_key())),
             scope
                 .conflict_keys()

@@ -11,8 +11,8 @@ use crate::backend::{
         PackageIdentity, PackageKind, ResourceKey,
     },
     infrastructure::tasks::{
-        ExternalRegistrationOutcome, TaskFn, TaskKind, TaskRuntime, TaskSnapshot, TaskSpec,
-        TaskState,
+        ExternalRegistrationOutcome, TaskCapabilities, TaskFn, TaskKind, TaskRuntime, TaskSnapshot,
+        TaskSpec, TaskState,
     },
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -225,6 +225,7 @@ impl BackgroundTaskRegistry {
             task_id,
             None,
             None,
+            None,
             dedup_key,
             conflict_keys,
             projection,
@@ -238,6 +239,7 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         title: Option<String>,
         category: Option<String>,
+        capabilities: Option<TaskCapabilities>,
         dedup_key: Option<String>,
         conflict_keys: impl IntoIterator<Item = String>,
         projection: &T,
@@ -255,6 +257,9 @@ impl BackgroundTaskRegistry {
         }
         if let Some(c) = category {
             spec = spec.with_category(c);
+        }
+        if let Some(capabilities) = capabilities {
+            spec = spec.with_capabilities(capabilities);
         }
         spec.detail = detail;
         match self.task_runtime.register_external(spec)? {

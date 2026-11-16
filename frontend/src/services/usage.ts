@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { TaskView } from "../types/taskCenter";
 import type {
   ModelPriceEntry,
   ModelPricingCatalog,
@@ -791,18 +792,17 @@ export async function getModelPricingCatalog(): Promise<ModelPricingCatalog> {
   return invoke<ModelPricingCatalog>("get_model_pricing_catalog");
 }
 
-export function subscribeModelPricingSyncTask(
-  listener: (snapshot: ModelPricingSyncTaskSnapshot) => void,
+export function subscribePricingSyncTask(
+  listener: (task: TaskView) => void,
 ): Promise<() => void> {
   if (!isTauriRuntime()) {
     return Promise.resolve(() => undefined);
   }
-  return listen<ModelPricingSyncTaskSnapshot>(
-    "model-pricing-sync-task-updated",
-    (event) => {
+  return listen<TaskView>("task-updated", (event) => {
+    if (event.payload.kind === "modelpricingsync") {
       listener(event.payload);
-    },
-  );
+    }
+  });
 }
 
 export async function setModelPricingExchangeRate(
