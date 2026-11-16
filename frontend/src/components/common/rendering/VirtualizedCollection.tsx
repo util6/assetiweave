@@ -4,7 +4,16 @@ import {
   type Range,
   type VirtualItem,
 } from "@tanstack/react-virtual";
-import { forwardRef, useCallback, useImperativeHandle, useMemo } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { flushSync } from "react-dom";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import { cn } from "../../../lib/utils";
 import { DeferredSkeletonBoundary } from "./DeferredSkeletonBoundary";
@@ -165,16 +174,25 @@ function VirtualizedCollectionInner<Item>(
     [estimateSize, items, size],
   );
   const shouldVirtualize = enabled && items.length >= minItems;
+  const [boundScrollElement, setBoundScrollElement] =
+    useState<HTMLElement | null>(() => scrollElementRef.current ?? null);
+  const measuredViewportRef = useRef<{
+    height: number;
+    width: number;
+  } | null>(null);
   const virtualizer = useVirtualizer({
     count: items.length,
-    enabled: shouldVirtualize,
+    // Enabling only once the scroll element is bound keeps the virtualizer from
+    // freezing the zero-height rect and zero offset of the first render; both are
+    // then read from the bound element instead of being memoized as 0.
+    enabled: shouldVirtualize && Boolean(boundScrollElement),
     estimateSize: resolveEstimateSize,
     gap,
     getItemKey: (index) => keys[index]!,
-    initialOffset: 0,
+    initialOffset: () => scrollElementRef.current?.scrollTop ?? 0,
     initialRect: {
-      height: scrollElementRef.current?.clientHeight ?? 0,
-      width: scrollElementRef.current?.clientWidth ?? 0,
+      height: boundScrollElement?.clientHeight ?? 0,
+      width: boundScrollElement?.clientWidth ?? 0,
     },
     getScrollElement: () => scrollElementRef.current,
     isScrollingResetDelay: SCROLL_IDLE_DELAY_MS,
@@ -185,6 +203,50 @@ function VirtualizedCollectionInner<Item>(
     // Heavy content remains gated by DeferredSkeletonBoundary / RenderScheduler.
     useFlushSync: true,
   });
+
+  // React attaches host refs after child layout effects commit. A virtualizer that
+  // reads the scroll element only during its own layout effect therefore misses a
+  // ref bound in that same commit and keeps the zero-height rect from the first
+  // render. Re-read once the commit finishes and flush the corrected range
+  // synchronously so it still lands before paint.
+  useLayoutEffect(() => {
+    let cancelled = false;
+    const bindScrollElement = (deferred: boolean) => {
+      if (cancelled) return;
+      const element = scrollElementRef.current;
+      if (element === boundScrollElement) return;
+      if (deferred) flushSync(() => setBoundScrollElement(element));
+      else setBoundScrollElement(element);
+    };
+    bindScrollElement(false);
+    queueMicrotask(() => bindScrollElement(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [boundScrollElement, scrollElementRef]);
+
+  // A hidden or zero-height container must recover as soon as it gets a bounded
+  // size, without waiting for a scroll event. The layout-effect read covers the
+  // binding commit; the observer covers later 0 -> non-zero transitions.
+  useLayoutEffect(() => {
+    const element = boundScrollElement;
+    if (!element || !shouldVirtualize) return undefined;
+    const syncViewport = () => {
+      const height = element.clientHeight;
+      const width = element.clientWidth;
+      const previous = measuredViewportRef.current;
+      measuredViewportRef.current = { height, width };
+      if (height <= 0 || width <= 0) return;
+      if (previous && (previous.height <= 0 || previous.width <= 0)) {
+        virtualizer.measure();
+      }
+    };
+    syncViewport();
+    if (typeof ResizeObserver !== "function") return undefined;
+    const observer = new ResizeObserver(syncViewport);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [boundScrollElement, shouldVirtualize, virtualizer]);
 
   useImperativeHandle(
     ref,
