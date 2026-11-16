@@ -16,7 +16,7 @@ pub(crate) mod mounting;
 #[macro_use]
 pub(crate) mod system;
 
-pub(crate) const BASELINE_COMMAND_COUNT: usize = 205;
+pub(crate) const BASELINE_COMMAND_COUNT: usize = 208;
 
 pub(crate) use self::agents::*;
 pub(crate) use self::catalog::*;
@@ -194,6 +194,9 @@ pub(crate) fn command_handler(
         get_model_pricing_sync_task,
         set_model_pricing_exchange_rate,
         save_model_price_entry,
+        rebind_model_pricing_alias,
+        set_model_pricing_lock,
+        set_model_pricing_ignored,
         audit_conversation_data,
         repair_conversation_data,
         get_conversation_data_maintenance_task,
