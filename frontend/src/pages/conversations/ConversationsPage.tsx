@@ -107,10 +107,12 @@ import { useQueryScope } from "../../app/query/QueryScopeProvider";
 import {
   conversationAdaptersQueryOptions,
   conversationKeys,
+  conversationSessionDetailQueryOptions,
   conversationSessionsQueryOptions,
   isWebRecordAdapter,
   loadAllConversationSessionPages,
 } from "../../app/query/conversationQueries";
+import type { QueryScope } from "../../app/query/catalogQueries";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
@@ -128,11 +130,6 @@ import {
 import {
   exportConversationSession,
   exportWebRecordSession,
-  getConversationSession,
-  getWebRecordSession,
-  listConversationAdapters,
-  listConversationSessions,
-  listWebRecordSessions,
   searchConversationRecords,
 } from "../../services/conversations";
 import { selectTargetDirectory } from "../../services/catalog";
@@ -301,7 +298,11 @@ export function ConversationsPage({
   const webRecordMode = currentRecordKind === "web";
   const queryClient = useQueryClient();
   const queryScope = useQueryScope();
-  const activeScope = queryScope ?? { tenantId: "default", epoch: 1 };
+  const fallbackScope = useMemo<QueryScope>(
+    () => ({ tenantId: "default", epoch: 1 }),
+    [],
+  );
+  const activeScope = queryScope ?? fallbackScope;
 
   const adaptersQuery = useQuery(
     conversationAdaptersQueryOptions(activeScope, currentRecordKind),
@@ -309,10 +310,23 @@ export function ConversationsPage({
   const sessionsQuery = useQuery(
     conversationSessionsQueryOptions(activeScope, currentRecordKind, query),
   );
-  const adapters = adaptersQuery.data ?? [];
-  const sessions = sessionsQuery.data ?? [];
-  const [sessionDetail, setSessionDetail] =
-    useState<ConversationSessionDetail | null>(null);
+  const sessionDetailQuery = useQuery({
+    ...conversationSessionDetailQueryOptions(
+      activeScope,
+      currentRecordKind,
+      selectedSessionId ?? "",
+    ),
+    enabled: Boolean(selectedSessionId),
+  });
+  const adapters = useMemo(
+    () => adaptersQuery.data ?? [],
+    [adaptersQuery.data],
+  );
+  const sessions = useMemo(
+    () => sessionsQuery.data ?? [],
+    [sessionsQuery.data],
+  );
+  const sessionDetail = sessionDetailQuery.data ?? null;
   /** 从父轮次锚点下钻时保留的溯源上下文；搜索命中打开子会话时依赖会话元数据兜底。 */
   const [subagentNavigation, setSubagentNavigation] =
     useState<SubagentSessionTarget | null>(null);
@@ -369,7 +383,7 @@ export function ConversationsPage({
   const syncRunning =
     syncTask?.status === "running" || syncTask?.status === "cancelling";
   const searchIndexRunning = searchIndexTask?.status === "running";
-  const sessionDetailRequestIdRef = useRef(0);
+  const notifiedDetailErrorRef = useRef<unknown>(null);
   const sessionSearchLoading = sessionsQuery.isFetching;
 
   const sessionCatalogReady = sessionsQuery.data !== undefined;
@@ -391,16 +405,26 @@ export function ConversationsPage({
         sessionsQuery.data.map((session) => session.id),
       );
     }
-  }, [sessionsQuery.data]);
+  }, [reconcileSessionSelection, sessionsQuery.data]);
+
+  useEffect(() => {
+    const error = sessionDetailQuery.error;
+    if (!error) {
+      notifiedDetailErrorRef.current = null;
+      return;
+    }
+    // 同一次失败只上报一次；重试或换会话后产生新的错误对象才会再次上报。
+    if (notifiedDetailErrorRef.current === error) return;
+    notifiedDetailErrorRef.current = error;
+    onNotifyError(errorMessage(error));
+  }, [onNotifyError, sessionDetailQuery.error]);
   const importedSourceNamesRef = useRef<Map<string, string>>(new Map());
   const startedNavigationNonceRef = useRef<string | null>(null);
   const consumedNavigationNonceRef = useRef<string | null>(null);
 
-  function clearSessionDetail() {
-    sessionDetailRequestIdRef.current += 1;
-    setSessionDetail(null);
+  const clearSessionDetail = useCallback(() => {
     clearConversationSelection();
-  }
+  }, [clearConversationSelection]);
 
   const sessionQuestionCount = useMemo(
     () =>
@@ -493,19 +517,10 @@ export function ConversationsPage({
   );
 
   useEffect(() => {
-    setSessionDetail(null);
     clearConversationSelection();
-    sessionDetailRequestIdRef.current += 1;
     handledSyncTaskIdRef.current = null;
     syncedAdapterIdsRef.current.clear();
   }, [clearConversationSelection, currentRecordKind]);
-
-  useEffect(
-    () => () => {
-      sessionDetailRequestIdRef.current += 1;
-    },
-    [],
-  );
 
   useEffect(() => {
     if (sessionCatalogReady) {
@@ -721,12 +736,9 @@ export function ConversationsPage({
   ]);
 
   useEffect(() => {
-    if (!selectedSessionId) {
-      clearSessionDetail();
-      return;
-    }
-    void loadSession(selectedSessionId);
-  }, [selectedSessionId]);
+    if (selectedSessionId) return;
+    clearSessionDetail();
+  }, [clearSessionDetail, selectedSessionId]);
 
   useEffect(() => {
     if (!selectedSessionId && sessionView === "detail") {
@@ -884,6 +896,107 @@ export function ConversationsPage({
     t,
   ]);
 
+  const refreshCatalog = useCallback(
+    async (options: { rethrow?: boolean } = {}) => {
+      try {
+        // 目录刷新按作用域整体失效：会话目录、适配器与会话详情一起保鲜。
+        await queryClient.invalidateQueries({
+          queryKey: conversationKeys.root(activeScope),
+        });
+        const [, nextSessions] = await Promise.all([
+          queryClient.fetchQuery(
+            conversationAdaptersQueryOptions(activeScope, currentRecordKind),
+          ),
+          queryClient.fetchQuery(
+            conversationSessionsQueryOptions(
+              activeScope,
+              currentRecordKind,
+              query,
+            ),
+          ),
+        ]);
+        reconcileSessionSelection(nextSessions.map((session) => session.id));
+      } catch (error) {
+        if (options.rethrow) throw error;
+        onNotifyError(errorMessage(error));
+      }
+    },
+    [
+      activeScope,
+      currentRecordKind,
+      onNotifyError,
+      query,
+      queryClient,
+      reconcileSessionSelection,
+    ],
+  );
+
+  const handleCloseImportDialog = useCallback(() => {
+    setImportDialogOpen(false);
+  }, [setImportDialogOpen]);
+
+  const handleScriptInstalled = useCallback(() => {
+    void refreshCatalog();
+  }, [refreshCatalog]);
+
+  const refreshSessions = useCallback(
+    async (options: { rethrow?: boolean } = {}) => {
+      try {
+        // 搜索刷新同样按作用域失效，避免保活中的会话详情停留在旧数据。
+        await queryClient.invalidateQueries({
+          queryKey: conversationKeys.root(activeScope),
+        });
+        const nextSessions = await queryClient.fetchQuery(
+          conversationSessionsQueryOptions(
+            activeScope,
+            currentRecordKind,
+            query,
+          ),
+        );
+        reconcileSessionSelection(nextSessions.map((session) => session.id));
+        return nextSessions;
+      } catch (error) {
+        if (options.rethrow) throw error;
+        onNotifyError(errorMessage(error));
+      }
+    },
+    [
+      activeScope,
+      currentRecordKind,
+      onNotifyError,
+      query,
+      queryClient,
+      reconcileSessionSelection,
+    ],
+  );
+
+  /**
+   * 用户再次选中当前已在详情视图中展示的会话（或详情处于失败态）时显式重取，
+   * 而不是静默无响应。
+   */
+  const refetchOpenSessionDetail = useCallback(
+    (sessionId: string) => {
+      if (sessionId !== selectedSessionId) return;
+      if (sessionView !== "detail" && !sessionDetailQuery.isError) return;
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.detail(
+          activeScope,
+          currentRecordKind,
+          sessionId,
+        ),
+        exact: true,
+      });
+    },
+    [
+      activeScope,
+      currentRecordKind,
+      queryClient,
+      selectedSessionId,
+      sessionDetailQuery.isError,
+      sessionView,
+    ],
+  );
+
   useEffect(() => {
     if (!syncTask) {
       syncedAdapterIdsRef.current.clear();
@@ -950,6 +1063,8 @@ export function ConversationsPage({
   }, [
     currentRecordKind,
     onNotifyError,
+    refreshCatalog,
+    syncTask,
     syncTask?.error?.message,
     syncTask?.id,
     syncTask?.progress?.completed_adapter_ids,
@@ -957,85 +1072,6 @@ export function ConversationsPage({
     syncTask?.status,
     t,
   ]);
-
-  async function refreshCatalog(options: { rethrow?: boolean } = {}) {
-    try {
-      await queryClient.invalidateQueries({
-        queryKey: conversationKeys.root(activeScope),
-      });
-      const [nextAdapters, nextSessions] = await Promise.all([
-        queryClient.fetchQuery(
-          conversationAdaptersQueryOptions(activeScope, currentRecordKind),
-        ),
-        queryClient.fetchQuery(
-          conversationSessionsQueryOptions(
-            activeScope,
-            currentRecordKind,
-            query,
-          ),
-        ),
-      ]);
-      reconcileSessionSelection(nextSessions.map((session) => session.id));
-    } catch (error) {
-      if (options.rethrow) throw error;
-      onNotifyError(errorMessage(error));
-    }
-  }
-
-  const handleCloseImportDialog = useCallback(() => {
-    setImportDialogOpen(false);
-  }, [setImportDialogOpen]);
-
-  const handleScriptInstalled = useCallback(() => {
-    void refreshCatalog();
-  }, [
-    activeScope,
-    currentRecordKind,
-    onNotifyError,
-    query,
-    queryClient,
-    reconcileSessionSelection,
-  ]);
-
-  async function refreshSessions(options: { rethrow?: boolean } = {}) {
-    try {
-      await queryClient.invalidateQueries({
-        queryKey: conversationKeys.sessions(
-          activeScope,
-          currentRecordKind,
-          query,
-        ),
-      });
-      const nextSessions = await queryClient.fetchQuery(
-        conversationSessionsQueryOptions(activeScope, currentRecordKind, query),
-      );
-      reconcileSessionSelection(nextSessions.map((session) => session.id));
-      return nextSessions;
-    } catch (error) {
-      if (options.rethrow) throw error;
-      onNotifyError(errorMessage(error));
-    }
-  }
-
-  async function loadSession(sessionId: string) {
-    const requestId = sessionDetailRequestIdRef.current + 1;
-    sessionDetailRequestIdRef.current = requestId;
-    setSessionDetail(null);
-    clearConversationSelection();
-
-    try {
-      const getSession = webRecordMode
-        ? getWebRecordSession
-        : getConversationSession;
-      const detail = await getSession(sessionId);
-      if (sessionDetailRequestIdRef.current !== requestId) return;
-      setSessionDetail(detail);
-    } catch (error) {
-      if (sessionDetailRequestIdRef.current === requestId) {
-        onNotifyError(errorMessage(error));
-      }
-    }
-  }
 
   async function handleSync() {
     handledSyncTaskIdRef.current = null;
@@ -1102,11 +1138,9 @@ export function ConversationsPage({
     (sessionId: string) => {
       setSubagentNavigation(null);
       openSession(sessionId);
-      if (sessionId === selectedSessionId) {
-        void loadSession(sessionId);
-      }
+      refetchOpenSessionDetail(sessionId);
     },
-    [openSession, selectedSessionId],
+    [openSession, refetchOpenSessionDetail],
   );
 
   /**
@@ -1117,11 +1151,9 @@ export function ConversationsPage({
       setSubagentNavigation(target);
       setPendingParentFocus(null);
       openDetachedSession(target.childSessionId);
-      if (target.childSessionId === selectedSessionId) {
-        void loadSession(target.childSessionId);
-      }
+      refetchOpenSessionDetail(target.childSessionId);
     },
-    [openDetachedSession, selectedSessionId],
+    [openDetachedSession, refetchOpenSessionDetail],
   );
 
   /**
@@ -1153,15 +1185,13 @@ export function ConversationsPage({
         sessionId: breadcrumb.parentSessionId,
         turnIndex: breadcrumb.parentTurnIndex ?? null,
       });
-      if (breadcrumb.parentSessionId === selectedSessionId) {
-        void loadSession(breadcrumb.parentSessionId);
-      }
+      refetchOpenSessionDetail(breadcrumb.parentSessionId);
     },
     [
       currentRecordKind,
       openConversationTarget,
       openSession,
-      selectedSessionId,
+      refetchOpenSessionDetail,
       sessions,
     ],
   );
@@ -1218,15 +1248,13 @@ export function ConversationsPage({
       if (hit.card_type !== "question") {
         updateContentVisibility(hit.card_type, true);
       }
-      if (hit.session.id === selectedSessionId) {
-        void loadSession(hit.session.id);
-      }
+      refetchOpenSessionDetail(hit.session.id);
     },
     [
       currentRecordKind,
       openConversationTarget,
       openDetachedSession,
-      selectedSessionId,
+      refetchOpenSessionDetail,
       updateContentVisibility,
     ],
   );
@@ -1499,7 +1527,9 @@ export function ConversationsPage({
         onAdapterChange={setContentSearchAdapterId}
         onApplyFilters={handleApplyContentSearchFilters}
         onCancelActiveTask={
-          globalSearch ? () => void globalSearch.cancelActiveSearch() : undefined
+          globalSearch
+            ? () => void globalSearch.cancelActiveSearch()
+            : undefined
         }
         onCardKindToggle={toggleContentSearchCardKind}
         onClose={() => setEffectiveContentSearchDialogOpen(false)}
@@ -1508,9 +1538,7 @@ export function ConversationsPage({
             ? () => void globalSearch.confirmConflictReplace()
             : undefined
         }
-        onDismissConflictKeepWaiting={
-          globalSearch?.dismissConflictKeepWaiting
-        }
+        onDismissConflictKeepWaiting={globalSearch?.dismissConflictKeepWaiting}
         onLoadMore={
           globalSearch
             ? () => void globalSearch.loadMore()

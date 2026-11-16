@@ -1,5 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import {
+  getConversationSession,
+  getWebRecordSession,
   listConversationAdapters,
   listConversationSessions,
   listWebRecordSessions,
@@ -8,6 +10,7 @@ import {
 import type {
   ConversationAdapter,
   ConversationRecordKind,
+  ConversationSessionDetail,
   ConversationSessionListItem,
 } from "../../types";
 import type { QueryScope } from "./catalogQueries";
@@ -32,6 +35,12 @@ export const conversationKeys = {
       page,
       pageSize,
     ] as const,
+  detail: (
+    scope: QueryScope,
+    recordKind: ConversationRecordKind,
+    sessionId: string,
+  ) =>
+    [...conversationKeys.root(scope), "detail", recordKind, sessionId] as const,
 };
 
 const DEFAULT_CONVERSATION_STALE_TIME = 1000 * 60;
@@ -97,6 +106,24 @@ export function conversationSessionsQueryOptions(
         listSessions,
         search.trim() || null,
       );
+    },
+    networkMode: "always",
+    retry: false,
+    staleTime: DEFAULT_CONVERSATION_STALE_TIME,
+  });
+}
+
+export function conversationSessionDetailQueryOptions(
+  scope: QueryScope,
+  recordKind: ConversationRecordKind,
+  sessionId: string,
+) {
+  return queryOptions({
+    queryKey: conversationKeys.detail(scope, recordKind, sessionId),
+    queryFn: async (): Promise<ConversationSessionDetail> => {
+      const getSession =
+        recordKind === "web" ? getWebRecordSession : getConversationSession;
+      return getSession(sessionId);
     },
     networkMode: "always",
     retry: false,
