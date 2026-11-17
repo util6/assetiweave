@@ -33,6 +33,7 @@ export type {
 } from "./VirtualizedCollection";
 export { renderingFlags } from "./renderingFeatureFlags";
 export type { RenderingFeatureFlags } from "./renderingFeatureFlags";
+export { VIRTUALIZATION_MIN_ITEMS } from "./renderingConstants";
 export {
   SKELETON_BLOCK_SIZE_PX,
   type DeferredRenderState,

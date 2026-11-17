@@ -38,6 +38,7 @@ import {
   RenderActivityProvider,
   RenderSafeScrollSurface,
   VirtualizedCollection,
+  VIRTUALIZATION_MIN_ITEMS,
   renderingFlags,
   type VirtualizedCollectionHandle,
 } from "../../components/common/rendering";
@@ -2284,7 +2285,7 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
     : t("conversation.session.emptyForApp");
   const sessionListVirtualized =
     renderingFlags.conversationListVirtualization &&
-    (selectedProjectGroup?.sessions.length ?? 0) >= 12;
+    (selectedProjectGroup?.sessions.length ?? 0) >= VIRTUALIZATION_MIN_ITEMS;
 
   return (
     <ResizableColumns
@@ -2408,7 +2409,7 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
                   getItemKey={(session) => session.id}
                   gap={12}
                   items={selectedProjectGroup.sessions}
-                  minItems={12}
+                  minItems={VIRTUALIZATION_MIN_ITEMS}
                   renderItem={(session) => (
                     <SessionCard
                       onOpen={() => onSessionOpen(session.id)}
@@ -2999,7 +3000,7 @@ export function SessionQuestionWorkspace({
               getItemKey={(item, index) => `${item.question.id}:${index}`}
               gap={0}
               items={questions}
-              minItems={12}
+              minItems={VIRTUALIZATION_MIN_ITEMS}
               pinnedKeys={
                 selectedQuestionListKey
                   ? new Set([selectedQuestionListKey])
@@ -3536,7 +3537,7 @@ export function QuestionPreview({
               getItemKey={(model) => model.turn.id}
               gap={0}
               items={turnModels}
-              minItems={12}
+              minItems={VIRTUALIZATION_MIN_ITEMS}
               onItemReady={handleTurnReady}
               pinnedKeys={pinnedKeys}
               ref={virtualizedCollectionRef}
