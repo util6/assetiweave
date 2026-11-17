@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import type { TaskView } from "../types/taskCenter";
 import type {
   ModelPriceEntry,
@@ -737,6 +736,14 @@ function buildMockPricingStatus(): ModelPricingStatus {
   };
 }
 
+/** 查询最近一次模型价格同步任务（任务中心不可用时的兜底）。 */
+export async function getModelPricingSyncTask(): Promise<TaskView | null> {
+  if (!isTauriRuntime()) {
+    return null;
+  }
+  return invoke<TaskView | null>("get_model_pricing_sync_task");
+}
+
 export interface PricingSyncTaskHandle {
   id: string;
   state: string;
@@ -776,18 +783,6 @@ export async function getModelPricingCatalog(): Promise<ModelPricingCatalog> {
   return invoke<ModelPricingCatalog>("get_model_pricing_catalog");
 }
 
-export function subscribePricingSyncTask(
-  listener: (task: TaskView) => void,
-): Promise<() => void> {
-  if (!isTauriRuntime()) {
-    return Promise.resolve(() => undefined);
-  }
-  return listen<TaskView>("task-updated", (event) => {
-    if (event.payload.kind === "modelpricingsync") {
-      listener(event.payload);
-    }
-  });
-}
 
 export async function setModelPricingExchangeRate(
   rate: number,

@@ -11,10 +11,60 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationPricingSettingsPanel } from "./ConversationPricingSettingsPanel";
 import * as usageService from "@/services/usage";
 
+const taskCenterMock = vi.hoisted(() => ({
+  current: null as null | { tasks: unknown[] },
+}));
+
+vi.mock("@/app/backgroundTasks/TaskCenterProvider", () => ({
+  useOptionalTaskCenter: () => taskCenterMock.current,
+}));
+
+const registerSpy = vi.hoisted(() => vi.fn(() => () => {}));
+vi.mock("@/app/backgroundTasks/taskInvalidationRegistry", () => ({
+  taskInvalidationRegistry: { register: registerSpy },
+}));
+
+function stage(id: string, name: string, status: string) {
+  return {
+    id,
+    name,
+    status,
+    metrics: [],
+    failures: [],
+  };
+}
+
+function pricingSyncTask(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "task-pricing-1",
+    kind: "modelpricingsync",
+    category: "conversation/pricing_sync",
+    title: "模型价格同步与重算",
+    state: "running",
+    outcome: null,
+    stages: [
+      stage("fetch_pricing", "获取最新价格与外汇汇率", "succeeded"),
+      stage("persist_catalog", "写入本地价格库持久化缓存", "running"),
+      stage("recalculate_history", "全量重新核算历史会话用量费用", "pending"),
+    ],
+    metrics: [],
+    failures: [],
+    capabilities: {
+      cancellable: true,
+      retryable: false,
+      clearable: true,
+    },
+    revision: 1,
+    ...overrides,
+  };
+}
+
 describe("ConversationPricingSettingsPanel", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    taskCenterMock.current = null;
+    registerSpy.mockClear();
   });
 
   const mockStatus = {
@@ -457,5 +507,128 @@ describe("ConversationPricingSettingsPanel", () => {
       (await screen.findAllByText("model-15")).length,
     ).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText("unpriced-top")).toBeNull();
+  });
+
+  it("restores a running pricing sync task from the task center without starting a new one", async () => {
+    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(
+      mockStatus,
+    );
+    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(
+      mockCatalog,
+    );
+    const syncSpy = vi.spyOn(usageService, "updateModelPricingCatalog");
+    taskCenterMock.current = { tasks: [pricingSyncTask()] };
+
+    render(<ConversationPricingSettingsPanel />);
+
+    await screen.findByText("参考汇率与在线同步");
+    expect(screen.getByText(/1\/3 阶段/)).toBeDefined();
+    expect(screen.getByText(/写入本地价格库持久化缓存/)).toBeDefined();
+    expect(syncSpy).not.toHaveBeenCalled();
+
+    expect(registerSpy).toHaveBeenCalledWith(
+      "conversation/pricing_sync",
+      expect.any(Function),
+    );
+  });
+
+  it("reloads catalog and status when the pricing sync task succeeds", async () => {
+    const statusSpy = vi
+      .spyOn(usageService, "getModelPricingStatus")
+      .mockResolvedValue(mockStatus);
+    const catalogSpy = vi
+      .spyOn(usageService, "getModelPricingCatalog")
+      .mockResolvedValue(mockCatalog);
+    taskCenterMock.current = { tasks: [pricingSyncTask()] };
+
+    const { rerender } = render(<ConversationPricingSettingsPanel />);
+    await screen.findByText(/1\/3 阶段/);
+    expect(statusSpy).toHaveBeenCalledTimes(1);
+
+    taskCenterMock.current = {
+      tasks: [
+        pricingSyncTask({
+          state: "succeeded",
+          result: {
+            channelUsed: "litellm",
+            modelsCount: 42,
+            exchangeRate: 7.31,
+            recalculatedEventsCount: 15,
+            catalogVersion: "v2",
+            updatedAt: new Date().toISOString(),
+            downgraded: false,
+            warning: null,
+          },
+        }),
+      ],
+    };
+    rerender(<ConversationPricingSettingsPanel />);
+
+    await waitFor(() => {
+      expect(statusSpy).toHaveBeenCalledTimes(2);
+      expect(catalogSpy).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.getByText(/渠道 litellm/)).toBeDefined();
+    expect(screen.getByText(/更新 42 款模型/)).toBeDefined();
+  });
+
+  it("shows a degraded banner when the sync falls back to cached pricing", async () => {
+    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(
+      mockStatus,
+    );
+    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(
+      mockCatalog,
+    );
+    taskCenterMock.current = { tasks: [pricingSyncTask()] };
+
+    const { rerender } = render(<ConversationPricingSettingsPanel />);
+    await screen.findByText(/1\/3 阶段/);
+
+    taskCenterMock.current = {
+      tasks: [
+        pricingSyncTask({
+          state: "succeeded",
+          result: {
+            channelUsed: "cache",
+            modelsCount: 7,
+            exchangeRate: 7.25,
+            recalculatedEventsCount: 0,
+            catalogVersion: "v1",
+            updatedAt: new Date().toISOString(),
+            downgraded: true,
+            warning: "远端价格渠道均不可达，已回落到本地缓存",
+          },
+        }),
+      ],
+    };
+    rerender(<ConversationPricingSettingsPanel />);
+
+    await screen.findByText(/远端价格渠道均不可达/);
+    expect(screen.getByText(/渠道 cache/)).toBeDefined();
+  });
+
+  it("shows the task error summary when the pricing sync fails", async () => {
+    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(
+      mockStatus,
+    );
+    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(
+      mockCatalog,
+    );
+    taskCenterMock.current = { tasks: [pricingSyncTask()] };
+
+    const { rerender } = render(<ConversationPricingSettingsPanel />);
+    await screen.findByText(/1\/3 阶段/);
+
+    taskCenterMock.current = {
+      tasks: [
+        pricingSyncTask({
+          state: "failed",
+          errorSummary: "网络同步模型价格失败：连接超时",
+        }),
+      ],
+    };
+    rerender(<ConversationPricingSettingsPanel />);
+
+    await screen.findByText("网络同步模型价格失败：连接超时");
   });
 });
