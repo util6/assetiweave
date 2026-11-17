@@ -5,15 +5,26 @@ import {
   useRef,
   useState,
   type ReactNode,
-  type UIEvent,
 } from "react";
 import { cn } from "../../lib/utils";
+
+/**
+ * 折叠头只关心“滚动主体当前的偏移”。上层容器在 capture 阶段可能还没有更新
+ * `currentTarget`，因此这里只依赖结构而非完整的 SyntheticEvent。
+ */
+export interface ScrollTopSource {
+  currentTarget: { scrollTop: number };
+}
 
 export interface CollapsibleHeaderContextValue {
   visible: boolean;
   setVisible: (visible: boolean) => void;
-  onScroll: (event: UIEvent<HTMLElement>) => void;
-  reset: () => void;
+  onScroll: (event: ScrollTopSource) => void;
+  /**
+   * 展开头部并把滚动基线设回指定位置。视图切换后重新可见时必须传入
+   * 当前滚动容器的 `scrollTop`，否则下一次小幅向上滚动会被误判为向下折叠。
+   */
+  reset: (baselineScrollTop?: number) => void;
 }
 
 const CollapsibleHeaderContext =
@@ -40,13 +51,13 @@ export function useCollapsibleHeaderState({
   const [visible, setVisible] = useState(initialVisible);
   const lastScrollTopRef = useRef(0);
 
-  const reset = useCallback(() => {
+  const reset = useCallback((baselineScrollTop = 0) => {
     setVisible(true);
-    lastScrollTopRef.current = 0;
+    lastScrollTopRef.current = baselineScrollTop;
   }, []);
 
   const onScroll = useCallback(
-    (e: UIEvent<HTMLElement>) => {
+    (e: ScrollTopSource) => {
       // 规避 Mac 触控板顶部弹性负值
       const currentTop = Math.max(0, e.currentTarget.scrollTop);
       const diff = currentTop - lastScrollTopRef.current;
