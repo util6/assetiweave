@@ -940,37 +940,6 @@ export function ConversationsPage({
     void refreshCatalog();
   }, [refreshCatalog]);
 
-  const refreshSessions = useCallback(
-    async (options: { rethrow?: boolean } = {}) => {
-      try {
-        // 搜索刷新同样按作用域失效，避免保活中的会话详情停留在旧数据。
-        await queryClient.invalidateQueries({
-          queryKey: conversationKeys.root(activeScope),
-        });
-        const nextSessions = await queryClient.fetchQuery(
-          conversationSessionsQueryOptions(
-            activeScope,
-            currentRecordKind,
-            query,
-          ),
-        );
-        reconcileSessionSelection(nextSessions.map((session) => session.id));
-        return nextSessions;
-      } catch (error) {
-        if (options.rethrow) throw error;
-        onNotifyError(errorMessage(error));
-      }
-    },
-    [
-      activeScope,
-      currentRecordKind,
-      onNotifyError,
-      query,
-      queryClient,
-      reconcileSessionSelection,
-    ],
-  );
-
   /**
    * 用户再次选中当前已在详情视图中展示的会话（或详情处于失败态）时显式重取，
    * 而不是静默无响应。
