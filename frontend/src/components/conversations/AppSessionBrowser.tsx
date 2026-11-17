@@ -295,6 +295,7 @@ function SessionCardSkeleton() {
     </div>
   );
 }
+
 function ProjectListItem({
   group,
   onSelect,
@@ -337,6 +338,7 @@ function ProjectListItem({
     </button>
   );
 }
+
 function projectGroupLabel(
   group: ConversationProjectSessionGroup,
   t: Translator,
@@ -345,6 +347,7 @@ function projectGroupLabel(
     ? abbreviateHomePath(group.projectPath)
     : t("conversation.session.noProject");
 }
+
 function AppListItem({
   completed,
   group,
@@ -405,6 +408,7 @@ function AppListItem({
     </button>
   );
 }
+
 function ConversationAppIcon({
   appName,
   shortcut,
@@ -437,6 +441,7 @@ function ConversationAppIcon({
     </span>
   );
 }
+
 export function findConversationAppShortcut(
   shortcuts: AppShortcut[],
   app: ConversationAppSummary,
@@ -450,6 +455,7 @@ export function findConversationAppShortcut(
     null
   );
 }
+
 function SessionCard({
   onOpen,
   session,
@@ -500,6 +506,7 @@ function SessionCard({
     </article>
   );
 }
+
 function SessionMetaChips({
   executionOrigin,
   executionPurpose,
@@ -566,6 +573,7 @@ function SessionMetaChips({
     </span>
   );
 }
+
 function SessionMetaChip({
   className = "",
   label,
