@@ -235,7 +235,12 @@ function rect(top: number, height: number): DOMRect {
 function stubLayout() {
   Object.defineProperty(HTMLElement.prototype, "clientHeight", {
     configurable: true,
-    get: () => VIEWPORT_HEIGHT,
+    // 只有滚动面拥有有界视口；其它元素为 0，让 viewportValid 证明的是布局而不是桩。
+    get(this: HTMLElement) {
+      return this.hasAttribute("data-render-safe-scroll-surface")
+        ? VIEWPORT_HEIGHT
+        : 0;
+    },
   });
   Object.defineProperty(HTMLElement.prototype, "clientWidth", {
     configurable: true,

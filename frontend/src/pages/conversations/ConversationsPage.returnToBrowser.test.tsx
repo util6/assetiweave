@@ -23,8 +23,10 @@ import type {
 import { ConversationsPage } from "./ConversationsPage";
 
 const getConversationSessionMock = vi.hoisted(() => vi.fn());
+const getWebRecordSessionMock = vi.hoisted(() => vi.fn());
 const listConversationAdaptersMock = vi.hoisted(() => vi.fn());
 const listConversationSessionsMock = vi.hoisted(() => vi.fn());
+const listWebRecordSessionsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../app/backgroundTasks/ConversationSyncProvider", () => ({
   useConversationSync: () => ({ startSync: vi.fn(), taskFor: () => null }),
@@ -66,8 +68,10 @@ vi.mock("../../services/conversations", async () => {
   return {
     ...actual,
     getConversationSession: getConversationSessionMock,
+    getWebRecordSession: getWebRecordSessionMock,
     listConversationAdapters: listConversationAdaptersMock,
     listConversationSessions: listConversationSessionsMock,
+    listWebRecordSessions: listWebRecordSessionsMock,
   };
 });
 
@@ -95,10 +99,16 @@ describe("ConversationsPage returning to the browse view", () => {
     listConversationSessionsMock
       .mockReset()
       .mockResolvedValue(sessionListItems());
+    listWebRecordSessionsMock.mockReset().mockResolvedValue([]);
     getConversationSessionMock
       .mockReset()
       .mockImplementation(async (sessionId: string) =>
         sessionDetail(sessionId),
+      );
+    getWebRecordSessionMock
+      .mockReset()
+      .mockImplementation(async (sessionId: string) =>
+        webSessionDetail(sessionId),
       );
   });
 
@@ -147,22 +157,73 @@ describe("ConversationsPage returning to the browse view", () => {
     expect(returnedSurface.scrollTop).toBe(400);
   });
 
+  it("keeps the web record cards queryable and the scroll offset on return", async () => {
+    listConversationAdaptersMock.mockResolvedValue([webAdapter]);
+    listWebRecordSessionsMock.mockResolvedValue(webSessionListItems());
+
+    renderPage("web");
+
+    const firstCard = await screen.findByRole("button", {
+      name: "Open session Web 01",
+    });
+    const listSurface = firstCard.closest(
+      "[data-render-safe-scroll-surface]",
+    ) as HTMLElement;
+    expect(listSurface).toBeTruthy();
+    // web 记录浏览只有应用与会话两列，不出现项目列。
+    expect(
+      screen.queryByRole("button", { name: /^Select project folder / }),
+    ).toBeNull();
+
+    listSurface.scrollTop = 400;
+    fireEvent.scroll(listSurface, { target: { scrollTop: 400 } });
+    const cardAtOffset = await waitFor(() => {
+      const cards = within(listSurface).getAllByRole("button", {
+        name: /^Open session Web /,
+      });
+      expect(cards.length).toBeGreaterThan(0);
+      return cards[0]!;
+    });
+
+    fireEvent.click(cardAtOffset);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Back to apps / sessions" }),
+    );
+
+    const returnedCard = await screen.findByRole("button", {
+      name: "Open session Web 05",
+    });
+    const returnedSurface = returnedCard.closest(
+      "[data-render-safe-scroll-surface]",
+    ) as HTMLElement;
+    expect(returnedSurface).toBe(listSurface);
+    expect(returnedSurface.scrollTop).toBe(400);
+    expect(
+      within(returnedSurface).getAllByRole("button", {
+        name: /^Open session Web /,
+      }).length,
+    ).toBeGreaterThan(0);
+  }, 30_000);
+
   it("expands the collapsible header on return and keeps it expanded on a small scroll up", async () => {
     renderPage();
 
+    const pageHeading = { name: "Conversation Browser" };
     const firstCard = await screen.findByRole("button", {
       name: "Open session Alpha 01",
     });
     const listSurface = firstCard.closest(
       "[data-render-safe-scroll-surface]",
     ) as HTMLElement;
-    const headerShell = document.querySelector(
-      ".collapsible-header-shell",
-    ) as HTMLElement;
+    expect(screen.getByRole("heading", pageHeading)).toBeTruthy();
 
     listSurface.scrollTop = 400;
     fireEvent.scroll(listSurface, { target: { scrollTop: 400 } });
-    expect(headerShell.getAttribute("data-collapsed")).toBe("true");
+    // 收起后标题必须离开可访问树，但仍留在 DOM 里（不是被卸载）。
+    expect(screen.queryByRole("heading", pageHeading)).toBeNull();
+    expect(
+      screen.getByRole("heading", { ...pageHeading, hidden: true }),
+    ).toBeTruthy();
 
     fireEvent.click(firstCard);
     fireEvent.click(
@@ -172,7 +233,7 @@ describe("ConversationsPage returning to the browse view", () => {
     );
 
     await waitFor(() =>
-      expect(headerShell.getAttribute("data-collapsed")).toBe("false"),
+      expect(screen.getByRole("heading", pageHeading)).toBeTruthy(),
     );
 
     // 基准必须是列表当前的 400：否则 395 - 0 会被当成向下滚动而再次收起。
@@ -180,7 +241,7 @@ describe("ConversationsPage returning to the browse view", () => {
       listSurface.scrollTop = 395;
       fireEvent.scroll(listSurface, { target: { scrollTop: 395 } });
     });
-    expect(headerShell.getAttribute("data-collapsed")).toBe("false");
+    expect(screen.getByRole("heading", pageHeading)).toBeTruthy();
   });
 
   it("keeps the app and project selection and can reopen the same session after returning", async () => {
@@ -228,7 +289,7 @@ describe("ConversationsPage returning to the browse view", () => {
     expect(getConversationSessionMock).toHaveBeenCalledWith("beta-session-1");
   });
 
-  it("returns from a drilled-down subagent session with the list rendered", async () => {
+  it("returns from a drilled-down subagent session without leaving page state behind", async () => {
     renderPage();
 
     const parentCard = await screen.findByRole("button", {
@@ -243,7 +304,7 @@ describe("ConversationsPage returning to the browse view", () => {
         })
       )[0]!,
     );
-    const parentBreadcrumb = await screen.findByRole("button", {
+    await screen.findByRole("button", {
       name: /^Back to parent .+ · #1$/,
     });
 
@@ -260,32 +321,25 @@ describe("ConversationsPage returning to the browse view", () => {
     expect(
       screen.queryByRole("button", { name: /^View subagent session/ }),
     ).toBeNull();
+    // 游离子会话的顶栏面包屑与正文传送门都只属于详情视图，返回浏览态后不得残留。
     expect(
       screen.queryByRole("button", { name: /^Back to parent .+ · #1$/ }),
     ).toBeNull();
-    expect(parentBreadcrumb).toBeTruthy();
-  });
+    expect(document.querySelector("[data-subagent-portal]")).toBeNull();
 
-  it("gives the session list its own scroll-content base without content-visibility skipping", async () => {
-    renderPage();
-
-    const firstCard = await screen.findByRole("button", {
-      name: "Open session Alpha 01",
-    });
-    const listSurface = firstCard.closest(
-      "[data-render-safe-scroll-surface]",
-    ) as HTMLElement;
-
-    expect(
-      listSurface.querySelector(".render-safe-scroll-content"),
-    ).toBeTruthy();
-    expect(listSurface.querySelectorAll(".render-safe-content")).toHaveLength(
-      0,
+    // 重新打开父会话：必须回到父会话自己的视图，不带任何上一次下钻的面包屑。
+    fireEvent.click(returnedCard);
+    await screen.findByRole("button", { name: "Back to apps / sessions" });
+    await waitFor(() =>
+      expect(document.querySelector("[data-subagent-portal]")).not.toBeNull(),
     );
-  });
+    expect(
+      screen.queryByRole("button", { name: /^Back to parent .+ · #1$/ }),
+    ).toBeNull();
+  }, 30_000);
 });
 
-function renderPage() {
+function renderPage(recordKind: "session" | "web" = "session") {
   return render(
     <QueryClientProvider client={testQueryClient}>
       <I18nProvider>
@@ -295,7 +349,7 @@ function renderPage() {
           onNotify={vi.fn()}
           onNotifyError={vi.fn()}
           onOpenSettings={vi.fn()}
-          recordKind="session"
+          recordKind={recordKind}
         />
       </I18nProvider>
     </QueryClientProvider>,
@@ -306,7 +360,10 @@ function renderPage() {
 function stubLayout() {
   Object.defineProperty(HTMLElement.prototype, "clientHeight", {
     configurable: true,
-    get: () => 640,
+    // 只有滚动面才有有界视口；其它元素保持 0，避免“视口有效”变成在验证桩本身。
+    get(this: HTMLElement) {
+      return this.hasAttribute("data-render-safe-scroll-surface") ? 640 : 0;
+    },
   });
   Object.defineProperty(HTMLElement.prototype, "clientWidth", {
     configurable: true,
@@ -396,6 +453,42 @@ function sessionListItems(): ConversationSessionListItem[] {
       updated_at: now,
     })),
   ];
+}
+
+const webAdapter: ConversationAdapter = {
+  ...adapter,
+  capabilities: ["web_records"],
+  content_hash: "web-adapter-hash",
+  executable_path: "/tmp/chatgpt-web-adapter",
+  id: "chatgpt-web",
+  manifest_path: "/tmp/chatgpt-web-adapter.json",
+  name: "ChatGPT Web",
+  trusted_hash: "web-adapter-hash",
+};
+
+function webSessionListItems(): ConversationSessionListItem[] {
+  return Array.from({ length: SESSION_COUNT }, (_, index) => ({
+    adapter_id: "chatgpt-web",
+    created_at: now,
+    external_id: `web-${index + 1}`,
+    id: `web-session-${index + 1}`,
+    imported_at: now,
+    missing: false,
+    project_path: null,
+    question_count: 1,
+    source_id: "chatgpt-web-live",
+    title: `Web ${String(index + 1).padStart(2, "0")}`,
+    turn_count: 1,
+    updated_at: now,
+  }));
+}
+
+function webSessionDetail(sessionId: string): ConversationSessionDetail {
+  const session = webSessionListItems().find((item) => item.id === sessionId);
+  return {
+    questions: [plainQuestion(sessionId)],
+    session: session ?? webSessionListItems()[0]!,
+  };
 }
 
 function sessionDetail(sessionId: string): ConversationSessionDetail {
