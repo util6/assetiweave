@@ -72,7 +72,6 @@ fn test_parse_openrouter_json_success() {
 fn test_fallback_chain_to_cache_and_bundled() {
     let rate = 7.25;
 
-    // When cache is provided, and remote fails or is bypassed
     let fake_cache_entry = ModelPriceEntry {
         provider: "custom".to_string(),
         model_patterns: vec!["cached-model".to_string()],
@@ -88,10 +87,109 @@ fn test_fallback_chain_to_cache_and_bundled() {
         ..Default::default()
     };
 
-    // If cache is empty, fallback returns Bundled
-    let bundled_outcome = fetch_tiered_pricing_catalog(rate, vec![], None);
-    // If running in environment without internet, it will be Bundled (or LiteLLM if internet accessible)
+    // 远端不可达 + 有缓存 → Cache 兜底
+    let cache_outcome =
+        fetch_tiered_pricing_catalog_inner(rate, vec![fake_cache_entry], None, || None);
+    assert_eq!(cache_outcome.channel, PricingSourceChannel::Cache);
+    assert_eq!(cache_outcome.entries.len(), 1);
+
+    // 远端不可达 + 无缓存 → Bundled 兜底
+    let bundled_outcome = fetch_tiered_pricing_catalog_inner(rate, vec![], None, || None);
+    assert_eq!(bundled_outcome.channel, PricingSourceChannel::Bundled);
     assert!(bundled_outcome.entries.len() >= 15);
+}
+
+#[test]
+fn fetch_timeouts_keep_remote_budget_and_rate_budget_independent() {
+    assert!(
+        FETCH_TIMEOUT_SECS >= 15,
+        "远端大体积价格 JSON 拉取超时必须放宽到 15 秒级别"
+    );
+    assert!(
+        RATE_FETCH_TIMEOUT_SECS < FETCH_TIMEOUT_SECS,
+        "汇率取数必须使用独立的短超时，不得与价格拉取复用同一常量"
+    );
+    assert!(
+        RATE_FETCH_TIMEOUT_SECS <= 5,
+        "汇率接口属附属信息，超时必须保持秒级短预算"
+    );
+}
+
+fn cache_entry(model_id: &str, channel: &str) -> ModelPriceEntry {
+    ModelPriceEntry {
+        provider: "custom".to_string(),
+        model_patterns: vec![model_id.to_string()],
+        currency: "CNY".to_string(),
+        input_per_million: 5.0,
+        output_per_million: 10.0,
+        source_channel: channel.to_string(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn offline_cache_fallback_excludes_override_and_ignore_rows() {
+    let mut ignored = cache_entry(&format!("{IGNORE_MODEL_ID_PREFIX}deadbeef"), "bundled");
+    ignored.price_locked = true;
+    ignored.is_ignored = true;
+
+    let cached = vec![
+        cache_entry(&format!("{OVERRIDE_MODEL_ID_PREFIX}gpt-4o"), "bundled"),
+        ignored,
+        cache_entry("gpt-4o", "user_override"),
+        cache_entry("clean-model", "litellm"),
+    ];
+
+    let outcome = fetch_tiered_pricing_catalog_inner(
+        7.25,
+        cached,
+        Some(&["clean-model".to_string()]),
+        || None,
+    );
+
+    assert_eq!(outcome.channel, PricingSourceChannel::Cache);
+    assert!(outcome.downgraded, "远端全不可达时必须标记降级");
+    assert!(
+        outcome
+            .warning
+            .as_deref()
+            .is_some_and(|warning| warning.contains("缓存")),
+        "降级原因必须明确说明落到缓存"
+    );
+    assert_eq!(outcome.entries.len(), 1, "缓存池必须只剩纯净参考行");
+    assert_eq!(
+        outcome.entries[0]
+            .model_patterns
+            .first()
+            .map(String::as_str),
+        Some("clean-model")
+    );
+    assert!(
+        !outcome.entries.iter().any(|entry| {
+            entry.source_channel.eq_ignore_ascii_case("user_override")
+                || entry.model_patterns.iter().any(|pattern| {
+                    pattern.starts_with(OVERRIDE_MODEL_ID_PREFIX)
+                        || pattern.starts_with(IGNORE_MODEL_ID_PREFIX)
+                })
+        }),
+        "兜底条目不得包含 user_override / __override__:: / __ignore__:: 语义行"
+    );
+}
+
+#[test]
+fn offline_falls_back_to_bundled_with_explicit_warning() {
+    let outcome = fetch_tiered_pricing_catalog_inner(7.25, vec![], None, || None);
+
+    assert_eq!(outcome.channel, PricingSourceChannel::Bundled);
+    assert!(outcome.downgraded);
+    assert!(
+        outcome
+            .warning
+            .as_deref()
+            .is_some_and(|warning| warning.contains("内置")),
+        "无缓存时降级原因必须说明落到内置目录"
+    );
+    assert!(outcome.entries.len() >= 15);
 }
 
 #[test]
@@ -130,129 +228,4 @@ fn test_extract_patterns_from_remote_key_cleans_prefixes() {
 
     let p5 = extract_patterns_from_remote_key("anthropic/claude-3.7-sonnet:free");
     assert_eq!(p5.first().map(String::as_str), Some("claude-3.7-sonnet"));
-}
-
-#[test]
-fn test_filter_entries_resolves_promotional_and_vendor_models() {
-    let raw = vec![
-        ModelPriceEntry {
-            provider: "azure_ai".to_string(),
-            model_patterns: extract_patterns_from_remote_key("azure_ai/FW-GLM-5"),
-            currency: "CNY".to_string(),
-            input_per_million: 7.7,
-            cache_read_per_million: 1.0,
-            cache_write_per_million: 7.7,
-            output_per_million: 24.6,
-            reasoning_per_million: 24.6,
-            raw_currency: Some("USD".to_string()),
-            raw_input_per_million: Some(1.1),
-            raw_output_per_million: Some(3.52),
-            ..Default::default()
-        },
-        ModelPriceEntry {
-            provider: "bedrock".to_string(),
-            model_patterns: extract_patterns_from_remote_key(
-                "bedrock/ap-northeast-1/minimax.minimax-m2.5",
-            ),
-            currency: "CNY".to_string(),
-            input_per_million: 2.3,
-            cache_read_per_million: 0.5,
-            cache_write_per_million: 2.3,
-            output_per_million: 9.2,
-            reasoning_per_million: 9.2,
-            raw_currency: Some("USD".to_string()),
-            raw_input_per_million: Some(0.33),
-            raw_output_per_million: Some(1.32),
-            ..Default::default()
-        },
-    ];
-
-    let bundled = PriceCatalog::bundled();
-    let targets = vec!["ZhipuAI/GLM-5".to_string(), "minimax-m2.5-free".to_string()];
-
-    let selected = filter_entries_for_target_models(&raw, &targets, &bundled);
-    assert_eq!(selected.len(), 2);
-
-    let glm = selected
-        .iter()
-        .find(|s| s.model_patterns.first().map(String::as_str) == Some("glm-5"))
-        .expect("must keep canonical native base model_id glm-5");
-    assert!(!glm.model_patterns.iter().any(|p| p == "zhipuai/glm-5"));
-    assert!(!glm.model_patterns.iter().any(|p| p == "ZhipuAI/GLM-5"));
-
-    let minimax = selected
-        .iter()
-        .find(|s| s.model_patterns.first().map(String::as_str) == Some("minimax-m2.5"))
-        .expect("must keep canonical native base model_id minimax-m2.5");
-    assert!(!minimax
-        .model_patterns
-        .iter()
-        .any(|p| p == "minimax-m2.5-free"));
-}
-
-#[test]
-fn test_filter_entries_matches_display_names_without_injecting_duplicates() {
-    let raw = vec![
-        ModelPriceEntry {
-            provider: "anthropic".to_string(),
-            model_patterns: extract_patterns_from_remote_key("anthropic/claude-3.7-sonnet"),
-            currency: "CNY".to_string(),
-            input_per_million: 21.75,
-            output_per_million: 108.75,
-            ..Default::default()
-        },
-        ModelPriceEntry {
-            provider: "google".to_string(),
-            model_patterns: extract_patterns_from_remote_key("google/flash"),
-            currency: "CNY".to_string(),
-            input_per_million: 0.725,
-            output_per_million: 2.9,
-            ..Default::default()
-        },
-    ];
-    let bundled = PriceCatalog::bundled();
-    let targets = vec![
-        "Claude 3.7 Sonnet (Thinking)".to_string(),
-        "anthropic/claude-3.7-sonnet".to_string(),
-        "Flash -N".to_string(),
-        "Gemini 3.8 Flash (High)".to_string(),
-    ];
-
-    let selected = filter_entries_for_target_models(&raw, &targets, &bundled);
-    assert_eq!(
-        selected.len(),
-        3,
-        "Claude variants must deduplicate to 1 entry, plus flash and gemini-3.8-flash"
-    );
-
-    let claude = selected
-        .iter()
-        .find(|s| s.provider == "anthropic")
-        .expect("claude entry");
-    assert_eq!(
-        claude.model_patterns.first().map(String::as_str),
-        Some("claude-3.7-sonnet")
-    );
-    assert!(!claude
-        .model_patterns
-        .iter()
-        .any(|p| p.contains("Thinking") || p.contains("thinking") || p.contains(' ')));
-
-    let flash = selected
-        .iter()
-        .find(|s| s.model_patterns.first().map(String::as_str) == Some("flash"))
-        .expect("flash entry");
-    assert!(!flash
-        .model_patterns
-        .iter()
-        .any(|p| p.eq_ignore_ascii_case("Flash -N") || p.eq_ignore_ascii_case("flash-n")));
-
-    let gemini = selected
-        .iter()
-        .find(|s| s.model_patterns.first().map(String::as_str) == Some("gemini-3.8-flash"))
-        .expect("gemini-3.8-flash entry");
-    assert!(!gemini
-        .model_patterns
-        .iter()
-        .any(|p| p.contains("High") || p.contains(' ')));
 }

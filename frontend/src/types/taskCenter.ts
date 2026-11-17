@@ -82,6 +82,11 @@ export interface TaskSkippedGroupView {
 
 export type TaskSkippedReasonView = TaskSkippedGroupView;
 
+/** 任务是否仍处于活动态（有待完成的工作）。任务中心内多处判定共用。 */
+export function isActiveTaskState(state: TaskState | string): boolean {
+  return state === "pending" || state === "running" || state === "cancelling";
+}
+
 export interface TaskStageView {
   id: string;
   name: string;
@@ -175,6 +180,8 @@ export interface TaskView {
   error_summary?: string | null;
   resultSummary?: string | null;
   result_summary?: string | null;
+  /** 终态结果投影（任务成功结束后由 TaskRuntime 统一回写）。 */
+  result?: unknown;
   capabilities: TaskCapabilitiesView;
   revision: number;
   changeClass?: TaskChangeClass;
@@ -342,6 +349,7 @@ export function normalizeTaskView(raw: unknown): TaskView {
     error_summary: errorSummary,
     resultSummary,
     result_summary: resultSummary,
+    result: data.result ?? null,
     capabilities: (data.capabilities ?? {
       cancellable: false,
       retryable: false,

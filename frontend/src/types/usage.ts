@@ -92,6 +92,10 @@ export interface ModelPricingSyncResult {
   recalculatedEventsCount: number;
   catalogVersion: string;
   updatedAt: string;
+  /** 所有远端价格渠道均不可达、回落到本地缓存或内置目录时为 true。 */
+  downgraded?: boolean;
+  /** 降级原因说明（仅在 downgraded 为 true 时存在）。 */
+  warning?: string | null;
 }
 
 export type ModelMatchSource =
@@ -129,35 +133,6 @@ export interface ModelPricingCatalog {
   activeChannel: string;
   models: ModelPriceEntry[];
   localModels?: ModelPriceEntry[];
-}
-
-export type ModelPricingSyncProgressPhase =
-  | "preparing"
-  | "fetching"
-  | "persisting"
-  | "recalculating"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
-export interface ModelPricingSyncTaskProgress {
-  phase: ModelPricingSyncProgressPhase;
-  message?: string | null;
-  channel?: string | null;
-  modelsCount: number;
-  recalculatedEventsCount: number;
-  exchangeRate: number;
-}
-
-export interface ModelPricingSyncTaskSnapshot {
-  id: string;
-  status: "running" | "completed" | "failed" | "cancelling";
-  force: boolean;
-  progress: ModelPricingSyncTaskProgress;
-  startedAt: string;
-  finishedAt?: string | null;
-  result?: ModelPricingSyncResult | null;
-  error?: { message: string } | null;
 }
 
 export interface ModelPricingStatus {
@@ -202,10 +177,23 @@ export interface UsageDashboardFilter {
   timezoneOffsetMinutes?: number | null;
 }
 
+export type UsageScanMode = "incremental" | "full";
+
 export interface UsageScanOptions {
   mode?: "incremental" | "full" | null;
   sourceId?: string | null;
   adapterId?: string | null;
+}
+
+/** 扫描任务终态结果投影（后端 `TaskView.result`）。 */
+export interface UsageScanResultSummary {
+  mode: UsageScanMode;
+  totalSources: number;
+  completedSources: number;
+  successfulSources: number;
+  failedSources: number;
+  totalEventsIngested: number;
+  recalculatedEventsCount: number;
 }
 
 export function formatChineseTokens(tokens: number, precision = 2): string {

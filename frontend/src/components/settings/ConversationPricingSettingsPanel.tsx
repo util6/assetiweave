@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Coins,
   RefreshCw,
@@ -15,19 +15,85 @@ import type {
   ModelPriceEntry,
   ModelPricingCatalog,
   ModelPricingStatus,
+  ModelPricingSyncResult,
 } from "@/types/usage";
 import {
   getModelPricingCatalog,
   getModelPricingStatus,
+  getModelPricingSyncTask,
   rebindModelPricingAlias,
   saveModelPriceEntry,
   setModelPricingExchangeRate,
   setModelPricingIgnored,
   setModelPricingLock,
-  subscribeModelPricingSyncTask,
   updateModelPricingCatalog,
 } from "@/services/usage";
+import { isActiveTaskState, type TaskView } from "@/types/taskCenter";
+import { useOptionalTaskCenter } from "@/app/backgroundTasks/TaskCenterProvider";
+import { taskInvalidationRegistry } from "@/app/backgroundTasks/taskInvalidationRegistry";
 import { ModelPricingTable } from "./ModelPricingTable";
+
+const PRICING_SYNC_KIND = "modelpricingsync";
+const PRICING_SYNC_CATEGORY = "conversation/pricing_sync";
+const SYNC_POLL_INTERVAL_MS = 2000;
+
+function isPricingSyncTask(task: TaskView): boolean {
+  return (
+    task.kind === PRICING_SYNC_KIND || task.category === PRICING_SYNC_CATEGORY
+  );
+}
+
+/** 用任务中心的阶段视图描述当前进度，避免依赖任何私有进度事件。 */
+function describeSyncProgress(task: TaskView): string {
+  const total = task.stages.length;
+  if (total === 0) return "正在同步模型价格...";
+  const finished = task.stages.filter(
+    (stage) =>
+      stage.status === "succeeded" ||
+      stage.status === "partial_success" ||
+      stage.status === "skipped" ||
+      stage.status === "failed" ||
+      stage.status === "canceled",
+  ).length;
+  const current =
+    task.stages.find((stage) => stage.status === "running") ??
+    task.stages.find((stage) => stage.status === "pending");
+  return `${finished}/${total} 阶段${current ? ` · ${current.name}` : ""}`;
+}
+
+function isDegraded(result: ModelPricingSyncResult | null): boolean {
+  if (!result) return false;
+  return (
+    result.downgraded === true ||
+    Boolean(result.warning) ||
+    result.channelUsed === "cache" ||
+    result.channelUsed === "bundled"
+  );
+}
+
+type PanelNoticeTone = "success" | "error" | "info";
+
+const noticeToneClass: Record<PanelNoticeTone, string> = {
+  success: "border-primary/30 bg-primary/10 text-primary",
+  info: "border-status-update/35 bg-status-update/10 text-status-update",
+  error: "border-destructive/30 bg-destructive/10 text-destructive",
+};
+
+const PanelNotice: React.FC<{ notice: { type: PanelNoticeTone; text: string } }> = ({
+  notice,
+}) => (
+  <div
+    className={`flex items-center gap-2 rounded-xl border p-3 text-caption ${noticeToneClass[notice.type]}`}
+    role="status"
+  >
+    {notice.type === "success" ? (
+      <CheckCircle2 className="h-4 w-4 shrink-0" />
+    ) : (
+      <AlertCircle className="h-4 w-4 shrink-0" />
+    )}
+    <span>{notice.text}</span>
+  </div>
+);
 
 export const ConversationPricingSettingsPanel: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
@@ -45,7 +111,7 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
   // Sync pricing states
   const [syncing, setSyncing] = useState<boolean>(false);
   const [syncNotice, setSyncNotice] = useState<{
-    type: "success" | "error";
+    type: "success" | "error" | "info";
     text: string;
   } | null>(null);
 
@@ -77,46 +143,118 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
     void loadData();
   }, [loadData]);
 
-  // Subscribe to real-time pricing sync task events
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
+  const taskCenter = useOptionalTaskCenter();
+  const [syncProgressText, setSyncProgressText] = useState<string | null>(null);
+  const watchedTaskIdRef = useRef<string | null>(null);
+  const finalizedTaskIdsRef = useRef<Set<string>>(new Set());
 
-    void subscribeModelPricingSyncTask((snapshot) => {
-      if (cancelled) return;
-      const isRunning =
-        snapshot.status === "running" || snapshot.status === "cancelling";
+  const pricingSyncTasks = useMemo(
+    () => (taskCenter?.tasks ?? []).filter(isPricingSyncTask),
+    [taskCenter?.tasks],
+  );
 
-      setSyncing(isRunning);
-      if (!isRunning) {
-        if (snapshot.status === "completed") {
-          const detail = snapshot.result;
-          setSyncNotice({
-            type: "success",
-            text: detail
-              ? `价格同步完成：更新 ${detail.modelsCount} 款模型，重算 ${detail.recalculatedEventsCount} 条会话用量（汇率 1 USD = ¥${detail.exchangeRate.toFixed(2)}）`
-              : "价格同步完成，已重算历史用量",
-          });
-          void loadData();
-        } else if (snapshot.status === "failed") {
-          setSyncNotice({
-            type: "error",
-            text: snapshot.error?.message || "网络同步模型价格失败",
-          });
-        }
+  const applyTerminalTask = useCallback(
+    (task: TaskView) => {
+      if (finalizedTaskIdsRef.current.has(task.id)) return;
+      finalizedTaskIdsRef.current.add(task.id);
+      watchedTaskIdRef.current = null;
+      setSyncing(false);
+      setSyncProgressText(null);
+
+      if (task.state === "succeeded") {
+        const detail = (task.result ?? null) as ModelPricingSyncResult | null;
+        setSyncNotice({
+          type: isDegraded(detail) ? "info" : "success",
+          text: detail
+            ? `价格同步完成：渠道 ${detail.channelUsed}，更新 ${detail.modelsCount} 款模型，重算 ${detail.recalculatedEventsCount} 条会话用量（汇率 1 USD = ¥${detail.exchangeRate.toFixed(2)}）${detail.warning ? ` · ${detail.warning}` : ""}`
+            : "价格同步完成，已重算历史用量",
+        });
+        void loadData();
+        return;
       }
-    })
-      .then((cleanup) => {
-        if (cancelled) cleanup();
-        else unlisten = cleanup;
-      })
-      .catch(() => {});
 
+      setSyncNotice({
+        type: "error",
+        text:
+          task.errorSummary ||
+          (task.state === "canceled"
+            ? "价格同步已取消"
+            : "网络同步模型价格失败"),
+      });
+    },
+    [loadData],
+  );
+
+  // 面板挂载 / 任务快照变化时：恢复运行中的同步任务态（阶段进度来自任务中心）。
+  useEffect(() => {
+    const running = pricingSyncTasks.find((task) =>
+      isActiveTaskState(task.state),
+    );
+    if (running) {
+      watchedTaskIdRef.current = running.id;
+      setSyncing(true);
+      setSyncProgressText(describeSyncProgress(running));
+      return;
+    }
+
+    const watchedId = watchedTaskIdRef.current;
+    if (!watchedId) {
+      setSyncing(false);
+      setSyncProgressText(null);
+      return;
+    }
+    const finished = pricingSyncTasks.find((task) => task.id === watchedId);
+    if (!finished || isActiveTaskState(finished.state)) return;
+    applyTerminalTask(finished);
+  }, [pricingSyncTasks, applyTerminalTask]);
+
+  // 首屏兜底：任务中心尚无快照时，直接查询后台同步任务态。
+  useEffect(() => {
+    if (taskCenter) return;
+    let cancelled = false;
+    void (async () => {
+      const task = await getModelPricingSyncTask();
+      if (cancelled || !task) return;
+      if (isActiveTaskState(task.state)) {
+        watchedTaskIdRef.current = task.id;
+        setSyncing(true);
+        setSyncProgressText(describeSyncProgress(task));
+      } else if (watchedTaskIdRef.current === task.id) {
+        applyTerminalTask(task);
+      }
+    })().catch(() => {});
     return () => {
       cancelled = true;
-      unlisten?.();
     };
-  }, [loadData]);
+  }, [taskCenter, applyTerminalTask]);
+
+  // 事件丢失兜底：运行期轮询任务态，避免界面卡在旧状态。
+  useEffect(() => {
+    if (!syncing) return;
+    const interval = setInterval(async () => {
+      try {
+        const task = await getModelPricingSyncTask();
+        if (!task) return;
+        if (isActiveTaskState(task.state)) {
+          setSyncProgressText(describeSyncProgress(task));
+          return;
+        }
+        applyTerminalTask(task);
+      } catch {
+        // 轮询失败不打扰用户，等待下一次 tick 或事件恢复。
+      }
+    }, SYNC_POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [syncing, applyTerminalTask]);
+
+  // 终态事件联动价格目录缓存失效（ADR-0017）。
+  useEffect(
+    () =>
+      taskInvalidationRegistry.register(PRICING_SYNC_CATEGORY, async () => {
+        await loadData();
+      }),
+    [loadData],
+  );
 
   // Save exchange rate
   const handleSaveRate = async () => {
@@ -151,15 +289,15 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
     setSyncing(true);
     setSyncNotice(null);
     try {
-      const snapshot = await updateModelPricingCatalog(true);
-      if (snapshot.status === "completed") {
-        setSyncNotice({
-          type: "success",
-          text: `同步完成：收录 ${snapshot.result?.modelsCount ?? 0} 款模型单价`,
-        });
-        await loadData();
-        setSyncing(false);
-      }
+      // 同步在任务中心托管执行，完成态由任务事件驱动，此处只接管启动态。
+      const task = await updateModelPricingCatalog(true);
+      watchedTaskIdRef.current = task.id;
+      const running =
+        task.state === "running" ||
+        task.state === "pending" ||
+        task.state === "cancelling";
+      setSyncing(running);
+      if (!running) setSyncProgressText(null);
     } catch (err) {
       setSyncNotice({
         type: "error",
@@ -338,41 +476,22 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
           </Button>
         </div>
 
-        {/* 汇率提示 */}
-        {rateNotice && (
+        {/* 同步进度：阶段态来自任务中心，不依赖私有进度事件 */}
+        {syncing && syncProgressText ? (
           <div
-            className={`flex items-center gap-2 rounded-xl border p-3 text-caption ${
-              rateNotice.type === "success"
-                ? "border-primary/30 bg-primary/10 text-primary"
-                : "border-destructive/30 bg-destructive/10 text-destructive"
-            }`}
+            className="flex items-center gap-2 rounded-xl border border-primary/25 bg-primary/5 px-3 py-2 text-caption text-on-surface-variant"
+            role="status"
           >
-            {rateNotice.type === "success" ? (
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-            ) : (
-              <AlertCircle className="h-4 w-4 shrink-0" />
-            )}
-            <span>{rateNotice.text}</span>
+            <RefreshCw className="h-3.5 w-3.5 animate-spin text-primary" />
+            <span>{syncProgressText}</span>
           </div>
-        )}
+        ) : null}
 
-        {/* 同步提示 */}
-        {syncNotice && (
-          <div
-            className={`flex items-center gap-2 rounded-xl border p-3 text-caption ${
-              syncNotice.type === "success"
-                ? "border-primary/30 bg-primary/10 text-primary"
-                : "border-destructive/30 bg-destructive/10 text-destructive"
-            }`}
-          >
-            {syncNotice.type === "success" ? (
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-            ) : (
-              <AlertCircle className="h-4 w-4 shrink-0" />
-            )}
-            <span>{syncNotice.text}</span>
-          </div>
-        )}
+        {/* 汇率提示 */}
+        {rateNotice ? <PanelNotice notice={rateNotice} /> : null}
+
+        {/* 同步提示：降级/部分可用走 info 态，失败走错误态 */}
+        {syncNotice ? <PanelNotice notice={syncNotice} /> : null}
       </Panel>
 
       {/* 2. 本地已用模型资费管理（默认只展示本地已用模型） */}

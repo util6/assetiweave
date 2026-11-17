@@ -128,6 +128,24 @@ pub(crate) struct BackgroundTaskRegistry {
     lifecycle: LifecycleTaskCoordinator,
 }
 
+/// 把托管任务快照投影成前端可直接消费的 `TaskView`（命令返回值唯一构造点）。
+pub(crate) fn task_view_for_task_id(
+    registry: &BackgroundTaskRegistry,
+    task_id: &str,
+) -> AppResult<crate::backend::application::system::TaskView> {
+    let task_runtime = registry.task_runtime().ok_or_else(|| {
+        crate::backend::application::AppError::Conflict("TaskRuntime 未初始化".to_string())
+    })?;
+    task_runtime
+        .get(task_id)
+        .map(|snapshot| crate::backend::application::system::TaskView::from_snapshot(&snapshot))
+        .ok_or_else(|| {
+            crate::backend::application::AppError::NotFound(format!(
+                "background task not found: {task_id}"
+            ))
+        })
+}
+
 impl Default for BackgroundTaskRegistry {
     fn default() -> Self {
         Self::with_task_runtime(TaskRuntime::new())

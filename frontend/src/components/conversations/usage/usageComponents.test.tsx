@@ -12,6 +12,12 @@ import {
   formatInstanceDisplayName,
   findMatchedAppShortcut,
 } from "./UsageBreakdownTables";
+import {
+  UsageScanResultBanner,
+  buildUsageScanNotice,
+  buildUsageScanNoticeFromTask,
+} from "./UsageScanResultBanner";
+import { UsageSourceDiagnosticsBanner } from "./UsageSourceDiagnosticsBanner";
 import { formatChineseTokens } from "../../../types/usage";
 
 describe("Usage Components", () => {
@@ -95,6 +101,7 @@ describe("Usage Components", () => {
     const onInstanceChange = vi.fn();
     const onRefresh = vi.fn();
     const onScan = vi.fn();
+    const onScanModeChange = vi.fn();
 
     render(
       <UsageToolbar
@@ -120,6 +127,9 @@ describe("Usage Components", () => {
         ]}
         onRefresh={onRefresh}
         onScan={onScan}
+        scanMode="incremental"
+        onScanModeChange={onScanModeChange}
+        scanning={false}
         scanStatus={{
           scannedSourcesCount: 464,
           totalEventsCount: 22938,
@@ -128,6 +138,7 @@ describe("Usage Components", () => {
           sourceDiagnostics: [],
         }}
         totalRequests={22938}
+        totalEventsCount={128}
         refreshing={false}
       />,
     );
@@ -135,11 +146,189 @@ describe("Usage Components", () => {
     expect(screen.getByText("相对范围")).toBeDefined();
     expect(screen.getByText("实例")).toBeDefined();
     expect(screen.getByText(/已扫描 464 个本地来源/)).toBeDefined();
+    // 两个口径必须分别带标签，避免把窗口内请求数误读成全库事件数。
+    expect(screen.getByText(/筛选区间/)).toBeDefined();
+    expect(screen.getByText("22,938")).toBeDefined();
+    expect(screen.getByText(/已入库/)).toBeDefined();
+    expect(screen.getByText("128")).toBeDefined();
     expect(screen.getByText(/本地多源用量统计/)).toBeDefined();
 
-    const scanBtn = screen.getByRole("button", { name: /重新扫描/ });
+    const scanBtn = screen.getByRole("button", { name: "开始扫描" });
     fireEvent.click(scanBtn);
     expect(onScan).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "全量重扫" }));
+    expect(onScanModeChange).toHaveBeenCalledWith("full");
+  });
+
+  it("renders source diagnostics banner with resolved source names and expands", () => {
+    const diagnostics = [
+      {
+        sourceId: "src-a",
+        adapterId: "codex",
+        level: "error",
+        message: "读取会话文件失败：权限不足",
+        timestamp: "2026-11-16T10:00:00Z",
+      },
+      {
+        sourceId: "src-b",
+        adapterId: "claude",
+        level: "error",
+        message: "适配器进程退出码 1",
+        timestamp: "2026-11-16T10:01:00Z",
+      },
+      {
+        sourceId: "src-c",
+        adapterId: "gemini",
+        level: "info",
+        message: "目录为空，跳过",
+        timestamp: "2026-11-16T10:02:00Z",
+      },
+    ];
+
+    render(
+      <UsageSourceDiagnosticsBanner
+        diagnostics={diagnostics}
+        sourceNames={{ "src-a": "默认实例", "src-b": "Claude 实例" }}
+      />,
+    );
+
+    expect(screen.getByText(/2 个来源读取失败/)).toBeDefined();
+    expect(screen.getByText("默认实例")).toBeDefined();
+    expect(screen.getByText(/权限不足/)).toBeDefined();
+    // 默认折叠到 2 条
+    expect(screen.queryByText(/目录为空/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /展开全部 1 条/ }));
+    expect(screen.getByText(/目录为空/)).toBeDefined();
+  });
+
+  it("renders nothing when there are no source diagnostics", () => {
+    const { container } = render(
+      <UsageSourceDiagnosticsBanner diagnostics={[]} />,
+    );
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("disables scan mode switch and action while a scan is running", () => {
+    render(
+      <UsageToolbar
+        timeRange="last_30_days"
+        onTimeRangeChange={vi.fn()}
+        selectedInstance="all"
+        onInstanceChange={vi.fn()}
+        sources={[]}
+        onRefresh={vi.fn()}
+        onScan={vi.fn()}
+        scanMode="full"
+        onScanModeChange={vi.fn()}
+        scanning
+        scanStatus={{
+          scannedSourcesCount: 0,
+          totalEventsCount: 0,
+          lastScannedAt: null,
+          activeScanTaskId: "task-1",
+          sourceDiagnostics: [],
+        }}
+        totalRequests={0}
+        totalEventsCount={128}
+        refreshing={false}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "正在扫描..." })).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: "增量扫描" }).hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "全量重扫" }).hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("renders scan result copy for full rescan / incremental with and without new events", () => {
+    const full = buildUsageScanNotice({
+      mode: "full",
+      totalSources: 3,
+      completedSources: 3,
+      successfulSources: 3,
+      failedSources: 0,
+      totalEventsIngested: 128,
+      recalculatedEventsCount: 128,
+    });
+    expect(full.tone).toBe("success");
+    expect(full.text).toContain("已全量刷新 128 条用量事件");
+
+    const incrementalEmpty = buildUsageScanNotice({
+      mode: "incremental",
+      totalSources: 2,
+      completedSources: 2,
+      successfulSources: 2,
+      failedSources: 0,
+      totalEventsIngested: 0,
+      recalculatedEventsCount: 0,
+    });
+    expect(incrementalEmpty.text).toContain("增量扫描完成：无新增用量事件");
+
+    const incrementalNew = buildUsageScanNotice({
+      mode: "incremental",
+      totalSources: 2,
+      completedSources: 2,
+      successfulSources: 2,
+      failedSources: 0,
+      totalEventsIngested: 7,
+      recalculatedEventsCount: 7,
+    });
+    expect(incrementalNew.text).toContain("增量扫描完成：新增 7 条用量事件");
+
+    const partial = buildUsageScanNotice({
+      mode: "full",
+      totalSources: 3,
+      completedSources: 3,
+      successfulSources: 2,
+      failedSources: 1,
+      totalEventsIngested: 10,
+      recalculatedEventsCount: 10,
+    });
+    expect(partial.tone).toBe("info");
+    expect(partial.text).toContain("1 个来源读取失败");
+
+    const { rerender } = render(
+      <UsageScanResultBanner notice={incrementalNew} />,
+    );
+    expect(screen.getByRole("status").textContent).toContain(
+      "增量扫描完成：新增 7 条用量事件",
+    );
+    rerender(<UsageScanResultBanner notice={null} />);
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("builds failed scan notice from task center error summary", () => {
+    const notice = buildUsageScanNoticeFromTask({
+      id: "task-failed",
+      kind: "conversationusagescan",
+      category: "conversation/usage_scan",
+      title: "用量统计扫描",
+      state: "failed",
+      outcome: "failure",
+      stages: [],
+      metrics: [],
+      failures: [
+        {
+          code: "usage_source_read_failed",
+          message: "数据源【实例 A】读取用量失败",
+          stage: "collect_usage",
+          retryable: true,
+          timestamp: "2026-01-01T00:00:00Z",
+        },
+      ],
+      errorSummary: null,
+      capabilities: { cancellable: false, retryable: false, clearable: true },
+      revision: 1,
+    });
+    expect(notice).toEqual({
+      tone: "error",
+      text: "数据源【实例 A】读取用量失败",
+    });
   });
 
   it("renders UsageBreakdownTables with side-by-side and full-width tables", () => {
@@ -307,6 +496,9 @@ describe("Usage Components", () => {
         sources={[]}
         onRefresh={onRefresh}
         onScan={onScan}
+        scanMode="incremental"
+        onScanModeChange={vi.fn()}
+        scanning={false}
         scanStatus={{
           scannedSourcesCount: 1,
           totalEventsCount: 10,
@@ -315,6 +507,7 @@ describe("Usage Components", () => {
           sourceDiagnostics: [],
         }}
         totalRequests={10}
+        totalEventsCount={128}
         refreshing={false}
       />,
     );
@@ -324,7 +517,7 @@ describe("Usage Components", () => {
     fireEvent.click(refreshBtn);
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
-    const scanBtn = screen.getByRole("button", { name: /重新扫描/ });
+    const scanBtn = screen.getByRole("button", { name: "开始扫描" });
     expect(scanBtn).toBeDefined();
     fireEvent.click(scanBtn);
     expect(onScan).toHaveBeenCalledTimes(1);
@@ -387,6 +580,9 @@ describe("Usage Components", () => {
         sources={[]}
         onRefresh={vi.fn()}
         onScan={vi.fn()}
+        scanMode="incremental"
+        onScanModeChange={vi.fn()}
+        scanning={false}
         scanStatus={{
           scannedSourcesCount: 0,
           totalEventsCount: 0,
@@ -395,6 +591,7 @@ describe("Usage Components", () => {
           sourceDiagnostics: [],
         }}
         totalRequests={0}
+        totalEventsCount={128}
         refreshing={false}
       />,
     );
@@ -507,6 +704,9 @@ describe("Usage Components", () => {
         sources={[]}
         onRefresh={vi.fn()}
         onScan={vi.fn()}
+        scanMode="incremental"
+        onScanModeChange={vi.fn()}
+        scanning={false}
         scanStatus={{
           scannedSourcesCount: 1,
           totalEventsCount: 10,
@@ -515,6 +715,7 @@ describe("Usage Components", () => {
           sourceDiagnostics: [],
         }}
         totalRequests={10}
+        totalEventsCount={128}
         refreshing={false}
       />,
     );

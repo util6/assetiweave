@@ -1,14 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import type { TaskView } from "../types/taskCenter";
 import type {
   ModelPriceEntry,
   ModelPricingCatalog,
   ModelPricingStatus,
   ModelPricingSyncResult,
-  ModelPricingSyncTaskSnapshot,
   UsageDashboardDto,
   UsageDashboardFilter,
+  UsageScanMode,
   UsageScanOptions,
+  UsageScanResultSummary,
   UsageScanStatus,
 } from "../types/usage";
 
@@ -16,32 +17,6 @@ export function isTauriRuntime(): boolean {
   return (
     typeof window !== "undefined" &&
     ("__TAURI_INTERNALS__" in window || "__TAURI__" in window)
-  );
-}
-
-export const USAGE_SCAN_TASK_UPDATED_EVENT =
-  "conversation-usage-scan-task-updated";
-
-export interface UsageScanTaskSnapshot {
-  id: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled" | string;
-  sourceId?: string | null;
-  mode: string;
-  startedAt: string;
-  finishedAt?: string | null;
-}
-
-export function subscribeUsageScanTask(
-  listener: (snapshot: UsageScanTaskSnapshot) => void,
-): Promise<() => void> {
-  if (!isTauriRuntime()) {
-    return Promise.resolve(() => undefined);
-  }
-  return listen<UsageScanTaskSnapshot>(
-    USAGE_SCAN_TASK_UPDATED_EVENT,
-    (event) => {
-      listener(event.payload);
-    },
   );
 }
 
@@ -388,28 +363,54 @@ export async function getConversationUsageScanStatus(): Promise<UsageScanStatus>
   return invoke<UsageScanStatus>("get_conversation_usage_scan_status");
 }
 
+export interface UsageScanTaskHandle {
+  id: string;
+  mode: UsageScanMode;
+}
+
+function normalizeUsageScanMode(value: unknown): UsageScanMode | null {
+  return value === "full" || value === "incremental" ? value : null;
+}
+
+/**
+ * 触发用量扫描任务。
+ *
+ * 任务由任务中心托管（`conversation/usage_scan`），运行/终态统一走
+ * `TaskCenterProvider` 的 `task-updated` 与任务列表，服务层只返回启动态句柄。
+ */
 export async function scanConversationUsage(
   options: UsageScanOptions = {},
-): Promise<UsageScanStatus> {
+): Promise<UsageScanTaskHandle> {
+  const mode = normalizeUsageScanMode(options.mode) ?? "incremental";
   if (!isTauriRuntime()) {
-    return {
-      scannedSourcesCount: 464,
-      totalEventsCount: 22938,
-      lastScannedAt: new Date().toISOString(),
-      activeScanTaskId: "mock-task-usage-scan",
-      sourceDiagnostics: [],
-    };
+    return { id: "mock-task-usage-scan", mode };
   }
-  const snapshot = await invoke<{ id: string; status: string }>(
-    "scan_conversation_usage",
-    {
-      options: options ?? {},
-    },
-  );
-  const status = await getConversationUsageScanStatus();
+  const task = await invoke<{ id: string }>("scan_conversation_usage", {
+    options: { ...options, mode },
+  });
+  return { id: task?.id ?? "", mode };
+}
+
+/** 解析任务终态投影中的扫描统计；无法识别 mode 时返回 null。 */
+export function normalizeUsageScanResult(
+  raw: unknown,
+): UsageScanResultSummary | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as Record<string, unknown>;
+  const mode = normalizeUsageScanMode(data.mode);
+  if (!mode) return null;
+
+  const count = (value: unknown): number =>
+    typeof value === "number" && Number.isFinite(value) ? value : 0;
+
   return {
-    ...status,
-    activeScanTaskId: snapshot?.id || status.activeScanTaskId,
+    mode,
+    totalSources: count(data.total_sources),
+    completedSources: count(data.completed_sources),
+    successfulSources: count(data.successful_sources),
+    failedSources: count(data.failed_sources),
+    totalEventsIngested: count(data.total_events_ingested),
+    recalculatedEventsCount: count(data.recalculated_events_count),
   };
 }
 
@@ -735,36 +736,27 @@ function buildMockPricingStatus(): ModelPricingStatus {
   };
 }
 
+/** 查询最近一次模型价格同步任务（任务中心不可用时的兜底）。 */
+export async function getModelPricingSyncTask(): Promise<TaskView | null> {
+  if (!isTauriRuntime()) {
+    return null;
+  }
+  return invoke<TaskView | null>("get_model_pricing_sync_task");
+}
+
+export interface PricingSyncTaskHandle {
+  id: string;
+  state: string;
+}
+
 export async function updateModelPricingCatalog(
   force = false,
   models?: string[],
-): Promise<ModelPricingSyncTaskSnapshot> {
+): Promise<PricingSyncTaskHandle> {
   if (!isTauriRuntime()) {
-    return {
-      id: "mock-task-pricing-sync",
-      status: "completed",
-      force,
-      progress: {
-        phase: "completed",
-        message: "价格同步完成",
-        channel: "litellm",
-        modelsCount: models ? models.length : MOCK_REFERENCE_MODELS.length,
-        recalculatedEventsCount: 22938,
-        exchangeRate: mockPricingState.exchangeRate,
-      },
-      startedAt: new Date().toISOString(),
-      finishedAt: new Date().toISOString(),
-      result: {
-        channelUsed: "litellm",
-        modelsCount: models ? models.length : MOCK_REFERENCE_MODELS.length,
-        exchangeRate: mockPricingState.exchangeRate,
-        recalculatedEventsCount: 22938,
-        catalogVersion: mockPricingState.catalogVersion,
-        updatedAt: new Date().toISOString(),
-      },
-    };
+    return { id: "mock-task-pricing-sync", state: "succeeded" };
   }
-  return invoke<ModelPricingSyncTaskSnapshot>("update_model_pricing_catalog", {
+  return invoke<PricingSyncTaskHandle>("update_model_pricing_catalog", {
     force,
     models,
   });
@@ -791,19 +783,6 @@ export async function getModelPricingCatalog(): Promise<ModelPricingCatalog> {
   return invoke<ModelPricingCatalog>("get_model_pricing_catalog");
 }
 
-export function subscribeModelPricingSyncTask(
-  listener: (snapshot: ModelPricingSyncTaskSnapshot) => void,
-): Promise<() => void> {
-  if (!isTauriRuntime()) {
-    return Promise.resolve(() => undefined);
-  }
-  return listen<ModelPricingSyncTaskSnapshot>(
-    "model-pricing-sync-task-updated",
-    (event) => {
-      listener(event.payload);
-    },
-  );
-}
 
 export async function setModelPricingExchangeRate(
   rate: number,

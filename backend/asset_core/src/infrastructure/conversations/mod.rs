@@ -26,6 +26,7 @@ pub mod package;
 mod path_normalization_tests;
 pub mod prelude;
 pub mod pricing_fetcher;
+mod pricing_target_filter;
 pub mod readers;
 pub mod runtime_probe;
 pub mod runtime_requirements;

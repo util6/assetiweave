@@ -13,6 +13,9 @@ pub struct TaskView {
     #[serde(default = "default_unbounded_pool_str")]
     pub resource_pool: String,
     pub title: String,
+    /// 任务分类命名空间（如 `conversation/usage_scan`）。
+    #[serde(default)]
+    pub category: String,
     pub tenant_id: Option<String>,
     pub state: String,
     pub outcome: Option<String>,
@@ -25,6 +28,9 @@ pub struct TaskView {
     pub failures: Vec<TaskFailureView>,
     pub error_summary: Option<String>,
     pub result_summary: Option<String>,
+    /// 终态结果投影（任务成功结束后由 `TaskRuntime` 统一回写）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
     pub capabilities: TaskCapabilitiesView,
     pub revision: u64,
     #[serde(default = "default_structural_str")]
@@ -281,6 +287,8 @@ impl TaskView {
                 .clone()
                 .or_else(|| snapshot.error.as_ref().map(|e| e.message.clone())),
             result_summary: snapshot.result_summary.clone(),
+            result: snapshot.result.clone(),
+            category: snapshot.category.clone(),
             capabilities: TaskCapabilitiesView {
                 cancellable: snapshot.capabilities.cancellable && snapshot.state.is_active(),
                 retryable: snapshot.capabilities.retryable && snapshot.state.is_terminal(),
@@ -386,3 +394,7 @@ impl TaskStageView {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "task_view_tests.rs"]
+mod tests;
