@@ -92,6 +92,10 @@ export interface ModelPricingSyncResult {
   recalculatedEventsCount: number;
   catalogVersion: string;
   updatedAt: string;
+  /** 所有远端价格渠道均不可达、回落到本地缓存或内置目录时为 true。 */
+  downgraded?: boolean;
+  /** 降级原因说明（仅在 downgraded 为 true 时存在）。 */
+  warning?: string | null;
 }
 
 export type ModelMatchSource =

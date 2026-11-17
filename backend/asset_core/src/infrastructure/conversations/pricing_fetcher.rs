@@ -1,5 +1,6 @@
 use crate::backend::domain::conversations::pricing::{
-    ModelPriceEntry, PriceCatalog, DEFAULT_USD_TO_CNY_RATE,
+    ModelPriceEntry, PriceCatalog, DEFAULT_USD_TO_CNY_RATE, IGNORE_MODEL_ID_PREFIX,
+    OVERRIDE_MODEL_ID_PREFIX,
 };
 use crate::backend::infrastructure::http_client::{get_with_redirects, shared_http_client};
 use crate::backend::infrastructure::{InfraError, InfraResult};
@@ -8,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
 
+use super::pricing_target_filter::filter_entries_for_target_models;
+
 pub const EXCHANGE_RATE_API_URL: &str = "https://open.er-api.com/v6/latest/USD";
 pub const LITELLM_PRIMARY_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -15,7 +18,13 @@ pub const LITELLM_MIRROR_URL: &str =
     "https://cdn.jsdelivr.net/gh/BerriAI/litellm@main/model_prices_and_context_window.json";
 pub const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
 
-pub const FETCH_TIMEOUT_SECS: u64 = 4;
+/// 远端价格目录（LiteLLM / OpenRouter 全量 JSON）拉取超时。
+///
+/// 该 JSON 体积处于数 MB 到数十 MB 量级，慢速网络下 4 秒级别的短超时会让同步静默
+/// 退回缓存/内置目录，因此放宽到 15 秒级别；与汇率接口的短超时彼此独立，
+/// 严禁复用同一个常量。
+pub const FETCH_TIMEOUT_SECS: u64 = 15;
+/// 汇率接口独立短超时：汇率只是附属信息，不能拖累价格目录拉取。
 pub const RATE_FETCH_TIMEOUT_SECS: u64 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +52,10 @@ pub struct TieredFetchOutcome {
     pub entries: Vec<ModelPriceEntry>,
     pub rate: f64,
     pub catalog_version: String,
+    /// 所有远端渠道均不可达、最终回落到本地缓存或内置目录时为 true。
+    pub downgraded: bool,
+    /// 降级原因说明（仅在 `downgraded` 为 true 时存在）。
+    pub warning: Option<String>,
 }
 
 /// Fetches the latest USD to CNY exchange rate from open API with fallback.
@@ -285,202 +298,124 @@ pub fn parse_openrouter_json(raw_json: &str, rate: f64) -> InfraResult<Vec<Model
     Ok(entries)
 }
 
-/// Filters and maps price entries on-demand for specific target models.
-/// For each target model, it attempts to match against raw_entries first;
-/// if not found, it falls back to bundled_catalog.
-pub fn filter_entries_for_target_models(
-    raw_entries: &[ModelPriceEntry],
-    target_models: &[String],
-    bundled_catalog: &PriceCatalog,
-) -> Vec<ModelPriceEntry> {
-    let raw_catalog = PriceCatalog {
-        catalog_version: "temp".to_string(),
-        updated_at: String::new(),
-        usd_to_cny_rate: 1.0,
-        models: raw_entries.to_vec(),
-    };
-    let mut selected = Vec::new();
-    let mut seen_keys = std::collections::HashSet::new();
+/// 远端目录是否可用：LiteLLM 主站/镜像优先，其次 OpenRouter；均需解析出足够条目。
+fn fetch_remote_catalog(rate: f64) -> Option<TieredFetchOutcome> {
+    let now_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let client = shared_http_client().ok()?;
 
-    for target in target_models {
-        let trimmed = target.trim();
-        if trimmed.is_empty() {
+    for url in [LITELLM_PRIMARY_URL, LITELLM_MIRROR_URL] {
+        let Ok(resp) = get_with_redirects(
+            &client,
+            url,
+            HeaderMap::new(),
+            Duration::from_secs(FETCH_TIMEOUT_SECS),
+        ) else {
+            continue;
+        };
+        if !resp.status().is_success() {
             continue;
         }
-
-        let raw_match = raw_catalog
-            .find_model_with_score("", trimmed)
-            .and_then(|(_, score)| raw_catalog.resolve_model("", trimmed).map(|r| (r, score)));
-        let bundled_match =
-            bundled_catalog
-                .find_model_with_score("", trimmed)
-                .and_then(|(_, score)| {
-                    bundled_catalog
-                        .resolve_model("", trimmed)
-                        .map(|r| (r, score))
-                });
-
-        let chosen = match (raw_match, bundled_match) {
-            (Some((raw_res, raw_score)), Some((bundled_res, bundled_score))) => {
-                let raw_has_price =
-                    raw_res.entry.input_per_million > 0.0 || raw_res.entry.output_per_million > 0.0;
-                let bundled_has_price = bundled_res.entry.input_per_million > 0.0
-                    || bundled_res.entry.output_per_million > 0.0;
-
-                if raw_has_price && bundled_has_price {
-                    if bundled_score > raw_score {
-                        bundled_res
-                    } else {
-                        raw_res
-                    }
-                } else if raw_has_price {
-                    raw_res
-                } else if bundled_has_price {
-                    bundled_res
-                } else {
-                    continue;
-                }
-            }
-            (Some((raw_res, _)), None) => {
-                if raw_res.entry.input_per_million > 0.0 || raw_res.entry.output_per_million > 0.0 {
-                    raw_res
-                } else {
-                    continue;
-                }
-            }
-            (None, Some((bundled_res, _))) => {
-                if bundled_res.entry.input_per_million > 0.0
-                    || bundled_res.entry.output_per_million > 0.0
-                {
-                    bundled_res
-                } else {
-                    continue;
-                }
-            }
-            (None, None) => continue,
-        };
-
-        let first_pattern = chosen
-            .entry
-            .model_patterns
-            .first()
-            .map(String::as_str)
-            .unwrap_or("");
-        let primary_is_exact = !first_pattern.is_empty() && !first_pattern.contains('*');
-        let canonical_base_id = if primary_is_exact {
-            first_pattern.to_string()
-        } else if !chosen.matched_model_id.is_empty() && !chosen.matched_model_id.contains('*') {
-            chosen.matched_model_id.clone()
-        } else {
-            first_pattern.trim_matches('*').to_string()
-        };
-
-        if canonical_base_id.is_empty() {
+        let Ok(text) = resp.text() else { continue };
+        let Ok(entries) = parse_litellm_json(&text, rate) else {
             continue;
-        }
-
-        let key = format!(
-            "{}:{}",
-            chosen.entry.provider.to_ascii_lowercase(),
-            canonical_base_id.to_ascii_lowercase()
-        );
-        if seen_keys.insert(key) {
-            let mut customized = chosen.entry.clone();
-            if !primary_is_exact {
-                customized
-                    .model_patterns
-                    .retain(|p| !p.eq_ignore_ascii_case(&canonical_base_id));
-                customized.model_patterns.insert(0, canonical_base_id);
-            }
-            selected.push(customized);
+        };
+        if entries.len() >= 20 {
+            return Some(TieredFetchOutcome {
+                channel: PricingSourceChannel::LiteLlm,
+                entries,
+                rate,
+                catalog_version: format!("litellm-{now_date}"),
+                downgraded: false,
+                warning: None,
+            });
         }
     }
-    selected
+
+    if let Ok(resp) = get_with_redirects(
+        &client,
+        OPENROUTER_MODELS_URL,
+        HeaderMap::new(),
+        Duration::from_secs(FETCH_TIMEOUT_SECS),
+    ) {
+        if resp.status().is_success() {
+            if let Ok(text) = resp.text() {
+                if let Ok(entries) = parse_openrouter_json(&text, rate) {
+                    if entries.len() >= 20 {
+                        return Some(TieredFetchOutcome {
+                            channel: PricingSourceChannel::OpenRouter,
+                            entries,
+                            rate,
+                            catalog_version: format!("openrouter-{now_date}"),
+                            downgraded: false,
+                            warning: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
-/// Executes the four-tier fallback chain:
-/// 1. Primary remote: LiteLLM
-/// 2. Secondary remote: OpenRouter
-/// 3. Local SQLite cache (passed in)
-/// 4. Bundled seed catalog (built-in)
+/// 缓存兜底池只接受纯净参考行。
 ///
-/// If `target_models` is provided and non-empty, only the pricing entries matching
-/// the target models will be extracted and returned, minimizing storage and redundant data.
-pub fn fetch_tiered_pricing_catalog(
+/// `source_channel == 'user_override'`、`__override__::` 与 `__ignore__::` 语义行
+/// 会抢走降级匹配，随后又在入库阶段被过滤，最终表现为「更新数为 0，渠道却写成 cache」。
+fn is_reference_cache_entry(entry: &ModelPriceEntry) -> bool {
+    if entry.is_ignored || entry.source_channel.eq_ignore_ascii_case("user_override") {
+        return false;
+    }
+    !entry.model_patterns.iter().any(|pattern| {
+        let pattern = pattern.trim();
+        pattern.starts_with(OVERRIDE_MODEL_ID_PREFIX) || pattern.starts_with(IGNORE_MODEL_ID_PREFIX)
+    })
+}
+
+/// 分层抓取内核：远端探测由 `remote` 提供（测试可注入离线实现，确定性覆盖兜底链路）。
+fn fetch_tiered_pricing_catalog_inner<Remote>(
     rate: f64,
     cached_entries: Vec<ModelPriceEntry>,
     target_models: Option<&[String]>,
-) -> TieredFetchOutcome {
+    remote: Remote,
+) -> TieredFetchOutcome
+where
+    Remote: FnOnce() -> Option<TieredFetchOutcome>,
+{
     let bundled = PriceCatalog::bundled_with_rate(rate);
-    let now_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
-    let mut outcome = 'fetch: {
-        // 1. Try LiteLLM primary and mirror
-        if let Ok(client) = shared_http_client() {
-            for url in [LITELLM_PRIMARY_URL, LITELLM_MIRROR_URL] {
-                if let Ok(resp) = get_with_redirects(
-                    &client,
-                    url,
-                    HeaderMap::new(),
-                    Duration::from_secs(FETCH_TIMEOUT_SECS),
-                ) {
-                    if resp.status().is_success() {
-                        if let Ok(text) = resp.text() {
-                            if let Ok(entries) = parse_litellm_json(&text, rate) {
-                                if entries.len() >= 20 {
-                                    break 'fetch TieredFetchOutcome {
-                                        channel: PricingSourceChannel::LiteLlm,
-                                        entries,
-                                        rate,
-                                        catalog_version: format!("litellm-{now_date}"),
-                                    };
-                                }
-                            }
-                        }
-                    }
+    let mut outcome = match remote() {
+        Some(outcome) => outcome,
+        None => {
+            let reference_cache: Vec<ModelPriceEntry> = cached_entries
+                .into_iter()
+                .filter(is_reference_cache_entry)
+                .collect();
+            if reference_cache.is_empty() {
+                TieredFetchOutcome {
+                    channel: PricingSourceChannel::Bundled,
+                    entries: bundled.models.clone(),
+                    rate,
+                    catalog_version: bundled.catalog_version.clone(),
+                    downgraded: true,
+                    warning: Some(
+                        "远端价格渠道均不可达，且本地无可用缓存，已降级使用内置价格目录"
+                            .to_string(),
+                    ),
+                }
+            } else {
+                let cache_count = reference_cache.len();
+                TieredFetchOutcome {
+                    channel: PricingSourceChannel::Cache,
+                    entries: reference_cache,
+                    rate,
+                    catalog_version: format!("cache-{}", chrono::Utc::now().format("%Y-%m-%d")),
+                    downgraded: true,
+                    warning: Some(format!(
+                        "远端价格渠道均不可达，已降级使用本地缓存的 {cache_count} 条参考价格"
+                    )),
                 }
             }
-
-            // 2. Try OpenRouter Models API
-            if let Ok(resp) = get_with_redirects(
-                &client,
-                OPENROUTER_MODELS_URL,
-                HeaderMap::new(),
-                Duration::from_secs(FETCH_TIMEOUT_SECS),
-            ) {
-                if resp.status().is_success() {
-                    if let Ok(text) = resp.text() {
-                        if let Ok(entries) = parse_openrouter_json(&text, rate) {
-                            if entries.len() >= 20 {
-                                break 'fetch TieredFetchOutcome {
-                                    channel: PricingSourceChannel::OpenRouter,
-                                    entries,
-                                    rate,
-                                    catalog_version: format!("openrouter-{now_date}"),
-                                };
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Try Local Cache
-        if !cached_entries.is_empty() {
-            break 'fetch TieredFetchOutcome {
-                channel: PricingSourceChannel::Cache,
-                entries: cached_entries,
-                rate,
-                catalog_version: format!("cache-{now_date}"),
-            };
-        }
-
-        // 4. Bundled Fallback
-        TieredFetchOutcome {
-            channel: PricingSourceChannel::Bundled,
-            entries: bundled.models.clone(),
-            rate,
-            catalog_version: bundled.catalog_version.clone(),
         }
     };
 
@@ -492,6 +427,24 @@ pub fn fetch_tiered_pricing_catalog(
     }
 
     outcome
+}
+
+/// Executes the four-tier fallback chain:
+/// 1. Primary remote: LiteLLM
+/// 2. Secondary remote: OpenRouter
+/// 3. Local SQLite cache (passed in, filtered to pure reference rows)
+/// 4. Bundled seed catalog (built-in)
+///
+/// If `target_models` is provided and non-empty, only the pricing entries matching
+/// the target models will be extracted and returned, minimizing storage and redundant data.
+pub fn fetch_tiered_pricing_catalog(
+    rate: f64,
+    cached_entries: Vec<ModelPriceEntry>,
+    target_models: Option<&[String]>,
+) -> TieredFetchOutcome {
+    fetch_tiered_pricing_catalog_inner(rate, cached_entries, target_models, || {
+        fetch_remote_catalog(rate)
+    })
 }
 
 #[cfg(test)]

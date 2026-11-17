@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 
 pub use super::pricing_normalize::{
     base_model_id_from_catalog_key, candidate_model_names, generate_hyphen_variant,
-    is_dirty_model_name, normalize_model_name, IGNORE_MODEL_ID_PREFIX, OVERRIDE_MODEL_ID_PREFIX,
+    is_dirty_model_name, normalize_model_name, strip_date_suffix, IGNORE_MODEL_ID_PREFIX,
+    OVERRIDE_MODEL_ID_PREFIX,
 };
 use super::pricing_normalize::{clean_base_id_from_pattern, matches_pattern, pattern_specificity};
 

@@ -227,7 +227,11 @@ pub fn candidate_model_names(raw: &str) -> Vec<String> {
     candidates
 }
 
-fn strip_date_suffix(name: &str) -> Option<String> {
+/// 剥离模型名尾部的日期/版本戳（`-20250219`、`-2024-08-06`、`-001`、`-0125`）。
+///
+/// 远端目录常用带日期键（`claude-3-5-sonnet-20250219`），本地底座则无日期，
+/// 反查匹配需要靠该函数把远端键还原为底座。
+pub fn strip_date_suffix(name: &str) -> Option<String> {
     // 8-digit date like -20250219 or -20241022
     if name.len() >= 9 {
         let suffix = &name[name.len() - 9..];

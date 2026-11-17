@@ -398,6 +398,8 @@ async fn test_rebind_lock_sync_protection_and_unlock_recalculates_costs() {
                         ],
                         rate: 7.25,
                         catalog_version: "litellm-2026-11-16".to_string(),
+                        downgraded: false,
+                        warning: None,
                     },
                 )
             },
