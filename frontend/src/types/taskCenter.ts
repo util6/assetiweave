@@ -82,6 +82,11 @@ export interface TaskSkippedGroupView {
 
 export type TaskSkippedReasonView = TaskSkippedGroupView;
 
+/** 任务是否仍处于活动态（有待完成的工作）。任务中心内多处判定共用。 */
+export function isActiveTaskState(state: TaskState | string): boolean {
+  return state === "pending" || state === "running" || state === "cancelling";
+}
+
 export interface TaskStageView {
   id: string;
   name: string;

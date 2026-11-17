@@ -289,10 +289,12 @@ async fn prune_superseded_reference_rows(
         let provider = row.get::<String, _>("provider").trim().to_ascii_lowercase();
 
         let superseded_by = written_references.iter().find(|(base_id, base_provider)| {
+            // 只清理同一 provider 下的旧变体行：provider 缺失时保守跳过，
+            // 避免把其它厂商的同名变体误删（不可逆）。
             let base_provider = base_provider.trim().to_ascii_lowercase();
-            let provider_matches =
-                base_provider.is_empty() || provider.is_empty() || base_provider == provider;
-            provider_matches && is_superseded_variant(&model_id, base_id)
+            !provider.is_empty()
+                && base_provider == provider
+                && is_superseded_variant(&model_id, base_id)
         });
         let Some((base_model_id, _)) = superseded_by else {
             continue;

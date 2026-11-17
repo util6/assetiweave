@@ -5,7 +5,7 @@ import type {
   UsageScanMode,
   UsageScanStatus,
 } from "../../types/usage";
-import type { TaskView } from "../../types/taskCenter";
+import { isActiveTaskState, type TaskView } from "../../types/taskCenter";
 import {
   getConversationUsageDashboard,
   getConversationUsageScanStatus,
@@ -40,10 +40,6 @@ const USAGE_SCAN_CATEGORY = "conversation/usage_scan";
 
 function isUsageScanTask(task: TaskView): boolean {
   return task.kind === USAGE_SCAN_KIND || task.category === USAGE_SCAN_CATEGORY;
-}
-
-function isActiveScanState(state: TaskView["state"]): boolean {
-  return state === "pending" || state === "running" || state === "cancelling";
 }
 
 export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
@@ -198,7 +194,7 @@ export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
   useEffect(() => {
     if (!taskCenter) return;
 
-    const running = usageScanTasks.find((task) => isActiveScanState(task.state));
+    const running = usageScanTasks.find((task) => isActiveTaskState(task.state));
     if (running) {
       watchedTaskIdsRef.current.add(running.id);
       if (activeScanTaskId !== running.id) setActiveScanTaskId(running.id);
@@ -208,7 +204,7 @@ export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
     for (const task of usageScanTasks) {
       if (!watchedTaskIdsRef.current.has(task.id)) continue;
       if (finalizedTaskIdsRef.current.has(task.id)) continue;
-      if (isActiveScanState(task.state)) continue;
+      if (isActiveTaskState(task.state)) continue;
       const notice = buildUsageScanNoticeFromTask(task);
       if (notice) finalizeScan(task.id, notice);
     }

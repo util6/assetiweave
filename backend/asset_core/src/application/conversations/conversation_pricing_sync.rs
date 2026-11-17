@@ -128,43 +128,6 @@ impl AppService {
 }
 
 impl AppService {
-    /// `force` 语义由任务准入层落地（`TaskSpec` 冲突策略），此处为无去重的单次执行。
-    pub async fn sync_model_pricing_catalog(
-        &self,
-        _force: bool,
-    ) -> AppResult<ModelPricingSyncResultDto> {
-        let mut noop_progress = |_phase: &str, _msg: &str| {};
-        self.sync_model_pricing_catalog_with_control(false, None, None, None, &mut noop_progress)
-            .await
-    }
-
-    /// `force` 语义由任务准入层落地（`TaskSpec` 冲突策略），此处为无去重的单次执行。
-    pub async fn sync_model_pricing_catalog_with_control<F>(
-        &self,
-        _force: bool,
-        target_models: Option<Vec<String>>,
-        cancellation: Option<&CancellationToken>,
-        task_id: Option<&str>,
-        on_progress: &mut F,
-    ) -> AppResult<ModelPricingSyncResultDto>
-    where
-        F: FnMut(&str, &str) + Send,
-    {
-        self.sync_model_pricing_catalog_inner(
-            target_models,
-            cancellation,
-            task_id,
-            on_progress,
-            |cached_rate, cached_entries, target_slice| {
-                let rate = fetch_usd_to_cny_rate().unwrap_or(cached_rate);
-                let outcome =
-                    fetch_tiered_pricing_catalog(rate, cached_entries, target_slice.as_deref());
-                (rate, outcome)
-            },
-        )
-        .await
-    }
-
     #[cfg(test)]
     pub(crate) async fn sync_model_pricing_catalog_with_fetcher<Fetch>(
         &self,

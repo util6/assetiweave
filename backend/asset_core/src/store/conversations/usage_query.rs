@@ -274,9 +274,6 @@ pub async fn query_usage_dashboard_sqlx(
         source_name_map.insert(sid, sname);
     }
 
-    // Load active exchange rate and price catalog for accurate CNY display and unit prices
-    // (loaded above before SQL: model filtering needs the catalog for base-model expansion).
-
     let registered_roots = crate::backend::store::load_sources_sqlx(pool, tenant_id)
         .await
         .unwrap_or_default()

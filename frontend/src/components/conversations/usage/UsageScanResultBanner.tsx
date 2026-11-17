@@ -38,7 +38,7 @@ export function buildUsageScanNotice(
   if (summary.mode === "full") {
     return {
       tone: summary.failedSources > 0 ? "info" : "success",
-      text: `已全量刷新 ${summary.totalEventsIngested} 条用量事件（重读 ${summary.totalSources} 个来源${failedSuffix}）`,
+      text: `已全量刷新 ${summary.totalEventsIngested} 条用量事件（读取 ${summary.totalSources} 个来源${failedSuffix}）`,
     };
   }
 

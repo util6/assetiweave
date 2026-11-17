@@ -28,7 +28,7 @@ import {
   setModelPricingLock,
   updateModelPricingCatalog,
 } from "@/services/usage";
-import type { TaskView } from "@/types/taskCenter";
+import { isActiveTaskState, type TaskView } from "@/types/taskCenter";
 import { useOptionalTaskCenter } from "@/app/backgroundTasks/TaskCenterProvider";
 import { taskInvalidationRegistry } from "@/app/backgroundTasks/taskInvalidationRegistry";
 import { ModelPricingTable } from "./ModelPricingTable";
@@ -43,10 +43,6 @@ function isPricingSyncTask(task: TaskView): boolean {
   );
 }
 
-function isActiveTaskState(state: TaskView["state"]): boolean {
-  return state === "pending" || state === "running" || state === "cancelling";
-}
-
 /** 用任务中心的阶段视图描述当前进度，避免依赖任何私有进度事件。 */
 function describeSyncProgress(task: TaskView): string {
   const total = task.stages.length;
@@ -54,8 +50,10 @@ function describeSyncProgress(task: TaskView): string {
   const finished = task.stages.filter(
     (stage) =>
       stage.status === "succeeded" ||
+      stage.status === "partial_success" ||
       stage.status === "skipped" ||
-      stage.status === "failed",
+      stage.status === "failed" ||
+      stage.status === "canceled",
   ).length;
   const current =
     task.stages.find((stage) => stage.status === "running") ??
@@ -72,6 +70,30 @@ function isDegraded(result: ModelPricingSyncResult | null): boolean {
     result.channelUsed === "bundled"
   );
 }
+
+type PanelNoticeTone = "success" | "error" | "info";
+
+const noticeToneClass: Record<PanelNoticeTone, string> = {
+  success: "border-primary/30 bg-primary/10 text-primary",
+  info: "border-status-update/35 bg-status-update/10 text-status-update",
+  error: "border-destructive/30 bg-destructive/10 text-destructive",
+};
+
+const PanelNotice: React.FC<{ notice: { type: PanelNoticeTone; text: string } }> = ({
+  notice,
+}) => (
+  <div
+    className={`flex items-center gap-2 rounded-xl border p-3 text-caption ${noticeToneClass[notice.type]}`}
+    role="status"
+  >
+    {notice.type === "success" ? (
+      <CheckCircle2 className="h-4 w-4 shrink-0" />
+    ) : (
+      <AlertCircle className="h-4 w-4 shrink-0" />
+    )}
+    <span>{notice.text}</span>
+  </div>
+);
 
 export const ConversationPricingSettingsPanel: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
@@ -466,45 +488,10 @@ export const ConversationPricingSettingsPanel: React.FC = () => {
         ) : null}
 
         {/* 汇率提示 */}
-        {rateNotice && (
-          <div
-            className={`flex items-center gap-2 rounded-xl border p-3 text-caption ${
-              rateNotice.type === "success"
-                ? "border-primary/30 bg-primary/10 text-primary"
-                : "border-destructive/30 bg-destructive/10 text-destructive"
-            }`}
-          >
-            {rateNotice.type === "success" ? (
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-            ) : (
-              <AlertCircle className="h-4 w-4 shrink-0" />
-            )}
-            <span>{rateNotice.text}</span>
-          </div>
-        )}
+        {rateNotice ? <PanelNotice notice={rateNotice} /> : null}
 
         {/* 同步提示：降级/部分可用走 info 态，失败走错误态 */}
-        {syncNotice && (
-          <div
-            className={`flex items-center gap-2 rounded-xl border p-3 text-caption ${
-              syncNotice.type === "success"
-                ? "border-primary/30 bg-primary/10 text-primary"
-                : syncNotice.type === "info"
-                  ? "border-status-update/35 bg-status-update/10 text-status-update"
-                  : "border-destructive/30 bg-destructive/10 text-destructive"
-            }`}
-            role="status"
-          >
-            {syncNotice.type === "error" ? (
-              <AlertCircle className="h-4 w-4 shrink-0" />
-            ) : syncNotice.type === "info" ? (
-              <AlertCircle className="h-4 w-4 shrink-0" />
-            ) : (
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-            )}
-            <span>{syncNotice.text}</span>
-          </div>
-        )}
+        {syncNotice ? <PanelNotice notice={syncNotice} /> : null}
       </Panel>
 
       {/* 2. 本地已用模型资费管理（默认只展示本地已用模型） */}

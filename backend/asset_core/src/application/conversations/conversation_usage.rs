@@ -63,14 +63,27 @@ impl AppService {
         self.spawn_pipeline_task(spec, move |cx| async move {
             let cancellation = cx.cancellation();
             let task_id = cx.task_id().to_string();
-            let mut noop_progress =
-                |_completed: usize, _total: usize, _name: Option<String>, _events: usize| {};
+            let progress_handle = cx.progress();
+            // 逐源进度写回任务快照（来源维度），任务中心据此展示「第 N/M 个来源」。
+            let mut on_progress = move |completed: usize,
+                                        total: usize,
+                                        current_source_name: Option<String>,
+                                        _events: usize| {
+                let note = current_source_name
+                    .filter(|name| !name.is_empty())
+                    .map(|name| format!("正在扫描 {name}"));
+                progress_handle.progress(
+                    completed as u64,
+                    Some(total.max(1) as u64),
+                    note.as_deref(),
+                );
+            };
             let result = service
                 .scan_conversation_usage_with_control(
                     options,
                     Some(&cancellation),
                     Some(&task_id),
-                    &mut noop_progress,
+                    &mut on_progress,
                 )
                 .await
                 .map_err(InfraError::external)?;
@@ -508,7 +521,16 @@ impl AppService {
         };
 
         if let Some(ctx) = task_ctx.as_ref() {
-            if failed_source_count == 0 {
+            if failed_source_count == 0 && successful_source_count == 0 {
+                // 所有来源都因缺少可用适配器被跳过：既不是成功也不是失败。
+                ctx.set_outcome(
+                    TaskOutcome::PartialSuccess,
+                    Some(format!(
+                        "没有可扫描的数据源（{total_sources} 个来源缺少可用适配器）"
+                    )),
+                    None,
+                );
+            } else if failed_source_count == 0 {
                 ctx.set_outcome(
                     TaskOutcome::Success,
                     Some(format!(
