@@ -135,35 +135,6 @@ export interface ModelPricingCatalog {
   localModels?: ModelPriceEntry[];
 }
 
-export type ModelPricingSyncProgressPhase =
-  | "preparing"
-  | "fetching"
-  | "persisting"
-  | "recalculating"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
-export interface ModelPricingSyncTaskProgress {
-  phase: ModelPricingSyncProgressPhase;
-  message?: string | null;
-  channel?: string | null;
-  modelsCount: number;
-  recalculatedEventsCount: number;
-  exchangeRate: number;
-}
-
-export interface ModelPricingSyncTaskSnapshot {
-  id: string;
-  status: "running" | "completed" | "failed" | "cancelling";
-  force: boolean;
-  progress: ModelPricingSyncTaskProgress;
-  startedAt: string;
-  finishedAt?: string | null;
-  result?: ModelPricingSyncResult | null;
-  error?: { message: string } | null;
-}
-
 export interface ModelPricingStatus {
   modelsCount: number;
   localModelsCount?: number;
