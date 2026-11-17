@@ -1778,10 +1778,19 @@ function ConversationShellContent({
   t: Translator;
   title: string;
 }) {
+  const collapsible = useCollapsibleHeader();
+
   return (
     <div
       className="app-bounded-route flex w-full flex-col px-[var(--app-page-x)] py-6"
       style={style}
+      onScrollCapture={(event) => {
+        // 页面根节点自身不滚动（overflow:hidden）：它自己的 0 偏移事件不能驱动折叠头。
+        // capture 阶段的 currentTarget 仍是根节点，真正的滚动主体是事件目标。
+        if (event.target === event.currentTarget) return;
+        if (!(event.target instanceof HTMLElement)) return;
+        collapsible?.onScroll({ currentTarget: event.target });
+      }}
     >
       <CollapsibleHeader className="mb-5">
         <PageHeader
