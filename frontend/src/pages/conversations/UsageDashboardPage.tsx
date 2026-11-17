@@ -24,6 +24,7 @@ import {
   buildUsageScanNoticeFromTask,
   type UsageScanNotice,
 } from "../../components/conversations/usage/UsageScanResultBanner";
+import { UsageSourceDiagnosticsBanner } from "../../components/conversations/usage/UsageSourceDiagnosticsBanner";
 import { AppSkeleton } from "../../components/foundation/skeleton";
 import { AlertCircle } from "lucide-react";
 import { useAppUiStore } from "../../store/ui/appUiStore";
@@ -123,6 +124,17 @@ export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
   }, []);
 
   const scanning = Boolean(activeScanTaskId || scanStatus.activeScanTaskId);
+
+  // 诊断里只有 sourceId/adapterId，展示时回填来源显示名。
+  const sourceNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const source of dashboard?.sources ?? []) {
+      if (source.sourceId) {
+        map[source.sourceId] = source.sourceName || source.appName;
+      }
+    }
+    return map;
+  }, [dashboard?.sources]);
 
   const finalizeScan = useCallback(
     (taskId: string, notice: UsageScanNotice) => {
@@ -283,12 +295,26 @@ export const UsageDashboardPage: React.FC<UsageDashboardPageProps> = ({
         scanning={scanning}
         scanStatus={scanStatus}
         totalRequests={dashboard?.hero.requestsCount || 0}
+        totalEventsCount={
+          dashboard?.scanStatus.totalEventsCount ??
+          scanStatus.totalEventsCount ??
+          0
+        }
         refreshing={refreshing}
       />
 
       <UsageScanResultBanner
         notice={scanNotice}
         onDismiss={() => setScanNotice(null)}
+      />
+
+      <UsageSourceDiagnosticsBanner
+        diagnostics={
+          dashboard?.scanStatus.sourceDiagnostics ??
+          scanStatus.sourceDiagnostics ??
+          []
+        }
+        sourceNames={sourceNameById}
       />
 
       {loading && !dashboard ? (

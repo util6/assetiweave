@@ -44,7 +44,10 @@ interface UsageToolbarProps {
   onScanModeChange: (mode: UsageScanMode) => void;
   scanning: boolean;
   scanStatus: UsageScanStatus;
+  /** 当前筛选区间内的请求数（随筛选变化）。 */
   totalRequests: number;
+  /** 本地已入库事件总数（全库口径，不随筛选变化）。 */
+  totalEventsCount: number;
   refreshing: boolean;
   className?: string;
 }
@@ -68,6 +71,7 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
   scanning,
   scanStatus,
   totalRequests,
+  totalEventsCount,
   refreshing,
   className,
 }) => {
@@ -277,8 +281,15 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
       <div className="px-1 text-caption text-on-surface-variant flex flex-wrap items-center justify-between gap-2">
         <div>
           已扫描 {scanStatus.scannedSourcesCount || sources.length || 0}{" "}
-          个本地来源，累计 {totalRequests.toLocaleString()} 次请求 · 上次更新{" "}
-          {lastUpdatedText}
+          个本地来源 · 筛选区间{" "}
+          <span className="font-medium text-on-surface">
+            {totalRequests.toLocaleString()}
+          </span>{" "}
+          次请求 · 已入库{" "}
+          <span className="font-medium text-on-surface">
+            {totalEventsCount.toLocaleString()}
+          </span>{" "}
+          条事件 · 上次更新 {lastUpdatedText}
         </div>
       </div>
 

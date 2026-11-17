@@ -11,7 +11,10 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use sqlx::{AssertSqlSafe, Row as SqlxRow, SqlitePool};
 use std::collections::{BTreeMap, HashMap};
 
-use super::usage_repo::load_all_usage_source_states_sqlx;
+use super::usage_repo::{
+    count_usage_events_for_tenant_sqlx, get_distinct_usage_provider_models_sqlx,
+    load_all_usage_source_states_sqlx, summarize_usage_source_states,
+};
 
 #[path = "usage_query_models.rs"]
 mod usage_query_models;
@@ -118,6 +121,64 @@ pub async fn query_usage_dashboard_sqlx(
         }
     };
 
+    // Load active exchange rate and price catalog early: model filtering needs the
+    // catalog to expand a merged base-model id back to its raw model names.
+    let rate_str =
+        super::pricing_repo::get_pricing_metadata_sqlx(pool, tenant_id, "usd_to_cny_rate")
+            .await
+            .ok()
+            .flatten();
+    let usd_to_cny_rate = rate_str.and_then(|s| s.parse::<f64>().ok()).unwrap_or(7.25);
+    let cached_models = super::pricing_repo::load_pricing_catalog_entries_sqlx(pool, tenant_id)
+        .await
+        .unwrap_or_default();
+    let catalog_version =
+        super::pricing_repo::get_pricing_metadata_sqlx(pool, tenant_id, "catalog_version")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "bundled".to_string());
+    let catalog = crate::backend::domain::conversations::pricing::PriceCatalog::new(
+        catalog_version,
+        Utc::now().to_rfc3339(),
+        usd_to_cny_rate,
+        cached_models,
+    );
+
+    // 模型筛选按看板展示的「合并后底座模型」展开：传入底座 id 时一并命中该底座下
+    // 合并前的原始模型名，避免筛选结果与模型明细表对不上。
+    let model_filter_values = match filter
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    {
+        Some(target) => {
+            let mut values = vec![target.to_string()];
+            let distinct = get_distinct_usage_provider_models_sqlx(pool, tenant_id)
+                .await
+                .unwrap_or_default();
+            for info in distinct {
+                if values.iter().any(|v| v == &info.model) {
+                    continue;
+                }
+                let matches_base = catalog
+                    .resolve_model(&info.provider, &info.model)
+                    .map(|resolved| {
+                        !resolved.is_ignored
+                            && !resolved.matched_model_id.is_empty()
+                            && resolved.matched_model_id == target
+                    })
+                    .unwrap_or(false);
+                if matches_base {
+                    values.push(info.model);
+                }
+            }
+            Some(values)
+        }
+        None => None,
+    };
+
     // Construct SQL query with optional filters
     let mut sql = String::from(
         r#"
@@ -148,9 +209,12 @@ pub async fn query_usage_dashboard_sqlx(
     if filter.source_id.is_some() {
         sql.push_str(" AND u.source_id = ?");
     }
-    // Exact raw `u.model` SQL filter when explicitly requested.
-    if filter.model.is_some() {
-        sql.push_str(" AND u.model = ?");
+    // Base-model aware `u.model` filter (raw names sharing the requested base model).
+    if let Some(ref models) = model_filter_values {
+        let placeholders = std::iter::repeat_n("?", models.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        sql.push_str(&format!(" AND u.model IN ({placeholders})"));
     }
     sql.push_str(" ORDER BY u.timestamp ASC");
 
@@ -167,8 +231,10 @@ pub async fn query_usage_dashboard_sqlx(
     if let Some(ref sid) = filter.source_id {
         query = query.bind(sid);
     }
-    if let Some(ref m) = filter.model {
-        query = query.bind(m);
+    if let Some(ref models) = model_filter_values {
+        for model in models {
+            query = query.bind(model);
+        }
     }
 
     let rows = query.fetch_all(pool).await?;
@@ -209,27 +275,7 @@ pub async fn query_usage_dashboard_sqlx(
     }
 
     // Load active exchange rate and price catalog for accurate CNY display and unit prices
-    let rate_str =
-        super::pricing_repo::get_pricing_metadata_sqlx(pool, tenant_id, "usd_to_cny_rate")
-            .await
-            .ok()
-            .flatten();
-    let usd_to_cny_rate = rate_str.and_then(|s| s.parse::<f64>().ok()).unwrap_or(7.25);
-    let cached_models = super::pricing_repo::load_pricing_catalog_entries_sqlx(pool, tenant_id)
-        .await
-        .unwrap_or_default();
-    let catalog_version =
-        super::pricing_repo::get_pricing_metadata_sqlx(pool, tenant_id, "catalog_version")
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "bundled".to_string());
-    let catalog = crate::backend::domain::conversations::pricing::PriceCatalog::new(
-        catalog_version,
-        Utc::now().to_rfc3339(),
-        usd_to_cny_rate,
-        cached_models,
-    );
+    // (loaded above before SQL: model filtering needs the catalog for base-model expansion).
 
     let registered_roots = crate::backend::store::load_sources_sqlx(pool, tenant_id)
         .await
@@ -553,19 +599,16 @@ pub async fn query_usage_dashboard_sqlx(
         .collect::<Vec<_>>();
     dates.reverse();
 
-    // Source states & scan status
+    // Source states & scan status. `total_events_count` 是租户全库事件总数（不受
+    // 时间窗口/筛选影响），与 `hero.requests_count`（当前筛选区间）语义分离。
     let states = load_all_usage_source_states_sqlx(pool, tenant_id).await?;
-    let last_scanned_at = states
-        .iter()
-        .filter_map(|s| s.last_success_scan_at.as_ref())
-        .max()
-        .cloned();
+    let (last_scanned_at, source_diagnostics) = summarize_usage_source_states(&states);
     let scan_status = UsageScanStatusDto {
         scanned_sources_count: states.len(),
-        total_events_count: loaded_events.len(),
+        total_events_count: count_usage_events_for_tenant_sqlx(pool, tenant_id).await?,
         last_scanned_at,
         active_scan_task_id: None,
-        source_diagnostics: Vec::new(),
+        source_diagnostics,
     };
     Ok(UsageDashboardDto {
         hero,
@@ -588,3 +631,7 @@ fn app_display_name_from_adapter(adapter_id: &str) -> String {
         _ => adapter_id.to_string(),
     }
 }
+
+#[cfg(test)]
+#[path = "usage_query_tests.rs"]
+mod tests;

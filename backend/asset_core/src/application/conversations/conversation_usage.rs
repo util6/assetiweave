@@ -1,6 +1,5 @@
 use super::usage_dto::{
     UsageDashboardDto, UsageDashboardFilter, UsageScanOptions, UsageScanStatusDto,
-    UsageSourceDiagnosticDto,
 };
 use crate::backend::application::prelude::*;
 use crate::backend::infrastructure::tasks::{
@@ -13,10 +12,11 @@ use crate::backend::{
         adapter_supports_usage, read_external_adapter_usage_with_settings,
     },
     store::conversations::{
-        get_pricing_metadata_sqlx, load_all_usage_source_states_sqlx,
-        load_pricing_catalog_entries_sqlx, load_usage_source_state_sqlx,
-        prune_unseen_usage_events_sqlx, query_usage_dashboard_sqlx, recalculate_usage_costs_sqlx,
-        save_usage_source_state_sqlx, upsert_usage_events_sqlx,
+        count_usage_events_for_tenant_sqlx, get_pricing_metadata_sqlx,
+        load_all_usage_source_states_sqlx, load_pricing_catalog_entries_sqlx,
+        load_usage_source_state_sqlx, prune_unseen_usage_events_sqlx,
+        query_usage_dashboard_sqlx, recalculate_usage_costs_sqlx, save_usage_source_state_sqlx,
+        summarize_usage_source_states, upsert_usage_events_sqlx,
         usage_repo::get_distinct_usage_models_sqlx, UsageSourceState,
     },
 };
@@ -99,50 +99,10 @@ impl AppService {
         let pool = self.db.pool();
         let tenant_id = self.tenant_id();
         let states = load_all_usage_source_states_sqlx(pool, tenant_id).await?;
-
-        let mut last_scanned_at: Option<String> = None;
-        let mut source_diagnostics = Vec::new();
         let scanned_sources_count = states.len();
-
-        for st in states {
-            if let Some(ref scan_time) = st.last_success_scan_at {
-                if last_scanned_at.as_ref().is_none_or(|curr| scan_time > curr) {
-                    last_scanned_at = Some(scan_time.clone());
-                }
-            }
-
-            let timestamp = st
-                .last_success_scan_at
-                .clone()
-                .unwrap_or_else(|| st.updated_at.clone());
-            if let Some(ref diag_json) = st.diagnostics_json {
-                let msgs = serde_json::from_str::<Vec<String>>(diag_json)
-                    .unwrap_or_else(|_| vec![diag_json.clone()]);
-                let level = if st.status == "error" {
-                    "error"
-                } else {
-                    "info"
-                }
-                .to_string();
-                for msg in msgs {
-                    source_diagnostics.push(UsageSourceDiagnosticDto {
-                        source_id: st.source_id.clone(),
-                        adapter_id: st.adapter_id.clone(),
-                        level: level.clone(),
-                        message: msg,
-                        timestamp: timestamp.clone(),
-                    });
-                }
-            }
-        }
-
-        let total_events_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM conversation_usage_events WHERE tenant_id = ?",
-        )
-        .bind(tenant_id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0) as usize;
+        let (last_scanned_at, source_diagnostics) =
+            summarize_usage_source_states(&states);
+        let total_events_count = count_usage_events_for_tenant_sqlx(pool, tenant_id).await?;
 
         Ok(UsageScanStatusDto {
             scanned_sources_count,

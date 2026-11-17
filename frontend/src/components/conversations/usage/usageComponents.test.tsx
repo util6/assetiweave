@@ -17,6 +17,7 @@ import {
   buildUsageScanNotice,
   buildUsageScanNoticeFromTask,
 } from "./UsageScanResultBanner";
+import { UsageSourceDiagnosticsBanner } from "./UsageSourceDiagnosticsBanner";
 import { formatChineseTokens } from "../../../types/usage";
 
 describe("Usage Components", () => {
@@ -137,6 +138,7 @@ describe("Usage Components", () => {
           sourceDiagnostics: [],
         }}
         totalRequests={22938}
+        totalEventsCount={128}
         refreshing={false}
       />,
     );
@@ -144,6 +146,11 @@ describe("Usage Components", () => {
     expect(screen.getByText("相对范围")).toBeDefined();
     expect(screen.getByText("实例")).toBeDefined();
     expect(screen.getByText(/已扫描 464 个本地来源/)).toBeDefined();
+    // 两个口径必须分别带标签，避免把窗口内请求数误读成全库事件数。
+    expect(screen.getByText(/筛选区间/)).toBeDefined();
+    expect(screen.getByText("22,938")).toBeDefined();
+    expect(screen.getByText(/已入库/)).toBeDefined();
+    expect(screen.getByText("128")).toBeDefined();
     expect(screen.getByText(/本地多源用量统计/)).toBeDefined();
 
     const scanBtn = screen.getByRole("button", { name: "开始扫描" });
@@ -152,6 +159,55 @@ describe("Usage Components", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "全量重扫" }));
     expect(onScanModeChange).toHaveBeenCalledWith("full");
+  });
+
+  it("renders source diagnostics banner with resolved source names and expands", () => {
+    const diagnostics = [
+      {
+        sourceId: "src-a",
+        adapterId: "codex",
+        level: "error",
+        message: "读取会话文件失败：权限不足",
+        timestamp: "2026-11-16T10:00:00Z",
+      },
+      {
+        sourceId: "src-b",
+        adapterId: "claude",
+        level: "error",
+        message: "适配器进程退出码 1",
+        timestamp: "2026-11-16T10:01:00Z",
+      },
+      {
+        sourceId: "src-c",
+        adapterId: "gemini",
+        level: "info",
+        message: "目录为空，跳过",
+        timestamp: "2026-11-16T10:02:00Z",
+      },
+    ];
+
+    render(
+      <UsageSourceDiagnosticsBanner
+        diagnostics={diagnostics}
+        sourceNames={{ "src-a": "默认实例", "src-b": "Claude 实例" }}
+      />,
+    );
+
+    expect(screen.getByText(/2 个来源读取失败/)).toBeDefined();
+    expect(screen.getByText("默认实例")).toBeDefined();
+    expect(screen.getByText(/权限不足/)).toBeDefined();
+    // 默认折叠到 2 条
+    expect(screen.queryByText(/目录为空/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /展开全部 1 条/ }));
+    expect(screen.getByText(/目录为空/)).toBeDefined();
+  });
+
+  it("renders nothing when there are no source diagnostics", () => {
+    const { container } = render(
+      <UsageSourceDiagnosticsBanner diagnostics={[]} />,
+    );
+    expect(container.firstChild).toBeNull();
   });
 
   it("disables scan mode switch and action while a scan is running", () => {
@@ -175,6 +231,7 @@ describe("Usage Components", () => {
           sourceDiagnostics: [],
         }}
         totalRequests={0}
+        totalEventsCount={128}
         refreshing={false}
       />,
     );
@@ -450,6 +507,7 @@ describe("Usage Components", () => {
           sourceDiagnostics: [],
         }}
         totalRequests={10}
+        totalEventsCount={128}
         refreshing={false}
       />,
     );
@@ -533,6 +591,7 @@ describe("Usage Components", () => {
           sourceDiagnostics: [],
         }}
         totalRequests={0}
+        totalEventsCount={128}
         refreshing={false}
       />,
     );
@@ -656,6 +715,7 @@ describe("Usage Components", () => {
           sourceDiagnostics: [],
         }}
         totalRequests={10}
+        totalEventsCount={128}
         refreshing={false}
       />,
     );

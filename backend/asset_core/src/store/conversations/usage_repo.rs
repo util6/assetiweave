@@ -4,6 +4,7 @@ use crate::backend::{
         CurrencyCostDto, UsageDailyTrendBucketDto, UsageDashboardDto, UsageDashboardFilter,
         UsageDateBreakdownDto, UsageHeroOverviewDto, UsageModelBreakdownDto,
         UsageProjectBreakdownDto, UsageScanStatusDto, UsageSourceBreakdownDto,
+        UsageSourceDiagnosticDto,
     },
     store::StoreResult,
 };
@@ -431,6 +432,68 @@ pub async fn get_distinct_usage_provider_models_sqlx(
         })
         .filter(|m| !m.model.trim().is_empty())
         .collect())
+}
+
+/// 全库（不限时间窗口/筛选）该租户已入库用量事件总数。
+///
+/// 与看板 `hero.requests_count`（当前筛选区间内）语义分离，避免切换时间范围时
+/// 被误读为「历史数据丢失」。
+pub async fn count_usage_events_for_tenant_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> StoreResult<usize> {
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM conversation_usage_events WHERE tenant_id = ?",
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count.max(0) as usize)
+}
+
+/// 把来源状态行汇总成「最新成功扫描时间 + 逐条诊断」。
+///
+/// `status = "error"` 的来源诊断标记为 `error`，其余为 `info`；看板与扫描状态端点
+/// 共用同一实现，避免两处口径漂移。
+pub fn summarize_usage_source_states(
+    states: &[UsageSourceState],
+) -> (Option<String>, Vec<UsageSourceDiagnosticDto>) {
+    let mut last_scanned_at: Option<String> = None;
+    let mut diagnostics = Vec::new();
+
+    for state in states {
+        if let Some(ref scan_time) = state.last_success_scan_at {
+            if last_scanned_at.as_ref().is_none_or(|curr| scan_time > curr) {
+                last_scanned_at = Some(scan_time.clone());
+            }
+        }
+
+        let Some(ref diag_json) = state.diagnostics_json else {
+            continue;
+        };
+        let messages = serde_json::from_str::<Vec<String>>(diag_json)
+            .unwrap_or_else(|_| vec![diag_json.clone()]);
+        let level = if state.status == "error" {
+            "error"
+        } else {
+            "info"
+        };
+        let timestamp = state
+            .last_success_scan_at
+            .clone()
+            .unwrap_or_else(|| state.updated_at.clone());
+        for message in messages {
+            diagnostics.push(UsageSourceDiagnosticDto {
+                source_id: state.source_id.clone(),
+                adapter_id: state.adapter_id.clone(),
+                level: level.to_string(),
+                message,
+                timestamp: timestamp.clone(),
+            });
+        }
+    }
+
+    (last_scanned_at, diagnostics)
 }
 
 #[cfg(test)]
