@@ -2407,9 +2407,9 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
               <div className="render-safe-scroll-content grid gap-3">
                 <VirtualizedCollection
                   className={sessionListVirtualized ? undefined : "grid gap-3"}
-                  // 会话卡片很轻，且已经是虚拟化绝对定位项；content-visibility
-                  // 只会让 WebKit 在重新可见的首帧跳过绘制，导致列表空白。
-                  contentVisibilityContainmentEnabled={false}
+                  contentVisibilityContainmentEnabled={
+                    renderingFlags.sessionCardContentVisibilityContainment
+                  }
                   deferredRenderingEnabled={
                     renderingFlags.deferredSkeletonRendering &&
                     sessionListVirtualized
