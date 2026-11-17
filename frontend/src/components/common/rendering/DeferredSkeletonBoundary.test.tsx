@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DeferredSkeletonBoundary } from "./DeferredSkeletonBoundary";
 import { RenderActivityProvider } from "./RenderActivityProvider";
@@ -37,6 +38,7 @@ function installObservers() {
 
 function renderBoundary(
   props: Partial<React.ComponentProps<typeof DeferredSkeletonBoundary>> = {},
+  { strict = false }: { strict?: boolean } = {},
 ) {
   installObservers();
   const scrollElement = document.createElement("div");
@@ -61,20 +63,27 @@ function renderBoundary(
   vi.stubGlobal("cancelAnimationFrame", (id: number) =>
     rafCallbacks.delete(id),
   );
-  const result = render(
+  const tree = (
     <RenderActivityProvider scrollElementRef={scrollElementRef}>
       <DeferredSkeletonBoundary itemKey="turn-1" {...props}>
         <span>ready content</span>
       </DeferredSkeletonBoundary>
-    </RenderActivityProvider>,
+    </RenderActivityProvider>
   );
+  const result = render(strict ? <StrictMode>{tree}</StrictMode> : tree);
   const flush = () =>
     act(() => {
       const callbacks = [...rafCallbacks.values()];
       rafCallbacks.clear();
       callbacks.forEach((callback) => callback(16));
     });
-  return { ...result, flush, scrollElement, scrollElementRef };
+  return {
+    ...result,
+    flush,
+    scrollElement,
+    scrollElementRef,
+    pendingFrames: () => rafCallbacks.size,
+  };
 }
 
 afterEach(() => {
@@ -164,6 +173,28 @@ describe("DeferredSkeletonBoundary", () => {
       </RenderActivityProvider>,
     );
     expect(screen.getByText("disabled content")).toBeTruthy();
+  });
+
+  it("reaches ready after a StrictMode mount/unmount/mount cycle without stranding tasks", async () => {
+    const { flush, pendingFrames } = renderBoundary({}, { strict: true });
+    const boundary = screen.getByTestId("deferred-render-boundary");
+    expect(boundary.getAttribute("data-render-state")).toBe("skeleton");
+
+    act(() =>
+      intersectionCallback?.([
+        {
+          boundingClientRect: { top: 100, bottom: 200 } as DOMRect,
+          isIntersecting: true,
+          target: boundary,
+        },
+      ]),
+    );
+    flush();
+
+    await waitFor(() => expect(screen.getByText("ready content")).toBeTruthy());
+    expect(boundary.getAttribute("data-render-state")).toBe("ready");
+    // 双挂载的第二次 effect 必须重新排程并被消费，不能留下未消费的帧回调。
+    expect(pendingFrames()).toBe(0);
   });
 
   it("transitions immediately to ready when forceReady changes from false to true", () => {
