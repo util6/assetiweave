@@ -1201,6 +1201,16 @@ export function ConversationsPage({
     setPendingParentFocus(null);
   }, []);
 
+  /**
+   * 顶栏返回浏览视图：控制器只清会话选择，页面级子代理溯源状态必须一起清，
+   * 否则下次打开会话时会带着上一次下钻留下的面包屑/定位目标。
+   */
+  const handleCloseSession = useCallback(() => {
+    setSubagentNavigation(null);
+    setPendingParentFocus(null);
+    closeSession();
+  }, [closeSession]);
+
   const activeParentBreadcrumb = useMemo<ParentSessionBreadcrumb | null>(() => {
     const current = sessionDetail?.session;
     if (!current) return null;
@@ -1481,7 +1491,7 @@ export function ConversationsPage({
             <ToolbarActionButton
               icon={<ArrowLeft size={16} />}
               label={t("conversation.session.backToBrowser")}
-              onClick={closeSession}
+              onClick={handleCloseSession}
               text={t("conversation.session.back")}
             />
             <ConversationContentFilter
