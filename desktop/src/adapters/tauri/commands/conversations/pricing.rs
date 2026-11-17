@@ -25,9 +25,7 @@ fn start_model_pricing_sync(
     let snapshot = task_runtime.get(handle.task_id()).ok_or_else(|| {
         AppError::NotFound(format!("background task not found: {}", handle.task_id()))
     })?;
-    Ok(crate::backend::application::system::TaskView::from_snapshot(
-        &snapshot,
-    ))
+    Ok(crate::backend::application::system::TaskView::from_snapshot(&snapshot))
 }
 
 #[tauri::command]

@@ -438,10 +438,7 @@ mod full_mode_fixture {
 
     /// 适配器读取 `payload.jsonl` 并回传 `cursor.txt` 中的游标，
     /// 便于测试在两次扫描之间改写源侧数据与游标。
-    pub(super) async fn seed_payload_fixture(
-        service: &AppService,
-        root: &Path,
-    ) -> PayloadFixture {
+    pub(super) async fn seed_payload_fixture(service: &AppService, root: &Path) -> PayloadFixture {
         use std::os::unix::fs::PermissionsExt;
 
         let payload_path = root.join("payload.jsonl");

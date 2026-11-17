@@ -161,7 +161,12 @@ async fn dashboard_model_filter_expands_base_model_to_raw_model_names() {
         "xiaomi-src-1",
         "opencode",
         &[
-            build_event("evt-mimo", "2026-01-02T00:00:00Z", "xiaomi", "mimo-v2.5-free"),
+            build_event(
+                "evt-mimo",
+                "2026-01-02T00:00:00Z",
+                "xiaomi",
+                "mimo-v2.5-free",
+            ),
             build_event("evt-gpt", "2026-01-02T01:00:00Z", "openai", "gpt-4o"),
         ],
         None,

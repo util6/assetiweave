@@ -14,10 +14,9 @@ use crate::backend::{
     store::conversations::{
         count_usage_events_for_tenant_sqlx, get_pricing_metadata_sqlx,
         load_all_usage_source_states_sqlx, load_pricing_catalog_entries_sqlx,
-        load_usage_source_state_sqlx, prune_unseen_usage_events_sqlx,
-        query_usage_dashboard_sqlx, recalculate_usage_costs_sqlx, save_usage_source_state_sqlx,
-        summarize_usage_source_states, upsert_usage_events_sqlx,
-        usage_repo::get_distinct_usage_models_sqlx, UsageSourceState,
+        load_usage_source_state_sqlx, prune_unseen_usage_events_sqlx, query_usage_dashboard_sqlx,
+        recalculate_usage_costs_sqlx, save_usage_source_state_sqlx, summarize_usage_source_states,
+        upsert_usage_events_sqlx, usage_repo::get_distinct_usage_models_sqlx, UsageSourceState,
     },
 };
 use chrono::Utc;
@@ -100,8 +99,7 @@ impl AppService {
         let tenant_id = self.tenant_id();
         let states = load_all_usage_source_states_sqlx(pool, tenant_id).await?;
         let scanned_sources_count = states.len();
-        let (last_scanned_at, source_diagnostics) =
-            summarize_usage_source_states(&states);
+        let (last_scanned_at, source_diagnostics) = summarize_usage_source_states(&states);
         let total_events_count = count_usage_events_for_tenant_sqlx(pool, tenant_id).await?;
 
         Ok(UsageScanStatusDto {
