@@ -22,27 +22,16 @@ export function intervalCoverage(
 }
 
 /**
- * Virtualized lists keep their inter-row gap in the virtualizer, not in the
- * collection's CSS, so `row-gap` alone under-reports an intentional gap as a
- * hole. Infer it from the rendered pitch, but only when it is smaller than half
- * a row: anything bigger is a missing row, not spacing.
+ * Virtualized lists keep their inter-row gap in the virtualizer rather than in
+ * the collection's CSS, so `row-gap` alone would report an intentional gap as a
+ * hole. The collection therefore declares the gap it actually renders with;
+ * CSS `row-gap` is only the fallback for non-virtualized lists.
  */
-export function inferRowGap(
-  rects: readonly Pick<DOMRect, "top" | "bottom" | "height">[],
-): number {
-  if (rects.length < 2) return 0;
-  const sorted = [...rects].sort((left, right) => left.top - right.top);
-  const heights = sorted.map((rect) => rect.height).sort((a, b) => a - b);
-  const medianHeight = heights[Math.floor(heights.length / 2)] ?? 0;
-  const deltas: number[] = [];
-  for (let index = 1; index < sorted.length; index++) {
-    const delta = sorted[index]!.top - sorted[index - 1]!.bottom;
-    if (delta > 0) deltas.push(delta);
-  }
-  if (deltas.length === 0) return 0;
-  deltas.sort((a, b) => a - b);
-  const median = deltas[Math.floor(deltas.length / 2)] ?? 0;
-  return median > 0 && median <= medianHeight / 2 ? median : 0;
+function declaredRowGap(collection: HTMLElement): number | null {
+  const declared = collection.dataset.virtualGap;
+  if (declared === undefined) return null;
+  const parsed = Number.parseFloat(declared);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export function readScrollCoverage(surface: HTMLElement) {
@@ -74,7 +63,9 @@ export function readScrollCoverage(surface: HTMLElement) {
     ),
   ];
   const rowRects = rows.map((row) => row.getBoundingClientRect());
-  const gap = pixels(collectionStyle?.rowGap) || inferRowGap(rowRects);
+  const gap =
+    (collection ? declaredRowGap(collection) : null) ??
+    pixels(collectionStyle?.rowGap);
   const intervals = rowRects.map(
     (rect) => [rect.top - gap / 2, rect.bottom + gap / 2] as const,
   );

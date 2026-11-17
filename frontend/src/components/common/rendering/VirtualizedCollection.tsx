@@ -18,7 +18,10 @@ import type { CSSProperties, ReactNode, RefObject } from "react";
 import { cn } from "../../../lib/utils";
 import { DeferredSkeletonBoundary } from "./DeferredSkeletonBoundary";
 import { useScrollActivitySnapshot } from "./RenderActivityProvider";
-import { SCROLL_IDLE_DELAY_MS } from "./renderingConstants";
+import {
+  SCROLL_IDLE_DELAY_MS,
+  VIRTUALIZATION_MIN_ITEMS,
+} from "./renderingConstants";
 import type { RenderPriority } from "./RenderScheduler";
 import {
   SKELETON_BLOCK_SIZE_PX,
@@ -124,7 +127,7 @@ function VirtualizedCollectionInner<Item>(
     gap = 24,
     getItemKey,
     items,
-    minItems = 12,
+    minItems = VIRTUALIZATION_MIN_ITEMS,
     onItemReady,
     pinnedKeys,
     renderItem,
@@ -306,6 +309,7 @@ function VirtualizedCollectionInner<Item>(
     return (
       <div
         className={cn("virtualized-collection", className)}
+        data-virtual-gap={gap}
         data-virtualized-collection=""
       >
         {items.map((item, index) => {
@@ -330,6 +334,7 @@ function VirtualizedCollectionInner<Item>(
   return (
     <div
       className={cn("virtualized-collection", className)}
+      data-virtual-gap={gap}
       data-virtualized-collection=""
       style={{ height: virtualizer.getTotalSize(), position: "relative" }}
     >
