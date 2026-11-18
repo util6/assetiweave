@@ -1,10 +1,16 @@
-//! Core runtime helpers that shell out to bundled JavaScript entrypoints.
+//! Fallback copies of host-owned runtime helpers, not conversation adapter
+//! plugins.
 //!
-//! These are not adapter copies: `runtime/shell-projector-v1` and
-//! `runtime/reproject-runner-v1` are host-owned snapshots used for command
-//! projection and legacy session reprojection. Moving their externalization to
-//! the managed `common/` directory is tracked separately; this module keeps the
-//! current behaviour untouched while `official.rs` drops adapter embedding.
+//! The scripts embedded here (`payload-policy.mjs`, `reproject-runner.mjs`,
+//! `shell-projector.cjs`, `projector-adapter.cjs` and their manifest) drive the
+//! host's own command projection and legacy session reprojection. They are not
+//! adapter plugin copies: the authoritative copy of every conversation adapter
+//! lives in the managed user directory (`conversation-adapters/**`) and is only
+//! ever read by [`super::official`].
+//!
+//! Fallbacks are released exclusively into `runtime/<helper>-v1/` and only when
+//! the target file is missing; an existing file is never overwritten, so user
+//! edits and later externalization into `common/` stay authoritative.
 
 use crate::backend::infrastructure::app_settings::conversation_adapter_dir;
 use crate::backend::{
@@ -49,9 +55,10 @@ pub fn ensure_reproject_runner_scripts() -> InfraResult<std::path::PathBuf> {
     fs::create_dir_all(&root)?;
     let policy_path = root.join("payload-policy.mjs");
     let runner_path = root.join("reproject-runner.mjs");
-    write_managed_runtime_file(&policy_path, PAYLOAD_POLICY_SCRIPT.as_bytes())?;
-    write_managed_runtime_file(&runner_path, REPROJECT_RUNNER_SCRIPT.as_bytes())?;
-    make_executable(&runner_path)?;
+    write_if_missing(&policy_path, PAYLOAD_POLICY_SCRIPT.as_bytes())?;
+    if write_if_missing(&runner_path, REPROJECT_RUNNER_SCRIPT.as_bytes())? {
+        make_executable(&runner_path)?;
+    }
     Ok(runner_path)
 }
 
@@ -99,10 +106,13 @@ fn materialize_shell_command_projector(root: &Path) -> InfraResult<ConversationA
     let manifest_path = root.join("conversation-adapter.json");
     let adapter_path = root.join("projector-adapter.cjs");
     let projector_path = root.join("shell-projector.cjs");
-    write_managed_runtime_file(&manifest_path, SHELL_PROJECTOR_MANIFEST.as_bytes())?;
-    write_managed_runtime_file(&adapter_path, SHELL_PROJECTOR_ADAPTER_SCRIPT.as_bytes())?;
-    write_managed_runtime_file(&projector_path, SHELL_PROJECTOR_SCRIPT.as_bytes())?;
-    make_executable(&adapter_path)?;
+    write_if_missing(&manifest_path, SHELL_PROJECTOR_MANIFEST.as_bytes())?;
+    let adapter_created =
+        write_if_missing(&adapter_path, SHELL_PROJECTOR_ADAPTER_SCRIPT.as_bytes())?;
+    write_if_missing(&projector_path, SHELL_PROJECTOR_SCRIPT.as_bytes())?;
+    if adapter_created {
+        make_executable(&adapter_path)?;
+    }
 
     let validation =
         super::external::validate_external_adapter_manifest(&manifest_path.to_string_lossy())?;
@@ -129,11 +139,16 @@ fn materialize_shell_command_projector(root: &Path) -> InfraResult<ConversationA
     })
 }
 
-fn write_managed_runtime_file(path: &Path, bytes: &[u8]) -> InfraResult<()> {
-    if fs::read(path).ok().as_deref() == Some(bytes) {
-        return Ok(());
+/// Release a fallback helper file only when it is missing.
+///
+/// Returns whether the file was written. An existing file is never touched —
+/// neither its bytes nor its permissions.
+fn write_if_missing(path: &Path, bytes: &[u8]) -> InfraResult<bool> {
+    if path.exists() {
+        return Ok(false);
     }
-    fs::write(path, bytes).map_err(InfraError::from)
+    fs::write(path, bytes).map_err(InfraError::from)?;
+    Ok(true)
 }
 
 #[cfg(unix)]
