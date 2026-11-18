@@ -203,9 +203,34 @@ describe("AgentSettingsPanel", () => {
     );
     await waitFor(() =>
       expect(
-        within(geminiRow as HTMLElement).getByTitle("gemini 1.0.0"),
+        within(geminiRow as HTMLElement).getByText(/gemini 1\.0\.0/),
       ).toBeTruthy(),
     );
+    const geminiMsg = within(geminiRow as HTMLElement).getByText(
+      /gemini 1\.0\.0/,
+    );
+    expect(geminiMsg.getAttribute("title")).toBeNull();
+    Object.defineProperty(geminiMsg, "clientWidth", {
+      configurable: true,
+      get: () => 80,
+    });
+    Object.defineProperty(geminiMsg, "scrollWidth", {
+      configurable: true,
+      get: () => 240,
+    });
+    Object.defineProperty(geminiMsg, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(geminiMsg, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(geminiMsg);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe("gemini 1.0.0"),
+    );
+    fireEvent.mouseLeave(geminiMsg);
 
     fireEvent.click(
       within(geminiRow as HTMLElement).getByRole("button", {
@@ -273,9 +298,34 @@ describe("AgentSettingsPanel", () => {
     );
     await waitFor(() =>
       expect(
-        within(codexRow as HTMLElement).getByTitle("codex-acp 1.1.2"),
+        within(codexRow as HTMLElement).getByText(/codex-acp 1\.1\.2/),
       ).toBeTruthy(),
     );
+    const codexMsg = within(codexRow as HTMLElement).getByText(
+      /codex-acp 1\.1\.2/,
+    );
+    expect(codexMsg.getAttribute("title")).toBeNull();
+    Object.defineProperty(codexMsg, "clientWidth", {
+      configurable: true,
+      get: () => 80,
+    });
+    Object.defineProperty(codexMsg, "scrollWidth", {
+      configurable: true,
+      get: () => 240,
+    });
+    Object.defineProperty(codexMsg, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(codexMsg, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(codexMsg);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe("codex-acp 1.1.2"),
+    );
+    fireEvent.mouseLeave(codexMsg);
   });
 
   it("loads ACP models in a dialog and persists the selected model callback", async () => {
@@ -452,11 +502,32 @@ describe("AgentSettingsPanel", () => {
     await waitFor(() =>
       expect(within(row as HTMLElement).getByText("不可用")).toBeTruthy(),
     );
-    expect(
-      within(row as HTMLElement).getByTitle(
+    const errorMsg = within(row as HTMLElement).getByText(
+      /The ACP Agent did not return a model list\./,
+    );
+    expect(errorMsg.getAttribute("title")).toBeNull();
+    Object.defineProperty(errorMsg, "clientWidth", {
+      configurable: true,
+      get: () => 80,
+    });
+    Object.defineProperty(errorMsg, "scrollWidth", {
+      configurable: true,
+      get: () => 280,
+    });
+    Object.defineProperty(errorMsg, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(errorMsg, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(errorMsg);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe(
         "The ACP Agent did not return a model list.",
       ),
-    ).toBeTruthy();
+    );
   });
 
   it("refreshes installed native Agents instead of leaving stale health in checking", async () => {

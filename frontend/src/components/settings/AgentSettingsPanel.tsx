@@ -33,6 +33,7 @@ import {
 import * as agentRuntime from "../../services/agentRuntime";
 import { Badge } from "../foundation/Badge";
 import { DialogFrame } from "../foundation/DialogFrame";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { AgentConnectionRow } from "./AgentConnectionRow";
@@ -1004,14 +1005,14 @@ function ModelOptionButton({
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex flex-wrap items-center gap-2 text-body-sm font-semibold text-on-surface">
-          <span className="truncate">{model.label}</span>
+          <TruncatedText>{model.label}</TruncatedText>
           {selected ? (
             <Badge tone="primary">{t("settings.agents.modelSelected")}</Badge>
           ) : null}
         </span>
-        <span className="mt-1 block truncate font-mono text-code-sm text-outline">
+        <TruncatedText className="mt-1 font-mono text-code-sm text-outline">
           {model.id}
-        </span>
+        </TruncatedText>
         {model.description ? (
           <span className="mt-1 block text-body-sm text-on-surface-variant">
             {model.description}

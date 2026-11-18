@@ -31,6 +31,7 @@ import {
 import { EmptyState } from "../../components/foundation/EmptyState";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { PageHeader } from "../../components/foundation/PageHeader";
+import { TruncatedText } from "../../components/foundation/TruncatedText";
 import {
   DataToolbar,
   DebouncedToolbarSearch,
@@ -62,6 +63,7 @@ import {
   copyPromptTextToClipboard,
 } from "../../services/promptClipboard";
 import { useI18n } from "../../i18n/I18nProvider";
+import { abbreviateHomePath } from "../../utils/path";
 import { useAppSettings } from "../../store/settings/useAppSettings";
 import {
   normalizeConversationTranslationTargetLanguage,
@@ -1078,7 +1080,7 @@ function PromptStageCard({
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5 text-code-sm text-on-surface-muted">
               <Clock size={13} />
-              <span className="truncate">{formatDateTime(updatedAt)}</span>
+              <TruncatedText>{formatDateTime(updatedAt)}</TruncatedText>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -1236,12 +1238,13 @@ function PromptStageCard({
         </div>
 
         <div className="relative z-10 flex min-h-11 items-center justify-between gap-3 border-t border-theme-card-border bg-theme-card-header/45 px-5 py-3 text-code-sm text-on-surface-muted">
-          <span className="min-w-0 truncate">
-            {faceCharacterCount} chars · {faceLineCount} lines
-            {faceAttachments.length > 0
-              ? ` · ${t("prompt.attachments.count", { count: faceAttachments.length })}`
-              : ""}
-          </span>
+          <TruncatedText className="min-w-0">
+            {`${faceCharacterCount} chars · ${faceLineCount} lines${
+              faceAttachments.length > 0
+                ? ` · ${t("prompt.attachments.count", { count: faceAttachments.length })}`
+                : ""
+            }`}
+          </TruncatedText>
           <span className="shrink-0">
             {t("prompt.copy.count", { count: activeNote?.copyCount ?? 0 })}
           </span>
@@ -1271,7 +1274,7 @@ function PromptStageCard({
               <span className="grid size-5 shrink-0 place-items-center rounded-full border border-theme-card-border text-[0.7rem] leading-none text-on-surface-muted">
                 1
               </span>
-              <span className="truncate">{copyImagesLabel}</span>
+              <TruncatedText>{copyImagesLabel}</TruncatedText>
             </button>
           ) : null}
           <button
@@ -1289,7 +1292,7 @@ function PromptStageCard({
                 2
               </span>
             ) : null}
-            <span className="truncate">{copyTextLabel}</span>
+            <TruncatedText>{copyTextLabel}</TruncatedText>
           </button>
           <button
             aria-label={saveLabel}
@@ -1367,13 +1370,15 @@ function PromptStageCard({
               <span className="flex min-w-0 items-center gap-1 text-code-sm text-on-surface-muted">
                 {note.projectPath ? (
                   <>
-                    <FolderOpen size={13} />
-                    <span className="truncate">{note.projectPath}</span>
+                    <FolderOpen className="shrink-0" size={13} />
+                    <TruncatedText tooltip={note.projectPath}>
+                      {abbreviateHomePath(note.projectPath)}
+                    </TruncatedText>
                   </>
                 ) : (
-                  <span className="truncate">
+                  <TruncatedText>
                     {t("prompt.copy.count", { count: note.copyCount })}
-                  </span>
+                  </TruncatedText>
                 )}
               </span>
             </span>
@@ -1403,7 +1408,7 @@ function PromptStageCard({
           <div className="flex h-8 w-full items-center justify-between gap-3 px-1 text-code-sm text-on-surface-muted">
             <span className="inline-flex min-w-0 items-center gap-1.5">
               <Clock size={14} />
-              <span className="truncate">{formatDateTime(updatedAt)}</span>
+              <TruncatedText>{formatDateTime(updatedAt)}</TruncatedText>
             </span>
             <span className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-theme-control-border bg-theme-control/92 p-1 shadow-[0_10px_26px_rgb(var(--theme-panel-shadow)/0.2)]">
               <button
@@ -1784,10 +1789,9 @@ function PromptEditableTagChip({
         getPromptTagGroupColorClass(label),
       )}
       data-testid={`prompt-edit-tag-chip-${label}`}
-      title={label}
     >
       <Tag className="shrink-0 opacity-75" size={15} />
-      <span className="min-w-0 truncate">{label}</span>
+      <TruncatedText className="min-w-0">{label}</TruncatedText>
       <button
         aria-label={editLabel}
         className="grid size-5 shrink-0 place-items-center rounded-full opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
@@ -1842,7 +1846,6 @@ function PromptLibraryTagChip({
           onBind();
         }
       }}
-      title={label}
       type="button"
     >
       {bound ? (
@@ -1850,7 +1853,7 @@ function PromptLibraryTagChip({
       ) : (
         <Plus className="shrink-0 opacity-75" size={13} />
       )}
-      <span className="min-w-0 truncate">{label}</span>
+      <TruncatedText className="min-w-0">{label}</TruncatedText>
     </button>
   );
 }
@@ -2038,9 +2041,8 @@ function PromptTagGroupPill({
           ? "px-1.5 py-0.5 text-code-sm"
           : "px-2 py-1 text-label-caps uppercase",
       )}
-      title={label}
     >
-      <span className="min-w-0 truncate">{label}</span>
+      <TruncatedText className="min-w-0">{label}</TruncatedText>
     </span>
   );
 }

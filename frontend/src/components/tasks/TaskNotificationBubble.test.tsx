@@ -174,4 +174,53 @@ describe("TaskNotificationBubble", () => {
     expect(mockOpenResultForTask).toHaveBeenCalledWith("task-search-1");
     expect(useAppUiStore.getState().taskCenterOpen).toBe(false);
   });
+
+  it("toggles TruncatedText lines between 2 and false when expanding and collapsing long messages", () => {
+    const longMessage =
+      "Line one error details that exceed fifty characters to trigger expand control and multiline clamping";
+    mockNotification = {
+      ...mockNotification!,
+      message: longMessage,
+      isFailure: true,
+    };
+
+    render(<TaskNotificationBubble />);
+
+    const messageEl = screen.getByText(longMessage);
+    expect(messageEl.className).toContain("line-clamp-2");
+    expect(messageEl.getAttribute("title")).toBeNull();
+
+    Object.defineProperty(messageEl, "clientWidth", {
+      configurable: true,
+      get: () => 200,
+    });
+    Object.defineProperty(messageEl, "scrollWidth", {
+      configurable: true,
+      get: () => 200,
+    });
+    Object.defineProperty(messageEl, "clientHeight", {
+      configurable: true,
+      get: () => 32,
+    });
+    Object.defineProperty(messageEl, "scrollHeight", {
+      configurable: true,
+      get: () => 72,
+    });
+
+    fireEvent.mouseEnter(messageEl);
+    act(() => {
+      vi.advanceTimersByTime(320);
+    });
+    expect(screen.getByRole("tooltip").textContent).toBe(longMessage);
+
+    fireEvent.click(screen.getByRole("button", { name: "展开完整信息" }));
+    expect(messageEl.className).not.toContain("line-clamp-2");
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    fireEvent.mouseEnter(messageEl);
+    act(() => {
+      vi.advanceTimersByTime(320);
+    });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
 });

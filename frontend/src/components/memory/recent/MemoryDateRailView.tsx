@@ -9,6 +9,7 @@ import type {
 } from "../../../types/memory";
 import { Badge } from "../../foundation/Badge";
 import { Panel } from "../../foundation/Panel";
+import { TruncatedText } from "../../foundation/TruncatedText";
 import { MemoryNodeCard } from "./MemoryNodeCard";
 import { groupProjectsByDateRail } from "./recentModel";
 
@@ -73,9 +74,12 @@ export function MemoryDateRailView({
                     <span className="grid size-7 shrink-0 place-items-center rounded-xl border border-theme-control-border/70 bg-theme-control/70 text-primary">
                       <FolderOpen size={14} />
                     </span>
-                    <h4 className="truncate text-body-sm font-semibold text-on-surface">
+                    <TruncatedText
+                      as="h4"
+                      className="text-body-sm font-semibold text-on-surface"
+                    >
                       {projectGroup.projectTitle}
-                    </h4>
+                    </TruncatedText>
                   </div>
                   <Badge tone="neutral">
                     {t("memory.recent.nodeCountBadge", {

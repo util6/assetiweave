@@ -1,5 +1,6 @@
 import type { Translator } from "../../i18n/I18nProvider";
 import type { ConversationSyncTaskProgress } from "../../services/conversations";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export function ConversationFullSyncProgress({
   progress,
@@ -26,12 +27,12 @@ export function ConversationFullSyncProgress({
       <div className="flex items-start justify-between gap-3 text-body-sm">
         <div className="min-w-0 text-on-surface-variant">
           {progress.current_source_name ? (
-            <p className="truncate">
+            <TruncatedText as="p">
               {t("settings.conversation.fullSyncCurrentSource")}
               <span className="font-semibold text-on-surface">
                 {progress.current_source_name}
               </span>
-            </p>
+            </TruncatedText>
           ) : determinate ? (
             <p>
               {t("settings.conversation.fullSyncProgressCount", {
