@@ -2909,7 +2909,6 @@ function SettingsPathRow({
         <TruncatedText
           as="code"
           className="min-w-0 flex-1 rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-code-md text-on-surface-variant"
-          tooltip={value}
         >
           {displayValue}
         </TruncatedText>
@@ -2951,7 +2950,6 @@ function DataBackupDirectoryRow({
             "min-w-0 flex-1 rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-code-md text-on-surface-variant",
             !hasCustomDirectory && "font-sans",
           )}
-          tooltip={hasCustomDirectory ? customDirectory : undefined}
         >
           {displayPath}
         </TruncatedText>
@@ -3045,7 +3043,6 @@ function CliToolsInstallRow({
             <TruncatedText
               as="code"
               className="mt-1 text-code-md text-on-surface-variant"
-              tooltip={status.install_dir}
             >
               {abbreviateHomePath(status.install_dir)}
             </TruncatedText>
@@ -3466,7 +3463,6 @@ function AdapterRuntimeStatusRow({
                     <TruncatedText
                       as="p"
                       className="font-mono text-code-md text-on-surface-variant"
-                      tooltip={status.program}
                     >
                       {abbreviateHomePath(status.program)}
                     </TruncatedText>

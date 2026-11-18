@@ -702,4 +702,52 @@ describe("GlobalSettingsDialog", () => {
       });
     });
   });
+
+  it("shows ~-abbreviated install_dir in CliToolsInstallRow tooltip on overflow", async () => {
+    const cliToolsService = await import("../../services/cliTools");
+    vi.mocked(cliToolsService.getCliToolsStatus).mockResolvedValueOnce({
+      bundled: true,
+      installed: true,
+      path_configured: true,
+      install_dir: "/Users/demo/.local/bin",
+      message: "CLI tools installed",
+    } as never);
+
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="general.storage"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    const installDirEl = await screen.findByText("~/.local/bin");
+    expect(installDirEl.getAttribute("title")).toBeNull();
+    Object.defineProperty(installDirEl, "clientWidth", {
+      configurable: true,
+      get: () => 60,
+    });
+    Object.defineProperty(installDirEl, "scrollWidth", {
+      configurable: true,
+      get: () => 180,
+    });
+    Object.defineProperty(installDirEl, "clientHeight", {
+      configurable: true,
+      get: () => 18,
+    });
+    Object.defineProperty(installDirEl, "scrollHeight", {
+      configurable: true,
+      get: () => 18,
+    });
+
+    fireEvent.mouseEnter(installDirEl);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe("~/.local/bin"),
+    );
+    fireEvent.mouseLeave(installDirEl);
+  });
 });

@@ -161,7 +161,7 @@ function SubagentChip({
     <Button
       aria-label={
         unresolved
-          ? t("conversation.subagent.unresolvedHint")
+          ? `${role} · ${title} · ${t("conversation.subagent.unresolved")} · ${t("conversation.subagent.unresolvedHint")}`
           : t("conversation.subagent.openChildSession", {
               title: `${role} ${title}`,
             })
@@ -172,11 +172,6 @@ function SubagentChip({
       disabled={unresolved}
       onClick={unresolved ? undefined : onOpen}
       size="sm"
-      title={
-        unresolved
-          ? `${role} · ${title} · ${t("conversation.subagent.unresolved")}`
-          : undefined
-      }
       type="button"
       variant="outline"
     >

@@ -9,7 +9,7 @@ import {
   useTooltipTiming,
 } from "../ui/tooltip";
 
-export type TruncatedTextLines = 1 | 2 | 3 | false | null | 0;
+export type TruncatedTextLines = 1 | 2 | 3 | false;
 
 export interface TruncatedTextOwnProps<T extends React.ElementType = "span"> {
   as?: T;
