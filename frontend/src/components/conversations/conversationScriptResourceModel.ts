@@ -91,7 +91,7 @@ export function packageLifecycleAction(
   }
   const origin = entry.installed_package?.origin;
   if (!entry.runtime_ready) {
-    // #199: a broken local package keeps its row instead of being silently removed.
+    // 199 号票：a broken local package keeps its row instead of being silently removed.
     // The repair path is unregistering it and re-registering a valid source directory.
     // Managed releases are repaired through the install path instead.
     return origin === "managed_release" || !origin ? null : "unregister";
