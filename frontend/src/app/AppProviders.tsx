@@ -18,6 +18,7 @@ import { CatalogTaskProvider } from "./backgroundTasks/CatalogTaskProvider";
 import { ConversationDataMaintenanceProvider } from "./backgroundTasks/ConversationDataMaintenanceProvider";
 import { ConversationSearchProvider } from "./backgroundTasks/ConversationSearchProvider";
 import { TaskCenterProvider } from "./backgroundTasks/TaskCenterProvider";
+import { TooltipProvider } from "../components/ui/tooltip";
 
 const appQueryClient = createAppQueryClient();
 
@@ -31,32 +32,34 @@ export function AppProviders({ children, i18n }: AppProvidersProps) {
     <QueryClientProvider client={appQueryClient}>
       <QueryScopeProvider>
         <I18nProvider i18n={i18n}>
-          <I18nEffects />
-          <SettingsEffects />
-          <ConversationCardKindRegistryProvider>
-            <ConversationSyncProvider>
-              <ConversationDataMaintenanceProvider>
-                <AiExecutionTaskProvider>
-                  <AgentLifecycleTaskProvider>
-                    <MemoryTaskProvider>
-                      <SkillBackupProvider>
-                        <CatalogTaskProvider>
-                          <TaskCenterProvider>
-                            <ConversationSearchProvider>
-                              <AppUpdateProvider>
-                                <SearchIndexProvider />
-                                {children}
-                              </AppUpdateProvider>
-                            </ConversationSearchProvider>
-                          </TaskCenterProvider>
-                        </CatalogTaskProvider>
-                      </SkillBackupProvider>
-                    </MemoryTaskProvider>
-                  </AgentLifecycleTaskProvider>
-                </AiExecutionTaskProvider>
-              </ConversationDataMaintenanceProvider>
-            </ConversationSyncProvider>
-          </ConversationCardKindRegistryProvider>
+          <TooltipProvider delayDuration={300} skipDelayDuration={150}>
+            <I18nEffects />
+            <SettingsEffects />
+            <ConversationCardKindRegistryProvider>
+              <ConversationSyncProvider>
+                <ConversationDataMaintenanceProvider>
+                  <AiExecutionTaskProvider>
+                    <AgentLifecycleTaskProvider>
+                      <MemoryTaskProvider>
+                        <SkillBackupProvider>
+                          <CatalogTaskProvider>
+                            <TaskCenterProvider>
+                              <ConversationSearchProvider>
+                                <AppUpdateProvider>
+                                  <SearchIndexProvider />
+                                  {children}
+                                </AppUpdateProvider>
+                              </ConversationSearchProvider>
+                            </TaskCenterProvider>
+                          </CatalogTaskProvider>
+                        </SkillBackupProvider>
+                      </MemoryTaskProvider>
+                    </AgentLifecycleTaskProvider>
+                  </AiExecutionTaskProvider>
+                </ConversationDataMaintenanceProvider>
+              </ConversationSyncProvider>
+            </ConversationCardKindRegistryProvider>
+          </TooltipProvider>
         </I18nProvider>
       </QueryScopeProvider>
     </QueryClientProvider>
