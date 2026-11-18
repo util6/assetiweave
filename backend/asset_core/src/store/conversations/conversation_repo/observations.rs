@@ -39,9 +39,14 @@ async fn load_source_sync_contract_sqlx(
 /// 装载某数据源已完成同步的会话版本指纹，供增量差集剔除未变更会话。
 ///
 /// 水位不再单独持有 per-session 行：每会话版本由会话记录自身的
-/// `source_fingerprint` 承载，源级契约只保留「载荷策略版本」这一条必须全量
-/// 重解析的闸门。适配器内容哈希、卡片契约与投影版本的变化都不再作废水位，
-/// 而是交由每条会话的版本令牌自证内容是否变化。
+/// `source_fingerprint` 承载。源级契约里有两个必须整源重解析的闸门：
+///
+/// - `synced_payload_policy_version`：宿主侧载荷结构变更（编译期常量）。
+/// - `synced_adapter_hash`：适配器综合内容 Hash（#204），涵盖清单、主脚本与
+///   当时生效的公共策略脚本。脚本内容变化只改 Hash、不改常量，因此 Hash
+///   漂移必须与载荷策略升级同等处理——否则改了 JS 就得改 Rust 常量再重编。
+///
+/// 卡片契约与投影版本的漂移不再作废水位，交由每条会话的版本令牌自证。
 ///
 /// 本函数不产生任何删除写入：契约失配只让本轮差集退化，绝不销毁既有证据。
 pub async fn load_conversation_session_versions_sqlx(
@@ -60,8 +65,7 @@ pub async fn load_conversation_session_versions_sqlx(
     };
 
     if contract.synced_payload_policy_version != Some(i64::from(payload_policy_version)) {
-        // 载荷策略升级会改变解析产物的语义，而源文件指纹不变，
-        // 因此这是唯一必须整源重解析的合法入口。
+        // 宿主侧载荷结构变更会改变解析产物的语义，而源文件指纹不变。
         tracing::info!(
             action = "conversation.sync.payload_policy_changed",
             source_id = %source_id,
@@ -72,16 +76,36 @@ pub async fn load_conversation_session_versions_sqlx(
         return Ok(std::collections::BTreeMap::new());
     }
 
-    if contract.synced_adapter_hash.as_deref() != adapter_content_hash
-        || contract.synced_card_contract_version != card_contract_version.map(i64::from)
+    if contract.synced_adapter_hash.as_deref() != adapter_content_hash {
+        // #204：适配器综合内容 Hash 漂移（含公共策略脚本晋升）意味着解析契约
+        // 已改变，必须整源重解析；重复同步时 Hash 已回签，不会再触发。
+        if contract.synced_adapter_hash.is_none() {
+            tracing::debug!(
+                action = "conversation.sync.adapter_hash_baseline",
+                source_id = %source_id,
+                current = ?adapter_content_hash,
+                "Source has no adapter hash watermark yet; reading the whole source"
+            );
+        } else {
+            tracing::info!(
+                action = "conversation.sync.adapter_hash_changed",
+                source_id = %source_id,
+                stored = ?contract.synced_adapter_hash,
+                current = ?adapter_content_hash,
+                "Adapter composite content hash changed; reparsing the whole source"
+            );
+        }
+        return Ok(std::collections::BTreeMap::new());
+    }
+
+    if contract.synced_card_contract_version != card_contract_version.map(i64::from)
         || contract.synced_projection_version != projection_version.map(i64::from)
     {
-        // 适配器包升级不再触发整源重解析：版本令牌已内含卡片模式版本与文件指纹，
-        // 真正变化的会话会在差集中自然浮现。
+        // 卡片契约与投影版本漂移仍由会话级版本令牌自证。
         tracing::debug!(
             action = "conversation.sync.adapter_contract_drift",
             source_id = %source_id,
-            "Adapter contract drifted; session fingerprints stay authoritative"
+            "Card/projection contract drifted; session fingerprints stay authoritative"
         );
     }
 

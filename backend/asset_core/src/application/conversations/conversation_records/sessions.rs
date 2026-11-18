@@ -325,7 +325,14 @@ impl AppService {
                 ))
             })?;
 
-        let adapter_content_hash = adapter_ref.content_hash.clone();
+        // #204：单会话重投影也要回签综合内容 Hash，否则下一轮同步会因基座
+        // Hash 与水位不一致而反复整源重解析。
+        let adapter_content_hash =
+            crate::backend::infrastructure::conversations::adapter_runtime_content_hash(
+                adapter_ref,
+            )
+            .map_err(|error| AppError::External(error.to_string()))?;
+
         let card_contract_version = adapter_ref.card_contract_version;
         let payload_policy_version =
             crate::backend::infrastructure::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION;

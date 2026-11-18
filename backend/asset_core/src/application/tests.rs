@@ -2641,7 +2641,11 @@ esac
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(synced_hash.as_deref(), Some("hash-v1"));
+    // #204：水位记录的是「综合内容 Hash」（清单 + 主脚本 + 生效公共脚本），
+    // 不再是适配器基座哈希本身。
+    let synced_hash = synced_hash.expect("source watermark stamped");
+    assert_eq!(synced_hash.len(), 64);
+    assert_ne!(synced_hash.as_str(), "hash-v1");
 
     // Round 2: Incremental sync skips both sessions
     let res2 = service
@@ -2661,7 +2665,7 @@ esac
     );
 
     // Round 3: 适配器内容哈希漂移（等价于桌面端更新了适配器包）。
-    // 会话级版本由会话记录自身的指纹承载，源级契约漂移不再作废差集。
+    // #204：综合内容 Hash 漂移必须整源重解析，让存量会话在下一轮同步按新契约重建。
     adapter.content_hash = Some("hash-v2".to_string());
     crate::backend::store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter)
         .await
@@ -2679,8 +2683,8 @@ esac
         .unwrap();
     assert_eq!(res3["results"][0]["status"], "completed");
     assert_eq!(
-        res3["results"][0]["active_session_count"], 0,
-        "adapter contract drift must not invalidate the session baseline"
+        res3["results"][0]["active_session_count"], 1,
+        "composite hash drift must re-parse the stored session"
     );
 
     let updated_hash: Option<String> = sqlx::query_scalar(
@@ -2691,7 +2695,11 @@ esac
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(updated_hash.as_deref(), Some("hash-v2"));
+    let updated_hash = updated_hash.expect("source watermark re-stamped");
+    assert_ne!(
+        updated_hash, synced_hash,
+        "the watermark must advance to the new composite hash"
+    );
 
     drop(service);
     fs::remove_dir_all(root).ok();

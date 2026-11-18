@@ -87,6 +87,8 @@ pub async fn import_conversation_sessions_advanced_sqlx(
         || stored_adapter_hash.as_deref() != adapter_content_hash
         || stored_card_contract_version != card_contract_version.map(i64::from)
         || stored_projection_version != projection_version.map(i64::from);
+    // 全量同步永远强制重解析；契约漂移（含 #204 的综合内容 Hash 变化）时，
+    // 本轮读回来的会话也必须重解析，不再按会话指纹跳过。
     let force_reparse = matches!(
         sync_mode,
         crate::backend::domain::ConversationSyncMode::Full
