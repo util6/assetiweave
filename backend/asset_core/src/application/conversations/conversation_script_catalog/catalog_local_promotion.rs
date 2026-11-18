@@ -66,10 +66,9 @@ async fn find_pending_local_workspace(
         if adapter_id.is_empty() {
             continue;
         }
-        // 官方适配器物化目录由官方同步逻辑维护，不参与显式本地信任晋升。
-        if crate::backend::infrastructure::conversations::is_official_adapter_id(adapter_id) {
-            continue;
-        }
+        // #196 之后不再有“官方适配器物化目录”：受管目录里的每个适配器包
+        // 都是同等的可晋升工作区。已安装且内容未变的包由下方 hash 比较判为
+        // 非待晋升，无需额外的官方身份短路。
         let adapter = adapters.iter().find(|adapter| adapter.id == adapter_id);
         let pending = match package.as_ref() {
             Some(package) => local_candidate_is_pending_update(&candidate, Some(package), adapter),
