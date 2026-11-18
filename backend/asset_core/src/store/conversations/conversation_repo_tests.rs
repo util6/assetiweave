@@ -2223,7 +2223,7 @@ async fn sqlx_round_trips_structured_cards_and_clears_translation_on_snapshot_re
 }
 
 #[tokio::test]
-async fn sqlx_adapter_contract_drift_keeps_session_fingerprints() {
+async fn sqlx_adapter_hash_drift_reparses_while_card_and_projection_drift_do_not() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-conversation-contract-drift-{}.sqlite",
         Uuid::new_v4()
@@ -2330,15 +2330,19 @@ async fn sqlx_adapter_contract_drift_keeps_session_fingerprints() {
     .await
     .expect("compare hydration identity");
 
-    // 会话级版本由会话记录自身承载：适配器、卡片契约与投影版本漂移都不再清空差集，
-    // 真正变化的会话交给版本令牌自证。
-    for versions in [&same, &adapter_changed, &card_changed, &projection_changed] {
+    // #204：综合内容 Hash 漂移必须整源重解析（脚本内容变化不伴随常量升级）；
+    // 卡片契约与投影版本漂移仍由会话级版本令牌自证，不清空差集。
+    assert!(
+        adapter_changed.is_empty(),
+        "adapter composite hash drift must invalidate the source watermark"
+    );
+    for versions in [&same, &card_changed, &projection_changed] {
         assert_eq!(
             versions.get("session-1").map(String::as_str),
             Some("source-v1")
         );
     }
-    // 只有载荷策略升级才允许整源重解析。
+    // 载荷策略升级同样整源重解析。
     assert!(payload_policy_changed.is_empty());
 
     let remaining: i64 = sqlx::query_scalar(
