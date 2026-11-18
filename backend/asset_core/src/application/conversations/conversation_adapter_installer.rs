@@ -49,6 +49,26 @@ pub async fn install_conversation_adapter_package_from_spec(
         }));
     }
 
+    let expected_package_hash = spec
+        .expected_package_hash
+        .as_deref()
+        .and_then(clean_non_empty_string);
+    let expected_artifact_hash = spec
+        .expected_artifact_hash
+        .as_deref()
+        .and_then(clean_non_empty_string);
+    // 信任只能来自声明的校验和，或来自已按 sha256 校验过的制品压缩包；
+    // 绝不允许用“刚写入磁盘的目录 hash”给 ManagedRelease 自签信任。
+    let artifact_verified = spec.source.kind
+        == ConversationAdapterPackageInstallSourceKind::ArtifactZip
+        && expected_artifact_hash.is_some();
+    if expected_package_hash.is_none() && !artifact_verified {
+        return Err(AppError::Validation(format!(
+            "conversation adapter package {} is missing an expected checksum; refusing to establish trust for a managed release",
+            spec.id
+        )));
+    }
+
     let previous_package = service
         .load_conversation_adapter_package(spec.package_id())
         .await?;
@@ -113,12 +133,11 @@ pub async fn install_conversation_adapter_package_from_spec(
         runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
         runtime_validated_at: Some(now.clone()),
         installed_content_hash: Some(installed.validation.content_hash.clone()),
-        trusted_package_hash: Some(
-            spec.expected_package_hash
-                .as_deref()
-                .and_then(clean_non_empty_string)
-                .unwrap_or_else(|| installed.validation.content_hash.clone()),
-        ),
+        trusted_package_hash: Some(expected_package_hash.clone().unwrap_or_else(|| {
+            // 制品压缩包已按目录声明的 sha256 校验，信任链条成立；
+            // 其余 ManagedRelease 缺少声明校验和时已在入口处拒绝。
+            installed.validation.content_hash.clone()
+        })),
         error_message: None,
         created_at: previous_package
             .as_ref()
