@@ -408,6 +408,12 @@ pub fn bundled_catalog_document(path: &str) -> Option<&'static str> {
         "history/io.github.util6.gemini-web.json" => Some(include_str!(
             "../../../../../builtin-assets/history/io.github.util6.gemini-web.json"
         )),
+        "history/io.github.util6.antigravity-session.json" => Some(include_str!(
+            "../../../../../builtin-assets/history/io.github.util6.antigravity-session.json"
+        )),
+        "history/io.github.util6.codebuddy-session.json" => Some(include_str!(
+            "../../../../../builtin-assets/history/io.github.util6.codebuddy-session.json"
+        )),
         _ => None,
     }
 }
