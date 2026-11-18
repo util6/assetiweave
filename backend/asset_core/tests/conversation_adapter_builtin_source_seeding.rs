@@ -269,7 +269,10 @@ async fn repeated_bootstrap_and_registration_keep_sources_idempotent() {
 
     let service = open_service(db_path.clone()).await;
     register_local_package(&service, &package_dir).await;
-    assert_eq!(builtin_source_ids(&service).await, vec!["codex-live".to_string()]);
+    assert_eq!(
+        builtin_source_ids(&service).await,
+        vec!["codex-live".to_string()]
+    );
 
     // 用户改动：改名并停用。
     let mut customized = service

@@ -196,6 +196,18 @@ fn version_snapshot_dirs(package_root: &Path) -> Vec<String> {
     names
 }
 
+async fn active_state(service: &AppService, temp: &TempHome) -> (String, usize) {
+    let package = service
+        .load_conversation_adapter_package(PACKAGE_ID)
+        .await
+        .expect("load package")
+        .expect("registered package");
+    (
+        package.install_dir,
+        version_snapshot_dirs(&temp.package_root()).len(),
+    )
+}
+
 async fn trusted_package_hash(service: &AppService) -> String {
     service
         .load_conversation_adapter_package(PACKAGE_ID)
@@ -325,6 +337,10 @@ async fn failed_promotion_keeps_the_active_snapshot_and_leaves_no_prepared_works
         &probe_script(1),
     );
     register_local_package(&service, &workspace).await;
+    // #199 routes registration through workspace promotion, so the first install
+    // already owns an immutable snapshot. Capture that state instead of assuming
+    // the source directory stays active.
+    let (install_before, snapshots_before) = active_state(&service, &temp).await;
     let trusted_before = trusted_package_hash(&service).await;
 
     let candidate = temp.adapter_root().join(ADAPTER_ID);
@@ -350,14 +366,18 @@ async fn failed_promotion_keeps_the_active_snapshot_and_leaves_no_prepared_works
         .await
         .expect("load package")
         .expect("package must remain registered");
-    assert_eq!(package.install_dir, workspace.to_string_lossy());
+    let (install_after, snapshots_after) = active_state(&service, &temp).await;
+    assert_eq!(
+        install_after, install_before,
+        "a failed promotion must keep the previously active snapshot"
+    );
+    assert_eq!(
+        snapshots_after, snapshots_before,
+        "a failed promotion must not add a new version snapshot"
+    );
     assert_eq!(
         package.trusted_package_hash.as_deref(),
         Some(trusted_before.as_str())
-    );
-    assert!(
-        version_snapshot_dirs(&temp.package_root()).is_empty(),
-        "a failed promotion must not leave a partial snapshot"
     );
     let prepared = temp.package_root().join("prepared");
     assert!(
@@ -436,6 +456,7 @@ async fn explicit_version_still_goes_through_the_remote_release_catalog() {
         .expect("load package")
         .expect("registered package")
         .install_dir;
+    let snapshots_before = version_snapshot_dirs(&temp.package_root()).len();
 
     let candidate = temp.adapter_root().join(ADAPTER_ID);
     write_package_dir(
@@ -455,9 +476,10 @@ async fn explicit_version_still_goes_through_the_remote_release_catalog() {
         !message.contains("workspace") && !message.contains("promote"),
         "explicit version must not fall back to local promotion: {message}"
     );
-    assert!(
-        version_snapshot_dirs(&temp.package_root()).is_empty(),
-        "no local snapshot may be created when a version is pinned"
+    assert_eq!(
+        version_snapshot_dirs(&temp.package_root()).len(),
+        snapshots_before,
+        "a pinned version must not add a local promotion snapshot"
     );
     let package = service
         .load_conversation_adapter_package(PACKAGE_ID)
