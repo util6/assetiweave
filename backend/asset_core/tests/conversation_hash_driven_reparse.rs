@@ -418,6 +418,87 @@ async fn common_policy_hash_drift_reparses_incrementally_and_refreshes_watermark
     drop(service);
 }
 
+/// #204 AC1 / #201 AC4 的真实包形态：晋升快照里自带 `payload-policy.mjs` 副本。
+///
+/// `common/` 是权威解析位置，包内副本不得遮蔽它的实时内容。修改
+/// `common/payload-policy.mjs` 必须改变综合 Hash，并在下一轮增量同步触发重解析。
+#[tokio::test(flavor = "multi_thread")]
+async fn common_policy_edit_reparses_even_when_the_package_ships_its_own_copy() {
+    let temp = TempHome::new("pkg-copy");
+    let read_log_path = temp.root().join("read.log");
+    let state = temp.root().join("state.txt");
+    std::env::set_var("AIW_204_READ_LOG", &read_log_path);
+    std::env::set_var("AIW_204_STATE", &state);
+    write_state(&state, &[("s-copy", "Q-copy", "A-copy")]);
+
+    let source_id = "hash-reparse-pkg-copy";
+    let source_dir = temp.root().join("source-dir");
+    fs::create_dir_all(&source_dir).expect("create source dir");
+    let package_dir = temp.root().join("workspace").join("hash-reparse-fixture");
+    write_adapter_package(&package_dir);
+    // 真实内置包形态：包目录自带 `payload-policy.mjs` 副本。
+    fs::write(
+        package_dir.join("payload-policy.mjs"),
+        "// PACKAGE_FROZEN_COPY\n// HASH_REPARSE_MARKER=packaged\n",
+    )
+    .expect("write packaged payload policy copy");
+
+    let service = open_service(temp.root().join("app.db")).await;
+    write_policy(&temp.common_dir(), "v1");
+    register_fixture(&service, &package_dir).await;
+    upsert_source(&service, source_id, &source_dir).await;
+
+    let package = service
+        .load_conversation_adapter_package_by_adapter(ADAPTER_ID)
+        .await
+        .expect("load promoted package")
+        .expect("fixture package is promoted");
+    assert!(
+        PathBuf::from(&package.install_dir)
+            .join("payload-policy.mjs")
+            .is_file(),
+        "the promoted snapshot must really ship its own payload-policy copy"
+    );
+
+    sync(&service, source_id, ConversationSyncMode::Incremental).await;
+    let first_hash = synced_adapter_hash(&service, source_id)
+        .await
+        .expect("first sync stamps the adapter hash");
+    let first_log = read_log(&read_log_path);
+    assert_eq!(first_log.len(), 1, "first sync must read the session once");
+
+    // 只改 common/ 的实时策略；快照里的副本保持原样。
+    write_policy(&temp.common_dir(), "v2");
+    let drifted_hash = current_runtime_hash(&service).await;
+    assert_ne!(
+        drifted_hash, first_hash,
+        "editing common/payload-policy.mjs must change the composite hash even when the package ships a copy"
+    );
+
+    sync(&service, source_id, ConversationSyncMode::Incremental).await;
+    let after_drift_log = read_log(&read_log_path);
+    assert_eq!(
+        after_drift_log.len(),
+        first_log.len() + 1,
+        "hash drift must trigger a re-parse on the next incremental sync"
+    );
+    assert!(
+        after_drift_log
+            .last()
+            .is_some_and(|line| line.contains("HASH_REPARSE_MARKER=v2")),
+        "the re-parse must use the live common/ policy, got {after_drift_log:?}"
+    );
+    assert_eq!(
+        synced_adapter_hash(&service, source_id).await.as_deref(),
+        Some(drifted_hash.as_str()),
+        "the watermark must advance to the composite hash that saw the common/ edit"
+    );
+
+    std::env::remove_var("AIW_204_READ_LOG");
+    std::env::remove_var("AIW_204_STATE");
+    drop(service);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn missing_source_session_keeps_all_turns_and_qa_through_reparse_and_full_sync() {
     let temp = TempHome::new("missing");

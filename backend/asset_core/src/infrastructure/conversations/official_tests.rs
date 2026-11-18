@@ -86,8 +86,16 @@ fn discovery_projects_existing_adapter_without_rewriting_user_edits() {
     assert_eq!(first[0].id, "codex");
     assert_eq!(
         first[0].trust_state,
-        ConversationAdapterTrustState::BuiltIn,
-        "an adapter that physically exists is projected as a managed adapter"
+        ConversationAdapterTrustState::Untrusted,
+        "a package that merely exists on disk is an untrusted observation (#195)"
+    );
+    assert_eq!(
+        first[0].trusted_hash, None,
+        "discovery must never sign the observed content into a trusted hash"
+    );
+    assert!(
+        first[0].content_hash.is_some(),
+        "discovery still records what the on-disk bytes hash to"
     );
     assert_eq!(
         snapshot(&script_path),

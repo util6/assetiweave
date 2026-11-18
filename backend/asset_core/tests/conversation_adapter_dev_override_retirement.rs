@@ -3,7 +3,6 @@
 //! 用例走 `AppService` 公共接缝，并且必须在独立测试进程里运行：`ASSETIWEAVE_HOME`
 //! 是进程级环境变量，和单元测试并行会互相踩踏，也会污染真实 `~/.assetiweave`。
 
-use asset_core::application::system::conversation_adapters::reconcile_app_conversation_adapters;
 use asset_core::application::AppService;
 use asset_core::domain::conversations::{
     ConversationAdapterPackage, ConversationAdapterPackageOrigin,
@@ -165,7 +164,7 @@ async fn open_service(db_path: PathBuf) -> AppService {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn reconcile_migrates_legacy_dev_override_into_managed_snapshot() {
+async fn startup_migrates_legacy_dev_override_into_managed_snapshot() {
     let temp = TempHome::new("migrate");
     let source_dir = temp.root().join("workspace").join("legacy-dev-source");
     write_package_dir(
@@ -176,7 +175,8 @@ async fn reconcile_migrates_legacy_dev_override_into_managed_snapshot() {
         PROBE,
     );
 
-    let service = open_service(temp.home().join("app.db")).await;
+    let db_path = temp.home().join("app.db");
+    let service = open_service(db_path.clone()).await;
     service
         .save_conversation_adapter_package(&legacy_dev_override_package(
             "com.util6.legacy-dev",
@@ -186,10 +186,11 @@ async fn reconcile_migrates_legacy_dev_override_into_managed_snapshot() {
         ))
         .await
         .expect("seed legacy dev_override row");
+    drop(service);
 
-    reconcile_app_conversation_adapters(service.pool(), service.tenant_id())
-        .await
-        .expect("reconcile app conversation adapters");
+    // #195 / ADR-0017：遗留 `dev_override` 迁移只在启动对账执行，
+    // 不再挂在租户切换 / reconcile 的同步请求路径上，所以这里必须重新启动一次。
+    let service = open_service(db_path).await;
 
     let package = service
         .load_conversation_adapter_package("com.util6.legacy-dev")
@@ -279,11 +280,12 @@ async fn reconcile_migrates_legacy_dev_override_into_managed_snapshot() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn reconcile_keeps_unreachable_dev_override_rows_but_marks_them_unready() {
+async fn startup_keeps_unreachable_dev_override_rows_but_marks_them_unready() {
     let temp = TempHome::new("missing-source");
     let missing_source = temp.root().join("workspace").join("deleted-source");
 
-    let service = open_service(temp.home().join("app.db")).await;
+    let db_path = temp.home().join("app.db");
+    let service = open_service(db_path.clone()).await;
     service
         .save_conversation_adapter_package(&legacy_dev_override_package(
             "com.util6.gone-dev",
@@ -293,10 +295,10 @@ async fn reconcile_keeps_unreachable_dev_override_rows_but_marks_them_unready() 
         ))
         .await
         .expect("seed legacy dev_override row");
+    drop(service);
 
-    reconcile_app_conversation_adapters(service.pool(), service.tenant_id())
-        .await
-        .expect("reconcile must survive an unreachable legacy source");
+    // #195 / ADR-0017：启动期迁移遇到不可达源只标记不可运行，不能阻断启动。
+    let service = open_service(db_path).await;
 
     let package = service
         .load_conversation_adapter_package("com.util6.gone-dev")
@@ -336,7 +338,7 @@ async fn reconcile_keeps_unreachable_dev_override_rows_but_marks_them_unready() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn repeated_reconcile_is_idempotent_for_migrated_rows() {
+async fn repeated_startup_migration_is_idempotent_for_migrated_rows() {
     let temp = TempHome::new("idempotent");
     let source_dir = temp.root().join("workspace").join("legacy-dev-source");
     write_package_dir(
@@ -347,7 +349,8 @@ async fn repeated_reconcile_is_idempotent_for_migrated_rows() {
         PROBE,
     );
 
-    let service = open_service(temp.home().join("app.db")).await;
+    let db_path = temp.home().join("app.db");
+    let service = open_service(db_path.clone()).await;
     service
         .save_conversation_adapter_package(&legacy_dev_override_package(
             "com.util6.legacy-dev",
@@ -357,20 +360,18 @@ async fn repeated_reconcile_is_idempotent_for_migrated_rows() {
         ))
         .await
         .expect("seed legacy dev_override row");
+    drop(service);
 
-    reconcile_app_conversation_adapters(service.pool(), service.tenant_id())
-        .await
-        .expect("first reconcile");
+    // #195 / ADR-0017：第一次启动执行迁移，第二次启动必须幂等跳过。
+    let service = open_service(db_path.clone()).await;
     let first = service
         .load_conversation_adapter_package("com.util6.legacy-dev")
         .await
         .expect("load package")
         .expect("package exists");
+    drop(service);
 
-    reconcile_app_conversation_adapters(service.pool(), service.tenant_id())
-        .await
-        .expect("second reconcile");
-
+    let service = open_service(db_path).await;
     let second = service
         .load_conversation_adapter_package("com.util6.legacy-dev")
         .await

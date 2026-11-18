@@ -755,6 +755,20 @@ async fn workspace_upgrade_promotes_only_a_probed_immutable_runtime_copy() {
     assert!(!first_install.exists());
     assert!(second_install.is_dir());
 
+    let package_before_failure = service
+        .load_conversation_adapter_package("com.util6.external-test")
+        .await
+        .expect("load package before failed revision")
+        .expect("active package before failed revision");
+    let adapter_before_failure = crate::backend::store::load_conversation_adapter_sqlx(
+        service.pool(),
+        service.tenant_id(),
+        "external-test",
+    )
+    .await
+    .expect("load adapter before failed revision")
+    .expect("active adapter before failed revision");
+
     write_executable("#!/bin/sh\ncat >/dev/null\nprintf 'invalid\\n'\n");
     let error = promote_conversation_adapter_workspace_package(
         &service,
@@ -770,8 +784,37 @@ async fn workspace_upgrade_promotes_only_a_probed_immutable_runtime_copy() {
         .await
         .expect("load retained package")
         .expect("retained package");
-    assert_eq!(PathBuf::from(retained.install_dir), second_install);
+    assert_eq!(PathBuf::from(&retained.install_dir), second_install);
     assert!(second_install.is_dir());
+
+    // #195：失败晋升不得留下任何半写入的受信任记录，DB 行必须与晋升前逐字段一致。
+    assert_eq!(
+        retained, package_before_failure,
+        "a failed promotion must not mutate the package row"
+    );
+    let adapter_after_failure = crate::backend::store::load_conversation_adapter_sqlx(
+        service.pool(),
+        service.tenant_id(),
+        "external-test",
+    )
+    .await
+    .expect("load adapter after failed revision")
+    .expect("active adapter after failed revision");
+    assert_eq!(
+        adapter_after_failure, adapter_before_failure,
+        "a failed promotion must not mutate the adapter row"
+    );
+    let prepared_root = managed_root
+        .join("packages")
+        .join("com.util6.external-test")
+        .join("prepared");
+    let prepared_leftovers = fs::read_dir(&prepared_root)
+        .map(|entries| entries.count())
+        .unwrap_or(0);
+    assert_eq!(
+        prepared_leftovers, 0,
+        "a failed promotion must not leave staging directories behind"
+    );
 
     fs::write(
         package_dir.join("conversation-adapter-package.json"),

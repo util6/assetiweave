@@ -1125,12 +1125,12 @@ async fn creating_tenant_seeds_isolated_skill_backup_library_root() {
         .await
         .expect("list tenant profiles")
         .is_empty());
-    let builtin_adapter_ids = tenant_service
+    let seeded_adapters = tenant_service
         .list_conversation_adapters()
-        .expect("list tenant conversation adapters")
-        .into_iter()
-        .filter(|adapter| adapter.trust_state == ConversationAdapterTrustState::BuiltIn)
-        .map(|adapter| adapter.id)
+        .expect("list tenant conversation adapters");
+    let seeded_adapter_ids = seeded_adapters
+        .iter()
+        .map(|adapter| adapter.id.clone())
         .collect::<std::collections::BTreeSet<_>>();
     let prepared_builtin_adapter_ids = tenant_service
         .runtime
@@ -1139,7 +1139,16 @@ async fn creating_tenant_seeds_isolated_skill_backup_library_root() {
         .map(|adapter| adapter.id.clone())
         .collect::<std::collections::BTreeSet<_>>();
     assert!(!prepared_builtin_adapter_ids.is_empty());
-    assert_eq!(builtin_adapter_ids, prepared_builtin_adapter_ids);
+    assert_eq!(seeded_adapter_ids, prepared_builtin_adapter_ids);
+    // #195：新租户投影出来的只是受管目录里的磁盘观测，播种本身不授予信任；
+    // 只有显式注册 / 晋升才会写入 trusted_hash。
+    assert!(
+        seeded_adapters.iter().all(|adapter| {
+            adapter.trust_state == ConversationAdapterTrustState::Untrusted
+                && adapter.trusted_hash.is_none()
+        }),
+        "tenant seeding must not grant implicit trust to discovered adapters"
+    );
 
     drop(tenant_service);
     fs::remove_dir_all(root).ok();
@@ -1485,6 +1494,27 @@ fn adapter_manifest_entry(root: &Path, script: &Path) -> String {
         .to_string()
 }
 
+/// #195：在测试里直接构造适配器行时，必须像「显式注册」一样自带信任指纹。
+///
+/// 生产环境的信任只能由晋升 / 安装 / 注册建立，绝不能从受管目录的磁盘观测里
+/// 推导出来。测试夹具既然是自己写下的清单与脚本，就应该显式声明「信任的正是
+/// 这份内容」：这里复用生产校验器算出与运行时完全一致的清单指纹，并同时写入
+/// `content_hash` 与 `trusted_hash`，让信任门禁按正常语义放行。
+fn trust_fixture_adapter(adapter: &mut ConversationAdapter, manifest_path: &Path) {
+    let hash =
+        crate::backend::infrastructure::conversations::external::validate_external_adapter_manifest(
+            &manifest_path.to_string_lossy(),
+        )
+        .map(|validation| validation.content_hash)
+        .unwrap_or_else(|_| {
+            // 没有可执行脚本的占位清单（`{}`）无法运行，只需要一个稳定指纹。
+            crate::backend::infrastructure::conversations::io_utils::hash_file(manifest_path)
+                .expect("hash placeholder fixture manifest")
+        });
+    adapter.content_hash = Some(hash.clone());
+    adapter.trusted_hash = Some(hash);
+}
+
 async fn upsert_conversation_export_fixture(
     service: &AppService,
     root: &Path,
@@ -1515,7 +1545,7 @@ async fn upsert_conversation_export_fixture(
         fs::write(&manifest_path, "{}").expect("write placeholder manifest");
     }
     let now = "2026-01-01T00:00:00Z".to_string();
-    let adapter = ConversationAdapter {
+    let mut adapter = ConversationAdapter {
         id: adapter_id.clone(),
         name: "Fixture export adapter".to_string(),
         kind: ConversationAdapterKind::External,
@@ -1535,6 +1565,7 @@ async fn upsert_conversation_export_fixture(
         created_at: now.clone(),
         updated_at: now.clone(),
     };
+    trust_fixture_adapter(&mut adapter, &manifest_path);
     let source = ConversationSource {
         id: source_id,
         adapter_id,
@@ -2202,7 +2233,7 @@ esac
     .expect("write adapter manifest");
 
     let now = "2026-01-01T00:00:00Z".to_string();
-    let adapter = ConversationAdapter {
+    let mut adapter = ConversationAdapter {
         id: adapter_id.clone(),
         name: "Fixture fault adapter".to_string(),
         kind: ConversationAdapterKind::External,
@@ -2222,6 +2253,7 @@ esac
         created_at: now.clone(),
         updated_at: now.clone(),
     };
+    trust_fixture_adapter(&mut adapter, &manifest_path);
     let source = ConversationSource {
         id: source_id.clone(),
         adapter_id: adapter_id.clone(),
@@ -2410,7 +2442,7 @@ esac
     .expect("write adapter manifest");
 
     let now = "2026-01-01T00:00:00Z".to_string();
-    let adapter = ConversationAdapter {
+    let mut adapter = ConversationAdapter {
         id: adapter_id.clone(),
         name: "Stage fault adapter".to_string(),
         kind: ConversationAdapterKind::External,
@@ -2430,6 +2462,7 @@ esac
         created_at: now.clone(),
         updated_at: now.clone(),
     };
+    trust_fixture_adapter(&mut adapter, &manifest_path);
     let source = ConversationSource {
         id: source_id.clone(),
         adapter_id: adapter_id.clone(),
@@ -2584,6 +2617,7 @@ esac
         created_at: now.clone(),
         updated_at: now.clone(),
     };
+    trust_fixture_adapter(&mut adapter, &manifest_path);
     let source = ConversationSource {
         id: source_id.clone(),
         adapter_id: adapter_id.clone(),

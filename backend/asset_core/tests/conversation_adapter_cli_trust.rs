@@ -352,6 +352,65 @@ async fn developer_sync_and_user_upgrade_share_one_trusted_promotion_path() {
         );
     }
 
+    // 3b. A real `packages/<id>/versions/<rev>` snapshot is internal runtime state,
+    // not an editable workspace. Scanning must skip it, and an explicit path must
+    // be rejected instead of silently re-promoting the snapshot.
+    let snapshot_dir = adapter_root
+        .join("packages")
+        .join("com.example.snapshot-dev")
+        .join("versions")
+        .join("1.0.0-abcdef123456");
+    write_package_dir(
+        &snapshot_dir,
+        "com.example.snapshot-dev",
+        "snapshot-dev",
+        "1.0.0",
+        &probe_script(1),
+    );
+    let scanned_snapshot = service
+        .upgrade_conversation_adapter_workspace(ConversationAdapterWorkspaceUpgradeParams {
+            package_dir: None,
+            developer: false,
+            dry_run: false,
+        })
+        .await
+        .expect("user upgrade must not fail because a runtime snapshot exists");
+    let canonical_packages =
+        fs::canonicalize(adapter_root.join("packages")).expect("canonical packages dir");
+    for item in scanned_snapshot["upgraded"]
+        .as_array()
+        .expect("scanned array")
+    {
+        let source = fs::canonicalize(PathBuf::from(
+            item["source_dir"].as_str().expect("source dir"),
+        ))
+        .expect("canonical source dir");
+        assert!(
+            !source.starts_with(&canonical_packages),
+            "a managed runtime snapshot must never be promoted as a workspace: {source:?}"
+        );
+    }
+    let error = service
+        .upgrade_conversation_adapter_workspace(ConversationAdapterWorkspaceUpgradeParams {
+            package_dir: Some(snapshot_dir.to_string_lossy().to_string()),
+            developer: false,
+            dry_run: false,
+        })
+        .await
+        .expect_err("an explicit runtime snapshot source must be rejected");
+    assert!(
+        error.to_string().contains("snapshot"),
+        "the rejection must explain that a runtime snapshot is not a workspace: {error}"
+    );
+    assert!(
+        !service
+            .list_conversation_adapters()
+            .expect("list adapters")
+            .iter()
+            .any(|adapter| adapter.id == "snapshot-dev"),
+        "the snapshot must not be registered as an adapter workspace"
+    );
+
     // 4. Dry-run must not sync, promote, or write package rows.
     let gamma_source = write_repo_adapter(&workspace, "gamma-dev", "1.0.0");
     let managed_before = tree_snapshot(&adapter_root);

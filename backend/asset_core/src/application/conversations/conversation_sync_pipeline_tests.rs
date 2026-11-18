@@ -23,6 +23,20 @@ fn write_test_script(dir: &Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
+/// #195：测试夹具自己写下清单与脚本，就必须像显式注册一样同时给出
+/// `content_hash` 与 `trusted_hash`——信任来自夹具的显式声明，而不是运行期
+/// 对受管目录的磁盘观测。指纹复用生产校验器，保证与运行时校验结果一致。
+fn trust_fixture_adapter(adapter: &mut ConversationAdapter, manifest_path: &Path) {
+    let hash =
+        crate::backend::infrastructure::conversations::external::validate_external_adapter_manifest(
+            &manifest_path.to_string_lossy(),
+        )
+        .map(|validation| validation.content_hash)
+        .expect("validate fixture adapter manifest");
+    adapter.content_hash = Some(hash.clone());
+    adapter.trusted_hash = Some(hash);
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn conversation_sync_records_failures_once_across_sync_and_persist_stages() {
@@ -80,7 +94,7 @@ esac
     .expect("write adapter manifest");
 
     let now = "2026-01-01T00:00:00Z".to_string();
-    let adapter = ConversationAdapter {
+    let mut adapter = ConversationAdapter {
         id: adapter_id.clone(),
         name: "Sync failure dedup adapter".to_string(),
         kind: ConversationAdapterKind::External,
@@ -100,6 +114,7 @@ esac
         created_at: now.clone(),
         updated_at: now.clone(),
     };
+    trust_fixture_adapter(&mut adapter, &manifest_path);
     let source = ConversationSource {
         id: source_id.clone(),
         adapter_id: adapter_id.clone(),

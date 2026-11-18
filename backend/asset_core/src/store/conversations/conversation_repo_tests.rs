@@ -649,7 +649,7 @@ async fn seeding_builtin_conversation_adapters_preserves_user_registered_adapter
 
     let loaded = async {
         upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &market_adapter).await?;
-        seed_prepared_builtin_conversation_adapters_sqlx(
+        seed_discovered_conversation_adapters_sqlx(
             database.pool(),
             TEST_TENANT_ID,
             vec![test_conversation_adapter(
@@ -668,6 +668,68 @@ async fn seeding_builtin_conversation_adapters_preserves_user_registered_adapter
     assert_eq!(loaded.trust_state, ConversationAdapterTrustState::Trusted);
     assert_eq!(loaded.manifest_path, market_adapter.manifest_path);
     assert_eq!(loaded.executable_path, market_adapter.executable_path);
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn seeding_discovered_adapters_refreshes_observations_without_granting_trust() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-adapter-seed-untrusted-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+
+    let mut existing = test_conversation_adapter(
+        "codex",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Untrusted,
+    );
+    existing.trusted_hash = None;
+    existing.content_hash = Some("disk-v1".to_string());
+    existing.enabled = false;
+    let mut observed = test_conversation_adapter(
+        "codex",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    observed.trusted_hash = Some("disk-v2".to_string());
+    observed.content_hash = Some("disk-v2".to_string());
+    observed.version = "1.1.0".to_string();
+    observed.manifest_path =
+        Some("/managed/conversation-adapters/codex/conversation-adapter.json".to_string());
+    observed.executable_path = Some("/managed/conversation-adapters/codex/adapter.mjs".to_string());
+
+    let loaded = async {
+        upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &existing).await?;
+        seed_discovered_conversation_adapters_sqlx(database.pool(), TEST_TENANT_ID, vec![observed])
+            .await?;
+        load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, "codex").await
+    }
+    .await
+    .expect("seed discovered conversation adapters")
+    .expect("codex adapter");
+
+    assert_eq!(
+        loaded.trust_state,
+        ConversationAdapterTrustState::Untrusted,
+        "seeding must never upgrade a discovered row into a trusted state"
+    );
+    assert_eq!(
+        loaded.trusted_hash, None,
+        "seeding must never sign the observed content into a trusted hash"
+    );
+    assert_eq!(loaded.content_hash.as_deref(), Some("disk-v2"));
+    assert_eq!(loaded.version, "1.1.0");
+    assert_eq!(
+        loaded.manifest_path.as_deref(),
+        Some("/managed/conversation-adapters/codex/conversation-adapter.json")
+    );
+    assert!(
+        !loaded.enabled,
+        "seeding must preserve the user's enabled/disabled intent"
+    );
 
     drop(database);
     cleanup_database(&db_path);

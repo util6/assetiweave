@@ -117,6 +117,91 @@ async fn bootstrap_projects_no_built_in_adapters_for_an_empty_managed_directory(
     drop(runtime);
 }
 
+/// #195：把一份包丢进受管目录不等于授权。发现只记录磁盘观测值，
+/// `trusted_hash` 必须保持为空，运行时门禁必须明确拒绝。
+#[tokio::test]
+async fn dropping_a_package_into_the_managed_directory_never_grants_trust() {
+    let root = isolated_root("bootstrap-untrusted-drop");
+    let managed_root = root.join("conversation-adapters");
+    let adapter_dir = managed_root.join("codex");
+    crate::backend::infrastructure::conversations::test_fixtures::copy_builtin_adapter(
+        "codex",
+        &adapter_dir,
+    )
+    .expect("stage adapter package");
+    let db_path = root.join("app.db");
+
+    let runtime = crate::backend::application::AppService::bootstrap_runtime_with_managed_root(
+        db_path.clone(),
+        RuntimeRole::OneShot,
+        managed_root.clone(),
+    )
+    .await
+    .expect("bootstrap with a dropped package");
+    let tenant_id = runtime.context().tenant.id.clone();
+    let first = store::list_conversation_adapters_sqlx(runtime.db().pool(), &tenant_id)
+        .await
+        .expect("list adapters")
+        .into_iter()
+        .find(|adapter| adapter.id == "codex")
+        .expect("dropped package is observed");
+    assert_eq!(
+        first.trust_state,
+        ConversationAdapterTrustState::Untrusted,
+        "a dropped package must be recorded as untrusted"
+    );
+    assert_eq!(
+        first.trusted_hash, None,
+        "bootstrapping must never sign the observed content"
+    );
+    let service = crate::backend::application::AppService::from_runtime(&runtime);
+    let error = service
+        .ensure_conversation_adapter_package_runtime_ready(&first)
+        .await
+        .expect_err("an untrusted adapter must not be allowed to run");
+    assert!(
+        error.to_string().contains("trusted content hash"),
+        "the gate must explain that explicit trust is missing: {error}"
+    );
+    drop(service);
+    drop(runtime);
+
+    fs::write(
+        adapter_dir.join("adapter.mjs"),
+        "// tampered after bootstrap\n",
+    )
+    .expect("tamper adapter script");
+    let runtime = crate::backend::application::AppService::bootstrap_runtime_with_managed_root(
+        db_path,
+        RuntimeRole::OneShot,
+        managed_root,
+    )
+    .await
+    .expect("second bootstrap");
+    let tenant_id = runtime.context().tenant.id.clone();
+    let second = store::list_conversation_adapters_sqlx(runtime.db().pool(), &tenant_id)
+        .await
+        .expect("list adapters")
+        .into_iter()
+        .find(|adapter| adapter.id == "codex")
+        .expect("dropped package is still observed");
+    assert_eq!(
+        second.trust_state,
+        ConversationAdapterTrustState::Untrusted,
+        "a later bootstrap must not promote the edited content"
+    );
+    assert_eq!(
+        second.trusted_hash, None,
+        "repeated bootstrap must not re-sign the observed content"
+    );
+    assert_ne!(
+        second.content_hash, first.content_hash,
+        "the observation must still track the edited on-disk bytes"
+    );
+    drop(runtime);
+    let _ = fs::remove_dir_all(root);
+}
+
 #[tokio::test]
 async fn seed_receives_prepared_data_and_writes_nothing_to_fs() {
     let fixture_root = std::env::temp_dir().join(format!(
@@ -166,9 +251,12 @@ async fn seed_receives_prepared_data_and_writes_nothing_to_fs() {
         updated_at: "now".to_string(),
     };
 
-    let seed_result =
-        super::seed_prepared_builtin_adapters(&pool, "default", std::slice::from_ref(&prepared))
-            .await;
+    let seed_result = super::seed_discovered_conversation_adapters(
+        &pool,
+        "default",
+        std::slice::from_ref(&prepared),
+    )
+    .await;
 
     restore_writable_directory(&read_only_dir);
     seed_result.expect("store seed should only persist prepared data");
@@ -228,9 +316,12 @@ async fn seed_rejects_invalid_paths_before_persisting_adapters() {
         updated_at: "now".to_string(),
     };
 
-    let result =
-        super::seed_prepared_builtin_adapters(&pool, "default", std::slice::from_ref(&invalid))
-            .await;
+    let result = super::seed_discovered_conversation_adapters(
+        &pool,
+        "default",
+        std::slice::from_ref(&invalid),
+    )
+    .await;
 
     assert!(result.is_err(), "invalid adapter paths should be rejected");
     assert!(

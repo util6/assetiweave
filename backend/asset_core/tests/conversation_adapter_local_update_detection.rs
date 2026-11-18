@@ -318,7 +318,7 @@ async fn conversation_script_catalog_higher_local_version_is_an_available_update
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn conversation_script_catalog_builtin_adapters_are_not_reported_as_updates() {
+async fn conversation_script_catalog_discovered_adapters_stay_untrusted_until_registered() {
     let temp = TempHome::new("builtin-baseline");
     stage_official_adapter_packages(&temp.adapter_root());
     let service = open_service(temp.root().join("app.db")).await;
@@ -329,27 +329,41 @@ async fn conversation_script_catalog_builtin_adapters_are_not_reported_as_update
         })
         .await
         .expect("list conversation adapter packages");
-    let builtins = entries
+    let discovered = entries
         .iter()
         .filter(|entry| {
             entry.installed_adapter.as_ref().is_some_and(|adapter| {
-                adapter.trust_state == ConversationAdapterTrustState::BuiltIn
+                adapter.trust_state == ConversationAdapterTrustState::Untrusted
             })
         })
         .collect::<Vec<_>>();
     assert!(
-        !builtins.is_empty(),
-        "the seeded official adapters must still appear in the catalog"
+        !discovered.is_empty(),
+        "adapters staged in the managed directory must still appear in the catalog"
     );
-    for entry in builtins {
+    for entry in discovered {
         assert_eq!(
-            entry.status, "built_in",
-            "untouched official adapter {} must stay built_in",
+            entry.status, "uninstalled",
+            "untouched managed-directory adapter {} must require explicit registration",
             entry.item.id
         );
         assert!(
             !entry.update_available,
-            "untouched official adapter {} must not be reported as an update",
+            "an untrusted projection of the official baseline must not be reported as an update: {}",
+            entry.item.id
+        );
+        assert!(
+            !entry.runtime_ready,
+            "an untrusted adapter must not be advertised as runnable: {}",
+            entry.item.id
+        );
+        let adapter = entry
+            .installed_adapter
+            .as_ref()
+            .expect("discovered adapter is present");
+        assert_eq!(
+            adapter.trusted_hash, None,
+            "discovery must not self-sign a trusted hash for {}",
             entry.item.id
         );
     }
