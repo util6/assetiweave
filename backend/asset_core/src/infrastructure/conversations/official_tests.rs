@@ -59,6 +59,10 @@ fn discovery_skips_reserved_and_unreadable_directories() {
         adapters.is_empty(),
         "reserved directories and unparsable manifests must not be projected"
     );
+    assert!(
+        broken.join(ADAPTER_MANIFEST_FILE_NAME).is_file(),
+        "an invalid package directory is preserved, never deleted"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
