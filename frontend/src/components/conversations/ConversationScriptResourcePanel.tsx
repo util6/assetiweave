@@ -1,23 +1,14 @@
 import clsx from "clsx";
 import {
   CircleAlert,
-  Download,
-  ExternalLink,
-  History,
-  Info,
   Loader2,
   PackageCheck,
-  PowerOff,
   RefreshCw,
-  RotateCcw,
   ShieldCheck,
-  Trash2,
-  Wrench,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import { Skeleton } from "../foundation/skeleton";
-import { SimpleSelect } from "../ui/select";
 import { formatErrorMessage } from "../../utils/error";
 import {
   checkConversationAdapterPackageUpdates,
@@ -39,7 +30,6 @@ import {
   updateConversationAdapterPackage,
   type ConversationAdapterPackageChangePreflight,
   type ConversationAdapterPackageCatalogEntry,
-  type ConversationAdapterPackageCatalogStatus,
   type ConversationAdapterCatalogRelease,
   type ConversationAdapterPackageInspection,
   type ConversationAdapterPackageVersion,
@@ -51,9 +41,24 @@ import type {
 } from "../../types";
 import type { NotificationMessage } from "../notifications/NotificationBanner";
 import { ConfirmDialog } from "../common/ConfirmDialog";
-import { Badge } from "../foundation/Badge";
-import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
+import { ConversationScriptResourceDetailDialog } from "./ConversationScriptResourceDetailDialog";
+import { ConversationScriptResourceRow } from "./ConversationScriptResourceRow";
+import {
+  actionLabelKey,
+  countUpdateOrRepairEntries,
+  isBuiltInEntry,
+  isUpdateOrRepairEntry,
+  manifestPathForEntry,
+  manifestPathFromInstallResult,
+  packageActionForEntry,
+  packageLifecycleAction,
+  packageTaskCompletedLabel,
+  packageTaskFailedLabel,
+  packageTaskRunningLabel,
+  resolvePackageChangeVersion,
+  type PackageChangeAction,
+} from "./conversationScriptResourceModel";
 
 const SCRIPT_INSTALL_POLL_INTERVAL_MS = 1000;
 
@@ -129,6 +134,9 @@ export function ConversationScriptResourcePanel({
   const [detailError, setDetailError] = useState<string | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<string>("");
   const [versionMutation, setVersionMutation] = useState<string | null>(null);
+  const [pendingVersionDeletion, setPendingVersionDeletion] = useState<
+    string | null
+  >(null);
   const [policySaving, setPolicySaving] = useState(false);
   const handledInstallTaskIds = useRef(new Set<string>());
 
@@ -143,10 +151,12 @@ export function ConversationScriptResourcePanel({
         const nextEntries = await listConversationAdapterPackages();
         setEntries(nextEntries);
         setError(null);
+        return nextEntries;
       } catch (loadError) {
         const message = errorMessage(loadError);
         setError(message);
         notifyError(message);
+        return null;
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -283,7 +293,7 @@ export function ConversationScriptResourcePanel({
   const viewCounts = useMemo(
     () => ({
       connected: recordEntries.filter((entry) => entry.installed).length,
-      updates: recordEntries.filter(isUpdateOrRepairEntry).length,
+      updates: countUpdateOrRepairEntries(recordEntries),
       discover: recordEntries.filter((entry) => !entry.installed).length,
     }),
     [recordEntries],
@@ -352,14 +362,18 @@ export function ConversationScriptResourcePanel({
   async function handleCheckUpdates() {
     setCheckingUpdates(true);
     try {
-      const statuses = await checkConversationAdapterPackageUpdates({
-        force: true,
-      });
-      await loadCatalog("refresh");
+      await checkConversationAdapterPackageUpdates({ force: true });
+      const refreshedEntries = await loadCatalog("refresh");
       setActiveView("updates");
+      // 与“可更新”标签页同口径：更新 ∪ 修复，而不是只统计 update_available。
+      const count = countUpdateOrRepairEntries(
+        (refreshedEntries ?? []).filter(
+          (entry) => entry.item.record_kind === recordKind,
+        ),
+      );
       notify({
         message: t("conversation.scriptMarket.checkUpdatesCompleted", {
-          count: statuses.filter((status) => status.update_available).length,
+          count,
         }),
         tone: "success",
       });
@@ -426,10 +440,12 @@ export function ConversationScriptResourcePanel({
         setInstallTask(task);
         return;
       }
-      const version =
-        detailEntry?.item.id === entry.item.id && selectedVersion
-          ? selectedVersion
-          : undefined;
+      const version = resolvePackageChangeVersion({
+        entryId: entry.item.id,
+        detailEntryId: detailEntry?.item.id ?? null,
+        releaseVersions: detailReleases.map((release) => release.version),
+        selectedVersion,
+      });
       const task =
         action === "update" || action === "repair"
           ? await updateConversationAdapterPackage({
@@ -506,16 +522,6 @@ export function ConversationScriptResourcePanel({
     }
     const packageId = detailEntry.installed_package.package_id;
     const mutationKey = `${action}:${version ?? "previous"}`;
-    if (
-      action === "delete" &&
-      !window.confirm(
-        t("conversation.scriptMarket.deleteVersionConfirm", {
-          version: version ?? "",
-        }),
-      )
-    ) {
-      return;
-    }
     setVersionMutation(mutationKey);
     try {
       if (action === "switch" && version) {
@@ -637,7 +643,7 @@ export function ConversationScriptResourcePanel({
           <button
             aria-selected={activeView === view}
             className={clsx(
-              "rounded-xl px-3 py-2 text-body-sm transition-[transform,background-color,color] duration-200 hover:-translate-y-px active:translate-y-0",
+              "conversation-pill-tab rounded-xl px-3 py-2 text-body-sm transition-[transform,background-color,color] duration-200 hover:-translate-y-px active:translate-y-0",
               activeView === view
                 ? "text-on-surface"
                 : "text-on-surface-variant hover:bg-theme-control-hover/70 hover:text-on-surface",
@@ -707,7 +713,7 @@ export function ConversationScriptResourcePanel({
           ) : (
             <div className="mt-3 grid max-h-72 gap-2 overflow-y-auto pr-1">
               {visibleEntries.map((entry) => (
-                <ScriptResourceRow
+                <ConversationScriptResourceRow
                   changeDisabled={disabled || installRunning}
                   disabled={disabled}
                   entry={entry}
@@ -727,391 +733,31 @@ export function ConversationScriptResourcePanel({
         </>
       )}
       {detailEntry ? (
-        <DialogFrame
-          closeLabel={t("common.close")}
-          contentClassName="grid gap-4"
-          footer={
-            <>
-              <Button
-                onClick={() => setDetailEntry(null)}
-                type="button"
-                variant="outline"
-              >
-                {t("common.close")}
-              </Button>
-              {packageLifecycleAction(detailEntry) ? (
-                <Button
-                  onClick={() => {
-                    const action = packageLifecycleAction(detailEntry);
-                    if (action) {
-                      void beginPackageChange(detailEntry, action);
-                    }
-                  }}
-                  type="button"
-                  variant="outline"
-                >
-                  <PowerOff size={15} />
-                  {t(actionLabelKey(packageLifecycleAction(detailEntry)!))}
-                </Button>
-              ) : null}
-              {packageActionForEntry(detailEntry) ? (
-                <Button
-                  onClick={() => void handleInstall(detailEntry)}
-                  type="button"
-                >
-                  <Download size={15} />
-                  {t(actionLabelKey(packageActionForEntry(detailEntry)!))}
-                </Button>
-              ) : null}
-            </>
-          }
-          icon={<Info size={18} />}
+        <ConversationScriptResourceDetailDialog
+          entry={detailEntry}
+          error={detailError}
+          inspection={detailInspection}
+          installedVersions={installedVersions}
+          loading={detailLoading}
+          onChangePolicy={(policy) => void changeUpdatePolicy(policy)}
           onClose={() => setDetailEntry(null)}
-          size="xl"
-          title={detailEntry.item.name}
-        >
-          {detailLoading ? (
-            <div aria-busy="true" className="grid gap-2" role="status">
-              <span className="sr-only">
-                {t("conversation.scriptMarket.loading")}
-              </span>
-              <Skeleton className="h-5 w-52 rounded" />
-              <Skeleton className="h-32 rounded" />
-            </div>
-          ) : detailError ? (
-            <div className="rounded-xl border border-status-remove/35 bg-status-remove/10 p-3 text-body-sm text-status-remove">
-              {detailError}
-            </div>
-          ) : (
-            <>
-              <div className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-card/65 p-3 sm:grid-cols-2">
-                <DetailField
-                  label={t("conversation.scriptMarket.packageId")}
-                  value={
-                    detailEntry.installed_package?.package_id ??
-                    detailEntry.item.id
-                  }
-                />
-                <DetailField
-                  label={t("conversation.scriptMarket.adapterId")}
-                  value={
-                    detailEntry.installed_adapter?.id ??
-                    detailEntry.item.adapter_id ??
-                    "-"
-                  }
-                />
-                <DetailField
-                  label={t("conversation.scriptMarket.origin")}
-                  value={
-                    detailInspection?.origin ??
-                    detailEntry.installed_package?.origin ??
-                    detailEntry.item.provider ??
-                    "-"
-                  }
-                />
-                <DetailField
-                  label={t("conversation.scriptMarket.publisher")}
-                  value={
-                    detailReleases[0]?.publisher ??
-                    detailEntry.item.provider ??
-                    "-"
-                  }
-                />
-                <DetailField
-                  label={t("conversation.scriptMarket.currentVersion")}
-                  value={
-                    detailEntry.installed_package?.version ??
-                    detailEntry.installed_adapter?.version ??
-                    t("conversation.scriptMarket.notInstalled")
-                  }
-                />
-                <DetailField
-                  label={t("conversation.scriptMarket.latestVersion")}
-                  value={detailReleases[0]?.version ?? detailEntry.item.version}
-                />
-                <DetailField
-                  label={t("conversation.scriptMarket.runtimeGate")}
-                  value={
-                    detailEntry.installed_package?.runtime_gate_status ??
-                    detailEntry.status
-                  }
-                />
-                <DetailField
-                  label={t("conversation.scriptMarket.recordKind")}
-                  value={detailEntry.item.record_kind}
-                />
-                <DetailField
-                  label={t("conversation.scriptMarket.path")}
-                  value={
-                    detailEntry.display_install_path ??
-                    detailEntry.installed_package?.install_dir ??
-                    detailEntry.install_path ??
-                    "-"
-                  }
-                  wide
-                />
-                <DetailField
-                  label={t("conversation.scriptMarket.manifest")}
-                  value={manifestDisplayPathForEntry(detailEntry) ?? "-"}
-                  wide
-                />
-                <DetailField
-                  label={t("conversation.scriptMarket.contentHash")}
-                  value={
-                    detailEntry.installed_package?.installed_content_hash ??
-                    detailEntry.installed_adapter?.content_hash ??
-                    "-"
-                  }
-                  wide
-                />
-                <DetailField
-                  label={t("conversation.scriptMarket.trustedHash")}
-                  value={
-                    detailEntry.installed_package?.trusted_package_hash ??
-                    detailEntry.installed_adapter?.trusted_hash ??
-                    "-"
-                  }
-                  wide
-                />
-              </div>
-
-              {detailEntry.installed_package?.origin === "dev_override" ? (
-                <div className="rounded-xl border border-status-update/35 bg-status-update/10 p-3 text-body-sm text-status-update">
-                  {t("conversation.scriptMarket.devOverrideNotice")}
-                </div>
-              ) : null}
-
-              {detailInspection?.affected_sources.length ? (
-                <section>
-                  <h4 className="text-body-sm font-semibold text-on-surface">
-                    {t("conversation.scriptMarket.affectedSources")}
-                  </h4>
-                  <ul className="mt-2 grid gap-1 text-body-sm text-on-surface-variant">
-                    {detailInspection.affected_sources.map((source) => (
-                      <li
-                        className="rounded-md border border-theme-card-border px-2 py-1.5"
-                        key={source.id}
-                      >
-                        {source.name} · {source.id}
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              ) : null}
-
-              {detailEntry.installed_package?.origin === "managed_release" ? (
-                <section>
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-theme-card-border bg-theme-control/40 p-3">
-                    <label
-                      className="text-body-sm font-medium text-on-surface"
-                      htmlFor="conversation-package-update-policy"
-                    >
-                      {t("conversation.scriptMarket.updatePolicy")}
-                    </label>
-                    <SimpleSelect
-                      ariaLabel={t("conversation.scriptMarket.updatePolicy")}
-                      className="w-auto min-w-36"
-                      disabled={policySaving}
-                      id="conversation-package-update-policy"
-                      onChange={(nextPolicy) =>
-                        void changeUpdatePolicy(
-                          nextPolicy as ConversationPackageUpdatePolicy,
-                        )
-                      }
-                      options={(
-                        [
-                          "manual",
-                          "follow_stable",
-                          "follow_beta",
-                          "pin_exact",
-                        ] as const
-                      ).map((policy) => ({
-                        label: t(`conversation.scriptMarket.policy.${policy}`),
-                        value: policy,
-                      }))}
-                      size="sm"
-                      value={detailEntry.installed_package.update_policy}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <h4 className="text-body-sm font-semibold text-on-surface">
-                      {t("conversation.scriptMarket.installedVersions")}
-                    </h4>
-                    {detailEntry.runtime_ready &&
-                    installedVersions.some(
-                      (version) =>
-                        version.version !==
-                        detailEntry.installed_package?.version,
-                    ) ? (
-                      <Button
-                        disabled={Boolean(versionMutation)}
-                        onClick={() => void mutateInstalledVersion("rollback")}
-                        type="button"
-                        variant="outline"
-                      >
-                        <RotateCcw size={15} />
-                        {t("conversation.scriptMarket.rollback")}
-                      </Button>
-                    ) : null}
-                  </div>
-                  <p className="mt-1 text-body-xs text-on-surface-variant">
-                    {t(
-                      detailEntry.runtime_ready
-                        ? "conversation.scriptMarket.deleteRunningVersionHelp"
-                        : "conversation.scriptMarket.deleteVersionHelp",
-                    )}
-                  </p>
-                  <div className="mt-2 grid gap-2">
-                    {installedVersions.map((version) => {
-                      const active =
-                        detailEntry.runtime_ready &&
-                        version.version ===
-                          detailEntry.installed_package?.version;
-                      return (
-                        <div
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-theme-card-border bg-theme-card/55 p-3"
-                          key={version.version}
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-body-sm font-semibold text-on-surface">
-                              {version.version}
-                            </span>
-                            {active ? (
-                              <Badge tone="primary">
-                                {t("conversation.scriptMarket.activeVersion")}
-                              </Badge>
-                            ) : null}
-                            <span className="text-body-xs text-on-surface-variant">
-                              {version.runtime_gate_status}
-                            </span>
-                          </div>
-                          {!active ? (
-                            <div className="flex gap-2">
-                              <Button
-                                disabled={Boolean(versionMutation)}
-                                onClick={() =>
-                                  void mutateInstalledVersion(
-                                    "switch",
-                                    version.version,
-                                  )
-                                }
-                                type="button"
-                                variant="outline"
-                              >
-                                {versionMutation ===
-                                `switch:${version.version}` ? (
-                                  <Loader2 className="animate-spin" size={15} />
-                                ) : null}
-                                {t(
-                                  detailEntry.status === "uninstalled"
-                                    ? "conversation.scriptMarket.registerVersion"
-                                    : "conversation.scriptMarket.switchVersion",
-                                )}
-                              </Button>
-                              <Button
-                                disabled={Boolean(versionMutation)}
-                                onClick={() =>
-                                  void mutateInstalledVersion(
-                                    "delete",
-                                    version.version,
-                                  )
-                                }
-                                type="button"
-                                variant="destructive"
-                              >
-                                <Trash2 size={15} />
-                                {t("conversation.scriptMarket.deleteVersion")}
-                              </Button>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              ) : detailEntry.installed ? (
-                <section className="rounded-xl border border-theme-card-border bg-theme-control/40 p-3">
-                  <h4 className="text-body-sm font-semibold text-on-surface">
-                    {t("conversation.scriptMarket.installedVersions")}
-                  </h4>
-                  <p className="mt-1 text-body-sm text-on-surface-variant">
-                    {t(
-                      isBuiltInEntry(detailEntry)
-                        ? "conversation.scriptMarket.builtInDeleteUnavailable"
-                        : "conversation.scriptMarket.externalDeleteUnavailable",
-                    )}
-                  </p>
-                  {!isBuiltInEntry(detailEntry) ? (
-                    <Button
-                      className="mt-3"
-                      disabled
-                      type="button"
-                      variant="destructive"
-                    >
-                      <Trash2 size={15} />
-                      {t("conversation.scriptMarket.deleteVersion")}
-                    </Button>
-                  ) : null}
-                </section>
-              ) : null}
-
-              <section>
-                <div className="flex items-center justify-between gap-2">
-                  <h4 className="flex items-center gap-2 text-body-sm font-semibold text-on-surface">
-                    <History size={15} />
-                    {t("conversation.scriptMarket.versionHistory")}
-                  </h4>
-                  {detailReleases.length > 0 ? (
-                    <SimpleSelect
-                      ariaLabel={t("conversation.scriptMarket.selectVersion")}
-                      className="w-auto min-w-44"
-                      onChange={(version) => setSelectedVersion(version)}
-                      options={detailReleases.map((release) => ({
-                        label: `${release.version} · ${release.channel}`,
-                        value: release.version,
-                      }))}
-                      size="sm"
-                      value={selectedVersion}
-                    />
-                  ) : null}
-                </div>
-                {detailReleases.length === 0 ? (
-                  <p className="mt-2 text-body-sm text-on-surface-variant">
-                    {t("conversation.scriptMarket.noVersionHistory")}
-                  </p>
-                ) : (
-                  <div className="mt-2 grid gap-2">
-                    {detailReleases.map((release) => (
-                      <article
-                        className="rounded-xl border border-theme-card-border bg-theme-card/55 p-3"
-                        key={release.version}
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-body-sm font-semibold text-on-surface">
-                            {release.version}
-                          </span>
-                          <Badge
-                            tone={
-                              release.breaking_change ? "remove" : "primary"
-                            }
-                          >
-                            {release.channel}
-                          </Badge>
-                          <span className="text-body-xs text-on-surface-variant">
-                            Core {release.core_compatibility}
-                          </span>
-                        </div>
-                        <pre className="mt-2 whitespace-pre-wrap font-sans text-body-sm leading-6 text-on-surface-variant">
-                          {release.changelog_markdown}
-                        </pre>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </section>
-            </>
-          )}
-        </DialogFrame>
+          onLifecycle={() => {
+            const action = packageLifecycleAction(detailEntry);
+            if (action) {
+              void beginPackageChange(detailEntry, action);
+            }
+          }}
+          onMutateVersion={(action, version) =>
+            void mutateInstalledVersion(action, version)
+          }
+          onPrimaryAction={() => void handleInstall(detailEntry)}
+          onRequestDeleteVersion={setPendingVersionDeletion}
+          onSelectVersion={setSelectedVersion}
+          policySaving={policySaving}
+          releases={detailReleases}
+          selectedVersion={selectedVersion}
+          versionMutation={versionMutation}
+        />
       ) : null}
 
       <ConfirmDialog
@@ -1164,377 +810,28 @@ export function ConversationScriptResourcePanel({
           </div>
         ) : null}
       </ConfirmDialog>
+
+      <ConfirmDialog
+        busy={Boolean(versionMutation)}
+        confirmLabel={t("conversation.scriptMarket.deleteVersion")}
+        layer="nested"
+        message={t("conversation.scriptMarket.deleteVersionConfirm", {
+          version: pendingVersionDeletion ?? "",
+        })}
+        onClose={() => setPendingVersionDeletion(null)}
+        onConfirm={() => {
+          const version = pendingVersionDeletion;
+          setPendingVersionDeletion(null);
+          if (version) {
+            void mutateInstalledVersion("delete", version);
+          }
+        }}
+        open={Boolean(pendingVersionDeletion)}
+        title={t("conversation.scriptMarket.deleteVersion")}
+        tone="danger"
+      />
     </section>
   );
-}
-
-function ScriptResourceRow({
-  changeDisabled,
-  disabled,
-  entry,
-  onInstall,
-  onInspect,
-  onLifecycle,
-}: {
-  changeDisabled: boolean;
-  disabled: boolean;
-  entry: ConversationAdapterPackageCatalogEntry;
-  onInstall: () => void;
-  onInspect: () => void;
-  onLifecycle: () => void;
-}) {
-  const { t } = useI18n();
-  const manifestDisplayPath = manifestDisplayPathForEntry(entry);
-  const packageAction = packageActionForEntry(entry);
-  const lifecycleAction = packageLifecycleAction(entry);
-
-  return (
-    <article className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-theme-card-border bg-theme-card px-3 py-2 max-[640px]:grid-cols-1">
-      <div className="min-w-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <h4 className="min-w-0 truncate text-body-sm font-semibold text-on-surface">
-            {entry.item.name}
-          </h4>
-          <Badge tone={statusBadgeTone(entry.status)}>
-            {t(statusLabelKey(entry.status))}
-          </Badge>
-          {entry.update_available && entry.status !== "update_available" ? (
-            <Badge tone="conflict">
-              {t("conversation.scriptMarket.updateAvailable")}
-            </Badge>
-          ) : null}
-          {entry.ahead_of_release && entry.status !== "ahead_of_release" ? (
-            <Badge tone="create">
-              {t("conversation.scriptMarket.aheadOfRelease")}
-            </Badge>
-          ) : null}
-        </div>
-        {entry.item.description ? (
-          <p className="mt-1 line-clamp-2 text-body-sm text-on-surface-variant">
-            {entry.item.description}
-          </p>
-        ) : null}
-        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-body-xs text-on-surface-variant">
-          <span>{entry.item.provider ?? entry.item.id}</span>
-          <span>{entry.item.version}</span>
-          {manifestDisplayPath ? (
-            <span className="max-w-sm truncate">{manifestDisplayPath}</span>
-          ) : null}
-          {entry.item.repository_url ? (
-            <a
-              className="inline-flex items-center gap-1 text-primary hover:underline"
-              href={entry.item.repository_url}
-              rel="noreferrer"
-              target="_blank"
-            >
-              <ExternalLink size={12} />
-              {t("conversation.scriptMarket.repository")}
-            </a>
-          ) : null}
-        </div>
-        {entry.error_message ? (
-          <div className="mt-2 flex items-start gap-2 rounded-md border border-status-remove/30 bg-status-remove/10 px-2 py-1.5 text-body-xs text-status-remove">
-            <CircleAlert className="mt-0.5 shrink-0" size={13} />
-            <span className="min-w-0 break-words">{entry.error_message}</span>
-          </div>
-        ) : null}
-      </div>
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button
-          aria-label={t("conversation.scriptMarket.details")}
-          className="inline-flex h-9 items-center gap-2 px-3 text-body-sm"
-          disabled={disabled}
-          onClick={onInspect}
-          type="button"
-          variant="outline"
-        >
-          <Info size={15} />
-          {t("conversation.scriptMarket.details")}
-        </Button>
-        {lifecycleAction ? (
-          <Button
-            className="inline-flex h-9 items-center gap-2 px-3 text-body-sm"
-            disabled={changeDisabled}
-            onClick={onLifecycle}
-            type="button"
-            variant="outline"
-          >
-            <PowerOff size={15} />
-            {t(actionLabelKey(lifecycleAction))}
-          </Button>
-        ) : null}
-        {entry.installed_package?.origin === "managed_release" ? (
-          <Button
-            className="inline-flex h-9 items-center gap-2 px-3 text-body-sm"
-            disabled={disabled}
-            onClick={onInspect}
-            type="button"
-            variant="outline"
-          >
-            <Trash2 size={15} />
-            {t("conversation.scriptMarket.manageVersions")}
-          </Button>
-        ) : null}
-        {packageAction ? (
-          <Button
-            className="inline-flex h-9 items-center gap-2 px-3 text-body-sm"
-            disabled={changeDisabled}
-            onClick={onInstall}
-            type="button"
-          >
-            {packageAction === "repair" ? (
-              <Wrench size={15} />
-            ) : packageAction === "update" ? (
-              <ShieldCheck size={15} />
-            ) : (
-              <Download size={15} />
-            )}
-            {t(actionLabelKey(packageAction))}
-          </Button>
-        ) : null}
-      </div>
-    </article>
-  );
-}
-
-type PackageAction = "install" | "update" | "repair";
-type PackageChangeAction = PackageAction | "unregister" | "uninstall";
-
-function packageActionForEntry(
-  entry: ConversationAdapterPackageCatalogEntry,
-): PackageAction | null {
-  const origin = entry.installed_package?.origin;
-  if (entry.status === "uninstalled") {
-    return "install";
-  }
-  if (entry.installed && origin !== "managed_release") {
-    return null;
-  }
-  if (
-    entry.status === "runtime_missing" ||
-    entry.status === "verification_failed" ||
-    entry.status === "hash_mismatch" ||
-    entry.status === "manifest_invalid" ||
-    entry.status === "core_incompatible"
-  ) {
-    return "repair";
-  }
-  if (entry.update_available || entry.status === "update_available") {
-    return "update";
-  }
-  if (!entry.installed || entry.status === "not_installed") {
-    return "install";
-  }
-  return null;
-}
-
-function isBuiltInEntry(entry: ConversationAdapterPackageCatalogEntry) {
-  return (
-    entry.status === "built_in" ||
-    entry.installed_package?.origin === "built_in" ||
-    entry.installed_adapter?.trust_state === "built_in" ||
-    entry.item.provider === "built_in"
-  );
-}
-
-function packageLifecycleAction(
-  entry: ConversationAdapterPackageCatalogEntry,
-): "unregister" | "uninstall" | null {
-  if (!entry.installed) {
-    return null;
-  }
-  if (entry.status === "uninstalled" || !entry.runtime_ready) {
-    return null;
-  }
-  return entry.installed_package?.origin === "managed_release"
-    ? "uninstall"
-    : "unregister";
-}
-
-function isUpdateOrRepairEntry(entry: ConversationAdapterPackageCatalogEntry) {
-  return Boolean(
-    entry.update_available ||
-    [
-      "update_available",
-      "runtime_missing",
-      "verification_failed",
-      "hash_mismatch",
-      "manifest_invalid",
-      "core_incompatible",
-    ].includes(entry.status),
-  );
-}
-
-function statusLabelKey(status: ConversationAdapterPackageCatalogStatus) {
-  switch (status) {
-    case "installed":
-    case "legacy_installed":
-      return "conversation.scriptMarket.installed";
-    case "uninstalled":
-      return "conversation.scriptMarket.uninstalled";
-    case "built_in":
-      return "conversation.scriptMarket.builtIn";
-    case "local_registered":
-      return "conversation.scriptMarket.localRegistered";
-    case "git_registered":
-      return "conversation.scriptMarket.gitRegistered";
-    case "dev_override":
-      return "conversation.scriptMarket.devOverride";
-    case "update_available":
-      return "conversation.scriptMarket.updateAvailable";
-    case "runtime_missing":
-      return "conversation.scriptMarket.runtimeMissing";
-    case "verification_failed":
-      return "conversation.scriptMarket.verificationFailed";
-    case "hash_mismatch":
-      return "conversation.scriptMarket.hashMismatch";
-    case "manifest_invalid":
-      return "conversation.scriptMarket.manifestInvalid";
-    case "core_incompatible":
-      return "conversation.scriptMarket.coreIncompatible";
-    case "ahead_of_release":
-      return "conversation.scriptMarket.aheadOfRelease";
-    case "not_installed":
-    default:
-      return "conversation.scriptMarket.notInstalled";
-  }
-}
-
-function statusBadgeTone(status: ConversationAdapterPackageCatalogStatus) {
-  switch (status) {
-    case "installed":
-    case "legacy_installed":
-    case "built_in":
-    case "local_registered":
-    case "git_registered":
-    case "dev_override":
-    case "ahead_of_release":
-      return "create";
-    case "update_available":
-    case "runtime_missing":
-    case "uninstalled":
-      return "conflict";
-    case "verification_failed":
-    case "hash_mismatch":
-    case "manifest_invalid":
-    case "core_incompatible":
-      return "remove";
-    case "not_installed":
-    default:
-      return "primary";
-  }
-}
-
-function actionLabelKey(action: PackageChangeAction) {
-  switch (action) {
-    case "unregister":
-      return "conversation.scriptMarket.uninstall";
-    case "uninstall":
-      return "conversation.scriptMarket.uninstall";
-    case "repair":
-      return "conversation.scriptMarket.repair";
-    case "update":
-      return "conversation.scriptMarket.update";
-    case "install":
-    default:
-      return "conversation.scriptMarket.registerPackage";
-  }
-}
-
-function packageTaskRunningLabel(
-  action?: ConversationScriptInstallTaskSnapshot["action"],
-) {
-  switch (action) {
-    case "update":
-      return "conversation.scriptMarket.updating";
-    case "uninstall":
-      return "conversation.scriptMarket.uninstalling";
-    case "install":
-    default:
-      return "conversation.scriptMarket.installing";
-  }
-}
-
-function packageTaskCompletedLabel(
-  action?: ConversationScriptInstallTaskSnapshot["action"],
-) {
-  switch (action) {
-    case "update":
-      return "conversation.scriptMarket.updateCompleted";
-    case "uninstall":
-      return "conversation.scriptMarket.uninstallCompleted";
-    case "install":
-    default:
-      return "conversation.scriptMarket.installCompleted";
-  }
-}
-
-function packageTaskFailedLabel(
-  action?: ConversationScriptInstallTaskSnapshot["action"],
-) {
-  switch (action) {
-    case "update":
-      return "conversation.scriptMarket.updateFailed";
-    case "uninstall":
-      return "conversation.scriptMarket.uninstallFailed";
-    case "install":
-    default:
-      return "conversation.scriptMarket.installFailed";
-  }
-}
-
-function DetailField({
-  label,
-  value,
-  wide = false,
-}: {
-  label: string;
-  value: string;
-  wide?: boolean;
-}) {
-  return (
-    <div className={clsx("min-w-0", wide && "sm:col-span-2")}>
-      <p className="text-body-xs font-medium text-on-surface-variant">
-        {label}
-      </p>
-      <p className="mt-0.5 break-all font-mono text-body-xs text-on-surface">
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function manifestPathForEntry(entry: ConversationAdapterPackageCatalogEntry) {
-  if (entry.installed_package?.adapter_manifest_path) {
-    return entry.installed_package.adapter_manifest_path;
-  }
-  if (entry.installed_adapter?.manifest_path) {
-    return entry.installed_adapter.manifest_path;
-  }
-  if (!entry.install_path) {
-    return null;
-  }
-  const manifestFile =
-    entry.item.manifest_file?.trim() || "conversation-adapter.json";
-  return `${entry.install_path.replace(/\/$/, "")}/${manifestFile}`;
-}
-
-function manifestDisplayPathForEntry(
-  entry: ConversationAdapterPackageCatalogEntry,
-) {
-  return entry.display_manifest_path ?? manifestPathForEntry(entry);
-}
-
-function manifestPathFromInstallResult(result: unknown) {
-  if (!result || typeof result !== "object" || !("manifest_path" in result)) {
-    return null;
-  }
-  const value = (result as { manifest_path?: unknown }).manifest_path;
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-function isTauriRuntime() {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 function errorMessage(error: unknown) {
