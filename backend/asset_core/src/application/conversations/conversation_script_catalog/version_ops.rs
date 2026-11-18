@@ -282,6 +282,20 @@ impl AppService {
             .load_conversation_adapter_package_by_adapter(&adapter.id)
             .await?
         else {
+            // #195：没有受管包记录时，只有显式建立过信任的适配器才能运行。
+            // 受管目录里刚被发现的包（trusted_hash 为空）必须走显式注册/晋升，
+            // 不能因为「没有包记录」就被直接放行。
+            let trusted = adapter
+                .trusted_hash
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|hash| !hash.is_empty());
+            if !trusted || !adapter_has_runtime_trust(adapter) {
+                return Err(AppError::Validation(format!(
+                    "conversation adapter {} has no trusted content hash; register or promote it explicitly before it can run",
+                    adapter.id
+                )));
+            }
             return Ok(());
         };
         self.refresh_conversation_adapter_package_runtime(&mut package, Some(adapter))

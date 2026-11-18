@@ -73,6 +73,11 @@ pub fn discover_managed_conversation_adapters_at(
     Ok(adapters)
 }
 
+/// Project a validated on-disk adapter as an *untrusted observation*.
+///
+/// #195：受管目录是用户可写的位置，磁盘上出现一份包不构成任何信任授权。
+/// 这里只记录「当前磁盘内容是什么」（`content_hash`），`trusted_hash` 必须留空，
+/// 信任只能由显式动作（工作区晋升 / 市场安装 / 本地注册）建立。
 fn project_validated_adapter(
     validation: super::types::ExternalAdapterValidationResult,
 ) -> ConversationAdapter {
@@ -86,8 +91,8 @@ fn project_validated_adapter(
         manifest_path: Some(validation.manifest_path.clone()),
         executable_path: Some(validation.executable_path.clone()),
         content_hash: Some(validation.content_hash.clone()),
-        trusted_hash: Some(validation.content_hash.clone()),
-        trust_state: ConversationAdapterTrustState::BuiltIn,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Untrusted,
         protocol_version: Some(validation.manifest.protocol_version),
         capabilities: validation.manifest.capabilities.clone(),
         input_kinds: validation.manifest.input_kinds.clone(),

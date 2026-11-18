@@ -45,12 +45,9 @@ pub fn local_candidate_is_pending_update(
     ) {
         return true;
     }
-    let trusted_content_hash = adapter.and_then(|adapter| {
-        adapter
-            .trusted_hash
-            .as_deref()
-            .or(adapter.content_hash.as_deref())
-    });
+    // #195：只与显式建立过信任的 hash 比较。磁盘观测值 `content_hash` 不是信任
+    // 凭据，用它兜底会让比对永远相等，重新变成死码。
+    let trusted_content_hash = adapter.and_then(|adapter| adapter.trusted_hash.as_deref());
     hash_differs(
         candidate.expected_content_hash.as_deref(),
         trusted_content_hash,

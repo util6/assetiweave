@@ -177,6 +177,19 @@ pub fn conversation_catalog_manifest_path(
         })
 }
 
+/// Whether an adapter row currently carries a trust grant that allows execution.
+///
+/// #195：`untrusted` 只是受管目录的磁盘观测；`changed` 表示受信任内容已漂移。
+/// 两者都不能运行，只有显式晋升/安装/注册写入的 `trusted`（以及承载历史语义的
+/// `built_in`）才可以。
+pub fn adapter_has_runtime_trust(adapter: &ConversationAdapter) -> bool {
+    matches!(
+        adapter.trust_state,
+        crate::backend::domain::ConversationAdapterTrustState::Trusted
+            | crate::backend::domain::ConversationAdapterTrustState::BuiltIn
+    )
+}
+
 pub fn package_origin_label(origin: ConversationAdapterPackageOrigin) -> &'static str {
     match origin {
         ConversationAdapterPackageOrigin::BuiltIn => "built_in",
@@ -231,17 +244,25 @@ pub fn conversation_adapter_package_status(
             ConversationAdapterPackageOrigin::BuiltIn => return "built_in".to_string(),
             _ => {}
         }
-    } else if adapter.is_some_and(|adapter| {
-        adapter.trust_state == crate::backend::domain::ConversationAdapterTrustState::BuiltIn
-    }) {
-        if !runtime_ready {
+    } else if let Some(adapter) = adapter {
+        // #195：受管目录里被发现的包只是「观测到的磁盘内容」，显式注册/晋升前
+        // 不具备信任，也就不可运行。这里给出「未安装」口径，让界面继续提供
+        // 注册/安装入口，而不是把一个未受信任的包显示成已安装。
+        if adapter.trust_state == crate::backend::domain::ConversationAdapterTrustState::Untrusted {
+            if update_available {
+                return "update_available".to_string();
+            }
             return "uninstalled".to_string();
         }
-        if update_available {
-            return "update_available".to_string();
+        if adapter.trust_state == crate::backend::domain::ConversationAdapterTrustState::BuiltIn {
+            if !runtime_ready {
+                return "uninstalled".to_string();
+            }
+            if update_available {
+                return "update_available".to_string();
+            }
+            return "built_in".to_string();
         }
-        return "built_in".to_string();
-    } else if adapter.is_some() {
         return "legacy_installed".to_string();
     }
     if update_available {
