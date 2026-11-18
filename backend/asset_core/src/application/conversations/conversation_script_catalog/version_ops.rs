@@ -282,6 +282,20 @@ impl AppService {
             .load_conversation_adapter_package_by_adapter(&adapter.id)
             .await?
         else {
+            // #195：没有受管包记录时，只有显式建立过信任的适配器才能运行。
+            // 受管目录里刚被发现的包（trusted_hash 为空）必须走显式注册/晋升，
+            // 不能因为「没有包记录」就被直接放行。
+            let trusted = adapter
+                .trusted_hash
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|hash| !hash.is_empty());
+            if !trusted || !adapter_has_runtime_trust(adapter) {
+                return Err(AppError::Validation(format!(
+                    "conversation adapter {} has no trusted content hash; register or promote it explicitly before it can run",
+                    adapter.id
+                )));
+            }
             return Ok(());
         };
         self.refresh_conversation_adapter_package_runtime(&mut package, Some(adapter))
@@ -300,17 +314,6 @@ impl AppService {
     ) -> AppResult<()> {
         let install_dir =
             crate::backend::infrastructure::path_utils::expand_path(&package.install_dir)?;
-        let is_official = crate::backend::infrastructure::conversations::is_official_adapter_id(
-            &package.adapter_id,
-        );
-        let is_dev_override = package.origin == ConversationAdapterPackageOrigin::DevOverride;
-        if is_official && !is_dev_override {
-            let _ =
-                crate::backend::infrastructure::conversations::sync_official_adapter_to_package_dir(
-                    &package.adapter_id,
-                    &install_dir,
-                );
-        }
         let evaluated = crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(
             &install_dir,
         )
@@ -323,14 +326,10 @@ impl AppService {
                 )));
             }
             if validation.manifest.version != package.version {
-                if is_official {
-                    package.version = validation.manifest.version.clone();
-                } else {
-                    return Err(AppError::Validation(format!(
-                        "conversation adapter package manifest version {} does not match active version {}",
-                        validation.manifest.version, package.version
-                    )));
-                }
+                return Err(AppError::Validation(format!(
+                    "conversation adapter package manifest version {} does not match active version {}",
+                    validation.manifest.version, package.version
+                )));
             }
             let adapter = adapter.ok_or_else(|| {
                 AppError::NotFound(format!(
@@ -344,54 +343,39 @@ impl AppService {
                     package.package_id, validation.adapter_validation.manifest.id, adapter.id
                 )));
             }
-            if package.origin != ConversationAdapterPackageOrigin::DevOverride {
-                if is_official {
-                    package.trusted_package_hash = Some(validation.content_hash.clone());
-                    package.installed_content_hash = Some(validation.content_hash.clone());
-                } else {
-                    let trusted_hash = package
-                        .trusted_package_hash
-                        .as_deref()
-                        .or(package.installed_content_hash.as_deref())
-                        .ok_or_else(|| {
-                            AppError::Validation(format!(
-                                "conversation adapter package has no trusted hash: {}",
-                                package.package_id
-                            ))
-                        })?;
-                    if validation.content_hash != trusted_hash {
-                        return Err(AppError::Validation(format!(
-                            "conversation adapter package content hash mismatch: {}",
-                            package.package_id
-                        )));
-                    }
-                }
+            // #199: every package is gated by its recorded trusted hash. There is no
+            // origin that may skip this check or self-sign a new hash from disk.
+            let trusted_hash = package
+                .trusted_package_hash
+                .as_deref()
+                .or(package.installed_content_hash.as_deref())
+                .ok_or_else(|| {
+                    AppError::Validation(format!(
+                        "conversation adapter package has no trusted hash: {}",
+                        package.package_id
+                    ))
+                })?;
+            if validation.content_hash != trusted_hash {
+                return Err(AppError::Validation(format!(
+                    "conversation adapter package content hash mismatch: {}",
+                    package.package_id
+                )));
             }
-            Ok((validation.content_hash, validation.adapter_validation.content_hash, validation.adapter_manifest_path))
+            Ok(validation.content_hash)
         });
 
         let previous_ready = package.runtime_ready;
         let previous_gate_status = package.runtime_gate_status;
         let previous_installed_content_hash = package.installed_content_hash.clone();
         let previous_trusted_package_hash = package.trusted_package_hash.clone();
-        let previous_version = package.version.clone();
         let previous_error_message = package.error_message.clone();
 
         let now = Utc::now().to_rfc3339();
-        let mut refreshed_adapter_manifest: Option<String> = None;
         match evaluated {
-            Ok((content_hash, adapter_hash, adapter_manifest_path)) => {
+            Ok(content_hash) => {
                 package.runtime_ready = true;
                 package.runtime_gate_status = ConversationAdapterRuntimeGateStatus::Ready;
-                package.installed_content_hash = Some(content_hash.clone());
-                if is_dev_override {
-                    package.trusted_package_hash = Some(content_hash);
-                    if adapter.and_then(|a| a.content_hash.as_deref())
-                        != Some(adapter_hash.as_str())
-                    {
-                        refreshed_adapter_manifest = Some(adapter_manifest_path);
-                    }
-                }
+                package.installed_content_hash = Some(content_hash);
                 package.error_message = None;
             }
             Err(error) => {
@@ -406,45 +390,12 @@ impl AppService {
             || package.runtime_gate_status != previous_gate_status
             || package.installed_content_hash != previous_installed_content_hash
             || package.trusted_package_hash != previous_trusted_package_hash
-            || package.version != previous_version
             || package.error_message != previous_error_message;
 
         package.runtime_validated_at = Some(now.clone());
         if changed {
             package.updated_at = now;
             self.save_conversation_adapter_package(package).await?;
-        }
-        if let Some(manifest_path) = refreshed_adapter_manifest {
-            let settings = self.app_settings_value();
-            if let Ok(preview) =
-                crate::backend::infrastructure::conversations::register_external_adapter_with_settings(
-                    crate::backend::infrastructure::conversations::ExternalAdapterRegisterParams {
-                        manifest_path,
-                        dry_run: true,
-                        yes: true,
-                    },
-                    &settings,
-                )
-                .await
-            {
-                if let Ok(mut updated_adapter) =
-                    crate::backend::infrastructure::conversations::adapter_from_registration_preview(
-                        preview,
-                    )
-                {
-                    let _ = crate::backend::infrastructure::path_utils::normalize_conversation_adapter_paths(
-                        &mut updated_adapter,
-                    );
-                    crate::backend::store::set_app_conversation_adapter_projection_sqlx(
-                        self.db.pool(),
-                        self.tenant_id(),
-                        &package.adapter_id,
-                        Some(&updated_adapter),
-                    )
-                    .await?;
-                    self.runtime.refresh_conversation_adapter_catalog().await?;
-                }
-            }
         }
         Ok(())
     }

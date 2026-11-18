@@ -40,6 +40,20 @@ impl AppService {
             return Ok(result);
         }
 
+        if let Some(result) = promote_pending_local_workspace(
+            self,
+            &params.package_id,
+            ConversationAdapterPackageChangeAction::Install,
+            params.dry_run,
+        )
+        .await?
+        {
+            if !params.dry_run {
+                self.runtime.refresh_conversation_adapter_catalog().await?;
+            }
+            return Ok(result);
+        }
+
         let catalog = load_conversation_script_catalog(params.catalog_url.as_deref())?;
         let package_id = params.package_id.trim();
         let item = catalog
@@ -90,6 +104,20 @@ impl AppService {
                 .install_conversation_adapter_package_release(params)
                 .await?;
             self.runtime.refresh_conversation_adapter_catalog().await?;
+            return Ok(result);
+        }
+
+        if let Some(result) = promote_pending_local_workspace(
+            self,
+            &params.package_id,
+            ConversationAdapterPackageChangeAction::Update,
+            params.dry_run,
+        )
+        .await?
+        {
+            if !params.dry_run {
+                self.runtime.refresh_conversation_adapter_catalog().await?;
+            }
             return Ok(result);
         }
 

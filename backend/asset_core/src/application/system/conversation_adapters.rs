@@ -5,25 +5,65 @@ use crate::backend::{
 };
 use sqlx::SqlitePool;
 
-/// Project a prepared built-in adapter environment into one tenant.
+/// Migrate legacy `dev_override` package rows into immutable managed snapshots.
 ///
-/// Application owns the orchestration; infrastructure normalizes file paths
-/// and materializes adapter metadata while Store persists the prepared rows.
-pub async fn seed_prepared_builtin_adapters(
+/// #199/#195：这段迁移会复制目录并计算内容 hash，属于启动期的重 I/O 对账，
+/// 不能挂在租户切换这类即时请求路径上（ADR-0017）。它只在启动对账时执行一次，
+/// 且失败只记录告警：遗留行会被就地标记为不可运行，用户修复后下次启动重试，
+/// 不能因为一次迁移失败阻断整个启动。
+pub async fn migrate_legacy_dev_override_packages_on_startup(pool: &SqlitePool) {
+    match crate::backend::application::conversations::conversation_script_catalog::migrate_legacy_dev_override_packages(pool).await {
+        Ok(0) => {}
+        Ok(migrated) => tracing::info!(
+            target: "assetiweave.operation",
+            operation = "app.environment.conversation_adapter_dev_override_migration",
+            migrated,
+            "legacy dev_override conversation adapter packages were migrated at startup"
+        ),
+        Err(error) => tracing::warn!(
+            target: "assetiweave.operation",
+            operation = "app.environment.conversation_adapter_dev_override_migration",
+            error = %error,
+            "legacy dev_override conversation adapter migration was skipped"
+        ),
+    }
+}
+
+/// Project the adapters discovered in the managed user directory into one tenant.
+///
+/// Application owns the orchestration; infrastructure normalizes file paths and
+/// materializes adapter metadata while Store persists the observed rows. The
+/// seed never grants trust: discovery records what is on disk, and only an
+/// explicit promotion/install/registration writes a trusted hash.
+pub async fn seed_discovered_conversation_adapters(
     pool: &SqlitePool,
     tenant_id: &str,
     adapters: &[ConversationAdapter],
 ) -> AppResult<()> {
-    let mut prepared_adapters = adapters.to_vec();
-    for adapter in &mut prepared_adapters {
+    let mut discovered_adapters = adapters.to_vec();
+    for adapter in &mut discovered_adapters {
         crate::backend::infrastructure::path_utils::normalize_conversation_adapter_paths(adapter)?;
     }
 
-    store::seed_prepared_builtin_conversation_adapters_sqlx(pool, tenant_id, prepared_adapters)
+    store::seed_discovered_conversation_adapters_sqlx(pool, tenant_id, discovered_adapters)
         .await
         .map_err(AppError::external)?;
     normalize_conversation_paths(pool, tenant_id).await?;
     reconcile_app_conversation_adapters(pool, tenant_id).await?;
+    // 对账过程可能投影出市场包适配器（例如从旧版本升级上来的库），其来源行
+    // 可能从未播种过。再补一次：只插入缺失行，不触碰用户改动。补播种是尽力
+    // 而为，失败不应阻断启动。
+    if let Err(error) =
+        crate::backend::store::seed_builtin_conversation_sources_sqlx(pool, tenant_id).await
+    {
+        tracing::warn!(
+            target: "assetiweave.operation",
+            operation = "app.conversation_adapter.builtin_source_seed",
+            tenant_id = %tenant_id,
+            error = %error,
+            "builtin conversation source backfill was skipped"
+        );
+    }
     Ok(())
 }
 
@@ -90,63 +130,7 @@ pub async fn reconcile_app_conversation_adapters(
     .execute(pool)
     .await;
     let packages = store::list_conversation_adapter_packages_sqlx(pool).await?;
-    for mut package in packages {
-        if let Ok(install_dir) =
-            crate::backend::infrastructure::path_utils::expand_path(&package.install_dir)
-        {
-            let is_official = crate::backend::infrastructure::conversations::is_official_adapter_id(
-                &package.adapter_id,
-            );
-            let is_dev_override = package.origin
-                == crate::backend::domain::ConversationAdapterPackageOrigin::DevOverride;
-            if is_official && !is_dev_override {
-                let _ = crate::backend::infrastructure::conversations::sync_official_adapter_to_package_dir(
-                    &package.adapter_id,
-                    &install_dir,
-                );
-            }
-            if is_official || is_dev_override {
-                if let Ok(validation) =
-                    crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(
-                        &install_dir,
-                    )
-                {
-                    if validation.manifest.package_id == package.package_id {
-                        let mut changed = false;
-                        if package.version != validation.manifest.version {
-                            package.version = validation.manifest.version;
-                            changed = true;
-                        }
-                        if package.trusted_package_hash.as_deref() != Some(&validation.content_hash)
-                        {
-                            package.trusted_package_hash = Some(validation.content_hash.clone());
-                            changed = true;
-                        }
-                        if package.installed_content_hash.as_deref()
-                            != Some(&validation.content_hash)
-                        {
-                            package.installed_content_hash = Some(validation.content_hash.clone());
-                            changed = true;
-                        }
-                        if !package.runtime_ready
-                            || package.runtime_gate_status
-                                != ConversationAdapterRuntimeGateStatus::Ready
-                        {
-                            package.runtime_ready = true;
-                            package.runtime_gate_status =
-                                ConversationAdapterRuntimeGateStatus::Ready;
-                            package.error_message = None;
-                            changed = true;
-                        }
-                        if changed {
-                            package.updated_at = chrono::Utc::now().to_rfc3339();
-                            let _ = store::upsert_conversation_adapter_package_sqlx(pool, &package)
-                                .await;
-                        }
-                    }
-                }
-            }
-        }
+    for package in packages {
         let mut adapter = if package.runtime_ready
             && package.runtime_gate_status == ConversationAdapterRuntimeGateStatus::Ready
         {

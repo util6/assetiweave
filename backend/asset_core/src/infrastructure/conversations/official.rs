@@ -1,352 +1,88 @@
+//! Read-only projection of conversation adapters that already exist in the
+//! managed user directory.
+//!
+//! The host never ships adapter script copies inside the binary: an adapter is
+//! only known to the application once a real package exists on disk. Bootstrap
+//! therefore enumerates the managed directory, validates each manifest and
+//! projects the result into `conversation_adapters`. Files are only ever read,
+//! so user edits to `adapter.mjs` / `payload-policy.mjs` / manifests survive
+//! every bootstrap, reconcile and sync pass byte for byte.
+
 use crate::backend::infrastructure::app_settings::conversation_adapter_dir;
 use crate::backend::{
     domain::{ConversationAdapter, ConversationAdapterKind, ConversationAdapterTrustState},
-    infrastructure::error::{InfraError, InfraResult},
+    infrastructure::error::InfraResult,
 };
 use chrono::Utc;
-use std::{fs, path::Path, sync::Mutex};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
-struct OfficialAdapterAsset {
-    manifest: &'static str,
-    manifest_text: &'static str,
-    package_manifest_text: &'static str,
-    script: &'static str,
-    payload_policy_script: Option<&'static str>,
+/// Managed directory children that are infrastructure, not adapter packages.
+const RESERVED_MANAGED_ENTRIES: &[&str] = &["packages", "runtime", "staging", "common"];
+
+/// Manifest file that identifies an adapter package directory.
+const ADAPTER_MANIFEST_FILE_NAME: &str = "conversation-adapter.json";
+
+/// Enumerate the managed user directory and project every valid adapter
+/// package that already exists there.
+pub fn discover_managed_conversation_adapters() -> InfraResult<Vec<ConversationAdapter>> {
+    discover_managed_conversation_adapters_at(&conversation_adapter_dir()?)
 }
 
-const PAYLOAD_POLICY_SCRIPT: &str =
-    include_str!("../../../../../builtin-assets/adapters/common/payload-policy.mjs");
-const REPROJECT_RUNNER_SCRIPT: &str =
-    include_str!("../../../../../builtin-assets/adapters/common/reproject-runner.mjs");
-const REPROJECT_RUNNER_RUNTIME_VERSION: &str = "reproject-runner-v1";
-const SHELL_PROJECTOR_SCRIPT: &str =
-    include_str!("../../../../../builtin-assets/adapters/common/shell-projector.cjs");
-const SHELL_PROJECTOR_ADAPTER_SCRIPT: &str =
-    include_str!("../../../../../builtin-assets/adapters/common/projector-adapter.cjs");
-const SHELL_PROJECTOR_MANIFEST: &str =
-    include_str!("../../../../../builtin-assets/adapters/common/projector-manifest.json");
-const SHELL_PROJECTOR_RUNTIME_VERSION: &str = "shell-projector-v1";
-static OFFICIAL_ADAPTER_MATERIALIZE_LOCK: Mutex<()> = Mutex::new(());
-static SHELL_PROJECTOR_MATERIALIZE_LOCK: Mutex<()> = Mutex::new(());
-static REPROJECT_RUNNER_MATERIALIZE_LOCK: Mutex<()> = Mutex::new(());
+/// Read-only discovery over an explicit managed root.
+///
+/// A missing root is a legal state (fresh installation without any adapter),
+/// and discovery must not create it.
+pub fn discover_managed_conversation_adapters_at(
+    root: &Path,
+) -> InfraResult<Vec<ConversationAdapter>> {
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut candidates: Vec<PathBuf> = fs::read_dir(root)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                return false;
+            };
+            !name.starts_with('.') && !RESERVED_MANAGED_ENTRIES.contains(&name)
+        })
+        .filter(|path| path.join(ADAPTER_MANIFEST_FILE_NAME).is_file())
+        .collect();
+    candidates.sort();
 
-const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
-    OfficialAdapterAsset {
-        manifest: "codex/conversation-adapter.json",
-        manifest_text: include_str!(
-            "../../../../../builtin-assets/adapters/codex/conversation-adapter.json"
-        ),
-        package_manifest_text: include_str!(
-            "../../../../../builtin-assets/adapters/codex/conversation-adapter-package.json"
-        ),
-        script: include_str!("../../../../../builtin-assets/adapters/codex/adapter.mjs"),
-        payload_policy_script: Some(PAYLOAD_POLICY_SCRIPT),
-    },
-    OfficialAdapterAsset {
-        manifest: "claude-code/conversation-adapter.json",
-        manifest_text: include_str!(
-            "../../../../../builtin-assets/adapters/claude-code/conversation-adapter.json"
-        ),
-        package_manifest_text: include_str!(
-            "../../../../../builtin-assets/adapters/claude-code/conversation-adapter-package.json"
-        ),
-        script: include_str!("../../../../../builtin-assets/adapters/claude-code/adapter.mjs"),
-        payload_policy_script: Some(PAYLOAD_POLICY_SCRIPT),
-    },
-    OfficialAdapterAsset {
-        manifest: "opencode/conversation-adapter.json",
-        manifest_text: include_str!(
-            "../../../../../builtin-assets/adapters/opencode/conversation-adapter.json"
-        ),
-        package_manifest_text: include_str!(
-            "../../../../../builtin-assets/adapters/opencode/conversation-adapter-package.json"
-        ),
-        script: include_str!("../../../../../builtin-assets/adapters/opencode/adapter.mjs"),
-        payload_policy_script: Some(PAYLOAD_POLICY_SCRIPT),
-    },
-    OfficialAdapterAsset {
-        manifest: "antigravity/conversation-adapter.json",
-        manifest_text: include_str!(
-            "../../../../../builtin-assets/adapters/antigravity/conversation-adapter.json"
-        ),
-        package_manifest_text: include_str!(
-            "../../../../../builtin-assets/adapters/antigravity/conversation-adapter-package.json"
-        ),
-        script: include_str!("../../../../../builtin-assets/adapters/antigravity/adapter.mjs"),
-        payload_policy_script: Some(PAYLOAD_POLICY_SCRIPT),
-    },
-    OfficialAdapterAsset {
-        manifest: "zcode/conversation-adapter.json",
-        manifest_text: include_str!(
-            "../../../../../builtin-assets/adapters/zcode/conversation-adapter.json"
-        ),
-        package_manifest_text: include_str!(
-            "../../../../../builtin-assets/adapters/zcode/conversation-adapter-package.json"
-        ),
-        script: include_str!("../../../../../builtin-assets/adapters/zcode/adapter.mjs"),
-        payload_policy_script: None,
-    },
-    OfficialAdapterAsset {
-        manifest: "codebuddy/conversation-adapter.json",
-        manifest_text: include_str!(
-            "../../../../../builtin-assets/adapters/codebuddy/conversation-adapter.json"
-        ),
-        package_manifest_text: include_str!(
-            "../../../../../builtin-assets/adapters/codebuddy/conversation-adapter-package.json"
-        ),
-        script: include_str!("../../../../../builtin-assets/adapters/codebuddy/adapter.mjs"),
-        payload_policy_script: Some(PAYLOAD_POLICY_SCRIPT),
-    },
-];
-
-fn should_refresh_official_adapter(
-    manifest_path: &Path,
-    bundled_manifest_text: &str,
-    target_dir: &Path,
-    bundled_script: &str,
-    bundled_payload_policy_script: Option<&str>,
-) -> bool {
-    let Ok(existing_text) = fs::read_to_string(manifest_path) else {
-        return true;
-    };
-    let script_path = target_dir.join("adapter.mjs");
-    let Ok(existing_script) = fs::read_to_string(&script_path) else {
-        return true;
-    };
-    if existing_script != bundled_script {
-        return true;
-    }
-    if let Some(bundled_policy) = bundled_payload_policy_script {
-        let Ok(existing_policy) = fs::read_to_string(target_dir.join("payload-policy.mjs")) else {
-            return true;
-        };
-        if existing_policy != bundled_policy {
-            return true;
-        }
-    }
-    let Ok(existing): Result<serde_json::Value, _> = serde_json::from_str(&existing_text) else {
-        return true;
-    };
-    let Ok(bundled): Result<serde_json::Value, _> = serde_json::from_str(bundled_manifest_text)
-    else {
-        return true;
-    };
-    let existing_version = existing
-        .get("version")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let bundled_version = bundled
-        .get("version")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if existing_version != bundled_version {
-        return true;
-    }
-    let existing_caps = existing.get("capabilities").and_then(|c| c.as_array());
-    let bundled_caps = bundled.get("capabilities").and_then(|c| c.as_array());
-    match (existing_caps, bundled_caps) {
-        (Some(e), Some(b)) => b.iter().any(|req| !e.contains(req)),
-        _ => false,
-    }
-}
-
-pub fn is_official_adapter_id(adapter_id: &str) -> bool {
-    OFFICIAL_ADAPTERS
-        .iter()
-        .any(|a| a.manifest.starts_with(&format!("{adapter_id}/")))
-}
-
-pub fn sync_official_adapter_to_package_dir(
-    adapter_id: &str,
-    target_dir: &Path,
-) -> InfraResult<bool> {
-    let Some(asset) = OFFICIAL_ADAPTERS
-        .iter()
-        .find(|a| a.manifest.starts_with(&format!("{adapter_id}/")))
-    else {
-        return Ok(false);
-    };
-    let target_manifest = target_dir.join("conversation-adapter.json");
-    if !should_refresh_official_adapter(
-        &target_manifest,
-        asset.manifest_text,
-        target_dir,
-        asset.script,
-        asset.payload_policy_script,
-    ) {
-        return Ok(false);
-    }
-    fs::create_dir_all(target_dir)?;
-    write_managed_runtime_file(&target_manifest, asset.manifest_text.as_bytes())?;
-    write_managed_runtime_file(
-        &target_dir.join("conversation-adapter-package.json"),
-        asset.package_manifest_text.as_bytes(),
-    )?;
-    let script_path = target_dir.join("adapter.mjs");
-    write_managed_runtime_file(&script_path, asset.script.as_bytes())?;
-    if let Some(policy_script) = asset.payload_policy_script {
-        write_managed_runtime_file(
-            &target_dir.join("payload-policy.mjs"),
-            policy_script.as_bytes(),
-        )?;
-    }
-    write_managed_runtime_file(
-        &target_dir.join("shell-projector.cjs"),
-        SHELL_PROJECTOR_SCRIPT.as_bytes(),
-    )?;
-    make_executable(&script_path)?;
-    Ok(true)
-}
-
-pub fn ensure_official_conversation_adapters() -> InfraResult<Vec<ConversationAdapter>> {
-    let _guard = OFFICIAL_ADAPTER_MATERIALIZE_LOCK
-        .lock()
-        .map_err(|_| InfraError::external("official adapter materialization lock poisoned"))?;
-    let root = conversation_adapter_dir()?;
     let mut adapters = Vec::new();
-    for asset in OFFICIAL_ADAPTERS {
-        let manifest_path = root.join(asset.manifest);
-        let adapter_dir = manifest_path.parent().ok_or_else(|| {
-            InfraError::Validation("official adapter manifest has no parent directory".to_string())
-        })?;
-        fs::create_dir_all(adapter_dir)?;
-        let refresh = should_refresh_official_adapter(
-            &manifest_path,
-            asset.manifest_text,
-            adapter_dir,
-            asset.script,
-            asset.payload_policy_script,
-        );
-        let write_fn = if refresh {
-            write_managed_runtime_file
-        } else {
-            write_if_missing
-        };
-        write_fn(&manifest_path, asset.manifest_text.as_bytes())?;
-        let package_manifest_path = adapter_dir.join("conversation-adapter-package.json");
-        write_fn(
-            &package_manifest_path,
-            asset.package_manifest_text.as_bytes(),
-        )?;
-        let script_path = adapter_dir.join("adapter.mjs");
-        write_fn(&script_path, asset.script.as_bytes())?;
-        if let Some(payload_script) = asset.payload_policy_script {
-            let payload_policy_path = adapter_dir.join("payload-policy.mjs");
-            write_fn(&payload_policy_path, payload_script.as_bytes())?;
+    for adapter_dir in candidates {
+        let manifest_path = adapter_dir.join(ADAPTER_MANIFEST_FILE_NAME);
+        match super::external::validate_external_adapter_manifest(&manifest_path.to_string_lossy())
+        {
+            Ok(validation) => adapters.push(project_validated_adapter(validation)),
+            Err(error) => tracing::warn!(
+                target: "assetiweave.operation",
+                operation = "app.bootstrap.conversation_adapter_discovery",
+                manifest_path = %manifest_path.display(),
+                error = %error,
+                "managed conversation adapter was skipped"
+            ),
         }
-        let shell_projector_path = adapter_dir.join("shell-projector.cjs");
-        write_fn(&shell_projector_path, SHELL_PROJECTOR_SCRIPT.as_bytes())?;
-        make_executable(&script_path)?;
-
-        let Ok(validation) =
-            super::external::validate_external_adapter_manifest(&manifest_path.to_string_lossy())
-        else {
-            continue;
-        };
-        let now = Utc::now().to_rfc3339();
-        adapters.push(ConversationAdapter {
-            id: validation.manifest.id.clone(),
-            name: validation.manifest.name.clone(),
-            kind: ConversationAdapterKind::External,
-            version: validation.manifest.version.clone(),
-            enabled: true,
-            manifest_path: Some(validation.manifest_path.clone()),
-            executable_path: Some(validation.executable_path.clone()),
-            content_hash: Some(validation.content_hash.clone()),
-            trusted_hash: Some(validation.content_hash.clone()),
-            trust_state: ConversationAdapterTrustState::BuiltIn,
-            protocol_version: Some(validation.manifest.protocol_version),
-            capabilities: validation.manifest.capabilities.clone(),
-            input_kinds: validation.manifest.input_kinds.clone(),
-            card_contract_version: validation.manifest.card_contract_version,
-            card_kinds: validation.manifest.card_kinds.clone(),
-            projection_version: validation.manifest.projection_version,
-            created_at: now.clone(),
-            updated_at: now,
-        });
     }
     Ok(adapters)
 }
 
-pub fn ensure_shell_command_projector() -> InfraResult<ConversationAdapter> {
-    let _guard = SHELL_PROJECTOR_MATERIALIZE_LOCK.lock().map_err(|_| {
-        InfraError::external("shell command projector materialization lock poisoned")
-    })?;
-    let root = conversation_adapter_dir()?
-        .join("runtime")
-        .join(SHELL_PROJECTOR_RUNTIME_VERSION);
-    materialize_shell_command_projector(&root)
-}
-
-pub fn ensure_reproject_runner_scripts() -> InfraResult<std::path::PathBuf> {
-    let _guard = REPROJECT_RUNNER_MATERIALIZE_LOCK
-        .lock()
-        .map_err(|_| InfraError::external("reproject runner materialization lock poisoned"))?;
-    let root = conversation_adapter_dir()?
-        .join("runtime")
-        .join(REPROJECT_RUNNER_RUNTIME_VERSION);
-    fs::create_dir_all(&root)?;
-    let policy_path = root.join("payload-policy.mjs");
-    let runner_path = root.join("reproject-runner.mjs");
-    write_managed_runtime_file(&policy_path, PAYLOAD_POLICY_SCRIPT.as_bytes())?;
-    write_managed_runtime_file(&runner_path, REPROJECT_RUNNER_SCRIPT.as_bytes())?;
-    make_executable(&runner_path)?;
-    Ok(runner_path)
-}
-
-pub async fn run_reproject_runner(
-    runner_path: &Path,
-    node_program: &Path,
-    payload_json: &[u8],
-) -> InfraResult<Vec<u8>> {
-    use std::process::Stdio;
-    use tokio::io::AsyncWriteExt;
-
-    let mut command = tokio::process::Command::new(node_program);
-    command
-        .arg(runner_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command.spawn().map_err(|err| {
-        InfraError::external(format!(
-            "failed to spawn reproject runner with {}: {err}",
-            node_program.display()
-        ))
-    })?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(payload_json)
-            .await
-            .map_err(InfraError::from)?;
-        stdin.shutdown().await.map_err(InfraError::from)?;
-    }
-    let output = child.wait_with_output().await.map_err(InfraError::from)?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(InfraError::external(format!(
-            "reproject runner failed ({}): {}",
-            output.status,
-            stderr.trim()
-        )));
-    }
-    Ok(output.stdout)
-}
-
-fn materialize_shell_command_projector(root: &Path) -> InfraResult<ConversationAdapter> {
-    fs::create_dir_all(root)?;
-    let manifest_path = root.join("conversation-adapter.json");
-    let adapter_path = root.join("projector-adapter.cjs");
-    let projector_path = root.join("shell-projector.cjs");
-    write_managed_runtime_file(&manifest_path, SHELL_PROJECTOR_MANIFEST.as_bytes())?;
-    write_managed_runtime_file(&adapter_path, SHELL_PROJECTOR_ADAPTER_SCRIPT.as_bytes())?;
-    write_managed_runtime_file(&projector_path, SHELL_PROJECTOR_SCRIPT.as_bytes())?;
-    make_executable(&adapter_path)?;
-
-    let validation =
-        super::external::validate_external_adapter_manifest(&manifest_path.to_string_lossy())?;
+/// Project a validated on-disk adapter as an *untrusted observation*.
+///
+/// #195：受管目录是用户可写的位置，磁盘上出现一份包不构成任何信任授权。
+/// 这里只记录「当前磁盘内容是什么」（`content_hash`），`trusted_hash` 必须留空，
+/// 信任只能由显式动作（工作区晋升 / 市场安装 / 本地注册）建立。
+fn project_validated_adapter(
+    validation: super::types::ExternalAdapterValidationResult,
+) -> ConversationAdapter {
     let now = Utc::now().to_rfc3339();
-    Ok(ConversationAdapter {
+    ConversationAdapter {
         id: validation.manifest.id.clone(),
         name: validation.manifest.name.clone(),
         kind: ConversationAdapterKind::External,
@@ -355,8 +91,8 @@ fn materialize_shell_command_projector(root: &Path) -> InfraResult<ConversationA
         manifest_path: Some(validation.manifest_path.clone()),
         executable_path: Some(validation.executable_path.clone()),
         content_hash: Some(validation.content_hash.clone()),
-        trusted_hash: Some(validation.content_hash.clone()),
-        trust_state: ConversationAdapterTrustState::BuiltIn,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Untrusted,
         protocol_version: Some(validation.manifest.protocol_version),
         capabilities: validation.manifest.capabilities.clone(),
         input_kinds: validation.manifest.input_kinds.clone(),
@@ -365,35 +101,7 @@ fn materialize_shell_command_projector(root: &Path) -> InfraResult<ConversationA
         projection_version: validation.manifest.projection_version,
         created_at: now.clone(),
         updated_at: now,
-    })
-}
-
-fn write_managed_runtime_file(path: &Path, bytes: &[u8]) -> InfraResult<()> {
-    if fs::read(path).ok().as_deref() == Some(bytes) {
-        return Ok(());
     }
-    fs::write(path, bytes).map_err(InfraError::from)
-}
-
-fn write_if_missing(path: &Path, bytes: &[u8]) -> InfraResult<()> {
-    if path.exists() {
-        return Ok(());
-    }
-    fs::write(path, bytes).map_err(InfraError::from)
-}
-
-#[cfg(unix)]
-fn make_executable(path: &Path) -> InfraResult<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).map_err(InfraError::from)
-}
-
-#[cfg(not(unix))]
-fn make_executable(_path: &Path) -> InfraResult<()> {
-    Ok(())
 }
 
 #[cfg(test)]

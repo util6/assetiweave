@@ -649,7 +649,7 @@ async fn seeding_builtin_conversation_adapters_preserves_user_registered_adapter
 
     let loaded = async {
         upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &market_adapter).await?;
-        seed_prepared_builtin_conversation_adapters_sqlx(
+        seed_discovered_conversation_adapters_sqlx(
             database.pool(),
             TEST_TENANT_ID,
             vec![test_conversation_adapter(
@@ -668,6 +668,68 @@ async fn seeding_builtin_conversation_adapters_preserves_user_registered_adapter
     assert_eq!(loaded.trust_state, ConversationAdapterTrustState::Trusted);
     assert_eq!(loaded.manifest_path, market_adapter.manifest_path);
     assert_eq!(loaded.executable_path, market_adapter.executable_path);
+
+    drop(database);
+    cleanup_database(&db_path);
+}
+
+#[tokio::test]
+async fn seeding_discovered_adapters_refreshes_observations_without_granting_trust() {
+    let db_path = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-adapter-seed-untrusted-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_async(&db_path).await.expect("open database");
+
+    let mut existing = test_conversation_adapter(
+        "codex",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Untrusted,
+    );
+    existing.trusted_hash = None;
+    existing.content_hash = Some("disk-v1".to_string());
+    existing.enabled = false;
+    let mut observed = test_conversation_adapter(
+        "codex",
+        ConversationAdapterKind::External,
+        ConversationAdapterTrustState::Trusted,
+    );
+    observed.trusted_hash = Some("disk-v2".to_string());
+    observed.content_hash = Some("disk-v2".to_string());
+    observed.version = "1.1.0".to_string();
+    observed.manifest_path =
+        Some("/managed/conversation-adapters/codex/conversation-adapter.json".to_string());
+    observed.executable_path = Some("/managed/conversation-adapters/codex/adapter.mjs".to_string());
+
+    let loaded = async {
+        upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &existing).await?;
+        seed_discovered_conversation_adapters_sqlx(database.pool(), TEST_TENANT_ID, vec![observed])
+            .await?;
+        load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, "codex").await
+    }
+    .await
+    .expect("seed discovered conversation adapters")
+    .expect("codex adapter");
+
+    assert_eq!(
+        loaded.trust_state,
+        ConversationAdapterTrustState::Untrusted,
+        "seeding must never upgrade a discovered row into a trusted state"
+    );
+    assert_eq!(
+        loaded.trusted_hash, None,
+        "seeding must never sign the observed content into a trusted hash"
+    );
+    assert_eq!(loaded.content_hash.as_deref(), Some("disk-v2"));
+    assert_eq!(loaded.version, "1.1.0");
+    assert_eq!(
+        loaded.manifest_path.as_deref(),
+        Some("/managed/conversation-adapters/codex/conversation-adapter.json")
+    );
+    assert!(
+        !loaded.enabled,
+        "seeding must preserve the user's enabled/disabled intent"
+    );
 
     drop(database);
     cleanup_database(&db_path);
@@ -2223,7 +2285,7 @@ async fn sqlx_round_trips_structured_cards_and_clears_translation_on_snapshot_re
 }
 
 #[tokio::test]
-async fn sqlx_adapter_contract_drift_keeps_session_fingerprints() {
+async fn sqlx_adapter_hash_drift_reparses_while_card_and_projection_drift_do_not() {
     let db_path = std::env::temp_dir().join(format!(
         "assetiweave-conversation-contract-drift-{}.sqlite",
         Uuid::new_v4()
@@ -2330,15 +2392,19 @@ async fn sqlx_adapter_contract_drift_keeps_session_fingerprints() {
     .await
     .expect("compare hydration identity");
 
-    // 会话级版本由会话记录自身承载：适配器、卡片契约与投影版本漂移都不再清空差集，
-    // 真正变化的会话交给版本令牌自证。
-    for versions in [&same, &adapter_changed, &card_changed, &projection_changed] {
+    // #204：综合内容 Hash 漂移必须整源重解析（脚本内容变化不伴随常量升级）；
+    // 卡片契约与投影版本漂移仍由会话级版本令牌自证，不清空差集。
+    assert!(
+        adapter_changed.is_empty(),
+        "adapter composite hash drift must invalidate the source watermark"
+    );
+    for versions in [&same, &card_changed, &projection_changed] {
         assert_eq!(
             versions.get("session-1").map(String::as_str),
             Some("source-v1")
         );
     }
-    // 只有载荷策略升级才允许整源重解析。
+    // 载荷策略升级同样整源重解析。
     assert!(payload_policy_changed.is_empty());
 
     let remaining: i64 = sqlx::query_scalar(

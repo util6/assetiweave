@@ -7,7 +7,54 @@ use crate::backend::domain::{
 };
 use crate::backend::infrastructure::conversations::{
     ConversationAdapterPackageInstallSourceKind, ConversationAdapterPackageInstallSpec,
+    COMMON_RUNTIME_DIR_NAME, COMMON_RUNTIME_FILES,
 };
+
+/// Overlay the currently effective `common/` helpers onto a runtime snapshot.
+///
+/// Only helpers the package already ships are replaced, so a promotion captures
+/// exactly the external scripts in force at snapshot time and never injects
+/// host-only files into a plugin package.
+pub fn overlay_effective_common_scripts(package_dir: &Path, managed_root: &Path) -> AppResult<()> {
+    let common_dir = managed_root.join(COMMON_RUNTIME_DIR_NAME);
+    crate::backend::infrastructure::conversations::ensure_common_runtime_scripts_at(&common_dir)
+        .map_err(AppError::external)?;
+    for name in COMMON_RUNTIME_FILES {
+        let target = package_dir.join(name);
+        if !target.is_file() {
+            continue;
+        }
+        let source = common_dir.join(name);
+        if !source.is_file() {
+            continue;
+        }
+        let effective = fs::read(&source).map_err(AppError::external)?;
+        if fs::read(&target).map_err(AppError::external)? == effective {
+            continue;
+        }
+        fs::copy(&source, &target).map_err(AppError::external)?;
+    }
+    Ok(())
+}
+
+/// Reject a managed runtime snapshot as a promotion source.
+///
+/// #202：`packages/<id>/versions/<rev>` 是晋升产物，不是可编辑工作区。把快照
+/// 目录显式传给 upgrade/register 只会产生「用受信任内容再次晋升」的假动作，
+/// 甚至让内部快照被当作外部源重新冻结。这里给出明确拒绝，避免隐式绕过约定。
+fn reject_managed_snapshot_source(source_dir: &Path, managed_root: &Path) -> AppResult<()> {
+    let packages_root = managed_root.join("packages");
+    let Ok(packages_root) = packages_root.canonicalize() else {
+        return Ok(());
+    };
+    if source_dir.starts_with(&packages_root) {
+        return Err(AppError::Validation(format!(
+            "conversation adapter runtime snapshot cannot be promoted as a workspace: {}",
+            source_dir.display()
+        )));
+    }
+    Ok(())
+}
 
 pub fn find_developer_conversation_adapter_root(start: &Path) -> AppResult<PathBuf> {
     for ancestor in start.ancestors() {
@@ -35,7 +82,7 @@ pub fn discover_conversation_adapter_workspace_dirs(root: &Path) -> AppResult<Ve
         .filter_map(|entry| {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if matches!(name.as_ref(), "packages" | "staging") {
+            if is_reserved_managed_entry(&name) {
                 return None;
             }
             let path = entry.path();
@@ -48,16 +95,62 @@ pub fn discover_conversation_adapter_workspace_dirs(root: &Path) -> AppResult<Ve
     Ok(package_dirs)
 }
 
+/// Package metadata a promotion should persist on top of the snapshot defaults.
+///
+/// Workspace upgrades use [`WorkspacePromotionOptions::default`] (the directory
+/// must be named after its adapter and the result is `LocalDirectory`). Local
+/// registration allows arbitrary source directory names and may record git
+/// tracking metadata.
+#[derive(Debug, Clone)]
+pub struct WorkspacePromotionOptions {
+    pub enforce_directory_name: bool,
+    pub origin: ConversationAdapterPackageOrigin,
+    pub source_url: Option<String>,
+    pub git_ref: Option<String>,
+    pub git_commit: Option<String>,
+}
+
+impl Default for WorkspacePromotionOptions {
+    fn default() -> Self {
+        Self {
+            enforce_directory_name: true,
+            origin: ConversationAdapterPackageOrigin::LocalDirectory,
+            source_url: None,
+            git_ref: None,
+            git_commit: None,
+        }
+    }
+}
+
 pub async fn promote_conversation_adapter_workspace_package(
     service: &AppService,
     package_dir: &Path,
     managed_root: &Path,
     dry_run: bool,
 ) -> AppResult<Value> {
+    promote_conversation_adapter_workspace_package_with_options(
+        service,
+        package_dir,
+        managed_root,
+        dry_run,
+        &WorkspacePromotionOptions::default(),
+    )
+    .await
+}
+
+/// Snapshot a package directory into the managed runtime layout.
+pub async fn promote_conversation_adapter_workspace_package_with_options(
+    service: &AppService,
+    package_dir: &Path,
+    managed_root: &Path,
+    dry_run: bool,
+    options: &WorkspacePromotionOptions,
+) -> AppResult<Value> {
     let source_dir = package_dir
         .canonicalize()
         .map_err(|error| format!("resolve adapter workspace failed: {error}"))
         .map_err(AppError::external)?;
+    reject_managed_snapshot_source(&source_dir, managed_root)?;
     let source_validation =
         crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(
             &source_dir,
@@ -68,7 +161,7 @@ pub async fn promote_conversation_adapter_workspace_package(
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
-    if directory_name != adapter_id {
+    if options.enforce_directory_name && directory_name != adapter_id {
         return Err(AppError::Validation(format!(
             "conversation adapter workspace directory must match adapter id: expected {adapter_id}, found {directory_name}"
         )));
@@ -126,6 +219,7 @@ pub async fn promote_conversation_adapter_workspace_package(
         return Ok(json!({
             "dry_run": true,
             "source_dir": source_dir,
+            "snapshot_path": version_dir,
             "install_dir": version_dir,
             "package_id": source_validation.manifest.package_id,
             "adapter_id": adapter_id,
@@ -141,26 +235,32 @@ pub async fn promote_conversation_adapter_workspace_package(
         fs::create_dir_all(parent).map_err(AppError::external)?;
     }
     crate::backend::infrastructure::filesystem::copy_dir(&source_dir, &prepared_dir)?;
+    // #195：快照 rename 之前不写任何受信任记录。登记（含 probe 执行）只在不可变
+    // 快照落位后进行，因此失败分支不会留下指向 `prepared/<uuid>` 的悬空行。
+    let mut created_snapshot: Option<PathBuf> = None;
     let promotion: AppResult<_> = async {
-        let prepared_validation =
-            crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(&prepared_dir)
+        // Fix the currently effective external helpers into the snapshot before
+        // it becomes an immutable runtime revision.
+        overlay_effective_common_scripts(&prepared_dir, managed_root)?;
+        let revalidated_source =
+            crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(&source_dir)
                 .map_err(AppError::external)?;
-        if prepared_validation.content_hash != source_validation.content_hash {
+        if revalidated_source.content_hash != source_validation.content_hash {
             return Err(AppError::Validation(
                 "conversation adapter workspace changed while its runtime snapshot was being created"
                     .to_string(),
             ));
         }
-        crate::backend::infrastructure::conversations::register_external_adapter_with_settings(
-            crate::backend::infrastructure::conversations::ExternalAdapterRegisterParams {
-                manifest_path: prepared_validation.adapter_manifest_path,
-                dry_run: false,
-                yes: true,
-            },
-            &settings,
-        )
-        .await
-        .map_err(AppError::external)?;
+        let prepared_validation =
+            crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(&prepared_dir)
+                .map_err(AppError::external)?;
+        let effective_hash = prepared_validation.content_hash.clone();
+        let revision = format!(
+            "{}-{}",
+            version,
+            &effective_hash[..12.min(effective_hash.len())]
+        );
+        let version_dir = package_root.join("versions").join(&revision);
 
         let created_version_dir = if version_dir.exists() {
             let existing =
@@ -168,7 +268,7 @@ pub async fn promote_conversation_adapter_workspace_package(
                     &version_dir,
                 )
                 .map_err(AppError::external)?;
-            if existing.content_hash != source_validation.content_hash {
+            if existing.content_hash != effective_hash {
                 return Err(AppError::Validation(format!(
                     "conversation adapter runtime revision is immutable: {}",
                     version_dir.display()
@@ -185,14 +285,19 @@ pub async fn promote_conversation_adapter_workspace_package(
             fs::rename(&prepared_dir, &version_dir).map_err(AppError::external)?;
             true
         };
+        if created_version_dir {
+            created_snapshot = Some(version_dir.clone());
+        }
 
         let final_validation =
             crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(&version_dir)
                 .map_err(AppError::external)?;
+        // Registering is an explicit trust action: it probes the immutable
+        // snapshot and only then signs its content hash.
         let preview = crate::backend::infrastructure::conversations::register_external_adapter_with_settings(
             crate::backend::infrastructure::conversations::ExternalAdapterRegisterParams {
                 manifest_path: final_validation.adapter_manifest_path.clone(),
-                dry_run: true,
+                dry_run: false,
                 yes: true,
             },
             &settings,
@@ -221,10 +326,13 @@ pub async fn promote_conversation_adapter_workspace_package(
                 .as_str()
                 .to_string(),
             runtime_ready: true,
-            origin: ConversationAdapterPackageOrigin::LocalDirectory,
-            source_url: Some(source_dir.to_string_lossy().to_string()),
-            git_ref: None,
-            git_commit: None,
+            origin: options.origin,
+            source_url: options
+                .source_url
+                .clone()
+                .or_else(|| Some(source_dir.to_string_lossy().to_string())),
+            git_ref: options.git_ref.clone(),
+            git_commit: options.git_commit.clone(),
             catalog_url: None,
             update_policy: ConversationPackageUpdatePolicy::PinExact,
             latest_version: Some(final_validation.manifest.version.clone()),
@@ -240,24 +348,21 @@ pub async fn promote_conversation_adapter_workspace_package(
                 .unwrap_or_else(|| now.clone()),
             updated_at: now,
         };
-        let activation = super::super::conversation_storage::activate_workspace(
+        super::super::conversation_storage::activate_workspace(
             service.db.pool(),
             &adapter,
             &package,
         )
-        .await;
-        if let Err(error) = activation {
-            if created_version_dir {
-                let _ = fs::remove_dir_all(&version_dir);
-            }
-            return Err(error);
-        }
+        .await?;
         let cleanup_warning =
             retain_only_active_workspace_runtime(&package_root, &version_dir).err();
         Ok(json!({
             "dry_run": false,
             "upgraded": true,
             "source_dir": source_dir,
+            "snapshot_path": version_dir,
+            "activated_version": final_validation.manifest.version.clone(),
+            "activated_hash": effective_hash,
             "package": package,
             "adapter": adapter,
             "validation": final_validation,
@@ -267,6 +372,9 @@ pub async fn promote_conversation_adapter_workspace_package(
     }.await;
     if promotion.is_err() {
         let _ = fs::remove_dir_all(&prepared_dir);
+        if let Some(snapshot) = created_snapshot.take() {
+            let _ = fs::remove_dir_all(snapshot);
+        }
     }
     promotion
 }
@@ -305,7 +413,7 @@ pub fn discover_local_conversation_adapter_packages(
         .filter_map(|entry| {
             let file_name = entry.file_name();
             let file_name = file_name.to_string_lossy();
-            if matches!(file_name.as_ref(), "packages" | "staging") {
+            if is_reserved_managed_entry(&file_name) {
                 return None;
             }
             entry.file_type().ok()?.is_dir().then(|| entry.path())
@@ -344,7 +452,7 @@ pub fn discover_local_conversation_adapter_packages(
                 tags: Vec::new(),
                 manifest_file,
                 package_manifest_file: Some("conversation-adapter-package.json".to_string()),
-                expected_content_hash: None,
+                expected_content_hash: Some(validation.adapter_validation.content_hash),
                 expected_package_hash: Some(validation.content_hash),
                 expected_artifact_hash: None,
                 artifact_size: None,

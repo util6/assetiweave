@@ -187,7 +187,7 @@ pub fn resolve_conversation_adapter_package_catalog_entries(
                 .map(|p| &p.version)
                 .or_else(|| installed_adapter.as_ref().map(|a| &a.version));
 
-            let (update_available, ahead_of_release) =
+            let (version_update_available, ahead_of_release) =
                 if let Some(installed_ver) = installed_version {
                     if let (Ok(installed_semver), Ok(item_semver)) = (
                         semver::Version::parse(installed_ver),
@@ -203,13 +203,22 @@ pub fn resolve_conversation_adapter_package_catalog_entries(
                 } else {
                     (false, false)
                 };
+            // 受管目录候选包与已受信任记录双重比对：SemVer 更高或同版本内容变化都算待晋升更新。
+            let update_available = version_update_available
+                || local_candidate_is_pending_update(
+                    &item,
+                    installed_package.as_ref(),
+                    installed_adapter.as_ref(),
+                );
             let runtime_ready = installed_package
                 .as_ref()
                 .map(|package| package.runtime_ready)
                 .unwrap_or_else(|| {
-                    installed_adapter
-                        .as_ref()
-                        .is_some_and(|adapter| adapter.enabled)
+                    // #195：没有受管包记录时，只有显式建立过信任的投影才能运行；
+                    // 受管目录里刚被发现的包只是磁盘观测，不能对外宣称可运行。
+                    installed_adapter.as_ref().is_some_and(|adapter| {
+                        adapter.enabled && adapter_has_runtime_trust(adapter)
+                    })
                 });
             let error_message = installed_package
                 .as_ref()
@@ -429,13 +438,13 @@ pub fn resolve_conversation_adapter_package_catalog_entries(
             installed: true,
             update_available: false,
             ahead_of_release: false,
-            runtime_ready: adapter.enabled,
+            runtime_ready: adapter.enabled && adapter_has_runtime_trust(adapter),
             status: conversation_adapter_package_status(
                 true,
                 None,
                 false,
                 false,
-                adapter.enabled,
+                adapter.enabled && adapter_has_runtime_trust(adapter),
                 Some(adapter),
             ),
             installed_package: None,

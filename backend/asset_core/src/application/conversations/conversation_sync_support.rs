@@ -83,9 +83,18 @@ impl AppService {
         } else {
             crate::backend::domain::conversations::ConversationRecordKind::Session
         };
+        // #204：水位身份令牌是「综合内容 Hash」——清单 + 主脚本 + 包内冻结的
+        // 公共脚本副本，或缺失时 `common/` 下的实时脚本内容。任一变化都会改变
+        // 令牌，从而在不改任何编译期常量的前提下驱动存量会话重解析。
         let adapter_content_hash = adapter
             .as_ref()
-            .and_then(|adapter| adapter.content_hash.clone());
+            .map(|adapter| {
+                crate::backend::infrastructure::conversations::adapter_runtime_content_hash(adapter)
+            })
+            .transpose()
+            .map_err(conversation_external_error)?
+            .flatten();
+
         let card_contract_version = adapter
             .as_ref()
             .and_then(|adapter| adapter.card_contract_version);

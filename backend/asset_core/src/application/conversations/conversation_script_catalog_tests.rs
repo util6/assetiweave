@@ -755,6 +755,20 @@ async fn workspace_upgrade_promotes_only_a_probed_immutable_runtime_copy() {
     assert!(!first_install.exists());
     assert!(second_install.is_dir());
 
+    let package_before_failure = service
+        .load_conversation_adapter_package("com.util6.external-test")
+        .await
+        .expect("load package before failed revision")
+        .expect("active package before failed revision");
+    let adapter_before_failure = crate::backend::store::load_conversation_adapter_sqlx(
+        service.pool(),
+        service.tenant_id(),
+        "external-test",
+    )
+    .await
+    .expect("load adapter before failed revision")
+    .expect("active adapter before failed revision");
+
     write_executable("#!/bin/sh\ncat >/dev/null\nprintf 'invalid\\n'\n");
     let error = promote_conversation_adapter_workspace_package(
         &service,
@@ -770,8 +784,37 @@ async fn workspace_upgrade_promotes_only_a_probed_immutable_runtime_copy() {
         .await
         .expect("load retained package")
         .expect("retained package");
-    assert_eq!(PathBuf::from(retained.install_dir), second_install);
+    assert_eq!(PathBuf::from(&retained.install_dir), second_install);
     assert!(second_install.is_dir());
+
+    // #195：失败晋升不得留下任何半写入的受信任记录，DB 行必须与晋升前逐字段一致。
+    assert_eq!(
+        retained, package_before_failure,
+        "a failed promotion must not mutate the package row"
+    );
+    let adapter_after_failure = crate::backend::store::load_conversation_adapter_sqlx(
+        service.pool(),
+        service.tenant_id(),
+        "external-test",
+    )
+    .await
+    .expect("load adapter after failed revision")
+    .expect("active adapter after failed revision");
+    assert_eq!(
+        adapter_after_failure, adapter_before_failure,
+        "a failed promotion must not mutate the adapter row"
+    );
+    let prepared_root = managed_root
+        .join("packages")
+        .join("com.util6.external-test")
+        .join("prepared");
+    let prepared_leftovers = fs::read_dir(&prepared_root)
+        .map(|entries| entries.count())
+        .unwrap_or(0);
+    assert_eq!(
+        prepared_leftovers, 0,
+        "a failed promotion must not leave staging directories behind"
+    );
 
     fs::write(
         package_dir.join("conversation-adapter-package.json"),
@@ -885,18 +928,21 @@ async fn local_registration_and_unregistration_never_modify_external_package_fil
     let service = AppService::open_with_db_path(root.join("app.db"))
         .await
         .expect("open service");
-    service
-        .register_conversation_adapter_local(ConversationAdapterLocalRegisterParams {
-            package_dir: package_dir.to_string_lossy().to_string(),
-            origin: ConversationAdapterPackageOrigin::LocalDirectory,
-            source_url: None,
-            git_ref: None,
-            git_commit: None,
-            dry_run: false,
-            yes: true,
-        })
-        .await
-        .expect("register local package");
+    // Registration promotes into the managed runtime directory. Pin the managed root
+    // inside the test tree so the unit suite never writes to the real user home.
+    let managed_root = root.join("managed-adapters");
+    promote_conversation_adapter_workspace_package_with_options(
+        &service,
+        &package_dir,
+        &managed_root,
+        false,
+        &WorkspacePromotionOptions {
+            enforce_directory_name: false,
+            ..WorkspacePromotionOptions::default()
+        },
+    )
+    .await
+    .expect("register local package");
     let registered = service
         .load_conversation_adapter_package("com.util6.external-test")
         .await
@@ -1103,22 +1149,23 @@ async fn refresh_conversation_adapter_package_runtime_skips_write_when_state_unc
     let _ = fs::remove_dir_all(&root);
 }
 
-#[tokio::test]
-async fn dev_override_official_adapter_is_not_clobbered_and_refreshes_hash() {
-    let root = std::env::temp_dir().join(format!(
-        "assetiweave-dev-override-test-{}",
-        uuid::Uuid::new_v4()
-    ));
-    let package_dir = root.join("antigravity");
-    fs::create_dir_all(&package_dir).expect("create package dir");
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn workspace_promotion_freezes_the_effective_common_scripts_into_the_snapshot() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root =
+        std::env::temp_dir().join(format!("assetiweave-workspace-common-{}", Uuid::new_v4()));
+    let package_dir = root.join("workspace").join("common-policy");
+    let managed_root = root.join("managed");
+    fs::create_dir_all(&package_dir).expect("create workspace package");
     fs::write(
         package_dir.join("conversation-adapter-package.json"),
         r#"{
   "schema_version": 1,
-  "package_id": "io.github.util6.antigravity-session",
-  "adapter_id": "antigravity",
-  "name": "Antigravity Dev",
-  "version": "1.5.3-dev",
+  "package_id": "com.util6.common-policy",
+  "name": "Common Policy",
+  "version": "1.0.0",
   "min_core_version": "0.1.0",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
@@ -1127,14 +1174,14 @@ async fn dev_override_official_adapter_is_not_clobbered_and_refreshes_hash() {
   "changelog": []
 }"#,
     )
-    .expect("write pkg manifest");
+    .expect("write package manifest");
     fs::write(
         package_dir.join("conversation-adapter.json"),
         r#"{
   "schema_version": 1,
-  "id": "antigravity",
-  "name": "Antigravity Dev",
-  "version": "1.5.3-dev",
+  "id": "common-policy",
+  "name": "Common Policy",
+  "version": "1.0.0",
   "protocol_version": 1,
   "command": ["adapter.sh"],
   "capabilities": ["probe", "read_session"],
@@ -1142,92 +1189,101 @@ async fn dev_override_official_adapter_is_not_clobbered_and_refreshes_hash() {
 }"#,
     )
     .expect("write adapter manifest");
-    let script_path = package_dir.join("adapter.sh");
+    let executable = package_dir.join("adapter.sh");
     fs::write(
-        &script_path,
-        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"ok\":true}}'\n",
+        &executable,
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"revision\":1}}'\n",
     )
-    .expect("write adapter script v1");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(&script_path).expect("metadata").permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script_path, permissions).expect("set permissions");
-    }
+    .expect("write adapter executable");
+    let mut permissions = fs::metadata(&executable)
+        .expect("adapter metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&executable, permissions).expect("make adapter executable");
+    fs::write(package_dir.join("payload-policy.mjs"), "bundled policy\n")
+        .expect("write bundled policy");
+    fs::write(
+        package_dir.join("shell-projector.cjs"),
+        "bundled projector\n",
+    )
+    .expect("write bundled projector");
 
     let service = AppService::open_with_db_path(root.join("app.db"))
         .await
         .expect("open service");
+    let common_dir = managed_root.join("common");
+    fs::create_dir_all(&common_dir).expect("create managed common dir");
+    let effective_policy = "export const effective = \"common\";\n";
+    let effective_projector = "// effective common projector\n";
+    fs::write(common_dir.join("payload-policy.mjs"), effective_policy)
+        .expect("write effective policy");
+    fs::write(common_dir.join("shell-projector.cjs"), effective_projector)
+        .expect("write effective projector");
 
-    let reg = service
-        .register_conversation_adapter_dev(
-            Some(package_dir.to_string_lossy().to_string()),
-            false,
-            false,
-            true,
-        )
-        .await
-        .expect("register dev_override");
-    assert_eq!(reg["origin"], "dev_override");
-
-    let pkg = service
-        .load_conversation_adapter_package("io.github.util6.antigravity-session")
-        .await
-        .expect("load pkg")
-        .expect("pkg exists");
-    assert_eq!(pkg.origin, ConversationAdapterPackageOrigin::DevOverride);
-
-    let hash_v1 = service
-        .list_conversation_adapters()
-        .expect("list adapters")
-        .into_iter()
-        .find(|a| a.id == "antigravity")
-        .and_then(|a| a.content_hash)
-        .expect("content hash v1");
-
-    // Reconcile must not overwrite our live dev_override folder with bundled official files
-    crate::backend::application::system::conversation_adapters::reconcile_app_conversation_adapters(
-        service.db.pool(),
-        service.tenant_id(),
+    let promoted = promote_conversation_adapter_workspace_package(
+        &service,
+        &package_dir,
+        &managed_root,
+        false,
     )
     .await
-    .expect("reconcile adapters");
-    let disk_after_reconcile =
-        fs::read_to_string(&script_path).expect("read script after reconcile");
-    assert!(
-        disk_after_reconcile.contains("#!/bin/sh"),
-        "DevOverride files must NEVER be overwritten by official bundled assets"
+    .expect("promote workspace");
+    let install_dir = PathBuf::from(
+        promoted["package"]["install_dir"]
+            .as_str()
+            .expect("install dir"),
     );
 
-    // Edit dev script on disk -> refresh runtime -> hash in conversation_adapters updates automatically
-    fs::write(
-        &script_path,
-        "#!/bin/sh\n# dev edit v2\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"ok\":true}}'\n",
-    )
-    .expect("write adapter script v2");
-    let adapter = service
-        .list_conversation_adapters()
-        .expect("list adapters")
-        .into_iter()
-        .find(|a| a.id == "antigravity")
-        .expect("antigravity adapter");
-    service
-        .ensure_conversation_adapter_package_runtime_ready(&adapter)
-        .await
-        .expect("refresh runtime");
-    let hash_v2 = service
-        .list_conversation_adapters()
-        .expect("list adapters")
-        .into_iter()
-        .find(|a| a.id == "antigravity")
-        .and_then(|a| a.content_hash)
-        .expect("content hash v2");
-    assert_ne!(
-        hash_v1, hash_v2,
-        "DevOverride hash must update on disk edits"
+    assert_eq!(
+        fs::read_to_string(install_dir.join("payload-policy.mjs")).expect("read snapshot policy"),
+        effective_policy,
+        "the snapshot must freeze the common payload policy in force at promotion time"
+    );
+    assert_eq!(
+        fs::read_to_string(install_dir.join("shell-projector.cjs"))
+            .expect("read snapshot projector"),
+        effective_projector,
+        "the snapshot must freeze the common shell projector in force at promotion time"
+    );
+    assert!(
+        common_dir.join("reproject-runner.mjs").is_file(),
+        "promotion must materialize missing common helpers without overwriting the edited ones"
+    );
+    assert_eq!(
+        fs::read_to_string(common_dir.join("payload-policy.mjs")).expect("read effective policy"),
+        effective_policy,
+        "promotion must never rewrite the effective common scripts"
     );
 
     drop(service);
-    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn discover_workspace_dirs_skips_reserved_managed_entries() {
+    let root = std::env::temp_dir().join(format!("aiw-202-discover-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create managed root");
+    for name in [
+        "packages",
+        "staging",
+        "common",
+        "runtime",
+        ".dev-sync-temp",
+        "codex",
+    ] {
+        let dir = root.join(name);
+        fs::create_dir_all(&dir).expect("create candidate dir");
+        fs::write(dir.join("conversation-adapter-package.json"), "{}")
+            .expect("write package marker");
+    }
+
+    let discovered = discover_conversation_adapter_workspace_dirs(&root)
+        .expect("discover workspace directories");
+    assert_eq!(
+        discovered,
+        vec![root.join("codex")],
+        "reserved infrastructure directories and hidden transfer dirs must never be promoted as workspaces"
+    );
+
+    let _ = fs::remove_dir_all(root);
 }

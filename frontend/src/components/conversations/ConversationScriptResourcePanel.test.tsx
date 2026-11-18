@@ -339,7 +339,9 @@ describe("ConversationScriptResourcePanel", () => {
 
     const details = await screen.findAllByRole("button", { name: "Details" });
     fireEvent.click(details[1]);
-    expect(await screen.findByText("1.0.0")).toBeTruthy();
+    await waitFor(() =>
+      expect(detailFieldValue("Current version")).toBe("1.0.0"),
+    );
 
     const checkUpdatesButton = Array.from(
       document.querySelectorAll("button"),
@@ -348,10 +350,7 @@ describe("ConversationScriptResourcePanel", () => {
     fireEvent.click(checkUpdatesButton!);
 
     await waitFor(() => {
-      const currentVersion = screen
-        .getByText("Current version")
-        .parentElement?.querySelector("p.font-mono");
-      expect(currentVersion?.textContent).toBe("1.0.1");
+      expect(detailFieldValue("Current version")).toBe("1.0.1");
     });
   });
 
@@ -394,7 +393,7 @@ describe("ConversationScriptResourcePanel", () => {
     await waitFor(() =>
       expect(serviceMocks.checkUpdates).toHaveBeenCalledWith({ force: true }),
     );
-    expect(serviceMocks.list).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(serviceMocks.list).toHaveBeenCalledTimes(2));
     expect(
       screen
         .getByRole("tab", { name: /Updates \(1\)/ })
@@ -657,12 +656,17 @@ describe("ConversationScriptResourcePanel", () => {
         installed_at: "2026-07-15T00:00:00Z",
       },
     ]);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderPanel();
 
     fireEvent.click(await screen.findByRole("button", { name: "Details" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Delete version" }),
+    );
+    const confirmDialog = await screen.findByRole("dialog", {
+      name: "Delete version",
+    });
+    fireEvent.click(
+      within(confirmDialog).getByRole("button", { name: "Delete version" }),
     );
 
     await waitFor(() =>
@@ -672,6 +676,169 @@ describe("ConversationScriptResourcePanel", () => {
         confirmed: true,
       }),
     );
+  });
+
+  it("counts local directory pending updates in the updates tab and offers an update action", async () => {
+    serviceMocks.list.mockResolvedValue([localPackageEntry]);
+    renderPanel();
+
+    expect(await screen.findByText("Local Session Parser")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /Updates \(1\)/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Updates \(1\)/ }));
+    const updatesView = screen.getByRole("tab", {
+      name: /Updates \(1\)/,
+    });
+    expect(updatesView.getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    await waitFor(() =>
+      expect(serviceMocks.prepare).toHaveBeenCalledWith({
+        action: "update",
+        packageId: "local.session-parser",
+        adapterId: "local-session",
+      }),
+    );
+  });
+
+  it("offers update and trust details from the detail dialog of a local directory package", async () => {
+    serviceMocks.list.mockResolvedValue([localPackageEntry]);
+    serviceMocks.listReleases.mockResolvedValue([]);
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Details" }));
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Local Session Parser",
+    });
+    expect(within(dialog).getByRole("button", { name: "Update" })).toBeTruthy();
+    expect(detailFieldValue("Trusted version")).toBe("1.1.0");
+    expect(detailFieldValue("Managed directory version")).toBe("1.2.0");
+    expect(detailFieldValue("Current content hash")).toBe("local-content-hash");
+    expect(detailFieldValue("Trusted hash")).toBe("local-trusted-hash");
+  });
+
+  it("applies a local directory update after confirmation and refreshes the catalog", async () => {
+    serviceMocks.list.mockResolvedValue([localPackageEntry]);
+    serviceMocks.update.mockResolvedValue({
+      id: "update-local-1",
+      status: "completed",
+      action: "update",
+      item_id: "local.session-parser",
+      package_id: "local.session-parser",
+      version: "1.2.0",
+      catalog_url: null,
+      dry_run: false,
+      phase: "completed",
+      started_at: "2026-07-15T00:00:00Z",
+      finished_at: "2026-07-15T00:00:01Z",
+      result: { manifest_path: null },
+      error: null,
+    });
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Updates \(1\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    await waitFor(() => expect(serviceMocks.prepare).toHaveBeenCalledTimes(1));
+    expect(serviceMocks.update).not.toHaveBeenCalled();
+
+    const confirmDialog = await screen.findByRole("dialog", {
+      name: "Confirm plugin change",
+    });
+    fireEvent.click(
+      within(confirmDialog).getByRole("button", { name: "Update" }),
+    );
+
+    await waitFor(() =>
+      expect(serviceMocks.update).toHaveBeenCalledWith({
+        packageId: "local.session-parser",
+        version: undefined,
+        confirmed: true,
+      }),
+    );
+    // 任务完成后的目录刷新
+    await waitFor(() => expect(serviceMocks.list).toHaveBeenCalledTimes(2));
+  });
+
+  it.each([
+    "hash_mismatch",
+    "runtime_missing",
+    "manifest_invalid",
+    "core_incompatible",
+    "verification_failed",
+  ] as const)(
+    "offers repair for a non-managed package in %s state",
+    async (status) => {
+      serviceMocks.list.mockResolvedValueOnce([
+        { ...localPackageEntry, update_available: false, status },
+      ]);
+      renderPanel();
+
+      expect(
+        await screen.findByRole("button", { name: "Repair" }),
+      ).toBeTruthy();
+    },
+  );
+
+  it("reports the same count in the update notice as the updates tab", async () => {
+    const onNotify = vi.fn();
+    serviceMocks.list.mockResolvedValue([
+      entries[1],
+      {
+        ...localPackageEntry,
+        status: "hash_mismatch",
+        update_available: false,
+      },
+    ]);
+    render(
+      <I18nProvider>
+        <ConversationScriptResourcePanel
+          onInstalled={vi.fn()}
+          onManifestSelect={vi.fn()}
+          onNotify={onNotify}
+          onNotifyError={vi.fn()}
+          recordKind="session"
+        />
+      </I18nProvider>,
+    );
+
+    expect(
+      await screen.findByRole("tab", { name: /Updates \(2\)/ }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+
+    await waitFor(() =>
+      expect(onNotify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message:
+            "Update check completed; 2 plugins can be updated or repaired.",
+        }),
+      ),
+    );
+  });
+
+  it("shows placeholder copy when trust details are missing", async () => {
+    serviceMocks.list.mockResolvedValue([
+      {
+        ...localPackageEntry,
+        installed_package: {
+          ...localPackageEntry.installed_package!,
+          installed_content_hash: null,
+          trusted_package_hash: null,
+        },
+      },
+    ]);
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Details" }));
+
+    expect(await screen.findByText("Trusted version")).toBeTruthy();
+    expect(screen.getByText("Managed directory version")).toBeTruthy();
+    expect(screen.getByText("Current content hash")).toBeTruthy();
+    expect(screen.getByText("Trusted hash")).toBeTruthy();
+    expect(screen.getAllByText("Not recorded").length).toBe(2);
   });
 
   it("displays structured backend error message instead of [object Object]", async () => {
@@ -719,6 +886,72 @@ function renderPanel() {
     </I18nProvider>,
   );
 }
+
+function detailFieldValue(label: string): string | null | undefined {
+  return screen.getByText(label).parentElement?.querySelector("p.font-mono")
+    ?.textContent;
+}
+
+const localPackageEntry: ConversationAdapterPackageCatalogEntry = {
+  item: {
+    id: "local.session-parser",
+    name: "Local Session Parser",
+    version: "1.2.0",
+    record_kind: "session",
+    provider: "local_directory",
+    adapter_id: "local-session",
+    tags: [],
+    manifest_file: "conversation-adapter.json",
+    source: {
+      type: "local_directory",
+      url: "/tmp/conversation-adapters/local-session",
+    },
+  },
+  installed: true,
+  update_available: true,
+  ahead_of_release: false,
+  runtime_ready: true,
+  status: "update_available",
+  display_install_path: "~/.assetiweave/conversation-adapters/local-session",
+  display_manifest_path:
+    "~/.assetiweave/conversation-adapters/local-session/conversation-adapter.json",
+  installed_package: {
+    package_id: "local.session-parser",
+    adapter_id: "local-session",
+    name: "Local Session Parser",
+    version: "1.1.0",
+    record_kind: "session",
+    install_dir: "/tmp/conversation-adapters/local-session",
+    manifest_path:
+      "/tmp/conversation-adapters/local-session/conversation-adapter-package.json",
+    adapter_manifest_path:
+      "/tmp/conversation-adapters/local-session/conversation-adapter.json",
+    runtime_protocol: "stdio-ndjson-v1",
+    runtime_ready: true,
+    origin: "local_directory",
+    update_policy: "manual",
+    latest_version: null,
+    runtime_gate_status: "ready",
+    installed_content_hash: "local-content-hash",
+    trusted_package_hash: "local-trusted-hash",
+    created_at: "2026-07-15T00:00:00Z",
+    updated_at: "2026-07-15T00:00:00Z",
+  },
+  installed_adapter: {
+    id: "local-session",
+    name: "Local Session",
+    kind: "external",
+    version: "1.1.0",
+    enabled: true,
+    manifest_path:
+      "/tmp/conversation-adapters/local-session/conversation-adapter.json",
+    trust_state: "trusted",
+    capabilities: ["read_session"],
+    input_kinds: ["directory"],
+    created_at: "2026-07-15T00:00:00Z",
+    updated_at: "2026-07-15T00:00:00Z",
+  },
+};
 
 const entries: ConversationAdapterPackageCatalogEntry[] = [
   {

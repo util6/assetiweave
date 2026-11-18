@@ -37,7 +37,7 @@ pub async fn activate_tenant_with_fault(
         }
         let builtin_adapters = runtime.builtin_conversation_adapters();
         if !builtin_adapters.is_empty() {
-            let _ = crate::backend::application::system::bootstrap::seed_prepared_builtin_adapters(
+            let _ = crate::backend::application::system::bootstrap::seed_discovered_conversation_adapters(
                 &pool,
                 &next_context.tenant.id,
                 builtin_adapters.as_ref(),

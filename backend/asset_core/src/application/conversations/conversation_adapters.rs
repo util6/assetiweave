@@ -118,6 +118,9 @@ impl AppService {
                 .await
                 .map_err(conversation_storage_error)?;
             }
+            // 注册是适配器进入系统的另一条入口：内置来源可能因为适配器此前
+            // 不存在而从未落库，这里补一次（幂等，不覆盖用户改过的行）。
+            super::conversation_storage::seed_builtin_sources_for_tenant(pool, tenant_id).await;
             self.runtime.refresh_conversation_adapter_catalog().await?;
         }
         Ok(preview)

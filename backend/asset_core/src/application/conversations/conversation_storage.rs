@@ -91,12 +91,12 @@ pub async fn activate_package(
     let adapter = normalize_adapter(adapter.clone())?;
     let package = normalize_package(package.clone())?;
     let version = normalize_version(version.clone())?;
-    Ok(
-        crate::backend::store::activate_conversation_adapter_package_sqlx(
-            pool, &adapter, &package, &version,
-        )
-        .await?,
+    crate::backend::store::activate_conversation_adapter_package_sqlx(
+        pool, &adapter, &package, &version,
     )
+    .await?;
+    seed_builtin_sources_for_all_tenants(pool).await;
+    Ok(())
 }
 
 pub async fn activate_workspace(
@@ -106,12 +106,48 @@ pub async fn activate_workspace(
 ) -> AppResult<()> {
     let adapter = normalize_adapter(adapter.clone())?;
     let package = normalize_package(package.clone())?;
-    Ok(
-        crate::backend::store::activate_conversation_adapter_workspace_sqlx(
-            pool, &adapter, &package,
-        )
-        .await?,
-    )
+    crate::backend::store::activate_conversation_adapter_workspace_sqlx(pool, &adapter, &package)
+        .await?;
+    seed_builtin_sources_for_all_tenants(pool).await;
+    Ok(())
+}
+
+/// 给刚刚激活的适配器补齐对应的内置对话来源。
+///
+/// 激活会把适配器投影到所有租户，所以这里逐租户补齐。补齐只插入缺失行：
+/// 已存在的来源（含被用户停用的、被改过配置的）不会被重写；适配器仍未
+/// 存在的来源也不会落库。
+///
+/// 失败只记 warn：适配器已经装好了，缺一个默认来源不应该让激活整体失败。
+async fn seed_builtin_sources_for_all_tenants(pool: &SqlitePool) {
+    match crate::backend::store::load_all_tenant_ids_sqlx(pool).await {
+        Ok(tenant_ids) => {
+            for tenant_id in tenant_ids {
+                seed_builtin_sources_for_tenant(pool, &tenant_id).await;
+            }
+        }
+        Err(error) => tracing::warn!(
+            target: "assetiweave.operation",
+            operation = "app.conversation_adapter.builtin_source_seed",
+            error = %error,
+            "builtin conversation source backfill was skipped"
+        ),
+    }
+}
+
+/// 单租户版本的补齐入口，供只操作当前租户的注册路径复用。
+pub(super) async fn seed_builtin_sources_for_tenant(pool: &SqlitePool, tenant_id: &str) {
+    if let Err(error) =
+        crate::backend::store::seed_builtin_conversation_sources_sqlx(pool, tenant_id).await
+    {
+        tracing::warn!(
+            target: "assetiweave.operation",
+            operation = "app.conversation_adapter.builtin_source_seed",
+            tenant_id = %tenant_id,
+            error = %error,
+            "builtin conversation source backfill was skipped"
+        );
+    }
 }
 
 pub async fn deactivate_package(

@@ -289,7 +289,7 @@ pub enum ConversationAdapterCommands {
     Upgrade(ConversationAdapterUpgradeArgs),
 
     #[command(
-        about = "Register an external adapter manifest or mount a live dev adapter directory"
+        about = "Register an external adapter manifest or promote a local package directory into a managed snapshot"
     )]
     Register(ConversationAdapterRegisterArgs),
 
@@ -306,14 +306,14 @@ pub struct ConversationAdapterRegisterArgs {
 
     #[arg(
         long,
-        help = "Register adapter package directory in live dev_override mode (no copy to packages/)"
+        help = "Register a local adapter package directory by promoting it into a managed runtime snapshot"
     )]
     pub dev: bool,
 
     #[arg(
         short = 'd',
         long,
-        help = "Register all adapters from this repository's builtin-assets/adapters directory in dev_override mode"
+        help = "Sync this repository's builtin-assets/adapters packages and common scripts into the managed user directory, then validate and promote them"
     )]
     pub developer: bool,
 
@@ -344,13 +344,13 @@ pub struct ConversationAdapterInspectArgs {
 
 #[derive(Args, Debug)]
 pub struct ConversationAdapterUpgradeArgs {
-    #[arg(help = "optional adapter directory path")]
+    #[arg(help = "optional adapter id, package directory, or adapter manifest path")]
     pub package_dir: Option<String>,
 
     #[arg(
         short = 'd',
         long,
-        help = "upgrade adapters from this repository's builtin-assets/adapters directory"
+        help = "Sync this repository's builtin-assets/adapters packages and common scripts into the managed user directory, then validate and promote them"
     )]
     pub developer: bool,
 

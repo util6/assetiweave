@@ -177,6 +177,19 @@ pub fn conversation_catalog_manifest_path(
         })
 }
 
+/// Whether an adapter row currently carries a trust grant that allows execution.
+///
+/// #195：`untrusted` 只是受管目录的磁盘观测；`changed` 表示受信任内容已漂移。
+/// 两者都不能运行，只有显式晋升/安装/注册写入的 `trusted`（以及承载历史语义的
+/// `built_in`）才可以。
+pub fn adapter_has_runtime_trust(adapter: &ConversationAdapter) -> bool {
+    matches!(
+        adapter.trust_state,
+        crate::backend::domain::ConversationAdapterTrustState::Trusted
+            | crate::backend::domain::ConversationAdapterTrustState::BuiltIn
+    )
+}
+
 pub fn package_origin_label(origin: ConversationAdapterPackageOrigin) -> &'static str {
     match origin {
         ConversationAdapterPackageOrigin::BuiltIn => "built_in",
@@ -213,26 +226,43 @@ pub fn conversation_adapter_package_status(
             }
             .to_string();
         }
+        // Git 来源是显式跟踪本地文件的来源，标签优先于更新态。
+        // `dev_override` 已不再产生（#199），只为尚未迁移的遗留行保留读兼容标签。
+        match package.origin {
+            ConversationAdapterPackageOrigin::DevOverride => return "dev_override".to_string(),
+            ConversationAdapterPackageOrigin::GitRef => return "git_registered".to_string(),
+            _ => {}
+        }
+        // 本地目录与内置来源不再吞掉更新态：待晋升的本地变更优先于来源标签。
+        if update_available {
+            return "update_available".to_string();
+        }
         match package.origin {
             ConversationAdapterPackageOrigin::LocalDirectory => {
                 return "local_registered".to_string()
             }
-            ConversationAdapterPackageOrigin::GitRef => return "git_registered".to_string(),
-            ConversationAdapterPackageOrigin::DevOverride => return "dev_override".to_string(),
             ConversationAdapterPackageOrigin::BuiltIn => return "built_in".to_string(),
-            ConversationAdapterPackageOrigin::ManagedRelease
-            | ConversationAdapterPackageOrigin::LegacyExternal => {}
+            _ => {}
         }
-    } else if adapter.is_some_and(|adapter| {
-        adapter.trust_state == crate::backend::domain::ConversationAdapterTrustState::BuiltIn
-    }) {
-        return if runtime_ready {
-            "built_in"
-        } else {
-            "uninstalled"
+    } else if let Some(adapter) = adapter {
+        // #195：受管目录里被发现的包只是「观测到的磁盘内容」，显式注册/晋升前
+        // 不具备信任，也就不可运行。这里给出「未安装」口径，让界面继续提供
+        // 注册/安装入口，而不是把一个未受信任的包显示成已安装。
+        if adapter.trust_state == crate::backend::domain::ConversationAdapterTrustState::Untrusted {
+            if update_available {
+                return "update_available".to_string();
+            }
+            return "uninstalled".to_string();
         }
-        .to_string();
-    } else if adapter.is_some() {
+        if adapter.trust_state == crate::backend::domain::ConversationAdapterTrustState::BuiltIn {
+            if !runtime_ready {
+                return "uninstalled".to_string();
+            }
+            if update_available {
+                return "update_available".to_string();
+            }
+            return "built_in".to_string();
+        }
         return "legacy_installed".to_string();
     }
     if update_available {

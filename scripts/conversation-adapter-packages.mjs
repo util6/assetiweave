@@ -12,7 +12,7 @@ const command = process.argv[2] ?? "check";
 const update = process.argv.includes("--update");
 const generatedCopies = [
   ...[
-    "antigravity", "chatgpt-web", "claude-code", "codex",
+    "antigravity", "chatgpt-web", "claude-code", "codebuddy", "codex",
     "gemini-web", "opencode", "qwen-web", "zcode",
   ].map((adapterId) => [
     "builtin-assets/adapters/common/shell-projector.cjs",

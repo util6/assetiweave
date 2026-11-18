@@ -34,7 +34,7 @@ impl AppService {
             &target_catalog,
         )
         .await?;
-        crate::backend::application::system::bootstrap::seed_prepared_builtin_adapters(
+        crate::backend::application::system::bootstrap::seed_discovered_conversation_adapters(
             pool,
             &tenant.id,
             builtin_conversation_adapters.as_ref(),

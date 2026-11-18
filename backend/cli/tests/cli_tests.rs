@@ -2591,7 +2591,7 @@ fn cli_conversation_adapter_register_dev_and_unregister() {
         .assert()
         .failure();
 
-    // 2. Register in dev_override mode with --yes
+    // 2. Register a local package with --yes: it is promoted into a managed snapshot
     let reg_assert = aiwc_command()
         .env("ASSETIWEAVE_DB_PATH", &db_path)
         .args([
@@ -2606,16 +2606,16 @@ fn cli_conversation_adapter_register_dev_and_unregister() {
         .success();
     let reg_json: Value = serde_json::from_slice(&reg_assert.get_output().stdout).unwrap();
     assert_eq!(reg_json["ok"], true);
-    assert_eq!(reg_json["data"]["origin"], "dev_override");
+    assert_eq!(reg_json["data"]["origin"], "local_directory");
 
-    // 3. Inspect shows dev_override origin
+    // 3. Inspect shows the promoted local origin
     let inspect_assert = aiwc_command()
         .env("ASSETIWEAVE_DB_PATH", &db_path)
         .args(["conversation", "adapter", "inspect", "custom-dev"])
         .assert()
         .success();
     let inspect_json: Value = serde_json::from_slice(&inspect_assert.get_output().stdout).unwrap();
-    assert_eq!(inspect_json["data"]["origin"], "dev_override");
+    assert_eq!(inspect_json["data"]["origin"], "local_directory");
 
     // 4. Unregister with --yes
     let unreg_assert = aiwc_command()
@@ -2631,4 +2631,256 @@ fn cli_conversation_adapter_register_dev_and_unregister() {
         .success();
     let unreg_json: Value = serde_json::from_slice(&unreg_assert.get_output().stdout).unwrap();
     assert_eq!(unreg_json["ok"], true);
+}
+
+fn isolated_aiwc(home: &std::path::Path, cwd: &std::path::Path) -> Command {
+    let mut command = Command::cargo_bin("aiwc").expect("aiwc binary is built");
+    command
+        .env("HOME", home)
+        .env("ASSETIWEAVE_HOME", home)
+        .env("ASSETIWEAVE_DB_PATH", home.join("app.db"))
+        .current_dir(cwd);
+    command
+}
+
+fn write_cli_repo_adapter(
+    repo: &std::path::Path,
+    adapter_id: &str,
+    version: &str,
+    revision: u32,
+) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let package_id = format!("com.example.{adapter_id}");
+    let dir = repo
+        .join("builtin-assets")
+        .join("adapters")
+        .join(adapter_id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("conversation-adapter-package.json"),
+        format!(
+            r#"{{
+  "schema_version": 1,
+  "package_id": "{package_id}",
+  "adapter_id": "{adapter_id}",
+  "name": "CLI Fixture {adapter_id}",
+  "version": "{version}",
+  "min_core_version": "0.1.0",
+  "record_kind": "session",
+  "adapter_manifest": "conversation-adapter.json",
+  "capabilities": ["probe", "read_session"],
+  "runtime": {{ "protocol": "stdio-ndjson-v1" }},
+  "changelog": []
+}}"#
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("conversation-adapter.json"),
+        format!(
+            r#"{{
+  "schema_version": 1,
+  "id": "{adapter_id}",
+  "name": "CLI Fixture {adapter_id}",
+  "version": "{version}",
+  "protocol_version": 1,
+  "command": ["adapter.sh"],
+  "capabilities": ["probe", "read_session"],
+  "input_kinds": ["directory"]
+}}"#
+        ),
+    )
+    .unwrap();
+    let script = dir.join("adapter.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{{\"type\":\"complete\",\"item\":{{\"revision\":{revision}}}}}'\n"
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&script, permissions).unwrap();
+    dir
+}
+
+#[test]
+fn cli_conversation_adapter_developer_sync_promotion() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let repo = root.path().join("repo");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&repo).unwrap();
+
+    write_cli_repo_adapter(&repo, "acme-dev", "0.1.0", 1);
+    let repo_common = repo.join("builtin-assets").join("adapters").join("common");
+    std::fs::create_dir_all(&repo_common).unwrap();
+    for name in [
+        "payload-policy.mjs",
+        "reproject-runner.mjs",
+        "shell-projector.cjs",
+        "projector-adapter.cjs",
+        "projector-manifest.json",
+    ] {
+        std::fs::write(repo_common.join(name), format!("// cli fixture {name}\n")).unwrap();
+    }
+
+    let managed = home.join("conversation-adapters");
+
+    // 1. upgrade -d synchronizes the repository into the managed directory and promotes it.
+    let assert = isolated_aiwc(&home, &repo)
+        .args([
+            "conversation",
+            "adapter",
+            "upgrade",
+            "-d",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let upgraded: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(upgraded["ok"], true);
+    assert_eq!(upgraded["data"]["dry_run"], false);
+    assert_eq!(upgraded["data"]["developer_synced"], true);
+    let item = &upgraded["data"]["upgraded"][0];
+    assert_eq!(item["activated_version"], "0.1.0");
+    let first_hash = item["activated_hash"].as_str().unwrap().to_string();
+    let first_snapshot = item["snapshot_path"].as_str().unwrap().to_string();
+    assert!(std::path::Path::new(&first_snapshot).is_dir());
+    assert!(managed.join("acme-dev").join("adapter.sh").is_file());
+    assert_eq!(
+        std::fs::read_to_string(managed.join("common").join("payload-policy.mjs")).unwrap(),
+        "// cli fixture payload-policy.mjs\n"
+    );
+
+    // 2. adapter list sees the promoted version.
+    let assert = isolated_aiwc(&home, &repo)
+        .args(["conversation", "adapter", "list", "--format", "json"])
+        .assert()
+        .success();
+    let listed: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    let adapter = listed["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|adapter| adapter["id"] == "acme-dev")
+        .expect("acme-dev listed");
+    assert_eq!(adapter["version"], "0.1.0");
+
+    // 3. Tampering with the managed workspace produces a new <version>-<hash12> snapshot.
+    let managed_script = managed.join("acme-dev").join("adapter.sh");
+    std::fs::write(
+        &managed_script,
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"revision\":2}}'\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&managed_script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&managed_script, permissions).unwrap();
+    }
+    let assert = isolated_aiwc(&home, &repo)
+        .args([
+            "conversation",
+            "adapter",
+            "upgrade",
+            "acme-dev",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let tampered: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    let item = &tampered["data"]["upgraded"][0];
+    assert_eq!(item["activated_version"], "0.1.0");
+    let second_hash = item["activated_hash"].as_str().unwrap();
+    assert_ne!(second_hash, first_hash);
+    assert_ne!(item["snapshot_path"].as_str().unwrap(), first_snapshot);
+    assert!(!std::path::Path::new(&first_snapshot).exists());
+
+    // 4. Reserved managed directories are never promoted as workspaces.
+    let runtime_dir = managed.join("runtime");
+    std::fs::create_dir_all(&runtime_dir).unwrap();
+    std::fs::write(runtime_dir.join("conversation-adapter-package.json"), "{}").unwrap();
+    let assert = isolated_aiwc(&home, &repo)
+        .args(["conversation", "adapter", "upgrade", "--format", "json"])
+        .assert()
+        .success();
+    let scanned: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    for item in scanned["data"]["upgraded"].as_array().unwrap() {
+        let source = std::path::Path::new(item["source_dir"].as_str().unwrap());
+        let name = source.file_name().unwrap().to_string_lossy();
+        assert_ne!(name, "runtime");
+        assert_ne!(name, "common");
+        assert_ne!(name, "packages");
+        assert_ne!(name, "staging");
+    }
+
+    // 5. Dry-run previews a snapshot without syncing or promoting.
+    write_cli_repo_adapter(&repo, "beta-dev", "0.1.0", 1);
+    let assert = isolated_aiwc(&home, &repo)
+        .args([
+            "conversation",
+            "adapter",
+            "upgrade",
+            "-d",
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let preview: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(preview["data"]["dry_run"], true);
+    assert_eq!(preview["data"]["developer_synced"], false);
+    let preview_item = preview["data"]["upgraded"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["adapter_id"] == "beta-dev")
+        .expect("beta-dev preview");
+    assert!(preview_item["snapshot_path"].as_str().is_some());
+    assert_eq!(preview_item["content_hash"].as_str().unwrap().len(), 64);
+    assert!(preview_item["preflight"].is_object());
+    assert!(!managed.join("beta-dev").exists());
+    assert!(!managed
+        .join("packages")
+        .join("com.example.beta-dev")
+        .exists());
+
+    // 6. register still requires --yes; developer register then syncs and promotes.
+    isolated_aiwc(&home, &repo)
+        .args(["conversation", "adapter", "register", "-d"])
+        .assert()
+        .failure();
+    let assert = isolated_aiwc(&home, &repo)
+        .args([
+            "conversation",
+            "adapter",
+            "register",
+            "-d",
+            "--yes",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let registered: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(registered["data"]["developer_synced"], true);
+    assert!(managed.join("beta-dev").join("adapter.sh").is_file());
+    let assert = isolated_aiwc(&home, &repo)
+        .args(["conversation", "adapter", "list", "--format", "json"])
+        .assert()
+        .success();
+    let listed: Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert!(listed["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|adapter| adapter["id"] == "beta-dev"));
 }
