@@ -23,8 +23,7 @@ impl AppService {
         let managed_root =
             crate::backend::infrastructure::app_settings::conversation_adapter_dir()?;
         let (source_root, package_dirs) = if let Some(package_dir) = params.package_dir {
-            let package_dir =
-                crate::backend::infrastructure::path_utils::expand_path(&package_dir)?;
+            let package_dir = resolve_workspace_target(&package_dir, &managed_root)?;
             (package_dir.clone(), vec![package_dir])
         } else if params.developer {
             let current_dir = env::current_dir().map_err(AppError::external)?;
@@ -51,8 +50,17 @@ impl AppService {
             )));
         }
 
-        let mut upgraded = Vec::with_capacity(package_dirs.len());
-        for package_dir in package_dirs {
+        // #202: developer mode still trusts exactly the same managed snapshot as
+        // user mode. The checkout is synchronized into the managed user
+        // directory first and promotion reads from there.
+        let promotion_dirs = if params.developer && !params.dry_run {
+            sync_developer_workspaces(&source_root, &managed_root, &package_dirs)?
+        } else {
+            package_dirs
+        };
+
+        let mut upgraded = Vec::with_capacity(promotion_dirs.len());
+        for package_dir in promotion_dirs {
             upgraded.push(
                 promote_conversation_adapter_workspace_package(
                     self,
@@ -69,7 +77,9 @@ impl AppService {
         Ok(json!({
             "dry_run": params.dry_run,
             "developer": params.developer,
+            "developer_synced": params.developer && !params.dry_run,
             "source_root": source_root,
+            "managed_root": managed_root,
             "upgraded": upgraded,
         }))
     }
@@ -301,8 +311,17 @@ impl AppService {
 
         let managed_root = crate::backend::infrastructure::app_settings::conversation_adapter_dir()
             .map_err(AppError::external)?;
-        let mut registered = Vec::with_capacity(package_dirs.len());
-        for dir in package_dirs {
+        // #202: `register --developer` and `upgrade --developer` share the same
+        // sync-then-promote path. A user-named package directory is promoted
+        // as-is; only repository mode copies editable sources into the managed
+        // user directory first.
+        let promotion_dirs = if developer && !dry_run {
+            sync_developer_workspaces(&source_root, &managed_root, &package_dirs)?
+        } else {
+            package_dirs
+        };
+        let mut registered = Vec::with_capacity(promotion_dirs.len());
+        for dir in promotion_dirs {
             registered.push(
                 promote_conversation_adapter_workspace_package_with_options(
                     self,
@@ -323,8 +342,10 @@ impl AppService {
         Ok(json!({
             "dry_run": dry_run,
             "developer": developer,
+            "developer_synced": developer && !dry_run,
             "origin": "local_directory",
             "source_root": source_root,
+            "managed_root": managed_root,
             "registered": registered,
         }))
     }
@@ -480,4 +501,29 @@ impl AppService {
             confirmation_required: risk != ConversationAdapterPackageChangeRisk::ReadOnly,
         })
     }
+}
+
+/// Resolve a user-supplied upgrade target.
+///
+/// User-state upgrades accept an adapter id inside the managed root, a package
+/// directory, or an adapter manifest file. Adapter ids only resolve against
+/// the managed directory, so a checkout-relative name can never silently point
+/// at unrelated files.
+fn resolve_workspace_target(raw: &str, managed_root: &Path) -> AppResult<PathBuf> {
+    let expanded = crate::backend::infrastructure::path_utils::expand_path(raw)?;
+    if expanded.is_file() {
+        return expanded.parent().map(Path::to_path_buf).ok_or_else(|| {
+            AppError::Validation("adapter manifest has no parent directory".to_string())
+        });
+    }
+    if expanded.is_dir() {
+        return Ok(expanded);
+    }
+    let by_id = managed_root.join(raw);
+    if by_id.is_dir() {
+        return Ok(by_id);
+    }
+    Err(AppError::Validation(format!(
+        "conversation adapter workspace was not found: {raw}"
+    )))
 }
