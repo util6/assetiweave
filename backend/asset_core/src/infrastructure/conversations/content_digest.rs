@@ -1,14 +1,16 @@
 //! #204：适配器「综合内容 Hash」。
 //!
 //! 同步水位判定的身份令牌不能只看适配器包自身（清单 + 主脚本 + 包内脚本副本）：
-//! 公共策略脚本（`common/**`）在包没有随附副本时才是真正生效的解析策略。
-//! 因此综合 Hash 由三部分组成：
+//! 公共策略脚本（`common/**`）才是解析时真正生效的策略。因此综合 Hash 由三部分组成：
 //!
 //! 1. 适配器记录里的 `content_hash`（清单指纹 + 主脚本指纹 + 包内
 //!    `payload-policy.mjs` 副本）；
-//! 2. 包目录内随包冻结的公共脚本副本（晋升时已冻结进不可变快照，改包外文件不影响它）；
-//! 3. 包目录缺失对应文件时，`$ASSETIWEAVE_HOME/conversation-adapters/common/`
-//!    下的实时内容。
+//! 2. `$ASSETIWEAVE_HOME/conversation-adapters/common/` 下公共脚本的**实时内容**；
+//! 3. 仅当 `common/` 缺失对应文件时，回落到包内随包副本。
+//!
+//! #195/#204：`common/` 是权威解析位置。此前「包内副本优先」会让晋升时冻结的
+//! 副本遮蔽用户的实时修改：改 `common/payload-policy.mjs` 综合 Hash 不变，
+//! 既不重解析也不生效。现在任何 `common/` 改动都会改变综合 Hash。
 //!
 //! 任一组成变化都会改变综合 Hash，从而由同步水位驱动存量会话重解析，
 //! 不再需要修改编译期常量。
@@ -70,13 +72,17 @@ fn compose_runtime_hash(
     Ok(hash_bytes(composite.as_bytes()))
 }
 
-/// 单个公共脚本的生效指纹：包内副本优先，缺失时回落到 `common/` 实时内容。
+/// Single public-script fingerprint: `common/` real-time content is authoritative.
+///
+/// #195/#204：`common/` 是运行时真正解析的位置，所以只要它存在同名文件就必须
+/// 以它为准；包内副本只在 `common/` 缺失时兜底。否则晋升时冻结的副本会遮蔽
+/// 用户对 `common/payload-policy.mjs` 的修改，使「改 common 即生效」失效。
 fn effective_script_digest(
     adapter_dir: Option<&Path>,
     common_dir: Option<&Path>,
     file_name: &str,
 ) -> InfraResult<String> {
-    for root in [adapter_dir, common_dir].into_iter().flatten() {
+    for root in [common_dir, adapter_dir].into_iter().flatten() {
         let path = root.join(file_name);
         if path.is_file() {
             return hash_file(&path);
