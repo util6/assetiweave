@@ -344,7 +344,7 @@ pub fn discover_local_conversation_adapter_packages(
                 tags: Vec::new(),
                 manifest_file,
                 package_manifest_file: Some("conversation-adapter-package.json".to_string()),
-                expected_content_hash: None,
+                expected_content_hash: Some(validation.adapter_validation.content_hash),
                 expected_package_hash: Some(validation.content_hash),
                 expected_artifact_hash: None,
                 artifact_size: None,
