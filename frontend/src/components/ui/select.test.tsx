@@ -1,9 +1,44 @@
 /* @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { TooltipProvider } from "../ui/tooltip";
 import { SimpleSelect } from "./select";
+
+function mockElementMetrics(
+  element: HTMLElement,
+  metrics: {
+    clientHeight: number;
+    clientWidth: number;
+    scrollHeight: number;
+    scrollWidth: number;
+  },
+) {
+  Object.defineProperty(element, "clientWidth", {
+    configurable: true,
+    get: () => metrics.clientWidth,
+  });
+  Object.defineProperty(element, "scrollWidth", {
+    configurable: true,
+    get: () => metrics.scrollWidth,
+  });
+  Object.defineProperty(element, "clientHeight", {
+    configurable: true,
+    get: () => metrics.clientHeight,
+  });
+  Object.defineProperty(element, "scrollHeight", {
+    configurable: true,
+    get: () => metrics.scrollHeight,
+  });
+}
 
 describe("SimpleSelect component (built with @radix-ui/react-select)", () => {
   beforeAll(() => {
@@ -15,6 +50,7 @@ describe("SimpleSelect component (built with @radix-ui/react-select)", () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
   });
 
   const options = [
@@ -147,5 +183,130 @@ describe("SimpleSelect component (built with @radix-ui/react-select)", () => {
     // 选项列表应该只来自当前活跃的下拉框，不应出现两个下拉框同时重叠展开
     const visibleOptions = screen.getAllByRole("option");
     expect(visibleOptions.length).toBe(options.length);
+  });
+
+  it("shows tooltip on hover when SimpleSelect selected value overflows trigger", () => {
+    vi.useFakeTimers();
+    const longLabel =
+      "assetiweave-very-long-session-log-filename-2026-11-18.log";
+
+    render(
+      <TooltipProvider>
+        <SimpleSelect
+          ariaLabel="选择日志文件"
+          onChange={vi.fn()}
+          options={[{ label: longLabel, value: "long-log" }]}
+          value="long-log"
+        />
+      </TooltipProvider>,
+    );
+
+    const combobox = screen.getByRole("combobox", { name: "选择日志文件" });
+    expect(combobox.className).not.toContain("[&>span]:line-clamp-1");
+
+    const triggerLabel = within(combobox).getByText(longLabel);
+    expect(triggerLabel.className).toContain("truncate");
+    expect(triggerLabel.className).toContain("pointer-events-auto");
+
+    mockElementMetrics(triggerLabel, {
+      clientWidth: 120,
+      scrollWidth: 320,
+      clientHeight: 20,
+      scrollHeight: 20,
+    });
+
+    fireEvent.mouseEnter(triggerLabel);
+    act(() => {
+      vi.advanceTimersByTime(320);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.textContent).toBe(longLabel);
+  });
+
+  it("shows tooltip on hover when SimpleSelect placeholder overflows trigger", () => {
+    vi.useFakeTimers();
+    const longPlaceholder =
+      "请选择一个非常非常长的本地日志文件路径以便进行过滤与查看";
+
+    render(
+      <TooltipProvider>
+        <SimpleSelect
+          ariaLabel="选择日志文件"
+          onChange={vi.fn()}
+          options={options}
+          placeholder={longPlaceholder}
+          value=""
+        />
+      </TooltipProvider>,
+    );
+
+    const combobox = screen.getByRole("combobox", { name: "选择日志文件" });
+    const placeholderEl = within(combobox).getByText(longPlaceholder);
+    expect(placeholderEl.className).toContain("truncate");
+    expect(placeholderEl.className).toContain("pointer-events-auto");
+
+    mockElementMetrics(placeholderEl, {
+      clientWidth: 100,
+      scrollWidth: 280,
+      clientHeight: 20,
+      scrollHeight: 20,
+    });
+
+    fireEvent.mouseEnter(placeholderEl);
+    act(() => {
+      vi.advanceTimersByTime(320);
+    });
+
+    expect(screen.getByRole("tooltip").textContent).toBe(longPlaceholder);
+  });
+
+  it("shows tooltip above SelectContent (z-[110]) when an option overflows in open dropdown", () => {
+    vi.useFakeTimers();
+    const longOptionLabel =
+      "/Users/example/very/long/log/directory/assetiweave-runtime-detail.log";
+
+    render(
+      <TooltipProvider>
+        <SimpleSelect
+          ariaLabel="选择日志文件"
+          onChange={vi.fn()}
+          options={[
+            { label: "short.log", value: "short" },
+            { label: longOptionLabel, value: "long" },
+          ]}
+          value="short"
+        />
+      </TooltipProvider>,
+    );
+
+    const combobox = screen.getByRole("combobox", { name: "选择日志文件" });
+    fireEvent.keyDown(combobox, { key: "ArrowDown" });
+
+    const listbox = screen.getByRole("listbox");
+    const selectContent = listbox.closest(".ui-menu");
+    expect(selectContent?.className).toContain("z-[100]");
+
+    const longOption = screen.getByRole("option", { name: longOptionLabel });
+    expect(longOption.className).toContain("min-w-0");
+
+    const optionText = within(longOption).getByText(longOptionLabel);
+    expect(optionText.className).toContain("truncate");
+
+    mockElementMetrics(optionText, {
+      clientWidth: 140,
+      scrollWidth: 360,
+      clientHeight: 20,
+      scrollHeight: 20,
+    });
+
+    fireEvent.mouseEnter(optionText);
+    act(() => {
+      vi.advanceTimersByTime(320);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.textContent).toBe(longOptionLabel);
+    expect(tooltip.className).toContain("z-[110]");
   });
 });

@@ -1768,18 +1768,6 @@
     }
   }
 
-  .asset-description {
-    display: -webkit-box;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 1;
-  }
-
-  .group:hover .asset-description,
-  .asset-expanded .asset-description {
-    color: rgb(var(--color-primary));
-  }
-
   .source-input {
     width: 100%;
     border-radius: theme("borderRadius.xl");

@@ -17,6 +17,7 @@ import {
   type Ref,
 } from "react";
 import { toolbarIconRecipe, toolbarSurfaceRecipe } from "../../theme/recipes";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export type ToolbarViewMode = "list" | "columns" | "grid";
 
@@ -585,7 +586,7 @@ export function ToolbarSingleSelectDropdown<Value extends string>({
                     onChange(option.value);
                   }}
                 >
-                  <span className="min-w-0 truncate">{option.label}</span>
+                  <TruncatedText>{option.label}</TruncatedText>
                   {selected && <Check size={15} />}
                 </DropdownMenuPrimitive.Item>
               );
@@ -656,7 +657,7 @@ const ToolbarDropdownButton = forwardRef<
       type="button"
     >
       {icon}
-      <span className="min-w-0 truncate">{label}</span>
+      <TruncatedText>{label}</TruncatedText>
       <ChevronDown
         className={clsx(
           "shrink-0 transition-transform",
@@ -731,7 +732,7 @@ function ToolbarDropdownCheckItem({
             data-toolbar-option-swatch=""
           />
         ) : null}
-        <span className="min-w-0 truncate">{label}</span>
+        <TruncatedText>{label}</TruncatedText>
       </span>
     </DropdownMenuPrimitive.CheckboxItem>
   );

@@ -14,6 +14,7 @@ import {
   subscribeAgentAccounts,
 } from "../../services/agentAccountService";
 import type { AgentAccount, AgentProvider } from "../../types/agentWorkspace";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { AccountManagerModal } from "./AccountManagerModal";
 
 export interface AccountPillProps {
@@ -85,6 +86,7 @@ export function AccountPill({
           onClick={() => setIsOpen(!isOpen)}
           aria-expanded={isOpen}
           aria-haspopup="true"
+          aria-label={`当前账号: ${currentAccount ? currentAccount.displayName : "未绑定账号"}`}
           title={`当前账号: ${currentAccount ? currentAccount.displayName : "未绑定账号"} (点击切号)`}
           className={`group flex items-center gap-1.5 rounded-full border border-theme-border/60 bg-theme-panel/70 backdrop-blur-md transition-all duration-150 hover:border-theme-border-hover hover:bg-theme-panel focus:outline-none focus:ring-1 focus:ring-primary-strong/40 shadow-sm ${
             size === "sm"
@@ -95,10 +97,10 @@ export function AccountPill({
           <ProviderIcon className="h-3.5 w-3.5 text-primary-strong transition-transform group-hover:scale-105" />
 
           {currentAccount ? (
-            <div className="flex items-center gap-1.5 max-w-[160px] truncate">
+            <div className="flex min-w-0 max-w-[160px] items-center gap-1.5">
               {/* Status indicator dot */}
               <span
-                className={`inline-block h-1.5 w-1.5 rounded-full ${
+                className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
                   currentAccount.state === "active"
                     ? "bg-status-create shadow-[0_0_4px_rgba(16,185,129,0.6)]"
                     : currentAccount.state === "rate_limited"
@@ -106,9 +108,9 @@ export function AccountPill({
                       : "bg-status-conflict shadow-[0_0_4px_rgba(244,63,94,0.6)]"
                 }`}
               />
-              <span className="font-medium text-theme-text truncate">
+              <TruncatedText className="font-medium text-theme-text">
                 {currentAccount.displayName}
-              </span>
+              </TruncatedText>
             </div>
           ) : (
             <span className="text-theme-muted">未选择账号</span>
@@ -150,9 +152,9 @@ export function AccountPill({
                           : "text-theme-text hover:bg-theme-panel/70"
                       }`}
                     >
-                      <div className="flex items-center gap-2 truncate">
+                      <div className="flex min-w-0 flex-1 items-center gap-2">
                         <span
-                          className={`h-1.5 w-1.5 rounded-full ${
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
                             acc.state === "active"
                               ? "bg-status-create"
                               : acc.state === "rate_limited"
@@ -160,14 +162,17 @@ export function AccountPill({
                                 : "bg-status-conflict"
                           }`}
                         />
-                        <div className="truncate">
-                          <div className="truncate font-medium">
+                        <div className="min-w-0 flex-1">
+                          <TruncatedText as="div" className="font-medium">
                             {acc.displayName}
-                          </div>
+                          </TruncatedText>
                           {acc.email && (
-                            <div className="text-[11px] text-theme-muted truncate">
+                            <TruncatedText
+                              as="div"
+                              className="text-[11px] text-theme-muted"
+                            >
                               {acc.email}
-                            </div>
+                            </TruncatedText>
                           )}
                         </div>
                       </div>

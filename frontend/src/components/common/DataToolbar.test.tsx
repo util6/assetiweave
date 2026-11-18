@@ -1,9 +1,16 @@
 /* @vitest-environment jsdom */
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Download } from "lucide-react";
+import { TooltipProvider } from "../ui/tooltip";
 import {
   DataToolbar,
   DebouncedToolbarSearch,
@@ -19,6 +26,7 @@ import { ToolbarButton } from "./ToolbarButton";
 
 describe("DataToolbar", () => {
   afterEach(() => {
+    cleanup();
     vi.useRealTimers();
   });
 
@@ -322,5 +330,45 @@ describe("DataToolbar", () => {
     expect(screen.getByRole("button", { name: "导出" }).className).toContain(
       "gap-1.5",
     );
+  });
+
+  it("shows tooltips on overflowing dropdown button and menu option labels", () => {
+    vi.useFakeTimers();
+    const longOption = "按最近一次完整会话更新时间降序排列（非常长的选项名称）";
+
+    render(
+      <TooltipProvider>
+        <ToolbarSingleSelectDropdown
+          ariaLabel="排序方式"
+          onChange={() => undefined}
+          options={[{ label: longOption, value: "updated" }]}
+          value="updated"
+        />
+      </TooltipProvider>,
+    );
+
+    const triggerLabel = screen.getByText(longOption);
+    Object.defineProperty(triggerLabel, "clientWidth", {
+      configurable: true,
+      get: () => 100,
+    });
+    Object.defineProperty(triggerLabel, "scrollWidth", {
+      configurable: true,
+      get: () => 280,
+    });
+    Object.defineProperty(triggerLabel, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(triggerLabel, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+
+    fireEvent.mouseEnter(triggerLabel);
+    act(() => {
+      vi.advanceTimersByTime(320);
+    });
+    expect(screen.getByRole("tooltip").textContent).toBe(longOption);
   });
 });

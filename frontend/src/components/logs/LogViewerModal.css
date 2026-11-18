@@ -18,13 +18,6 @@
   font-size: 12px;
 }
 
-.log-viewer-path-text {
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .log-viewer-file-item {
   max-width: min(320px, 100%);
   min-width: 0;
@@ -48,41 +41,6 @@
 .log-viewer-line-limit-label {
   font-size: 12px;
   color: rgb(var(--theme-control-fg));
-}
-
-.log-viewer-select-wrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.log-viewer-select {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: inherit;
-  font-size: 12px;
-  line-height: 1.4;
-  padding: 0 18px 0 0;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.log-viewer-select:focus {
-  outline: none;
-}
-
-.log-viewer-select-wrap svg {
-  position: absolute;
-  right: 0;
-  color: rgb(var(--theme-control-fg));
-  pointer-events: none;
 }
 
 .log-viewer-level-select-wrap {
@@ -142,10 +100,6 @@
   .log-viewer-toolbar {
     margin-left: 0;
     width: 100%;
-  }
-
-  .log-viewer-path-text {
-    max-width: 180px;
   }
 
   .log-viewer-content {
