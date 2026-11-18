@@ -2577,7 +2577,10 @@ function SortableShortcutEditRow({
           <AppShortcutIconForShortcut className="size-5" shortcut={shortcut} />
         </span>
         <div className="min-w-0">
-          <TruncatedText as="p" className="text-body-md font-bold text-on-surface">
+          <TruncatedText
+            as="p"
+            className="text-body-md font-bold text-on-surface"
+          >
             {shortcut.profileName}
           </TruncatedText>
           <TruncatedText

@@ -60,7 +60,9 @@ describe("AccountPill", () => {
       name: /Codex 工作主号/i,
     });
     expect(pillButton.getAttribute("title")).toBeNull();
-    expect(pillButton.getAttribute("aria-label")).toBe("当前账号: Codex 工作主号");
+    expect(pillButton.getAttribute("aria-label")).toBe(
+      "当前账号: Codex 工作主号",
+    );
     fireEvent.click(pillButton);
 
     // Dropdown is visible

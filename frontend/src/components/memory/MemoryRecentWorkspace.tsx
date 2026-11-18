@@ -135,9 +135,7 @@ export function MemoryRecentWorkspace({
         const snapshot = await getRecentMemorySnapshot();
         applySnapshot(snapshot);
       } catch (error) {
-        setLoadError(
-          error instanceof Error ? error.message : String(error),
-        );
+        setLoadError(error instanceof Error ? error.message : String(error));
       } finally {
         if (!silent) {
           setLoading(false);

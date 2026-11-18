@@ -432,7 +432,9 @@ function TruncatedTextInner<T extends React.ElementType = "span">(
           : ariaDescribedby
       }
       className={cn(
-        inline ? "inline-block min-w-0 max-w-full align-bottom" : "block min-w-0",
+        inline
+          ? "inline-block min-w-0 max-w-full align-bottom"
+          : "block min-w-0",
         truncationClass,
         className,
       )}

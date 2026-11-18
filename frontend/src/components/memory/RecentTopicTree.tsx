@@ -35,7 +35,11 @@ import {
 } from "./recent/recentModel";
 
 export { buildTreeHierarchy, parseNodeAnchor };
-export type { NodeAnchor, TreeHierarchyNode, TreeHierarchyNode as HierarchyNode };
+export type {
+  NodeAnchor,
+  TreeHierarchyNode,
+  TreeHierarchyNode as HierarchyNode,
+};
 
 export interface RecentTopicTreeProps {
   expandedHistorySlugs?: Set<string>;
@@ -282,7 +286,10 @@ function TopicBranchSection({
   updatingNodeId,
 }: {
   onNavigateSession?: (target: MemoryNavigationTarget) => void;
-  onStatusChange?: (node: RecentTreeNodeView, nextStatus: MemoryNodeStatus) => void;
+  onStatusChange?: (
+    node: RecentTreeNodeView,
+    nextStatus: MemoryNodeStatus,
+  ) => void;
   t: Translator;
   topic: RecentTopicView;
   updatingNodeId?: string | null;
@@ -365,7 +372,10 @@ function TreeBranchNode({
 }: {
   branch: TreeHierarchyNode;
   onNavigateSession?: (target: MemoryNavigationTarget) => void;
-  onStatusChange?: (node: RecentTreeNodeView, nextStatus: MemoryNodeStatus) => void;
+  onStatusChange?: (
+    node: RecentTreeNodeView,
+    nextStatus: MemoryNodeStatus,
+  ) => void;
   t: Translator;
   updatingNodeId?: string | null;
   visibleNodeIds: Set<string>;

@@ -110,7 +110,9 @@ const Tooltip: React.FC<TooltipProps> = ({ onOpenChange, ...props }) => {
     [notifyClosed, onOpenChange],
   );
 
-  const root = <TooltipPrimitive.Root onOpenChange={handleOpenChange} {...props} />;
+  const root = (
+    <TooltipPrimitive.Root onOpenChange={handleOpenChange} {...props} />
+  );
 
   if (hasProvider) {
     return root;

@@ -285,9 +285,7 @@ describe("RecentTopicTree Unit & Stress Tests", () => {
       }) as HTMLButtonElement;
       expect(unavailableJump.disabled).toBe(true);
 
-      fireEvent.click(
-        screen.getByRole("button", { name: "查看完整历史树" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "查看完整历史树" }));
       expect(onToggleProjectHistory).toHaveBeenCalledWith("alpha");
     });
 

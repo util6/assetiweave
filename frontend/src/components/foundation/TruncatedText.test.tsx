@@ -345,7 +345,12 @@ describe("TruncatedText", () => {
   it("renders above modal DialogFrame layers with pointer-events-auto", () => {
     render(
       <TooltipProvider>
-        <DialogFrame layer="top" onClose={() => undefined} portal={false} title="Settings">
+        <DialogFrame
+          layer="top"
+          onClose={() => undefined}
+          portal={false}
+          title="Settings"
+        >
           <TruncatedText data-testid="modal-text">
             /Users/example/very/long/modal/path/that/overflows
           </TruncatedText>

@@ -32,7 +32,10 @@ export interface MemoryNodeCardProps {
   highlightUnexplored?: boolean;
   node: RecentTreeNodeView;
   onNavigateSession?: (target: MemoryNavigationTarget) => void;
-  onStatusChange?: (node: RecentTreeNodeView, nextStatus: MemoryNodeStatus) => void;
+  onStatusChange?: (
+    node: RecentTreeNodeView,
+    nextStatus: MemoryNodeStatus,
+  ) => void;
   showParentContext?: boolean;
   t: Translator;
   updating?: boolean;
@@ -86,9 +89,7 @@ export function MemoryNodeCard({
             {t(`memory.recent.status.${node.status}`)}
           </Badge>
 
-          {contextLabel && (
-            <Badge tone="neutral">{contextLabel}</Badge>
-          )}
+          {contextLabel && <Badge tone="neutral">{contextLabel}</Badge>}
 
           {turnLabel && (
             <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border/75 bg-theme-control/75 px-2.5 py-0.5 font-mono text-caption text-on-surface-variant">
@@ -131,7 +132,10 @@ export function MemoryNodeCard({
         {node.summary}
       </p>
 
-      {(node.sessionTitle || isUnavailable || onStatusChange || onNavigateSession) && (
+      {(node.sessionTitle ||
+        isUnavailable ||
+        onStatusChange ||
+        onNavigateSession) && (
         <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
           <div className="min-w-0 flex-1">
             {node.sessionTitle && (

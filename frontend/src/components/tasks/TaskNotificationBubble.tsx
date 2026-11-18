@@ -60,8 +60,9 @@ function TaskNotificationBubbleContent({
         dismissNotification(currentNotification.id);
         if (currentNotification.task.kind === "conversationcontentsearch") {
           const recordKind =
-            conversationSearch?.getTaskRecordKind(currentNotification.task.id) ??
-            "session";
+            conversationSearch?.getTaskRecordKind(
+              currentNotification.task.id,
+            ) ?? "session";
           const targetPath =
             recordKind === "web"
               ? "/conversations/web-records"
