@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "package_id": "io.github.util6.antigravity-session",
+  "adapter_id": "antigravity",
+  "name": "Antigravity Session Parser",
+  "publisher": "util6",
+  "record_kind": "session",
+  "releases": [
+    {
+      "version": "1.5.3",
+      "channel": "stable",
+      "released_at": "2026-11-05T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.antigravity-session-1.5.3-universal.zip",
+      "artifact_size": 201766,
+      "artifact_sha256": "a476e610ee1da06e06337ee9e42d5200830ff594aa889d365d8fa03b4b80f844",
+      "changelog_markdown": "## 1.5.3\n\n- Fold resolved project paths to portable anchors (~/...) to enforce the storage-folding contract across platforms.\n- Ignore internal antigravity-acp execution directories and filter out cognitive memory extraction prompts and test probes from user session listings.\n- Infer project workspace paths reliably from transcript context environments (Command Working Directory, Active Workspaces, and open files).",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/antigravity"
+      }
+    }
+  ]
+}
