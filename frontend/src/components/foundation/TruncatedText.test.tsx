@@ -11,7 +11,7 @@ import { createRef, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DialogFrame } from "./DialogFrame";
-import { TooltipProvider } from "../ui/tooltip";
+import { resolveOpenDelay, TooltipProvider } from "../ui/tooltip";
 import { TruncatedText } from "./TruncatedText";
 
 function mockElementMetrics(
@@ -370,5 +370,59 @@ describe("TruncatedText", () => {
     expect(tooltip.className).toContain("z-[110]");
     expect(tooltip.className).toContain("pointer-events-auto");
     expect(tooltip.className).toContain("[overflow-wrap:anywhere]");
+  });
+
+  it("resolves open delay with skipDelayDuration window and warms subsequent tooltips", () => {
+    vi.setSystemTime(new Date("2026-11-18T00:00:00.000Z"));
+    expect(resolveOpenDelay(null, 300, 150)).toBe(300);
+    expect(resolveOpenDelay(Date.now() - 100, 300, 150)).toBe(0);
+    expect(resolveOpenDelay(Date.now() - 200, 300, 150)).toBe(300);
+    expect(resolveOpenDelay(Date.now() - 50, 300, 0)).toBe(300);
+
+    render(
+      <TooltipProvider delayDuration={300} skipDelayDuration={150}>
+        <TruncatedText data-testid="first">
+          First overflowing path text
+        </TruncatedText>
+        <TruncatedText data-testid="second">
+          Second overflowing path text
+        </TruncatedText>
+      </TooltipProvider>,
+    );
+
+    const first = screen.getByTestId("first");
+    const second = screen.getByTestId("second");
+    mockElementMetrics(first, {
+      clientWidth: 80,
+      scrollWidth: 240,
+      clientHeight: 20,
+      scrollHeight: 20,
+    });
+    mockElementMetrics(second, {
+      clientWidth: 80,
+      scrollWidth: 240,
+      clientHeight: 20,
+      scrollHeight: 20,
+    });
+
+    fireEvent.mouseEnter(first);
+    act(() => {
+      vi.advanceTimersByTime(310);
+    });
+    expect(screen.getByRole("tooltip").textContent).toBe(
+      "First overflowing path text",
+    );
+
+    fireEvent.mouseLeave(first);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    // Within 150ms skipDelayDuration window, second tooltip opens immediately
+    fireEvent.mouseEnter(second);
+    expect(screen.getByRole("tooltip").textContent).toBe(
+      "Second overflowing path text",
+    );
   });
 });

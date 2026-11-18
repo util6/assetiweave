@@ -1425,7 +1425,7 @@ describe("TaskCenterModal", () => {
     fireEvent.mouseEnter(pathText);
     await waitFor(() =>
       expect(screen.getByRole("tooltip").textContent).toBe(
-        "/Users/demo/very/long/path/to/session-01.jsonl",
+        "~/very/long/path/to/session-01.jsonl",
       ),
     );
     fireEvent.mouseLeave(pathText);
@@ -1734,5 +1734,86 @@ describe("TaskCenterModal", () => {
       expect(screen.getByRole("tooltip").textContent).toBe(longOp),
     );
     fireEvent.mouseLeave(opEl);
+  });
+
+  it("removes native title from task row button while preserving note in aria-label, and shows abbreviated fail.path tooltip", async () => {
+    mockSelectedTaskId = "task-path-tooltip";
+    mockTasks = [
+      {
+        id: "task-path-tooltip",
+        kind: "ConversationSync",
+        title: "路径缩写提示测试",
+        state: "failed",
+        outcome: "failure",
+        progress: {
+          current: 1,
+          total: 2,
+          note: "任务行进度备注",
+        },
+        stages: [
+          {
+            id: "scan-stage",
+            name: "扫描阶段",
+            status: "failed",
+            steps: [],
+            metrics: [],
+            failures: [
+              {
+                code: "read_error",
+                message: "读取失败",
+                stage: "scan-stage",
+                path: "/Users/demo/very/long/failed/file.jsonl",
+                retryable: true,
+                timestamp: "2026-09-10T03:00:00Z",
+              },
+            ],
+            currentActivities: [],
+            skipped: [],
+          },
+        ],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: false, retryable: true, clearable: true },
+        revision: 1,
+      },
+    ];
+
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    const taskList = await screen.findByTestId("task-list");
+    const rowButton = within(taskList).getByRole("button", { pressed: true });
+    expect(rowButton.getAttribute("title")).toBeNull();
+    expect(rowButton.getAttribute("aria-label")).toContain("路径缩写提示测试");
+    expect(rowButton.getAttribute("aria-label")).toContain("任务行进度备注");
+
+    const failPathEl = screen.getByText("~/very/long/failed/file.jsonl");
+    expect(failPathEl.getAttribute("title")).toBeNull();
+    Object.defineProperty(failPathEl, "clientWidth", {
+      configurable: true,
+      get: () => 80,
+    });
+    Object.defineProperty(failPathEl, "scrollWidth", {
+      configurable: true,
+      get: () => 280,
+    });
+    Object.defineProperty(failPathEl, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(failPathEl, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(failPathEl);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe(
+        "~/very/long/failed/file.jsonl",
+      ),
+    );
+    fireEvent.mouseLeave(failPathEl);
   });
 });

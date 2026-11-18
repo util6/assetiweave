@@ -205,7 +205,6 @@ function ProjectTopicTreePanel({
               <TruncatedText
                 as="p"
                 className="mt-0.5 font-mono text-caption text-outline"
-                tooltip={effectiveProject.projectPath}
               >
                 {abbreviateHomePath(effectiveProject.projectPath)}
               </TruncatedText>

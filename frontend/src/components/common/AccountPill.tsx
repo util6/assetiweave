@@ -87,7 +87,6 @@ export function AccountPill({
           aria-expanded={isOpen}
           aria-haspopup="true"
           aria-label={`当前账号: ${currentAccount ? currentAccount.displayName : "未绑定账号"}`}
-          title={`当前账号: ${currentAccount ? currentAccount.displayName : "未绑定账号"} (点击切号)`}
           className={`group flex items-center gap-1.5 rounded-full border border-theme-border/60 bg-theme-panel/70 backdrop-blur-md transition-all duration-150 hover:border-theme-border-hover hover:bg-theme-panel focus:outline-none focus:ring-1 focus:ring-primary-strong/40 shadow-sm ${
             size === "sm"
               ? "px-2.5 py-1 text-body-xs"

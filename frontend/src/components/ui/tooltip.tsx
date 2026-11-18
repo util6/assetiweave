@@ -14,21 +14,29 @@ interface TooltipTimingContextValue {
   skipDelayDuration: number;
 }
 
+export function resolveOpenDelay(
+  lastClosedAt: number | null,
+  delayDuration: number,
+  skipDelayDuration: number,
+): number {
+  if (skipDelayDuration <= 0 || lastClosedAt === null) {
+    return delayDuration;
+  }
+  return Date.now() - lastClosedAt <= skipDelayDuration ? 0 : delayDuration;
+}
+
 const fallbackLastClosedAt = { current: null as number | null };
 
 const defaultTimingContext: TooltipTimingContextValue = {
   delayDuration: DEFAULT_TOOLTIP_DELAY_MS,
   skipDelayDuration: DEFAULT_TOOLTIP_SKIP_DELAY_MS,
   hasProvider: false,
-  getOpenDelay: () => {
-    if (fallbackLastClosedAt.current === null) {
-      return DEFAULT_TOOLTIP_DELAY_MS;
-    }
-    return Date.now() - fallbackLastClosedAt.current <=
-      DEFAULT_TOOLTIP_SKIP_DELAY_MS
-      ? 0
-      : DEFAULT_TOOLTIP_DELAY_MS;
-  },
+  getOpenDelay: () =>
+    resolveOpenDelay(
+      fallbackLastClosedAt.current,
+      DEFAULT_TOOLTIP_DELAY_MS,
+      DEFAULT_TOOLTIP_SKIP_DELAY_MS,
+    ),
   notifyClosed: () => {
     fallbackLastClosedAt.current = Date.now();
   },
@@ -58,14 +66,12 @@ const TooltipProvider: React.FC<TooltipProviderProps> = ({
       delayDuration,
       skipDelayDuration,
       hasProvider: true,
-      getOpenDelay: () => {
-        if (skipDelayDuration <= 0 || lastClosedAtRef.current === null) {
-          return delayDuration;
-        }
-        return Date.now() - lastClosedAtRef.current <= skipDelayDuration
-          ? 0
-          : delayDuration;
-      },
+      getOpenDelay: () =>
+        resolveOpenDelay(
+          lastClosedAtRef.current,
+          delayDuration,
+          skipDelayDuration,
+        ),
       notifyClosed: () => {
         lastClosedAtRef.current = Date.now();
       },

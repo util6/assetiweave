@@ -290,8 +290,9 @@ describe("ConversationsPage subagent drill-down", () => {
     // 左栏芯片同样可见，但不可点、不发请求。
     fireEvent.click(screen.getByRole("button", { name: "展开 3 个子代理" }));
     const unresolvedChip = screen.getByRole("button", {
-      name: "该锚点没有记录子会话主键，只能只读查看",
+      name: /Explore · 梳理入口 A.*该锚点没有记录子会话主键，只能只读查看/,
     });
+    expect(unresolvedChip.getAttribute("title")).toBeNull();
     expect((unresolvedChip as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(unresolvedChip);
     expect(getConversationSessionMock).toHaveBeenCalledTimes(1);

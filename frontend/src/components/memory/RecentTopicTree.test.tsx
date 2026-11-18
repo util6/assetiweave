@@ -372,7 +372,7 @@ describe("RecentTopicTree Unit & Stress Tests", () => {
       expect(screen.getByText("收起为近期切片")).toBeTruthy();
     });
 
-    it("abbreviates projectPath with TruncatedText and shows full path tooltip on overflow without native title", async () => {
+    it("abbreviates projectPath with TruncatedText and shows abbreviated path tooltip on overflow without native title", async () => {
       const project: RecentProjectView = {
         projectKey: "alpha",
         projectTitle: "Project Alpha",
@@ -421,7 +421,7 @@ describe("RecentTopicTree Unit & Stress Tests", () => {
       fireEvent.mouseEnter(pathEl);
       await waitFor(() =>
         expect(screen.getByRole("tooltip").textContent).toBe(
-          "/Users/demo/workspace/assetiweave",
+          "~/workspace/assetiweave",
         ),
       );
       fireEvent.mouseLeave(pathEl);

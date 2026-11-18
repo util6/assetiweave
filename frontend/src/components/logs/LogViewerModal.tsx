@@ -361,10 +361,7 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
         </div>
         <div className="log-viewer-meta-item">
           <FolderOpen size={14} />
-          <TruncatedText
-            className="max-w-[280px] max-[900px]:max-w-[180px]"
-            tooltip={snapshot?.log_dir_path || undefined}
-          >
+          <TruncatedText className="max-w-[280px] max-[900px]:max-w-[180px]">
             {snapshot?.log_dir_path
               ? abbreviateHomePath(snapshot.log_dir_path)
               : "-"}

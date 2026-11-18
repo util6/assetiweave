@@ -1371,7 +1371,7 @@ function PromptStageCard({
                 {note.projectPath ? (
                   <>
                     <FolderOpen className="shrink-0" size={13} />
-                    <TruncatedText tooltip={note.projectPath}>
+                    <TruncatedText>
                       {abbreviateHomePath(note.projectPath)}
                     </TruncatedText>
                   </>

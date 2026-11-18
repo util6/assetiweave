@@ -410,6 +410,11 @@ function TaskCenterModalContent({
                     const startedAt = task.startedAt ?? task.started_at;
                     return (
                       <button
+                        aria-label={
+                          task.progress?.note
+                            ? `${task.title} · ${task.progress.note}`
+                            : undefined
+                        }
                         aria-pressed={isSelected}
                         className={clsx(
                           "conversation-row group relative grid min-h-[68px] w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 overflow-hidden p-3 text-left transition-all cursor-pointer",
@@ -418,7 +423,6 @@ function TaskCenterModalContent({
                         data-selected={isSelected}
                         key={task.id}
                         onClick={() => setSelectedTaskId(task.id)}
-                        title={task.progress?.note || undefined}
                         type="button"
                       >
                         {/* 左侧：统一的方圆图标容器 */}
@@ -1125,10 +1129,7 @@ function StageCard({
 
                   {fail.path || fail.identity ? (
                     <div className="flex items-center justify-between gap-2 rounded-xl bg-theme-control/20 px-2.5 py-1 font-mono text-code-xs text-on-surface-muted">
-                      <TruncatedText
-                        className="max-w-[420px]"
-                        tooltip={fail.path ?? fail.identity ?? ""}
-                      >
+                      <TruncatedText className="max-w-[420px]">
                         {fail.path
                           ? abbreviateHomePath(fail.path)
                           : fail.identity}
@@ -1269,7 +1270,7 @@ function StageCard({
                         >
                           {path ? (
                             <>
-                              <TruncatedText className="min-w-0" tooltip={path}>
+                              <TruncatedText className="min-w-0">
                                 {abbreviateHomePath(path)}
                               </TruncatedText>
                               <Button
