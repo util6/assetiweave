@@ -48,7 +48,10 @@ impl AppService {
                 )
             })
             .collect::<Vec<_>>();
-        if sources.is_empty() {
+        if sources.is_empty() && (params.source_id.is_some() || params.adapter_id.is_some()) {
+            // An explicitly requested source/adapter that matches nothing is a real
+            // miss. With no filter at all the user simply has no adapter installed
+            // yet (#196 stopped shipping built-in adapters), so sync is a no-op.
             return Err(AppError::NotFound(
                 "no matching conversation sources".to_string(),
             ));
@@ -492,7 +495,10 @@ impl AppService {
             self.runtime.notify_domain_events();
         }
 
-        if results.is_empty() && errors.is_empty() {
+        if results.is_empty()
+            && errors.is_empty()
+            && (params.source_id.is_some() || params.adapter_id.is_some())
+        {
             return Err(AppError::NotFound(
                 "no matching conversation sources".to_string(),
             ));
