@@ -1,8 +1,121 @@
 use crate::backend::{
     domain::{ConversationAdapter, ConversationAdapterKind, ConversationAdapterTrustState},
+    infrastructure::runtime::RuntimeRole,
     store,
 };
 use std::{fs, path::Path};
+
+fn file_snapshot(path: &Path) -> (Vec<u8>, Option<std::time::SystemTime>) {
+    (
+        fs::read(path).expect("read adapter file"),
+        fs::metadata(path)
+            .expect("read adapter metadata")
+            .modified()
+            .ok(),
+    )
+}
+
+fn isolated_root(tag: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("assetiweave-{tag}-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create isolated root");
+    root
+}
+
+#[tokio::test]
+async fn bootstrap_and_reconcile_never_rewrite_managed_adapter_files() {
+    let root = isolated_root("bootstrap-managed-adapters");
+    let managed_root = root.join("conversation-adapters");
+    let adapter_dir = managed_root.join("codex");
+    crate::backend::infrastructure::conversations::test_fixtures::copy_builtin_adapter(
+        "codex",
+        &adapter_dir,
+    )
+    .expect("stage adapter package");
+    let script_path = adapter_dir.join("adapter.mjs");
+    let policy_path = adapter_dir.join("payload-policy.mjs");
+    let manifest_path = adapter_dir.join("conversation-adapter.json");
+    fs::write(&script_path, "// edited by the user\n").expect("edit adapter script");
+    fs::write(&policy_path, "// edited payload policy\n").expect("edit payload policy");
+    let before = [
+        file_snapshot(&script_path),
+        file_snapshot(&policy_path),
+        file_snapshot(&manifest_path),
+    ];
+
+    let db_path = root.join("app.db");
+    for pass in 0..2 {
+        let runtime = crate::backend::application::AppService::bootstrap_runtime_with_managed_root(
+            db_path.clone(),
+            RuntimeRole::OneShot,
+            managed_root.clone(),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("bootstrap pass {pass} failed: {error}"));
+        let tenant_id = runtime.context().tenant.id.clone();
+        let adapter = store::list_conversation_adapters_sqlx(runtime.db().pool(), &tenant_id)
+            .await
+            .expect("list adapters")
+            .into_iter()
+            .find(|adapter| adapter.id == "codex")
+            .expect("managed adapter must be projected from disk");
+        assert_eq!(
+            adapter.manifest_path.as_deref(),
+            Some(manifest_path.to_string_lossy().as_ref()),
+            "projection must point at the managed directory copy"
+        );
+        drop(runtime);
+    }
+
+    let pool = store::open_migrated_pool(&db_path)
+        .await
+        .expect("open database");
+    crate::backend::application::system::conversation_adapters::reconcile_app_conversation_adapters(
+        &pool, "default",
+    )
+    .await
+    .expect("reconcile adapters");
+    pool.close().await;
+
+    let after = [
+        file_snapshot(&script_path),
+        file_snapshot(&policy_path),
+        file_snapshot(&manifest_path),
+    ];
+    assert_eq!(
+        after, before,
+        "bootstrap and reconcile must not rewrite user-edited adapter files"
+    );
+}
+
+#[tokio::test]
+async fn bootstrap_projects_no_built_in_adapters_for_an_empty_managed_directory() {
+    let root = isolated_root("bootstrap-empty-adapters");
+    let managed_root = root.join("conversation-adapters");
+
+    let runtime = crate::backend::application::AppService::bootstrap_runtime_with_managed_root(
+        root.join("app.db"),
+        RuntimeRole::OneShot,
+        managed_root.clone(),
+    )
+    .await
+    .expect("bootstrap fresh installation");
+
+    let tenant_id = runtime.context().tenant.id.clone();
+    let adapters = store::list_conversation_adapters_sqlx(runtime.db().pool(), &tenant_id)
+        .await
+        .expect("list adapters");
+    assert!(
+        adapters
+            .iter()
+            .all(|adapter| adapter.trust_state != ConversationAdapterTrustState::BuiltIn),
+        "a fresh installation must not fabricate built-in adapter records: {adapters:?}"
+    );
+    assert!(
+        !managed_root.join("codex").exists(),
+        "bootstrapping must not release adapter script copies"
+    );
+    drop(runtime);
+}
 
 #[tokio::test]
 async fn seed_receives_prepared_data_and_writes_nothing_to_fs() {

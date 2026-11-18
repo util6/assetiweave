@@ -20,6 +20,7 @@ pub mod external_scaffold;
 pub mod harvester;
 pub mod io_utils;
 pub mod official;
+pub mod official_runtime;
 pub mod package;
 #[cfg(test)]
 #[path = "path_normalization_tests.rs"]
@@ -30,6 +31,8 @@ mod pricing_target_filter;
 pub mod readers;
 pub mod runtime_probe;
 pub mod runtime_requirements;
+#[cfg(test)]
+pub mod test_fixtures;
 #[cfg(test)]
 mod tests;
 pub mod types;
@@ -48,9 +51,10 @@ pub use external::{
 pub use external::{register_external_adapter, try_run_external_adapter};
 pub use harvester::run_conversation_harvester_with_control;
 pub use official::{
-    ensure_official_conversation_adapters, ensure_reproject_runner_scripts,
-    ensure_shell_command_projector, is_official_adapter_id, run_reproject_runner,
-    sync_official_adapter_to_package_dir,
+    discover_managed_conversation_adapters, discover_managed_conversation_adapters_at,
+};
+pub use official_runtime::{
+    ensure_reproject_runner_scripts, ensure_shell_command_projector, run_reproject_runner,
 };
 pub use package::{
     validate_conversation_adapter_package_dir, ConversationAdapterPackageInstallSource,

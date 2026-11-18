@@ -94,18 +94,9 @@ pub async fn reconcile_app_conversation_adapters(
         if let Ok(install_dir) =
             crate::backend::infrastructure::path_utils::expand_path(&package.install_dir)
         {
-            let is_official = crate::backend::infrastructure::conversations::is_official_adapter_id(
-                &package.adapter_id,
-            );
             let is_dev_override = package.origin
                 == crate::backend::domain::ConversationAdapterPackageOrigin::DevOverride;
-            if is_official && !is_dev_override {
-                let _ = crate::backend::infrastructure::conversations::sync_official_adapter_to_package_dir(
-                    &package.adapter_id,
-                    &install_dir,
-                );
-            }
-            if is_official || is_dev_override {
+            if is_dev_override {
                 if let Ok(validation) =
                     crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(
                         &install_dir,

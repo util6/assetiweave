@@ -18,6 +18,21 @@ impl AppService {
         db_path: PathBuf,
         role: RuntimeRole,
     ) -> AppResult<std::sync::Arc<AppRuntime>> {
+        let managed_root = crate::backend::infrastructure::app_settings::conversation_adapter_dir()
+            .map_err(AppError::external)?;
+        Self::bootstrap_runtime_with_managed_root(db_path, role, managed_root).await
+    }
+
+    /// Bootstrap against an explicit managed adapter directory.
+    ///
+    /// Production always resolves the directory from `ASSETIWEAVE_HOME`;
+    /// the parameter exists so callers can drive startup against a scoped
+    /// directory without mutating process-wide environment state.
+    pub(crate) async fn bootstrap_runtime_with_managed_root(
+        db_path: PathBuf,
+        role: RuntimeRole,
+        managed_root: PathBuf,
+    ) -> AppResult<std::sync::Arc<AppRuntime>> {
         if let Some(parent) = db_path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent).map_err(AppError::external)?;
         }
@@ -38,15 +53,17 @@ impl AppService {
             &target_catalog,
         )
         .await?;
-        let builtin_conversation_adapters = tokio::task::spawn_blocking(
-            crate::backend::infrastructure::conversations::ensure_official_conversation_adapters,
-        )
+        let managed_conversation_adapters = tokio::task::spawn_blocking(move || {
+            crate::backend::infrastructure::conversations::discover_managed_conversation_adapters_at(
+                &managed_root,
+            )
+        })
         .await
         .map_err(AppError::external)?
         .map_err(AppError::external)?;
         let tenant_ids = store::load_all_tenant_ids_sqlx(&pool).await?;
         for tenant_id in &tenant_ids {
-            seed_prepared_builtin_adapters(&pool, tenant_id, &builtin_conversation_adapters)
+            seed_prepared_builtin_adapters(&pool, tenant_id, &managed_conversation_adapters)
                 .await?;
         }
 
@@ -55,7 +72,7 @@ impl AppService {
             pool,
             target_catalog_dir,
             target_catalog,
-            builtin_conversation_adapters,
+            managed_conversation_adapters,
         )
         .await?;
         crate::backend::application::agents::agent_market::prepare_startup_runtime(
