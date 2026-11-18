@@ -2591,7 +2591,7 @@ fn cli_conversation_adapter_register_dev_and_unregister() {
         .assert()
         .failure();
 
-    // 2. Register in dev_override mode with --yes
+    // 2. Register a local package with --yes: it is promoted into a managed snapshot
     let reg_assert = aiwc_command()
         .env("ASSETIWEAVE_DB_PATH", &db_path)
         .args([
@@ -2606,16 +2606,16 @@ fn cli_conversation_adapter_register_dev_and_unregister() {
         .success();
     let reg_json: Value = serde_json::from_slice(&reg_assert.get_output().stdout).unwrap();
     assert_eq!(reg_json["ok"], true);
-    assert_eq!(reg_json["data"]["origin"], "dev_override");
+    assert_eq!(reg_json["data"]["origin"], "local_directory");
 
-    // 3. Inspect shows dev_override origin
+    // 3. Inspect shows the promoted local origin
     let inspect_assert = aiwc_command()
         .env("ASSETIWEAVE_DB_PATH", &db_path)
         .args(["conversation", "adapter", "inspect", "custom-dev"])
         .assert()
         .success();
     let inspect_json: Value = serde_json::from_slice(&inspect_assert.get_output().stdout).unwrap();
-    assert_eq!(inspect_json["data"]["origin"], "dev_override");
+    assert_eq!(inspect_json["data"]["origin"], "local_directory");
 
     // 4. Unregister with --yes
     let unreg_assert = aiwc_command()

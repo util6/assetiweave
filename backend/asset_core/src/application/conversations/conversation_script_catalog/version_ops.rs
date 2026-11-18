@@ -300,7 +300,6 @@ impl AppService {
     ) -> AppResult<()> {
         let install_dir =
             crate::backend::infrastructure::path_utils::expand_path(&package.install_dir)?;
-        let is_dev_override = package.origin == ConversationAdapterPackageOrigin::DevOverride;
         let evaluated = crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(
             &install_dir,
         )
@@ -330,25 +329,25 @@ impl AppService {
                     package.package_id, validation.adapter_validation.manifest.id, adapter.id
                 )));
             }
-            if package.origin != ConversationAdapterPackageOrigin::DevOverride {
-                let trusted_hash = package
-                    .trusted_package_hash
-                    .as_deref()
-                    .or(package.installed_content_hash.as_deref())
-                    .ok_or_else(|| {
-                        AppError::Validation(format!(
-                            "conversation adapter package has no trusted hash: {}",
-                            package.package_id
-                        ))
-                    })?;
-                if validation.content_hash != trusted_hash {
-                    return Err(AppError::Validation(format!(
-                        "conversation adapter package content hash mismatch: {}",
+            // #199: every package is gated by its recorded trusted hash. There is no
+            // origin that may skip this check or self-sign a new hash from disk.
+            let trusted_hash = package
+                .trusted_package_hash
+                .as_deref()
+                .or(package.installed_content_hash.as_deref())
+                .ok_or_else(|| {
+                    AppError::Validation(format!(
+                        "conversation adapter package has no trusted hash: {}",
                         package.package_id
-                    )));
-                }
+                    ))
+                })?;
+            if validation.content_hash != trusted_hash {
+                return Err(AppError::Validation(format!(
+                    "conversation adapter package content hash mismatch: {}",
+                    package.package_id
+                )));
             }
-            Ok((validation.content_hash, validation.adapter_validation.content_hash, validation.adapter_manifest_path))
+            Ok(validation.content_hash)
         });
 
         let previous_ready = package.runtime_ready;
@@ -358,20 +357,11 @@ impl AppService {
         let previous_error_message = package.error_message.clone();
 
         let now = Utc::now().to_rfc3339();
-        let mut refreshed_adapter_manifest: Option<String> = None;
         match evaluated {
-            Ok((content_hash, adapter_hash, adapter_manifest_path)) => {
+            Ok(content_hash) => {
                 package.runtime_ready = true;
                 package.runtime_gate_status = ConversationAdapterRuntimeGateStatus::Ready;
-                package.installed_content_hash = Some(content_hash.clone());
-                if is_dev_override {
-                    package.trusted_package_hash = Some(content_hash);
-                    if adapter.and_then(|a| a.content_hash.as_deref())
-                        != Some(adapter_hash.as_str())
-                    {
-                        refreshed_adapter_manifest = Some(adapter_manifest_path);
-                    }
-                }
+                package.installed_content_hash = Some(content_hash);
                 package.error_message = None;
             }
             Err(error) => {
@@ -392,38 +382,6 @@ impl AppService {
         if changed {
             package.updated_at = now;
             self.save_conversation_adapter_package(package).await?;
-        }
-        if let Some(manifest_path) = refreshed_adapter_manifest {
-            let settings = self.app_settings_value();
-            if let Ok(preview) =
-                crate::backend::infrastructure::conversations::register_external_adapter_with_settings(
-                    crate::backend::infrastructure::conversations::ExternalAdapterRegisterParams {
-                        manifest_path,
-                        dry_run: true,
-                        yes: true,
-                    },
-                    &settings,
-                )
-                .await
-            {
-                if let Ok(mut updated_adapter) =
-                    crate::backend::infrastructure::conversations::adapter_from_registration_preview(
-                        preview,
-                    )
-                {
-                    let _ = crate::backend::infrastructure::path_utils::normalize_conversation_adapter_paths(
-                        &mut updated_adapter,
-                    );
-                    crate::backend::store::set_app_conversation_adapter_projection_sqlx(
-                        self.db.pool(),
-                        self.tenant_id(),
-                        &package.adapter_id,
-                        Some(&updated_adapter),
-                    )
-                    .await?;
-                    self.runtime.refresh_conversation_adapter_catalog().await?;
-                }
-            }
         }
         Ok(())
     }

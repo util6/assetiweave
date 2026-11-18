@@ -219,11 +219,7 @@ impl AppService {
         let now = Utc::now().to_rfc3339();
         let mut statuses = Vec::new();
         for package in &mut packages {
-            if matches!(
-                package.origin,
-                crate::backend::domain::ConversationAdapterPackageOrigin::GitRef
-                    | crate::backend::domain::ConversationAdapterPackageOrigin::DevOverride
-            ) {
+            if package.origin == crate::backend::domain::ConversationAdapterPackageOrigin::GitRef {
                 continue;
             }
             let adapter = adapters
