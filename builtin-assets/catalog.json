@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-11-14T00:00:00Z",
+  "updated_at": "2026-11-18T00:00:00Z",
   "items": [
     {
       "id": "io.github.util6.codex-session",
@@ -16,8 +16,8 @@
         "codex",
         "node"
       ],
-      "expected_package_hash": "c50737d79cc186ab46de8104ad170bddc16b421015c90bb6f44d00fbd484ae53",
-      "expected_content_hash": "51053c265f4a4c158e2ac6a7f2f0671203e7001452f83b39a2694b832d4bdcc8",
+      "expected_package_hash": "6cfae305b4eb65ede711059612a037dda5bf123a4f6eea7235f14939cdbbbbe1",
+      "expected_content_hash": "2c34d9ea7f1915671bb96512be67131cd5f87d36e42fa2e386880ca845f9182f",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
@@ -38,8 +38,8 @@
         "sqlite",
         "node"
       ],
-      "expected_package_hash": "0227e41e11ce1ddf33c2c1cec858e452987f1f9494bdbba3f96af79c6e48d654",
-      "expected_content_hash": "c5a17ca30a1cce031528ecea7ed0bfa51ad1d748f098de44a394dac2c1d4e3b5",
+      "expected_package_hash": "624ce984632157fa5eea65a6f3e0e26208dcb6eb1026b02f6eb965e03b1fc94f",
+      "expected_content_hash": "30ce350a17518e0808197a1514a854dfccfdb0107a88aacc1c60b01890a30bc6",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/opencode"
@@ -59,8 +59,8 @@
         "claude-code",
         "node"
       ],
-      "expected_package_hash": "279394a6c040fd4c849c29132b54ea01ca6bee5d1b4480e9b44d4a6be23b2b80",
-      "expected_content_hash": "17aff181d7013a2f4dd696d582707ec0448aaf8e42db9aa0c71a7b15919553be",
+      "expected_package_hash": "9e826b25122aa296fab268ebda76b20728d1e0e77a2030747713d9a25c78308e",
+      "expected_content_hash": "d9d254bc15280e1b5cecf2ab5a07231f8e159fa5cc443ba2f1c9eca6e8ad0e83",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code"
@@ -82,7 +82,7 @@
         "node"
       ],
       "expected_package_hash": "5ffc71bd3687c7a3276453165d8249091dbbdb278ef880686b443ba043a0645d",
-      "expected_content_hash": "fa7e1b0c5641bc9315d7e969d7b864ef4085a6cdc2301d9ec2d2e588c8fea49d",
+      "expected_content_hash": "f88775e6d9e0a4352614b3d250ebdbeb1034f9750126ed9c43c0513677a91100",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
@@ -104,7 +104,7 @@
         "browser-cookie-auth"
       ],
       "expected_package_hash": "d188d206eb3506a5203fca58d8ef5c28a84dbfd610702dadb82d5954bde20ad4",
-      "expected_content_hash": "4b8898eedf120ab640cc5cc6db7a03fb3ec8a1cf8a3f370cdd17c9a9a51a2ab1",
+      "expected_content_hash": "cec4519ec8d430b4b525fbd6c749adf9c11a58c498581a587923923899054fd0",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web"
@@ -126,7 +126,7 @@
         "browser-cookie-auth"
       ],
       "expected_package_hash": "8684da82acd23c97f39c71fd3e6de5b9ad585c12f191cd3a1fc29734fcb7f235",
-      "expected_content_hash": "02b0159b1b8458dee17cbadb617c8ba9e4939211629d9223cc91c711a583b62f",
+      "expected_content_hash": "4e3b0f99e73b1dc7c645e3f9cc6d0b2e9020bfcf17b7112959e89ad418070531",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/qwen-web"
@@ -148,10 +148,53 @@
         "browser-cookie-auth"
       ],
       "expected_package_hash": "3e5a4698cc7f4637437a9df784de37660e4bc4646a6ede1a24c56eb2819345f8",
-      "expected_content_hash": "1d456c5f66703228492755d295555b3f3c12b17caf0ab3308f274617c8ffa365",
+      "expected_content_hash": "ff2e09e34bb2ea85a0b856240abf55e4fa8d9facae756b514439cd2098412df3",
       "source": {
         "type": "github",
         "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web"
+      }
+    },
+    {
+      "id": "io.github.util6.antigravity-session",
+      "name": "Antigravity Session Parser",
+      "version": "1.5.3",
+      "record_kind": "session",
+      "provider": "antigravity",
+      "adapter_id": "antigravity",
+      "description": "Reads local Antigravity session records and exports normalized conversation turns.",
+      "repository_url": "https://github.com/util6/assetiweave",
+      "tags": [
+        "session",
+        "antigravity",
+        "node"
+      ],
+      "expected_package_hash": "9327bb1e4a17f4c8dd3116e817634178e45bb189f5303cea75301e67f4c6693c",
+      "expected_content_hash": "4b02af0c29b25c6c4cf406c4d805331c5c1ba0190df3490041eb6e4f6b75c18c",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/antigravity"
+      }
+    },
+    {
+      "id": "io.github.util6.codebuddy-session",
+      "name": "CodeBuddy Session Parser",
+      "version": "1.4.1",
+      "record_kind": "session",
+      "provider": "codebuddy",
+      "adapter_id": "codebuddy",
+      "description": "Reads local CodeBuddy and WorkBuddy session records and exports normalized conversation turns.",
+      "repository_url": "https://github.com/util6/assetiweave",
+      "tags": [
+        "session",
+        "codebuddy",
+        "workbuddy",
+        "node"
+      ],
+      "expected_package_hash": "7fe36b16257bf1580b8fb223e8aad365337ff5b189da73ce8e4366f62fec8c93",
+      "expected_content_hash": "35b0f2cc3201d3debf0c8df2ff3c934b6c52851a4b2b7c8448537ed201618d9e",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codebuddy"
       }
     }
   ]

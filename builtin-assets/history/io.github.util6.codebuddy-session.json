@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "package_id": "io.github.util6.codebuddy-session",
+  "adapter_id": "codebuddy",
+  "name": "CodeBuddy Session Parser",
+  "publisher": "util6",
+  "record_kind": "session",
+  "releases": [
+    {
+      "version": "1.4.1",
+      "channel": "stable",
+      "released_at": "2026-10-04T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codebuddy-session-1.4.1-universal.zip",
+      "artifact_size": 119271,
+      "artifact_sha256": "453c67aa8639892bc2adcc62642306a4f76fce94949d5e58ae8cce5b8fd5dc09",
+      "changelog_markdown": "## 1.4.1\n\n- Unify WorkBuddy and CodeBuddy multi-flavor session discovery, support WorkBuddy SQLite title index and subagent linking.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codebuddy"
+      }
+    }
+  ]
+}
