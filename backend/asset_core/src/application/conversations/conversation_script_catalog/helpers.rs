@@ -213,25 +213,33 @@ pub fn conversation_adapter_package_status(
             }
             .to_string();
         }
+        // 开发覆盖与 Git 来源是显式跟踪本地文件的来源，标签优先于更新态。
+        match package.origin {
+            ConversationAdapterPackageOrigin::DevOverride => return "dev_override".to_string(),
+            ConversationAdapterPackageOrigin::GitRef => return "git_registered".to_string(),
+            _ => {}
+        }
+        // 本地目录与内置来源不再吞掉更新态：待晋升的本地变更优先于来源标签。
+        if update_available {
+            return "update_available".to_string();
+        }
         match package.origin {
             ConversationAdapterPackageOrigin::LocalDirectory => {
                 return "local_registered".to_string()
             }
-            ConversationAdapterPackageOrigin::GitRef => return "git_registered".to_string(),
-            ConversationAdapterPackageOrigin::DevOverride => return "dev_override".to_string(),
             ConversationAdapterPackageOrigin::BuiltIn => return "built_in".to_string(),
-            ConversationAdapterPackageOrigin::ManagedRelease
-            | ConversationAdapterPackageOrigin::LegacyExternal => {}
+            _ => {}
         }
     } else if adapter.is_some_and(|adapter| {
         adapter.trust_state == crate::backend::domain::ConversationAdapterTrustState::BuiltIn
     }) {
-        return if runtime_ready {
-            "built_in"
-        } else {
-            "uninstalled"
+        if !runtime_ready {
+            return "uninstalled".to_string();
         }
-        .to_string();
+        if update_available {
+            return "update_available".to_string();
+        }
+        return "built_in".to_string();
     } else if adapter.is_some() {
         return "legacy_installed".to_string();
     }
