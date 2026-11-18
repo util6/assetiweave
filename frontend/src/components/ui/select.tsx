@@ -3,6 +3,7 @@ import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 type SelectOpenListener = (activeId: string | null) => void;
 const selectOpenListeners = new Set<SelectOpenListener>();
@@ -91,7 +92,7 @@ const SelectTrigger = React.forwardRef<
 >(({ className, children, size = "default", ...props }, ref) => (
   <SelectPrimitive.Trigger
     className={cn(
-      "group flex w-full items-center justify-between gap-2 rounded-xl border border-theme-control-border bg-theme-control text-on-surface shadow-[var(--theme-shadow-control-inset)] outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus-visible:border-primary-strong/60 focus-visible:ring-2 focus-visible:ring-primary-strong/25 data-[state=open]:border-primary-strong/60 data-[state=open]:ring-2 data-[state=open]:ring-primary-strong/20 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
+      "group flex w-full items-center justify-between gap-2 rounded-xl border border-theme-control-border bg-theme-control text-on-surface shadow-[var(--theme-shadow-control-inset)] outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus-visible:border-primary-strong/60 focus-visible:ring-2 focus-visible:ring-primary-strong/25 data-[state=open]:border-primary-strong/60 data-[state=open]:ring-2 data-[state=open]:ring-primary-strong/20 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:min-w-0",
       size === "sm" ? "h-9 px-2.5 text-body-sm" : "h-10 px-3 text-body-sm",
       className,
     )}
@@ -155,7 +156,7 @@ const SelectContent = React.forwardRef<
     <SelectPrimitive.Portal container={portalContainer}>
       <SelectPrimitive.Content
         className={cn(
-          "ui-menu relative z-[100] max-h-96 min-w-[8rem] overflow-hidden rounded-2xl border border-theme-card-border/75 bg-theme-card/95 text-theme-control-fg shadow-[var(--theme-shadow-panel)] backdrop-blur-xl",
+          "ui-menu relative z-[100] max-h-96 min-w-[8rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-theme-card-border/75 bg-theme-card/95 text-theme-control-fg shadow-[var(--theme-shadow-panel)] backdrop-blur-xl",
           position === "popper" && "my-1",
           className,
         )}
@@ -201,7 +202,7 @@ const SelectItem = React.forwardRef<
 >(({ className, children, ...props }, ref) => (
   <SelectPrimitive.Item
     className={cn(
-      "relative flex w-full cursor-pointer select-none items-center rounded-xl py-2 pl-2.5 pr-8 text-body-sm outline-none transition-[background-color,color] duration-150",
+      "relative flex w-full min-w-0 cursor-pointer select-none items-center rounded-xl py-2 pl-2.5 pr-8 text-body-sm outline-none transition-[background-color,color] duration-150 [&>span:last-child]:min-w-0",
       "text-on-surface-variant",
       // Hover 与聚焦高亮态（覆盖原生 :hover、键盘 :focus 和 Radix data-highlighted）
       "hover:bg-theme-control-hover hover:text-on-surface",
@@ -223,7 +224,9 @@ const SelectItem = React.forwardRef<
         <Check className="size-4 text-primary" />
       </SelectPrimitive.ItemIndicator>
     </span>
-    <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+    <SelectPrimitive.ItemText>
+      <TruncatedText className="pointer-events-auto">{children}</TruncatedText>
+    </SelectPrimitive.ItemText>
   </SelectPrimitive.Item>
 ));
 SelectItem.displayName = SelectPrimitive.Item.displayName;
@@ -289,10 +292,20 @@ export function SimpleSelect<T extends string = string>({
           id={id}
           size={size}
         >
-          <span className="flex min-w-0 flex-1 items-center gap-2 truncate text-left">
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-left [&>span]:min-w-0">
             {icon ? <span className="shrink-0">{icon}</span> : null}
-            <SelectValue placeholder={placeholder}>
-              {selectedOption ? selectedOption.label : undefined}
+            <SelectValue
+              placeholder={
+                <TruncatedText className="pointer-events-auto">
+                  {placeholder}
+                </TruncatedText>
+              }
+            >
+              {selectedOption ? (
+                <TruncatedText className="pointer-events-auto">
+                  {selectedOption.label}
+                </TruncatedText>
+              ) : undefined}
             </SelectValue>
           </span>
         </SelectTrigger>

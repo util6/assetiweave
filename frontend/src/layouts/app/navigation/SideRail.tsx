@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import type { ReactNode } from "react";
+import { TruncatedText } from "../../../components/foundation/TruncatedText";
 import { useI18n } from "../../../i18n/I18nProvider";
 import { headerTabLabel, railLabel } from "../../../i18n/navigation";
 import { MenuIcon } from "../../../router/icons";
@@ -187,17 +188,17 @@ function BrandIdentity({
                 {action.icon}
               </span>
             ) : null}
-            <span className="min-w-0 truncate" data-side-rail-label="">
+            <TruncatedText data-side-rail-label="">
               {action.label}
-            </span>
+            </TruncatedText>
           </button>
         ) : (
-          <span
-            className="min-w-0 truncate text-body-md font-semibold"
+          <TruncatedText
+            className="text-body-md font-semibold"
             data-side-rail-label=""
           >
             AssetIWeave
-          </span>
+          </TruncatedText>
         )
       ) : null}
     </div>
@@ -358,12 +359,12 @@ function RailButton({
         {!expanded && badge ? badge : null}
       </span>
       {expanded ? (
-        <span
-          className="min-w-0 flex-1 truncate text-left text-body-sm font-medium"
+        <TruncatedText
+          className="flex-1 text-left text-body-sm font-medium"
           data-side-rail-label=""
         >
           {label}
-        </span>
+        </TruncatedText>
       ) : null}
       {expanded && badge ? (
         <span className="ml-auto shrink-0 flex items-center">{badge}</span>

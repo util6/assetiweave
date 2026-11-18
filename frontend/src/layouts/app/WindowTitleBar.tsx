@@ -1,6 +1,7 @@
 import { Minus, Square, X } from "lucide-react";
 import { useEffect, useState, type ComponentType, type SVGProps } from "react";
 import clsx from "clsx";
+import { TruncatedText } from "../../components/foundation/TruncatedText";
 import {
   appWindowIconAsset,
   setAppWindowIcon,
@@ -90,7 +91,7 @@ export function WindowTitleBar({
           data-app-window-icon="display"
           src={appWindowIconAsset("display")}
         />
-        <span className="truncate">AssetIWeave</span>
+        <TruncatedText>AssetIWeave</TruncatedText>
       </div>
       {customControls ? (
         <div

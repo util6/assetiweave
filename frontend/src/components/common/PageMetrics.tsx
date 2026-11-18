@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export interface PageMetric {
   label: string;
@@ -29,9 +30,9 @@ export function PageMetrics({
           data-page-metric=""
           key={metric.label}
         >
-          <span className="min-w-0 truncate whitespace-nowrap text-on-surface-variant">
+          <TruncatedText className="whitespace-nowrap text-on-surface-variant">
             {metric.label}
-          </span>
+          </TruncatedText>
           <strong className="shrink-0 font-mono text-code-md text-primary">
             {metric.value}
           </strong>
