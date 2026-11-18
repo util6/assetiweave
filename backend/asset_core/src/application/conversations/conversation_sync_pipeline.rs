@@ -7,6 +7,14 @@ use crate::backend::infrastructure::tasks::{
 };
 use serde_json::{json, Value};
 
+/// Whether the caller explicitly asked for a specific source or adapter.
+///
+/// An explicit target that matches nothing is a real miss; no filter at all is
+/// just "nothing installed yet" and must degrade to a no-op (#196).
+fn has_explicit_target(params: &ConversationSyncParams) -> bool {
+    params.source_id.is_some() || params.adapter_id.is_some()
+}
+
 impl AppService {
     pub async fn sync_conversations_with_control<F>(
         &self,
@@ -48,7 +56,7 @@ impl AppService {
                 )
             })
             .collect::<Vec<_>>();
-        if sources.is_empty() && (params.source_id.is_some() || params.adapter_id.is_some()) {
+        if sources.is_empty() && has_explicit_target(&params) {
             // An explicitly requested source/adapter that matches nothing is a real
             // miss. With no filter at all the user simply has no adapter installed
             // yet (#196 stopped shipping built-in adapters), so sync is a no-op.
@@ -495,10 +503,7 @@ impl AppService {
             self.runtime.notify_domain_events();
         }
 
-        if results.is_empty()
-            && errors.is_empty()
-            && (params.source_id.is_some() || params.adapter_id.is_some())
-        {
+        if results.is_empty() && errors.is_empty() && has_explicit_target(&params) {
             return Err(AppError::NotFound(
                 "no matching conversation sources".to_string(),
             ));

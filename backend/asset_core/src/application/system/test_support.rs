@@ -28,7 +28,7 @@ pub async fn init_test_database(pool: &SqlitePool) -> AppResult<()> {
     .map_err(AppError::external)?;
     let adapters =
         crate::backend::infrastructure::conversations::discover_managed_conversation_adapters()?;
-    super::conversation_adapters::seed_prepared_builtin_adapters(
+    super::conversation_adapters::seed_discovered_conversation_adapters(
         pool,
         store::DEFAULT_TENANT_ID,
         &adapters,

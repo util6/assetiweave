@@ -53,6 +53,10 @@ impl AppService {
             &target_catalog,
         )
         .await?;
+        // #195：遗留 `dev_override` 迁移会复制目录并计算 hash，只在启动对账执行，
+        // 不再挂在租户切换的同步请求路径上（ADR-0017）。失败只 warn，不阻断启动。
+        crate::backend::application::system::conversation_adapters::migrate_legacy_dev_override_packages_on_startup(&pool)
+            .await;
         let managed_conversation_adapters = tokio::task::spawn_blocking(move || {
             crate::backend::infrastructure::conversations::discover_managed_conversation_adapters_at(
                 &managed_root,
@@ -63,7 +67,7 @@ impl AppService {
         .map_err(AppError::external)?;
         let tenant_ids = store::load_all_tenant_ids_sqlx(&pool).await?;
         for tenant_id in &tenant_ids {
-            seed_prepared_builtin_adapters(&pool, tenant_id, &managed_conversation_adapters)
+            seed_discovered_conversation_adapters(&pool, tenant_id, &managed_conversation_adapters)
                 .await?;
         }
 
@@ -94,12 +98,12 @@ impl AppService {
 
 /// Seed one tenant from the immutable built-in environment prepared by
 /// `AppRuntime`. This boundary performs no filesystem writes.
-pub async fn seed_prepared_builtin_adapters(
+pub async fn seed_discovered_conversation_adapters(
     pool: &SqlitePool,
     tenant_id: &str,
     adapters: &[ConversationAdapter],
 ) -> AppResult<()> {
-    crate::backend::application::system::conversation_adapters::seed_prepared_builtin_adapters(
+    crate::backend::application::system::conversation_adapters::seed_discovered_conversation_adapters(
         pool, tenant_id, adapters,
     )
     .await
