@@ -2,6 +2,7 @@ import { Eye } from "lucide-react";
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { AgentSessionStatus } from "../../types/agentSession";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export interface AgentSessionHeaderProps {
   recipientTitle?: ReactNode;
@@ -25,12 +26,13 @@ export function AgentSessionHeader({
   return (
     <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-3 border-b border-theme-card-border/45 bg-theme-card-header/85 px-4 py-2.5 backdrop-blur sm:px-5">
       <div className="flex min-w-0 items-center gap-2">
-        <h3
-          className="truncate text-title-sm font-bold text-on-surface"
+        <TruncatedText
+          as="h3"
+          className="text-title-sm font-bold text-on-surface"
           data-testid={`${testIdPrefix}-active-recipient`}
         >
           {recipientTitle}
-        </h3>
+        </TruncatedText>
         {model ? (
           <span
             className="rounded border border-theme-control-border/60 bg-theme-control/60 px-1.5 py-0.5 text-caption font-mono text-on-surface-variant"

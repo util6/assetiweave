@@ -17,6 +17,7 @@ import type {
 import { abbreviateHomePath } from "../../utils/path";
 import { stripAnsi } from "../../utils/stripAnsi";
 import { ConversationDiff } from "../conversations/ConversationDiff";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export interface AgentSessionToolDetailProps {
   item: AgentSessionItemView;
@@ -109,9 +110,9 @@ export function AgentSessionToolDetail({
             $ {commandInfo.command}
           </pre>
           {commandInfo.cwd ? (
-            <div className="mt-1 truncate text-caption font-mono text-on-surface-variant">
-              cwd: {abbreviateHomePath(commandInfo.cwd)}
-            </div>
+            <TruncatedText className="mt-1 text-caption font-mono text-on-surface-variant">
+              {`cwd: ${abbreviateHomePath(commandInfo.cwd)}`}
+            </TruncatedText>
           ) : null}
         </div>
       ) : null}
@@ -321,9 +322,7 @@ function ToolContentBlockRenderer({
           <div className="flex min-w-0 items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-1.5 text-label-caps font-mono font-medium text-on-surface">
               <FileCode size={13} className="shrink-0 text-primary" />
-              <span className="truncate" title={block.path}>
-                {displayPath}
-              </span>
+              <TruncatedText>{displayPath}</TruncatedText>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {block.isTruncated ? (
@@ -367,9 +366,7 @@ function ToolContentBlockRenderer({
         >
           <div className="flex min-w-0 items-center gap-1.5 font-mono text-caption text-on-surface">
             <MapPin size={13} className="shrink-0 text-primary" />
-            <span className="truncate" title={locator}>
-              {locator}
-            </span>
+            <TruncatedText>{locator}</TruncatedText>
           </div>
           <button
             aria-label="Copy location"
@@ -399,7 +396,7 @@ function ToolContentBlockRenderer({
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-1.5 text-label-caps font-mono font-medium text-on-surface">
               <ImageIcon size={13} className="shrink-0 text-primary" />
-              <span className="truncate">{displayPath}</span>
+              <TruncatedText>{displayPath}</TruncatedText>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {block.mimeType ? (
@@ -443,9 +440,9 @@ function ToolContentBlockRenderer({
           <div className="flex min-w-0 items-center gap-2">
             <Package size={15} className="shrink-0 text-primary" />
             <div className="min-w-0">
-              <div className="truncate font-semibold text-body-sm text-on-surface">
+              <TruncatedText className="font-semibold text-body-sm text-on-surface">
                 {block.title || block.artifactId}
-              </div>
+              </TruncatedText>
               <div className="flex items-center gap-2 font-mono text-caption text-outline">
                 <span>{block.artifactId}</span>
                 <span className="rounded bg-theme-panel/70 px-1 py-0.5">

@@ -7,6 +7,8 @@ import type {
 } from "../../../types/usage";
 import { formatChineseTokens, formatUsageCosts } from "../../../types/usage";
 import { cn } from "../../../lib/utils";
+import { abbreviateHomePath } from "../../../utils/path";
+import { TruncatedText } from "../../foundation/TruncatedText";
 import {
   AppShortcutIcon,
   AppShortcutIconForShortcut,
@@ -195,17 +197,14 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
                       key={rowKey}
                       className="hover:bg-theme-control/35 transition-colors"
                     >
-                      <td className="py-2.5 pl-2 pr-3 font-mono text-caption text-on-surface font-medium truncate max-w-[200px] align-top">
-                        <span title={m.model}>{m.model}</span>
+                      <td className="py-2.5 pl-2 pr-3 font-mono text-caption text-on-surface font-medium max-w-[200px] align-top">
+                        <TruncatedText>{m.model}</TruncatedText>
                       </td>
                       <td className="py-2.5 pr-3 font-mono text-caption text-on-surface-variant align-top">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <span
-                            className="truncate max-w-[220px]"
-                            title={primaryRaw}
-                          >
+                          <TruncatedText className="max-w-[220px]">
                             {primaryRaw}
-                          </span>
+                          </TruncatedText>
                           {extraCount > 0 && (
                             <Button
                               type="button"
@@ -353,13 +352,13 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
                               )}
                             </span>
                             <div className="flex flex-col min-w-0">
-                              <span
-                                className="font-bold text-body-sm text-on-surface truncate max-w-[140px]"
-                                title={s.sourceName || s.appName}
+                              <TruncatedText
+                                className="font-bold text-body-sm text-on-surface max-w-[140px]"
+                                tooltip={s.sourceName || s.appName}
                               >
                                 {displayName}
-                              </span>
-                              <span className="font-mono text-[11px] text-on-surface-variant/70 truncate max-w-[140px]">
+                              </TruncatedText>
+                              <TruncatedText className="font-mono text-[11px] text-on-surface-variant/70 max-w-[140px]">
                                 {s.appName &&
                                 s.appName.toLowerCase() !==
                                   displayName.toLowerCase()
@@ -369,7 +368,7 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
                                         displayName.toLowerCase()
                                     ? s.adapterId
                                     : "本地会话"}
-                              </span>
+                              </TruncatedText>
                             </div>
                           </div>
                         </td>
@@ -473,11 +472,13 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
                           onSelectProject(isSelected ? "all" : p.projectPath);
                         }
                       }}
+                      aria-label={
+                        isSelected ? "点击取消项目过滤" : "点击过滤该项目"
+                      }
                       className={cn(
                         "hover:bg-theme-control/35 transition-colors cursor-pointer group",
                         isSelected && "bg-primary/10 hover:bg-primary/15",
                       )}
-                      title={isSelected ? "点击取消项目过滤" : "点击过滤该项目"}
                     >
                       <td className="py-2.5 pl-2 pr-4 font-mono text-caption text-on-surface">
                         <div className="flex items-center gap-2 max-w-[280px] sm:max-w-[360px]">
@@ -487,24 +488,21 @@ export const UsageBreakdownTables: React.FC<UsageBreakdownTablesProps> = ({
                             <FolderGit2 className="size-4 shrink-0 text-primary/70 group-hover:text-primary transition-colors" />
                           )}
                           <div className="flex flex-col min-w-0">
-                            <span
+                            <TruncatedText
                               className={cn(
-                                "text-caption font-semibold truncate",
+                                "text-caption font-semibold",
                                 isSelected
                                   ? "text-primary font-bold"
                                   : "text-on-surface",
                               )}
                             >
                               {p.displayName}
-                            </span>
+                            </TruncatedText>
                             {!p.isUnassigned &&
                               p.projectPath !== p.displayName && (
-                                <span
-                                  className="text-[11px] font-mono text-on-surface-variant/70 truncate"
-                                  title={p.projectPath}
-                                >
-                                  {p.projectPath}
-                                </span>
+                                <TruncatedText className="text-[11px] font-mono text-on-surface-variant/70">
+                                  {abbreviateHomePath(p.projectPath)}
+                                </TruncatedText>
                               )}
                           </div>
                           {isSelected && (

@@ -2,6 +2,7 @@ import { Crown, User, Sparkles, Cpu, Bot } from "lucide-react";
 import { AgentSessionWorkspace } from "../../agent-session/AgentSessionWorkspace";
 import { AccountPill } from "../../common/AccountPill";
 import { Badge } from "../../foundation/Badge";
+import { TruncatedText } from "../../foundation/TruncatedText";
 import { SUPPORTED_AGENTS } from "../../../services/agentTeamService";
 import type {
   TeamMemberConfig,
@@ -56,10 +57,10 @@ export function TeamParallelLanes({
           >
             {/* Lane Header */}
             <div className="flex h-11 items-center justify-between border-b border-theme-border/50 bg-theme-panel/40 px-3 py-1.5 backdrop-blur-xs">
-              <div className="flex items-center gap-2 truncate">
+              <div className="flex min-w-0 items-center gap-2">
                 {member.role === "leader" ? (
                   <span
-                    className="flex h-5 items-center gap-1 rounded-md bg-status-warning/15 px-1.5 text-[11px] font-semibold text-status-warning"
+                    className="flex h-5 shrink-0 items-center gap-1 rounded-md bg-status-warning/15 px-1.5 text-[11px] font-semibold text-status-warning"
                     title="团队组长 (Leader)"
                   >
                     <Crown className="h-3 w-3" />
@@ -67,20 +68,20 @@ export function TeamParallelLanes({
                   </span>
                 ) : (
                   <span
-                    className="flex h-5 items-center gap-1 rounded-md bg-theme-panel/80 px-1.5 text-[11px] font-medium text-theme-muted"
+                    className="flex h-5 shrink-0 items-center gap-1 rounded-md bg-theme-panel/80 px-1.5 text-[11px] font-medium text-theme-muted"
                     title="协同成员 (Teammate)"
                   >
                     <User className="h-3 w-3" />
                   </span>
                 )}
 
-                <span className="font-semibold text-body-xs text-theme-text truncate">
+                <TruncatedText className="font-semibold text-body-xs text-theme-text">
                   {member.name}
-                </span>
+                </TruncatedText>
 
-                <span className="text-[11px] text-theme-muted truncate">
-                  ({agentDef.displayName.split(" ")[0]} • {member.model})
-                </span>
+                <TruncatedText className="text-[11px] text-theme-muted">
+                  {`(${agentDef.displayName.split(" ")[0]} • ${member.model})`}
+                </TruncatedText>
               </div>
 
               {/* Lane Account Pill (Cockpit 切号!) */}

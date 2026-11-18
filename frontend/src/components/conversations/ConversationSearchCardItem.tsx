@@ -17,6 +17,7 @@ import {
   SearchHitMetaChip,
 } from "./conversationSearchHelpers";
 import { useConversationCardKindRegistry } from "./ConversationCardKindRegistry";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export interface ConversationSearchCardItemProps {
   active?: boolean;
@@ -112,41 +113,52 @@ export const ConversationSearchCardItem = memo(
         </div>
 
         {/* Line 2: Session Title */}
-        <h3
+        <TruncatedText
+          as="h3"
           className={clsx(
-            "line-clamp-2 text-body-sm font-semibold transition-colors",
+            "text-body-sm font-semibold transition-colors",
             active
               ? "text-primary"
               : "text-on-surface group-hover:text-primary",
           )}
+          lines={2}
+          tooltip={hit.session.title}
         >
           {highlightMatch(hit.session.title, query)}
-        </h3>
+        </TruncatedText>
 
         {/* Line 3: Question or Contextual Path if available */}
         {hit.question_title ? (
           <div className="flex items-center gap-1.5 rounded-lg bg-theme-control/40 px-2 py-1 text-code-xs text-on-surface-variant">
             <MessageSquare className="size-3.5 shrink-0 text-primary/70" />
-            <span className="line-clamp-1">
+            <TruncatedText lines={1} tooltip={hit.question_title}>
               {highlightMatch(hit.question_title, query)}
-            </span>
+            </TruncatedText>
           </div>
         ) : null}
 
         {/* Line 4: Snippet content with match highlighting */}
         <div className="rounded-xl border border-theme-control-border/40 bg-theme-control/30 px-3 py-2 text-body-sm leading-relaxed text-on-surface-variant">
-          <span className="line-clamp-3 font-mono text-[12.5px] leading-relaxed break-words">
+          <TruncatedText
+            className="font-mono text-[12.5px] leading-relaxed break-words"
+            lines={3}
+            tooltip={
+              hit.highlight_segments && hit.highlight_segments.length > 0
+                ? hit.highlight_segments.map((segment) => segment.text).join("")
+                : hit.snippet
+            }
+          >
             {renderHitSnippet(hit, query)}
-          </span>
+          </TruncatedText>
         </div>
 
         {/* Line 5: Project folder path */}
         {showProjectPath && hit.session.project_path ? (
           <div className="flex items-center gap-1.5 text-code-xs text-on-surface-muted">
             <Folder className="size-3 shrink-0 text-outline" />
-            <span className="truncate font-mono">
+            <TruncatedText className="font-mono">
               {abbreviateHomePath(hit.session.project_path)}
-            </span>
+            </TruncatedText>
           </div>
         ) : null}
       </button>

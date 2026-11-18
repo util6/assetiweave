@@ -4,6 +4,7 @@ import clsx from "clsx";
 
 import type { Translator } from "../../i18n/I18nProvider";
 import { cn } from "../../lib/utils";
+import { TruncatedText } from "../foundation/TruncatedText";
 import type {
   ConversationSearchCardType,
   ConversationSearchHit,
@@ -83,18 +84,18 @@ export function SearchHitMetaChip({
   label: string;
 }) {
   return (
-    <span
+    <TruncatedText
       className={cn(
-        "inline-flex h-5 max-w-full items-center overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-theme-control-border bg-theme-control/80 px-2 text-code-xs font-medium text-on-surface-variant shadow-[var(--theme-shadow-control-inset)]",
+        "h-5 max-w-full rounded-md border border-theme-control-border bg-theme-control/80 px-2 text-code-xs font-medium leading-[18px] text-on-surface-variant shadow-[var(--theme-shadow-control-inset)]",
         className,
       )}
+      inline
       style={
         accentColor ? searchHitMetaChipAccentStyle(accentColor) : undefined
       }
-      title={label}
     >
       {label}
-    </span>
+    </TruncatedText>
   );
 }
 
@@ -418,10 +419,11 @@ export function ConversationSearchTrigger({
   shortcut?: string;
 }) {
   const effectiveQuery = searching
-    ? (searchingQuery?.trim() || activeQuery?.trim() || "")
-    : (activeQuery?.trim() || "");
+    ? searchingQuery?.trim() || activeQuery?.trim() || ""
+    : activeQuery?.trim() || "";
   const displayLabel = effectiveQuery || placeholder;
-  const showResultBadge = !searching && Boolean(effectiveQuery) && resultCount != null;
+  const showResultBadge =
+    !searching && Boolean(effectiveQuery) && resultCount != null;
 
   return (
     <button
@@ -441,14 +443,14 @@ export function ConversationSearchTrigger({
         ) : (
           <Search className="size-4 shrink-0 transition-colors group-hover:text-primary" />
         )}
-        <span
+        <TruncatedText
           className={clsx(
-            "truncate font-medium",
+            "font-medium",
             effectiveQuery ? "text-on-surface" : "text-outline",
           )}
         >
           {displayLabel}
-        </span>
+        </TruncatedText>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
         {searching ? (

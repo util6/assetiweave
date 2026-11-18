@@ -12,6 +12,7 @@ import {
 import { useI18n } from "../../i18n/I18nProvider";
 import type { ConversationAdapterPackageCatalogEntry } from "../../services/conversations";
 import { Badge } from "../foundation/Badge";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 import {
   actionLabelKey,
@@ -46,9 +47,12 @@ export function ConversationScriptResourceRow({
     <article className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-theme-card-border bg-theme-card px-3 py-2 max-[640px]:grid-cols-1">
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <h4 className="min-w-0 truncate text-body-sm font-semibold text-on-surface">
+          <TruncatedText
+            as="h4"
+            className="min-w-0 text-body-sm font-semibold text-on-surface"
+          >
             {entry.item.name}
-          </h4>
+          </TruncatedText>
           <Badge tone={statusBadgeTone(entry.status)}>
             {t(statusLabelKey(entry.status))}
           </Badge>
@@ -64,15 +68,21 @@ export function ConversationScriptResourceRow({
           ) : null}
         </div>
         {entry.item.description ? (
-          <p className="mt-1 line-clamp-2 text-body-sm text-on-surface-variant">
+          <TruncatedText
+            as="p"
+            className="mt-1 text-body-sm text-on-surface-variant"
+            lines={2}
+          >
             {entry.item.description}
-          </p>
+          </TruncatedText>
         ) : null}
         <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-body-xs text-on-surface-variant">
           <span>{entry.item.provider ?? entry.item.id}</span>
           <span>{entry.item.version}</span>
           {manifestDisplayPath ? (
-            <span className="max-w-sm truncate">{manifestDisplayPath}</span>
+            <TruncatedText className="max-w-sm">
+              {manifestDisplayPath}
+            </TruncatedText>
           ) : null}
           {entry.item.repository_url ? (
             <a

@@ -9,6 +9,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import { Skeleton } from "../foundation/skeleton";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { formatErrorMessage } from "../../utils/error";
 import {
   checkConversationAdapterPackageUpdates,
@@ -662,10 +663,9 @@ export function ConversationScriptResourcePanel({
       {installRunning ? (
         <div className="mt-3 flex items-center gap-2 rounded-xl border border-status-update/35 bg-status-update/10 px-3 py-2 text-body-sm text-status-update">
           <Loader2 className="shrink-0 animate-spin" size={15} />
-          <span className="truncate">
-            {t(packageTaskRunningLabel(installTask.action))} -{" "}
-            {installTask.package_id ?? installTask.item_id}
-          </span>
+          <TruncatedText>
+            {`${t(packageTaskRunningLabel(installTask.action))} - ${installTask.package_id ?? installTask.item_id}`}
+          </TruncatedText>
         </div>
       ) : null}
 

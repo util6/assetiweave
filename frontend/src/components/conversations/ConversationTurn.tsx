@@ -8,6 +8,7 @@ import type {
 } from "../../types";
 import type { Translator } from "../../i18n/I18nProvider";
 import { Badge } from "../foundation/Badge";
+import { TruncatedText } from "../foundation/TruncatedText";
 import type {
   ConversationContentBlock,
   ConversationContentVisibility,
@@ -395,20 +396,18 @@ export const ConversationTurn = memo(function ConversationTurn({
             </h3>
             {model.turn.agent_role ? (
               <Badge
-                className="max-w-xs truncate rounded-full px-2.5 py-0.5 text-xs font-medium"
-                title={model.turn.agent_role}
+                className="max-w-xs rounded-full px-2.5 py-0.5 text-xs font-medium"
                 tone="neutral"
               >
-                {model.turn.agent_role}
+                <TruncatedText>{model.turn.agent_role}</TruncatedText>
               </Badge>
             ) : null}
             {model.turn.model ? (
               <Badge
-                className="max-w-xs truncate rounded-full px-2.5 py-0.5 font-mono text-xs normal-case tracking-normal"
-                title={model.turn.model}
+                className="max-w-xs rounded-full px-2.5 py-0.5 font-mono text-xs normal-case tracking-normal"
                 tone="neutral"
               >
-                {model.turn.model}
+                <TruncatedText>{model.turn.model}</TruncatedText>
               </Badge>
             ) : null}
           </div>

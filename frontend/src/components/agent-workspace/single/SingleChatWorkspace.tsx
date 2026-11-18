@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Sparkles, Search, Zap, TestTube2, FileCode2 } from "lucide-react";
 import { SingleChatHeader } from "./SingleChatHeader";
 import { AgentSessionWorkspace } from "../../agent-session/AgentSessionWorkspace";
+import { TruncatedText } from "../../foundation/TruncatedText";
 import {
   SUPPORTED_AGENTS,
   simulateAgentStream,
@@ -182,9 +183,12 @@ export function SingleChatWorkspace() {
                         <div className="text-body-xs font-semibold text-theme-text group-hover:text-primary-strong">
                           {qp.title}
                         </div>
-                        <div className="mt-1 text-[11px] text-theme-muted line-clamp-2">
+                        <TruncatedText
+                          className="mt-1 text-[11px] text-theme-muted"
+                          lines={2}
+                        >
                           {qp.prompt}
-                        </div>
+                        </TruncatedText>
                       </button>
                     );
                   })}

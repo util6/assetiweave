@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useCollapsibleHeader } from "../common/CollapsibleHeader";
 import { RenderSafeScrollSurface } from "../common/rendering";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export function ColumnPanel({
   actions,
@@ -28,9 +29,12 @@ export function ColumnPanel({
       <header className="conversation-column-header flex h-12 shrink-0 items-center justify-between gap-2 px-4">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-primary">{icon}</span>
-          <h2 className="truncate text-label-caps text-on-surface-variant">
+          <TruncatedText
+            as="h2"
+            className="text-label-caps text-on-surface-variant"
+          >
             {title}
-          </h2>
+          </TruncatedText>
           {badge ? <span className="shrink-0">{badge}</span> : null}
         </div>
         {actions ? (

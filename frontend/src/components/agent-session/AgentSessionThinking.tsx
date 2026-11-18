@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { AgentSessionItemView } from "../../types/agentSession";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export interface AgentSessionThinkingProps {
   item: AgentSessionItemView;
@@ -50,7 +51,9 @@ export function AgentSessionThinking({
             <Sparkles size={14} />
           )}
         </span>
-        <span className="truncate font-medium">{item.status || title}</span>
+        <TruncatedText className="font-medium">
+          {item.status || title}
+        </TruncatedText>
         <span className="text-caption text-outline">{item.state}</span>
         {!isProcessingOnly ? (
           <span className="ml-auto text-outline">
