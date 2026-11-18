@@ -54,7 +54,10 @@ pub use official::{
     discover_managed_conversation_adapters, discover_managed_conversation_adapters_at,
 };
 pub use official_runtime::{
-    ensure_reproject_runner_scripts, ensure_shell_command_projector, run_reproject_runner,
+    common_runtime_dir, ensure_common_runtime_scripts, ensure_common_runtime_scripts_at,
+    ensure_reproject_runner_scripts, ensure_shell_command_projector,
+    materialize_common_runtime_scripts_at, run_reproject_runner, COMMON_RUNTIME_DIR_NAME,
+    COMMON_RUNTIME_FILES,
 };
 pub use package::{
     validate_conversation_adapter_package_dir, ConversationAdapterPackageInstallSource,
