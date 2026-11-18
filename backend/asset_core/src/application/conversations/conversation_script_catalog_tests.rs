@@ -1231,3 +1231,113 @@ async fn dev_override_official_adapter_is_not_clobbered_and_refreshes_hash() {
     drop(service);
     let _ = fs::remove_dir_all(&root);
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn workspace_promotion_freezes_the_effective_common_scripts_into_the_snapshot() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root =
+        std::env::temp_dir().join(format!("assetiweave-workspace-common-{}", Uuid::new_v4()));
+    let package_dir = root.join("workspace").join("common-policy");
+    let managed_root = root.join("managed");
+    fs::create_dir_all(&package_dir).expect("create workspace package");
+    fs::write(
+        package_dir.join("conversation-adapter-package.json"),
+        r#"{
+  "schema_version": 1,
+  "package_id": "com.util6.common-policy",
+  "name": "Common Policy",
+  "version": "1.0.0",
+  "min_core_version": "0.1.0",
+  "record_kind": "session",
+  "adapter_manifest": "conversation-adapter.json",
+  "capabilities": ["probe", "read_session"],
+  "runtime": { "protocol": "stdio-ndjson-v1" },
+  "changelog": []
+}"#,
+    )
+    .expect("write package manifest");
+    fs::write(
+        package_dir.join("conversation-adapter.json"),
+        r#"{
+  "schema_version": 1,
+  "id": "common-policy",
+  "name": "Common Policy",
+  "version": "1.0.0",
+  "protocol_version": 1,
+  "command": ["adapter.sh"],
+  "capabilities": ["probe", "read_session"],
+  "input_kinds": ["directory"]
+}"#,
+    )
+    .expect("write adapter manifest");
+    let executable = package_dir.join("adapter.sh");
+    fs::write(
+        &executable,
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"revision\":1}}'\n",
+    )
+    .expect("write adapter executable");
+    let mut permissions = fs::metadata(&executable)
+        .expect("adapter metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&executable, permissions).expect("make adapter executable");
+    fs::write(package_dir.join("payload-policy.mjs"), "bundled policy\n")
+        .expect("write bundled policy");
+    fs::write(
+        package_dir.join("shell-projector.cjs"),
+        "bundled projector\n",
+    )
+    .expect("write bundled projector");
+
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
+    let common_dir = managed_root.join("common");
+    fs::create_dir_all(&common_dir).expect("create managed common dir");
+    let effective_policy = "export const effective = \"common\";\n";
+    let effective_projector = "// effective common projector\n";
+    fs::write(common_dir.join("payload-policy.mjs"), effective_policy)
+        .expect("write effective policy");
+    fs::write(common_dir.join("shell-projector.cjs"), effective_projector)
+        .expect("write effective projector");
+
+    let promoted = promote_conversation_adapter_workspace_package(
+        &service,
+        &package_dir,
+        &managed_root,
+        false,
+    )
+    .await
+    .expect("promote workspace");
+    let install_dir = PathBuf::from(
+        promoted["package"]["install_dir"]
+            .as_str()
+            .expect("install dir"),
+    );
+
+    assert_eq!(
+        fs::read_to_string(install_dir.join("payload-policy.mjs")).expect("read snapshot policy"),
+        effective_policy,
+        "the snapshot must freeze the common payload policy in force at promotion time"
+    );
+    assert_eq!(
+        fs::read_to_string(install_dir.join("shell-projector.cjs"))
+            .expect("read snapshot projector"),
+        effective_projector,
+        "the snapshot must freeze the common shell projector in force at promotion time"
+    );
+    assert!(
+        common_dir.join("reproject-runner.mjs").is_file(),
+        "promotion must materialize missing common helpers without overwriting the edited ones"
+    );
+    assert_eq!(
+        fs::read_to_string(common_dir.join("payload-policy.mjs")).expect("read effective policy"),
+        effective_policy,
+        "promotion must never rewrite the effective common scripts"
+    );
+
+    drop(service);
+    let _ = fs::remove_dir_all(root);
+}

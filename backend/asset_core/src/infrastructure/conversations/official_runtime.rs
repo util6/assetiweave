@@ -1,5 +1,5 @@
-//! Fallback copies of host-owned runtime helpers, not conversation adapter
-//! plugins.
+//! Host-owned conversation runtime helpers, externalized into the managed
+//! user directory.
 //!
 //! The scripts embedded here (`payload-policy.mjs`, `reproject-runner.mjs`,
 //! `shell-projector.cjs`, `projector-adapter.cjs` and their manifest) drive the
@@ -8,9 +8,12 @@
 //! lives in the managed user directory (`conversation-adapters/**`) and is only
 //! ever read by [`super::official`].
 //!
-//! Fallbacks are released exclusively into `runtime/<helper>-v1/` and only when
-//! the target file is missing; an existing file is never overwritten, so user
-//! edits and later externalization into `common/` stay authoritative.
+//! The authoritative location for these helpers is
+//! `$ASSETIWEAVE_HOME/conversation-adapters/common/`. Runners resolve the
+//! external file directly, so a user edit takes effect on the next sync without
+//! recompiling the binary. The embedded copies are released only when the
+//! target file is missing; an existing file is never overwritten, so user edits
+//! stay authoritative.
 
 use crate::backend::infrastructure::app_settings::conversation_adapter_dir;
 use crate::backend::{
@@ -18,48 +21,111 @@ use crate::backend::{
     infrastructure::error::{InfraError, InfraResult},
 };
 use chrono::Utc;
-use std::{fs, path::Path, sync::Mutex};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
+
+pub const COMMON_RUNTIME_DIR_NAME: &str = "common";
+pub const PAYLOAD_POLICY_FILE_NAME: &str = "payload-policy.mjs";
+pub const REPROJECT_RUNNER_FILE_NAME: &str = "reproject-runner.mjs";
+pub const SHELL_PROJECTOR_FILE_NAME: &str = "shell-projector.cjs";
+pub const SHELL_PROJECTOR_ADAPTER_FILE_NAME: &str = "projector-adapter.cjs";
+pub const SHELL_PROJECTOR_MANIFEST_FILE_NAME: &str = "projector-manifest.json";
+
+/// Every host-owned helper that lives in `common/`.
+pub const COMMON_RUNTIME_FILES: [&str; 5] = [
+    PAYLOAD_POLICY_FILE_NAME,
+    REPROJECT_RUNNER_FILE_NAME,
+    SHELL_PROJECTOR_FILE_NAME,
+    SHELL_PROJECTOR_ADAPTER_FILE_NAME,
+    SHELL_PROJECTOR_MANIFEST_FILE_NAME,
+];
 
 const PAYLOAD_POLICY_SCRIPT: &str =
     include_str!("../../../../../builtin-assets/adapters/common/payload-policy.mjs");
 const REPROJECT_RUNNER_SCRIPT: &str =
     include_str!("../../../../../builtin-assets/adapters/common/reproject-runner.mjs");
-const REPROJECT_RUNNER_RUNTIME_VERSION: &str = "reproject-runner-v1";
 const SHELL_PROJECTOR_SCRIPT: &str =
     include_str!("../../../../../builtin-assets/adapters/common/shell-projector.cjs");
 const SHELL_PROJECTOR_ADAPTER_SCRIPT: &str =
     include_str!("../../../../../builtin-assets/adapters/common/projector-adapter.cjs");
 const SHELL_PROJECTOR_MANIFEST: &str =
     include_str!("../../../../../builtin-assets/adapters/common/projector-manifest.json");
-const SHELL_PROJECTOR_RUNTIME_VERSION: &str = "shell-projector-v1";
-static SHELL_PROJECTOR_MATERIALIZE_LOCK: Mutex<()> = Mutex::new(());
-static REPROJECT_RUNNER_MATERIALIZE_LOCK: Mutex<()> = Mutex::new(());
 
-pub fn ensure_shell_command_projector() -> InfraResult<ConversationAdapter> {
-    let _guard = SHELL_PROJECTOR_MATERIALIZE_LOCK.lock().map_err(|_| {
-        InfraError::external("shell command projector materialization lock poisoned")
-    })?;
-    let root = conversation_adapter_dir()?
-        .join("runtime")
-        .join(SHELL_PROJECTOR_RUNTIME_VERSION);
-    materialize_shell_command_projector(&root)
+static COMMON_RUNTIME_MATERIALIZE_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_materialization() -> InfraResult<std::sync::MutexGuard<'static, ()>> {
+    COMMON_RUNTIME_MATERIALIZE_LOCK
+        .lock()
+        .map_err(|_| InfraError::external("conversation runtime helper lock poisoned"))
 }
 
-pub fn ensure_reproject_runner_scripts() -> InfraResult<std::path::PathBuf> {
-    let _guard = REPROJECT_RUNNER_MATERIALIZE_LOCK
-        .lock()
-        .map_err(|_| InfraError::external("reproject runner materialization lock poisoned"))?;
-    let root = conversation_adapter_dir()?
-        .join("runtime")
-        .join(REPROJECT_RUNNER_RUNTIME_VERSION);
-    fs::create_dir_all(&root)?;
-    let policy_path = root.join("payload-policy.mjs");
-    let runner_path = root.join("reproject-runner.mjs");
-    write_if_missing(&policy_path, PAYLOAD_POLICY_SCRIPT.as_bytes())?;
-    if write_if_missing(&runner_path, REPROJECT_RUNNER_SCRIPT.as_bytes())? {
-        make_executable(&runner_path)?;
+/// Resolve the authoritative `common/` directory inside the managed root.
+pub fn common_runtime_dir() -> InfraResult<PathBuf> {
+    Ok(conversation_adapter_dir()?.join(COMMON_RUNTIME_DIR_NAME))
+}
+
+/// Ensure every host-owned helper exists on disk and return the `common/` dir.
+pub fn ensure_common_runtime_scripts() -> InfraResult<PathBuf> {
+    let root = common_runtime_dir()?;
+    ensure_common_runtime_scripts_at(&root)
+}
+
+/// Same as [`ensure_common_runtime_scripts`] against an explicit root.
+pub fn ensure_common_runtime_scripts_at(root: &Path) -> InfraResult<PathBuf> {
+    let _guard = lock_materialization()?;
+    materialize_common_runtime_scripts_at(root)
+}
+
+/// Release missing fallback helpers into `root` without touching existing files.
+///
+/// The caller is responsible for serialization; public entry points go through
+/// [`ensure_common_runtime_scripts_at`].
+pub fn materialize_common_runtime_scripts_at(root: &Path) -> InfraResult<PathBuf> {
+    fs::create_dir_all(root)?;
+    write_if_missing(
+        &root.join(PAYLOAD_POLICY_FILE_NAME),
+        PAYLOAD_POLICY_SCRIPT.as_bytes(),
+    )?;
+    let runner_created = write_if_missing(
+        &root.join(REPROJECT_RUNNER_FILE_NAME),
+        REPROJECT_RUNNER_SCRIPT.as_bytes(),
+    )?;
+    write_if_missing(
+        &root.join(SHELL_PROJECTOR_FILE_NAME),
+        SHELL_PROJECTOR_SCRIPT.as_bytes(),
+    )?;
+    let adapter_created = write_if_missing(
+        &root.join(SHELL_PROJECTOR_ADAPTER_FILE_NAME),
+        SHELL_PROJECTOR_ADAPTER_SCRIPT.as_bytes(),
+    )?;
+    write_if_missing(
+        &root.join(SHELL_PROJECTOR_MANIFEST_FILE_NAME),
+        SHELL_PROJECTOR_MANIFEST.as_bytes(),
+    )?;
+    if runner_created {
+        make_executable(&root.join(REPROJECT_RUNNER_FILE_NAME))?;
     }
-    Ok(runner_path)
+    if adapter_created {
+        make_executable(&root.join(SHELL_PROJECTOR_ADAPTER_FILE_NAME))?;
+    }
+    Ok(root.to_path_buf())
+}
+
+/// Resolve the reproject runner from `common/`, releasing the fallback only
+/// when the external script is missing.
+pub fn ensure_reproject_runner_scripts() -> InfraResult<PathBuf> {
+    let root = ensure_common_runtime_scripts()?;
+    Ok(root.join(REPROJECT_RUNNER_FILE_NAME))
+}
+
+/// Resolve the core shell command projector from `common/`, releasing missing
+/// helpers only when needed.
+pub fn ensure_shell_command_projector() -> InfraResult<ConversationAdapter> {
+    let root = ensure_common_runtime_scripts()?;
+    validate_common_shell_projector(&root)
 }
 
 pub async fn run_reproject_runner(
@@ -101,19 +167,8 @@ pub async fn run_reproject_runner(
     Ok(output.stdout)
 }
 
-fn materialize_shell_command_projector(root: &Path) -> InfraResult<ConversationAdapter> {
-    fs::create_dir_all(root)?;
-    let manifest_path = root.join("conversation-adapter.json");
-    let adapter_path = root.join("projector-adapter.cjs");
-    let projector_path = root.join("shell-projector.cjs");
-    write_if_missing(&manifest_path, SHELL_PROJECTOR_MANIFEST.as_bytes())?;
-    let adapter_created =
-        write_if_missing(&adapter_path, SHELL_PROJECTOR_ADAPTER_SCRIPT.as_bytes())?;
-    write_if_missing(&projector_path, SHELL_PROJECTOR_SCRIPT.as_bytes())?;
-    if adapter_created {
-        make_executable(&adapter_path)?;
-    }
-
+fn validate_common_shell_projector(root: &Path) -> InfraResult<ConversationAdapter> {
+    let manifest_path = root.join(SHELL_PROJECTOR_MANIFEST_FILE_NAME);
     let validation =
         super::external::validate_external_adapter_manifest(&manifest_path.to_string_lossy())?;
     let now = Utc::now().to_rfc3339();

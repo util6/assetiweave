@@ -7,7 +7,35 @@ use crate::backend::domain::{
 };
 use crate::backend::infrastructure::conversations::{
     ConversationAdapterPackageInstallSourceKind, ConversationAdapterPackageInstallSpec,
+    COMMON_RUNTIME_DIR_NAME, COMMON_RUNTIME_FILES,
 };
+
+/// Overlay the currently effective `common/` helpers onto a runtime snapshot.
+///
+/// Only helpers the package already ships are replaced, so a promotion captures
+/// exactly the external scripts in force at snapshot time and never injects
+/// host-only files into a plugin package.
+pub fn overlay_effective_common_scripts(package_dir: &Path, managed_root: &Path) -> AppResult<()> {
+    let common_dir = managed_root.join(COMMON_RUNTIME_DIR_NAME);
+    crate::backend::infrastructure::conversations::ensure_common_runtime_scripts_at(&common_dir)
+        .map_err(AppError::external)?;
+    for name in COMMON_RUNTIME_FILES {
+        let target = package_dir.join(name);
+        if !target.is_file() {
+            continue;
+        }
+        let source = common_dir.join(name);
+        if !source.is_file() {
+            continue;
+        }
+        let effective = fs::read(&source).map_err(AppError::external)?;
+        if fs::read(&target).map_err(AppError::external)? == effective {
+            continue;
+        }
+        fs::copy(&source, &target).map_err(AppError::external)?;
+    }
+    Ok(())
+}
 
 pub fn find_developer_conversation_adapter_root(start: &Path) -> AppResult<PathBuf> {
     for ancestor in start.ancestors() {
@@ -142,15 +170,28 @@ pub async fn promote_conversation_adapter_workspace_package(
     }
     crate::backend::infrastructure::filesystem::copy_dir(&source_dir, &prepared_dir)?;
     let promotion: AppResult<_> = async {
-        let prepared_validation =
-            crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(&prepared_dir)
+        // Fix the currently effective external helpers into the snapshot before
+        // it becomes an immutable runtime revision.
+        overlay_effective_common_scripts(&prepared_dir, managed_root)?;
+        let revalidated_source =
+            crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(&source_dir)
                 .map_err(AppError::external)?;
-        if prepared_validation.content_hash != source_validation.content_hash {
+        if revalidated_source.content_hash != source_validation.content_hash {
             return Err(AppError::Validation(
                 "conversation adapter workspace changed while its runtime snapshot was being created"
                     .to_string(),
             ));
         }
+        let prepared_validation =
+            crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(&prepared_dir)
+                .map_err(AppError::external)?;
+        let effective_hash = prepared_validation.content_hash.clone();
+        let revision = format!(
+            "{}-{}",
+            version,
+            &effective_hash[..12.min(effective_hash.len())]
+        );
+        let version_dir = package_root.join("versions").join(&revision);
         crate::backend::infrastructure::conversations::register_external_adapter_with_settings(
             crate::backend::infrastructure::conversations::ExternalAdapterRegisterParams {
                 manifest_path: prepared_validation.adapter_manifest_path,
@@ -168,7 +209,7 @@ pub async fn promote_conversation_adapter_workspace_package(
                     &version_dir,
                 )
                 .map_err(AppError::external)?;
-            if existing.content_hash != source_validation.content_hash {
+            if existing.content_hash != effective_hash {
                 return Err(AppError::Validation(format!(
                     "conversation adapter runtime revision is immutable: {}",
                     version_dir.display()
