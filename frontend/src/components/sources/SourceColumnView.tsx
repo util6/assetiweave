@@ -23,6 +23,7 @@ import { MountStatePill } from "../assets/MountStatePill";
 import { QuickMountButtons } from "../assets/QuickMountButtons";
 import { SkillBackupBadge } from "../assets/SkillBackupBadge";
 import { ResizableColumns } from "../layout/ResizableColumns";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { SourceBulkMountControls } from "./SourceBulkMountControls";
 
 export function SourceColumnView({
@@ -130,12 +131,12 @@ export function SourceColumnView({
                   aria-hidden="true"
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold">
+                  <TruncatedText className="font-mono text-code-md font-semibold">
                     {source.name}
-                  </span>
-                  <span className="mt-1 block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-outline">
+                  </TruncatedText>
+                  <TruncatedText className="mt-1 font-mono text-body-sm text-outline">
                     {abbreviateHomePath(source.root_path)}
-                  </span>
+                  </TruncatedText>
                   <span className="mt-1 text-body-sm text-on-surface-variant">
                     {t("source.assetCount", { count: sourceAssets.length })}
                   </span>
@@ -168,9 +169,9 @@ export function SourceColumnView({
                 >
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold text-on-surface">
+                      <TruncatedText className="font-mono text-code-md font-semibold text-on-surface">
                         {asset.name}
-                      </span>
+                      </TruncatedText>
                       <span className={kindBadgeClass(asset.kind)}>
                         {t("assetKind.skill")}
                       </span>
@@ -181,12 +182,12 @@ export function SourceColumnView({
                       />
                     </div>
                     <button
-                      className="mt-1 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
+                      aria-label={t("asset.revealPath")}
+                      className="mt-1 block max-w-full text-left font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
                       onClick={() => onAssetReveal(asset.stored_path)}
-                      title={t("asset.revealPath")}
                       type="button"
                     >
-                      {displayAssetPath(asset)}
+                      <TruncatedText>{displayAssetPath(asset)}</TruncatedText>
                     </button>
                   </div>
                   <div className="inline-flex w-fit max-w-full shrink-0 flex-wrap items-center justify-end gap-2 rounded-xl border border-theme-control-border bg-theme-control/55 p-1.5 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.38)]">
@@ -357,12 +358,15 @@ function ColumnHeader({
   return (
     <header className="ui-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
-        <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">
+        <TruncatedText
+          as="h3"
+          className="text-body-md font-semibold text-on-surface"
+        >
           {title}
-        </h3>
-        <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">
+        </TruncatedText>
+        <TruncatedText as="p" className="mt-0.5 text-body-sm text-outline">
           {meta}
-        </p>
+        </TruncatedText>
       </div>
       {onAction && actionLabel && (
         <button
@@ -391,14 +395,15 @@ function SourceDetailRow({
   return (
     <div className="min-w-0">
       <div className="text-label-caps uppercase text-outline">{label}</div>
-      <div
+      <TruncatedText
+        as="div"
         className={clsx(
-          "mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-on-surface",
+          "mt-1 text-body-sm text-on-surface",
           mono && "font-mono",
         )}
       >
         {value}
-      </div>
+      </TruncatedText>
     </div>
   );
 }
@@ -416,12 +421,12 @@ function RuleList({ label, rules }: { label: string; rules: string[] }) {
       ) : (
         <div className="mt-1 flex flex-wrap gap-1.5">
           {rules.map((rule) => (
-            <span
-              className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 font-mono text-body-sm text-on-surface-variant"
+            <TruncatedText
+              className="max-w-full rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 font-mono text-body-sm text-on-surface-variant"
               key={rule}
             >
               {rule}
-            </span>
+            </TruncatedText>
           ))}
         </div>
       )}

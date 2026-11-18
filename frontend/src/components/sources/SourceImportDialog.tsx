@@ -16,6 +16,7 @@ import {
 import { abbreviateHomePath } from "../../utils/path";
 import { PathPickerInput } from "../common/PathPickerInput";
 import { DialogFrame } from "../foundation/DialogFrame";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
@@ -386,12 +387,18 @@ export function SourceImportDialog({
                                   type="checkbox"
                                 />
                                 <div className="min-w-0">
-                                  <div className="truncate font-mono text-body-sm font-medium">
+                                  <TruncatedText
+                                    as="div"
+                                    className="font-mono text-body-sm font-medium"
+                                  >
                                     {candidate.name}
-                                  </div>
-                                  <div className="truncate font-mono text-label-xs text-outline">
+                                  </TruncatedText>
+                                  <TruncatedText
+                                    as="div"
+                                    className="font-mono text-label-xs text-outline"
+                                  >
                                     {candidate.relative_path}
-                                  </div>
+                                  </TruncatedText>
                                 </div>
                               </div>
                               {candidate.skill_count > 0 && (

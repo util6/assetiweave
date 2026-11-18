@@ -17,6 +17,7 @@ import type { SkillBackupSettings } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
 import { PathPickerInput } from "../common/PathPickerInput";
 import { DialogFrame, type DialogLayer } from "../foundation/DialogFrame";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 
 export function SkillBackupLibraryDialog({
@@ -215,12 +216,9 @@ function ReadonlyRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-3 text-body-sm max-[640px]:grid-cols-1">
       <span className="text-on-surface-variant">{label}</span>
-      <span
-        className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-on-surface"
-        title={value}
-      >
+      <TruncatedText className="font-mono text-on-surface">
         {value}
-      </span>
+      </TruncatedText>
     </div>
   );
 }

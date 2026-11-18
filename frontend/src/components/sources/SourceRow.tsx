@@ -23,6 +23,7 @@ import type {
 } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
 import { isManagedSkillSource } from "../../utils/sourcePolicy";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { SourceBulkMountControls } from "./SourceBulkMountControls";
 
 export function SourceRow({
@@ -94,9 +95,12 @@ export function SourceRow({
               )}
               aria-hidden="true"
             />
-            <h3 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md text-on-surface">
+            <TruncatedText
+              as="h3"
+              className="font-mono text-code-md text-on-surface"
+            >
               {source.name}
-            </h3>
+            </TruncatedText>
             <span className="rounded-full border border-theme-control-border/65 bg-theme-control/65 px-2.5 py-1 text-label-caps uppercase text-on-surface-variant">
               {sourceKindLabel(source.kind, t)}
             </span>
@@ -127,12 +131,14 @@ export function SourceRow({
           </div>
 
           <button
-            className="mt-2 max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
+            aria-label={t("source.action.reveal")}
+            className="mt-2 block max-w-full text-left font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
             onClick={onReveal}
-            title={t("source.action.reveal")}
             type="button"
           >
-            {abbreviateHomePath(source.root_path)}
+            <TruncatedText>
+              {abbreviateHomePath(source.root_path)}
+            </TruncatedText>
           </button>
         </div>
 

@@ -18,6 +18,7 @@ import {
   AppShortcutIcon,
   APP_SHORTCUT_ICON_FRAME_CLASS,
 } from "../apps/AppShortcutIcon";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export function AssetMountCard({
   asset,
@@ -110,9 +111,12 @@ export function AssetMountCard({
 
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center justify-between gap-2">
-            <p className="overflow-hidden text-ellipsis whitespace-nowrap text-body-sm font-bold text-on-surface">
+            <TruncatedText
+              as="p"
+              className="text-body-sm font-bold text-on-surface"
+            >
               {profile.name}
-            </p>
+            </TruncatedText>
             <span
               className={clsx(
                 "grid size-5 shrink-0 place-items-center rounded-full border transition-colors",
@@ -130,13 +134,16 @@ export function AssetMountCard({
               <Check size={13} />
             </span>
           </div>
-          <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-sm text-on-surface-variant">
+          <TruncatedText
+            as="p"
+            className="mt-1 font-mono text-code-sm text-on-surface-variant"
+          >
             {abbreviateHomePath(targetDir)}
-          </p>
+          </TruncatedText>
           <div className="mt-2 flex min-w-0 items-center gap-2">
             <span
               className={clsx(
-                "inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm",
+                "inline-flex min-w-0 items-center gap-1.5 text-body-sm",
                 disabled || !supported
                   ? "text-status-conflict"
                   : !mounted && mountCardStateTextClass(displayState),
@@ -161,11 +168,13 @@ export function AssetMountCard({
                     : undefined
                 }
               />
-              {disabled
-                ? t("mount.blocked")
-                : supported
-                  ? t(`mount.display.${displayState}` as TranslationKey)
-                  : t("mount.unsupported")}
+              <TruncatedText>
+                {disabled
+                  ? t("mount.blocked")
+                  : supported
+                    ? t(`mount.display.${displayState}` as TranslationKey)
+                    : t("mount.unsupported")}
+              </TruncatedText>
             </span>
           </div>
         </div>

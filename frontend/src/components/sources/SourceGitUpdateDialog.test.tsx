@@ -271,4 +271,30 @@ describe("SourceGitUpdateDialog", () => {
       ]);
     });
   });
+
+  it("abbreviates home paths in group repoRoot", () => {
+    render(
+      <I18nProvider>
+        <SourceGitUpdateDialog
+          onClose={vi.fn()}
+          onNotifyError={vi.fn()}
+          open
+          sources={[
+            {
+              ...mockSources[0],
+              repo_root: "/Users/alice/fork-code/claude-skills",
+              root_path: "/Users/alice/fork-code/claude-skills",
+              scan_root: "/Users/alice/fork-code/claude-skills",
+            },
+          ]}
+        />
+      </I18nProvider>,
+    );
+
+    const abbreviated = screen.getByText("~/fork-code/claude-skills");
+    expect(abbreviated.className).toContain("truncate");
+    expect(
+      screen.queryByText("/Users/alice/fork-code/claude-skills"),
+    ).toBeNull();
+  });
 });

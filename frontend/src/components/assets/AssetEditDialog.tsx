@@ -21,6 +21,7 @@ import {
   SkillBackupInlineProgress,
 } from "../backup/SkillBackupProgress";
 import { DialogFrame } from "../foundation/DialogFrame";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 
 export function AssetEditDialog({
@@ -157,7 +158,7 @@ export function AssetEditDialog({
             <ReadonlyRow
               href={sourceHref}
               label={t("asset.source")}
-              value={assetSourceLabel(asset, source)}
+              value={abbreviateHomePath(assetSourceLabel(asset, source))}
               mono
             />
             <ReadonlyRow
@@ -279,9 +280,9 @@ function AssetGroupMembershipRow({
     <div className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-theme-card-border bg-theme-card/70 px-3 py-2 max-[720px]:grid-cols-1">
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="truncate font-mono text-code-md font-semibold text-on-surface">
+          <TruncatedText className="font-mono text-code-md font-semibold text-on-surface">
             {group.group.name}
-          </span>
+          </TruncatedText>
           {inGroup && <StatusChip>{t("asset.editDialog.inGroup")}</StatusChip>}
           {manualMember && (
             <StatusChip>{t("asset.editDialog.manualMember")}</StatusChip>
@@ -293,9 +294,13 @@ function AssetGroupMembershipRow({
             <StatusChip>{t("group.disabled")}</StatusChip>
           )}
         </div>
-        <p className="mt-1 line-clamp-1 text-body-sm text-on-surface-variant">
+        <TruncatedText
+          as="p"
+          className="mt-1 text-body-sm text-on-surface-variant"
+          lines={1}
+        >
           {group.group.description ?? t("group.noDescription")}
-        </p>
+        </TruncatedText>
       </div>
       <Button
         disabled={busy || (!canAddManual && !canRemoveManual)}
@@ -331,16 +336,19 @@ function AssetProfileMountRow({
     <div className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 rounded-xl border border-theme-card-border bg-theme-card/70 px-3 py-2 max-[720px]:grid-cols-1">
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="truncate font-mono text-code-md font-semibold text-on-surface">
+          <TruncatedText className="font-mono text-code-md font-semibold text-on-surface">
             {profile.name}
-          </span>
+          </TruncatedText>
           <span className="rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
             {profile.app_kind}
           </span>
         </div>
-        <p className="mt-1 truncate font-mono text-body-sm text-outline">
+        <TruncatedText
+          as="p"
+          className="mt-1 font-mono text-body-sm text-outline"
+        >
           {abbreviateHomePath(profile.target_paths[0] ?? "")}
-        </p>
+        </TruncatedText>
       </div>
       <span
         className={clsx(
@@ -386,15 +394,16 @@ function ReadonlyRow({
   value: string;
 }) {
   const valueClassName = mono
-    ? "mt-0.5 truncate font-mono text-body-sm text-on-surface"
-    : "mt-0.5 truncate text-body-sm text-on-surface";
+    ? "mt-0.5 font-mono text-body-sm text-on-surface"
+    : "mt-0.5 text-body-sm text-on-surface";
 
   return (
     <div className="min-w-0">
       <div className="text-label-caps uppercase text-outline">{label}</div>
       {href ? (
-        <a
-          className={`${valueClassName} block text-primary hover:text-primary-strong hover:underline hover:decoration-primary/55 hover:underline-offset-2`}
+        <TruncatedText
+          as="a"
+          className={`${valueClassName} text-primary hover:text-primary-strong hover:underline hover:decoration-primary/55 hover:underline-offset-2`}
           href={href}
           onClick={(event) => {
             event.preventDefault();
@@ -402,14 +411,13 @@ function ReadonlyRow({
           }}
           rel="noreferrer"
           target="_blank"
-          title={value}
         >
           {value}
-        </a>
+        </TruncatedText>
       ) : (
-        <div className={valueClassName} title={value}>
+        <TruncatedText as="div" className={valueClassName}>
           {value}
-        </div>
+        </TruncatedText>
       )}
     </div>
   );

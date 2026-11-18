@@ -30,6 +30,8 @@ describe("SkillGroupExclusiveMountDialog", () => {
     const detailTags = html.match(/<details\b[^>]*>/g) ?? [];
     expect(detailTags).toHaveLength(4);
     expect(detailTags.every((tag) => !/\sopen(=|\s|>)/.test(tag))).toBe(true);
+    expect(html).not.toContain("text-ellipsis");
+    expect(html).toContain('class="block min-w-0 truncate">Codex</span>');
   });
 });
 
