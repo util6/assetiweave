@@ -5,6 +5,7 @@ import type {
   AssetMountStatus,
   TargetProfile,
 } from "../../types";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { AssetMountCard } from "./AssetMountCard";
 
 export function AssetMountPanel({
@@ -41,11 +42,14 @@ export function AssetMountPanel({
           <span className="text-label-caps uppercase text-outline">
             {t("mount.title")}
           </span>
-          <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-on-surface-variant">
+          <TruncatedText
+            as="p"
+            className="mt-1 text-body-sm text-on-surface-variant"
+          >
             {mountBlockedReason
               ? t("mount.blockedAppSource")
               : t("mount.description")}
-          </p>
+          </TruncatedText>
         </div>
         <span className="rounded-md border border-theme-control-border bg-theme-control px-2.5 py-1 font-mono text-body-sm text-primary">
           {t("mount.selected", { count: mountedCount })}

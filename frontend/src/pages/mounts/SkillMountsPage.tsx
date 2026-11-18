@@ -60,6 +60,7 @@ import { EmptyState as FoundationEmptyState } from "../../components/foundation/
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { AppSkeleton } from "../../components/foundation/skeleton";
 import { Panel as FoundationPanel } from "../../components/foundation/Panel";
+import { TruncatedText } from "../../components/foundation/TruncatedText";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -822,9 +823,12 @@ function AppMountRow({
           </span>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h3 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold text-on-surface">
+              <TruncatedText
+                as="h3"
+                className="font-mono text-code-md font-semibold text-on-surface"
+              >
                 {profile.name}
-              </h3>
+              </TruncatedText>
               <span className="rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
                 {profile.app_kind}
               </span>
@@ -843,12 +847,14 @@ function AppMountRow({
               <MountStatePill compact state={summaryState} />
             </div>
             <button
-              className="mt-2 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
+              aria-label={t("appMount.action.reveal")}
+              className="mt-2 block max-w-full text-left font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
               onClick={onReveal}
-              title={t("appMount.action.reveal")}
               type="button"
             >
-              {abbreviateHomePath(profile.target_paths[0] ?? "")}
+              <TruncatedText>
+                {abbreviateHomePath(profile.target_paths[0] ?? "")}
+              </TruncatedText>
             </button>
           </div>
         </div>
@@ -1035,12 +1041,12 @@ function AppMountColumnView({
                     />
                   </span>
                   <span className="min-w-0">
-                    <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold">
+                    <TruncatedText className="font-mono text-code-md font-semibold">
                       {profile.name}
-                    </span>
-                    <span className="mt-1 block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-outline">
+                    </TruncatedText>
+                    <TruncatedText className="mt-1 font-mono text-body-sm text-outline">
                       {abbreviateHomePath(profile.target_paths[0] ?? "")}
-                    </span>
+                    </TruncatedText>
                   </span>
                 </button>
               );
@@ -1267,12 +1273,12 @@ function ScopeList({
             type="button"
           >
             <span className="min-w-0">
-              <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold">
+              <TruncatedText className="font-mono text-code-md font-semibold">
                 {scope.name}
-              </span>
-              <span className="mt-1 block overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">
+              </TruncatedText>
+              <TruncatedText className="mt-1 text-body-sm text-outline">
                 {scope.description}
-              </span>
+              </TruncatedText>
               <span className="mt-1 text-body-sm text-on-surface-variant">
                 {t("appMount.scope.mountProgress", {
                   selected: counts.mounted,
@@ -1408,9 +1414,9 @@ function SkillScopeAssetList({
           >
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold text-on-surface">
+                <TruncatedText className="font-mono text-code-md font-semibold text-on-surface">
                   {asset.name}
-                </span>
+                </TruncatedText>
                 <span className={kindBadgeClass(asset.kind)}>
                   {assetKindLabel(asset.kind, t)}
                 </span>
@@ -1421,9 +1427,9 @@ function SkillScopeAssetList({
                 />
               </div>
               <div className="mt-1 flex min-w-0 items-center gap-2">
-                <span className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant">
+                <TruncatedText className="font-mono text-body-sm text-on-surface-variant">
                   {displayAssetPath(asset)}
-                </span>
+                </TruncatedText>
                 {source && (
                   <span className="shrink-0 rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
                     {sourceOriginLabel(source.source_origin, t)}
@@ -1924,12 +1930,15 @@ function ColumnHeader({
   return (
     <header className="ui-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
-        <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">
+        <TruncatedText
+          as="h3"
+          className="text-body-md font-semibold text-on-surface"
+        >
           {title}
-        </h3>
-        <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">
+        </TruncatedText>
+        <TruncatedText as="p" className="mt-0.5 text-body-sm text-outline">
           {meta}
-        </p>
+        </TruncatedText>
       </div>
       {onAction && actionLabel && (
         <div className="flex shrink-0 items-center gap-1.5">

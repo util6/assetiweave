@@ -1,6 +1,7 @@
 import { CheckSquare } from "lucide-react";
 import type { ReactNode } from "react";
 import { DebouncedToolbarSearch } from "../common/DataToolbar";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { Asset } from "../../types";
 import { displayAssetPath } from "../../utils/path";
@@ -32,12 +33,12 @@ export function GroupField({
 export function AssetPickerText({ asset }: { asset: Asset }) {
   return (
     <span className="min-w-0">
-      <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold text-on-surface">
+      <TruncatedText className="font-mono text-code-md font-semibold text-on-surface">
         {asset.name}
-      </span>
-      <span className="mt-1 block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant">
+      </TruncatedText>
+      <TruncatedText className="mt-1 font-mono text-body-sm text-on-surface-variant">
         {displayAssetPath(asset)}
-      </span>
+      </TruncatedText>
     </span>
   );
 }

@@ -18,6 +18,7 @@ import { displayAssetPath } from "../../utils/path";
 import { assetSourceHref, assetSourceLabel } from "../../utils/assetSource";
 import { openExternalLink } from "../../utils/externalLinks";
 import { kindBadgeClass } from "../../utils/styles";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { MountStatePill } from "./MountStatePill";
 import { QuickMountButtons } from "./QuickMountButtons";
 import { SkillBackupBadge } from "./SkillBackupBadge";
@@ -77,34 +78,37 @@ export function AssetGridView({
             <div className="flex min-w-0 items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[14px] font-semibold leading-5 text-on-surface">
+                  <TruncatedText className="max-w-full font-mono text-[14px] font-semibold leading-5 text-on-surface">
                     {asset.name}
-                  </span>
+                  </TruncatedText>
                   <span className={kindBadgeClass(asset.kind)}>
                     {assetKindLabel(asset.kind, t)}
                   </span>
                   <SkillBackupBadge asset={asset} />
                   <MountStatePill compact state={mountSummaryState} />
                 </div>
-                <p className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-outline">
-                  {sourceHref ? (
-                    <a
-                      className="text-primary hover:text-primary-strong hover:underline hover:decoration-primary/55 hover:underline-offset-2"
-                      href={sourceHref}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        void openExternalLink(sourceHref);
-                      }}
-                      rel="noreferrer"
-                      target="_blank"
-                      title={sourceLabel}
-                    >
-                      {sourceLabel}
-                    </a>
-                  ) : (
-                    sourceLabel
-                  )}
-                </p>
+                {sourceHref ? (
+                  <TruncatedText
+                    as="a"
+                    className="mt-1 font-mono text-body-sm text-primary hover:text-primary-strong hover:underline hover:decoration-primary/55 hover:underline-offset-2"
+                    href={sourceHref}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      void openExternalLink(sourceHref);
+                    }}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {sourceLabel}
+                  </TruncatedText>
+                ) : (
+                  <TruncatedText
+                    as="p"
+                    className="mt-1 font-mono text-body-sm text-outline"
+                  >
+                    {sourceLabel}
+                  </TruncatedText>
+                )}
               </div>
 
               <div className="flex shrink-0 items-center gap-1.5">
@@ -130,23 +134,27 @@ export function AssetGridView({
               </div>
             </div>
 
-            <p className="mt-4 line-clamp-3 min-h-12 text-body-sm text-on-surface-variant">
+            <TruncatedText
+              as="p"
+              className="mt-4 min-h-12 text-body-sm text-on-surface-variant"
+              lines={3}
+            >
               {asset.description ?? t("asset.noDescription")}
-            </p>
+            </TruncatedText>
 
             <button
-              className="mt-3 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-xl border border-theme-control-border bg-theme-control/55 px-3 py-2 text-left font-mono text-body-sm text-on-surface-variant transition-[transform,background-color,border-color,color] duration-200 hover:-translate-y-px hover:border-theme-nav-active-border hover:text-primary active:translate-y-0"
+              aria-label={t("asset.revealPath")}
+              className="mt-3 block max-w-full rounded-xl border border-theme-control-border bg-theme-control/55 px-3 py-2 text-left font-mono text-body-sm text-on-surface-variant transition-[transform,background-color,border-color,color] duration-200 hover:-translate-y-px hover:border-theme-nav-active-border hover:text-primary active:translate-y-0"
               onClick={() => onRevealPath(asset.stored_path)}
-              title={t("asset.revealPath")}
               type="button"
             >
-              {displayAssetPath(asset)}
+              <TruncatedText>{displayAssetPath(asset)}</TruncatedText>
             </button>
 
             <div className="mt-auto flex min-w-0 items-center justify-between gap-3 pt-4">
               <span
                 className={clsx(
-                  "inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm",
+                  "inline-flex min-w-0 items-center gap-1.5 text-body-sm",
                   mountBlockedReason
                     ? "text-status-conflict"
                     : mountSummaryTextClass(mountSummaryState),
@@ -161,8 +169,10 @@ export function AssetGridView({
                   )}
                   aria-hidden="true"
                 />
-                {mountBlockedReason ??
-                  t("mount.selected", { count: mountedProfileIds.length })}
+                <TruncatedText>
+                  {mountBlockedReason ??
+                    t("mount.selected", { count: mountedProfileIds.length })}
+                </TruncatedText>
               </span>
               <div className="shrink-0 rounded-xl border border-theme-control-border bg-theme-control/55 p-1.5">
                 <QuickMountButtons

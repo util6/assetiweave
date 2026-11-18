@@ -11,6 +11,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { DialogFrame } from "../foundation/DialogFrame";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { SkillBackupTaskSnapshot } from "../../services/catalog";
 import { DEFAULT_GROUP_COLOR_HEX } from "../../theme/themes";
@@ -320,14 +321,20 @@ export function SkillGroupEditDialog({
                     )}
                   </span>
                   <div className="min-w-0">
-                    <p className="truncate text-title-sm font-bold text-on-surface">
+                    <TruncatedText
+                      as="p"
+                      className="text-title-sm font-bold text-on-surface"
+                    >
                       {name.trim() || detail.group.name}
-                    </p>
-                    <p className="mt-1 truncate text-body-sm text-on-surface-variant">
+                    </TruncatedText>
+                    <TruncatedText
+                      as="p"
+                      className="mt-1 text-body-sm text-on-surface-variant"
+                    >
                       {description.trim() ||
                         detail.group.description ||
                         t("group.noDescription")}
-                    </p>
+                    </TruncatedText>
                   </div>
                 </div>
                 <Controller

@@ -1,6 +1,7 @@
 import { Archive, RefreshCw } from "lucide-react";
 import type { Translator } from "../../i18n/I18nProvider";
 import type { SkillBackupTaskSnapshot } from "../../services/catalog";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export function SkillBackupBackgroundTaskIndicator({
   task,
@@ -53,9 +54,12 @@ export function SkillBackupBackgroundTaskIndicator({
         />
       </div>
       {task.current_asset_id ? (
-        <p className="mt-2 truncate text-code-sm text-on-surface-muted">
+        <TruncatedText
+          as="p"
+          className="mt-2 text-code-sm text-on-surface-muted"
+        >
           {t("backup.background.current", { name: task.current_asset_id })}
-        </p>
+        </TruncatedText>
       ) : null}
     </section>
   );

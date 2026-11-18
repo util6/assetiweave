@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "../ui/button";
 import { DialogFrame } from "../foundation/DialogFrame";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { AppShortcut, SkillGroupExclusiveMountPreview } from "../../types";
 import { AppShortcutIconForShortcut } from "../apps/AppShortcutIcon";
@@ -70,9 +71,7 @@ export function SkillGroupExclusiveMountDialog({
                     className="size-4 shrink-0"
                     shortcut={shortcut}
                   />
-                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                    {shortcut.profileName}
-                  </span>
+                  <TruncatedText>{shortcut.profileName}</TruncatedText>
                 </span>
               }
             />
@@ -208,9 +207,12 @@ function ExclusiveDetailSection({
                 className="min-w-0 rounded-md bg-theme-card-header/50 px-2 py-1.5"
                 key={item.asset_id}
               >
-                <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface">
+                <TruncatedText
+                  as="div"
+                  className="font-mono text-body-sm text-on-surface"
+                >
                   {item.name}
-                </div>
+                </TruncatedText>
                 {risk && item.reason && (
                   <div className="mt-1 text-body-sm text-status-conflict">
                     {item.reason}
