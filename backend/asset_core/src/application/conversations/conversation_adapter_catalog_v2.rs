@@ -210,16 +210,47 @@ impl AppService {
                 force: params.force,
             })
             .await?;
+        let adapters = self.list_conversation_adapters()?;
+        let local_candidates =
+            super::conversation_script_catalog::discover_local_conversation_adapter_packages(
+                &crate::backend::infrastructure::app_settings::conversation_adapter_dir()?,
+            )?;
         let mut packages = self.load_conversation_adapter_packages().await?;
         let now = Utc::now().to_rfc3339();
         let mut statuses = Vec::new();
         for package in &mut packages {
             if matches!(
                 package.origin,
-                crate::backend::domain::ConversationAdapterPackageOrigin::LocalDirectory
-                    | crate::backend::domain::ConversationAdapterPackageOrigin::GitRef
+                crate::backend::domain::ConversationAdapterPackageOrigin::GitRef
                     | crate::backend::domain::ConversationAdapterPackageOrigin::DevOverride
             ) {
+                continue;
+            }
+            let adapter = adapters
+                .iter()
+                .find(|adapter| adapter.id == package.adapter_id);
+            // 受管目录里的同 id 候选包：本地版本更高或同版本内容变化都算待晋升更新。
+            let local_update = local_candidates
+                .iter()
+                .find(|item| item.package_id() == package.package_id)
+                .is_some_and(|item| {
+                    super::conversation_script_catalog::local_candidate_is_pending_update(
+                        item,
+                        Some(&*package),
+                        adapter,
+                    )
+                });
+            if package.origin
+                == crate::backend::domain::ConversationAdapterPackageOrigin::LocalDirectory
+            {
+                package.last_checked_at = Some(now.clone());
+                self.save_conversation_adapter_package(package).await?;
+                statuses.push(ConversationAdapterPackageUpdateStatus {
+                    package_id: package.package_id.clone(),
+                    current_version: package.version.clone(),
+                    latest_compatible_release: None,
+                    update_available: local_update,
+                });
                 continue;
             }
             if package.update_policy
@@ -232,7 +263,7 @@ impl AppService {
                     package_id: package.package_id.clone(),
                     current_version: package.version.clone(),
                     latest_compatible_release: None,
-                    update_available: false,
+                    update_available: local_update,
                 });
                 continue;
             }
@@ -250,9 +281,10 @@ impl AppService {
                 .collect::<Vec<_>>();
             sort_releases_newest_first(&mut compatible);
             let latest = compatible.first().cloned();
-            let update_available = latest
-                .as_ref()
-                .is_some_and(|release| semver_is_newer(&release.version, &package.version));
+            let update_available = local_update
+                || latest
+                    .as_ref()
+                    .is_some_and(|release| semver_is_newer(&release.version, &package.version));
             package.latest_version = latest.as_ref().map(|release| release.version.clone());
             package.last_checked_at = Some(now.clone());
             self.save_conversation_adapter_package(package).await?;
