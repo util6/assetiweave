@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Diff, Hunk, parseDiff, type FileData } from "react-diff-view";
 import "react-diff-view/style/index.css";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export function ConversationDiff({
   value,
@@ -30,12 +31,9 @@ export function ConversationDiff({
             key={`${displayPath(file)}-${index}`}
           >
             <header className="flex min-h-9 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-theme-card-border bg-theme-card-header/80 px-3 py-2">
-              <span
-                className="min-w-0 truncate font-mono text-code-sm font-semibold text-on-surface"
-                title={displayPath(file)}
-              >
+              <TruncatedText className="min-w-0 font-mono text-code-sm font-semibold text-on-surface">
                 {displayPath(file)}
-              </span>
+              </TruncatedText>
               <span
                 className="flex shrink-0 items-center gap-2 font-mono text-code-sm"
                 aria-label={`${additions} additions, ${deletions} deletions`}

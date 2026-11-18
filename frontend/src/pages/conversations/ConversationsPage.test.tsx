@@ -303,9 +303,9 @@ describe("MarkdownContent", () => {
     expect(container.textContent).toContain("定位到三处同步入口");
     // 长篇委派 Prompt 不得平铺进父轮次正文。
     expect(container.textContent).not.toContain("请梳理同步入口，不要只列文件");
-    expect(
-      screen.getAllByRole("button", { name: /查看子会话/ }),
-    ).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /查看子会话/ })).toHaveLength(
+      2,
+    );
 
     fireEvent.click(
       screen.getByRole("button", { name: "查看子会话：梳理同步入口" }),
@@ -766,10 +766,15 @@ describe("MarkdownContent", () => {
       />,
     );
 
-    const appChip = screen.getByTitle("Codex");
+    const appChip = screen
+      .getAllByText("Codex")
+      .find((el) => el.className.includes("rounded-md"));
 
-    expect(appChip.className).toContain("rounded-md");
-    expect(appChip.getAttribute("style")).toContain("rgb(16, 185, 129)");
+    expect(appChip).toBeDefined();
+    expect(appChip?.getAttribute("title")).toBeNull();
+    expect(appChip?.className).toContain("truncate");
+    expect(appChip?.className).toContain("rounded-md");
+    expect(appChip?.getAttribute("style")).toContain("rgb(16, 185, 129)");
     expect(screen.queryByText("APP Codex")).toBeNull();
     expect(screen.getByText("abcdef12").className).toContain("font-mono");
     expect(screen.queryByText("Session abcdef12")).toBeNull();
@@ -1592,6 +1597,51 @@ describe("MarkdownContent", () => {
     expect(html).toContain("#2");
   });
 
+  it("migrates question list and session header truncation off native title attributes", () => {
+    const html = renderToStaticMarkup(
+      <SessionQuestionWorkspace
+        contentCardColors={{
+          answer: "#facc15",
+          code: "#60a5fa",
+          command: "#f59e0b",
+          result: "#34d399",
+          tool: "#22c55e",
+        }}
+        onExport={async () => undefined}
+        onPickOutputRoot={async () => null}
+        onQuestionSelect={vi.fn()}
+        onQuestionSelectionChange={vi.fn()}
+        outputRoot="/tmp/conversation-export"
+        question={richQuestionDetail}
+        questions={[questionDetail, richQuestionDetail]}
+        selectedQuestionId={richQuestionDetail.question.id}
+        selectedQuestionIds={new Set()}
+        session={{
+          ...sessionDetail,
+          session: {
+            ...sessionDetail.session,
+            project_path: "/Users/example/work/assetiweave",
+          },
+          questions: [questionDetail, richQuestionDetail],
+        }}
+        setOutputRoot={vi.fn()}
+        t={t}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
+      />,
+    );
+
+    expect(html).not.toContain(`title="${questionDetail.question.title}"`);
+    expect(html).not.toContain(`title="${sessionDetail.session.title}"`);
+    expect(html).not.toContain('title="/Users/example/work/assetiweave"');
+    expect(html).toContain("~/work/assetiweave");
+  });
+
   it("shows the subagent pill on a single-turn question and drills into chips", () => {
     vi.stubGlobal(
       "ResizeObserver",
@@ -1637,11 +1687,16 @@ describe("MarkdownContent", () => {
 
     // 胶囊展开后是该轮派发的子代理芯片。
     fireEvent.click(screen.getByRole("button", { name: "展开 2 个子代理" }));
-    expect(screen.getByRole("button", { name: "打开子代理会话：Explore 梳理同步入口" }))
-      .toBeTruthy();
+    expect(
+      screen.getByRole("button", {
+        name: "打开子代理会话：Explore 梳理同步入口",
+      }),
+    ).toBeTruthy();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "打开子代理会话：Explore 梳理同步入口" }),
+      screen.getByRole("button", {
+        name: "打开子代理会话：Explore 梳理同步入口",
+      }),
     );
     expect(onOpenSubagentSession).toHaveBeenCalledWith(
       expect.objectContaining({

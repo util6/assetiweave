@@ -5,6 +5,7 @@ import type {
 } from "../../types";
 import type { Translator } from "../../i18n/I18nProvider";
 import { Button } from "../ui/button";
+import { TruncatedText } from "../foundation/TruncatedText";
 import {
   groupSubagentPortalsByTurn,
   mainConversationTurns,
@@ -76,9 +77,9 @@ export function QuestionTurnRail({
                 <span className="shrink-0 font-mono text-code-sm text-on-surface-muted">
                   {entry.ordinal}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-body-sm text-on-surface-variant">
+                <TruncatedText className="min-w-0 flex-1 text-body-sm text-on-surface-variant">
                   {turnRailTitle(entry.turn)}
-                </span>
+                </TruncatedText>
               </button>
               {entry.subagents.length > 0 ? (
                 <Button
@@ -174,7 +175,7 @@ function SubagentChip({
       title={
         unresolved
           ? `${role} · ${title} · ${t("conversation.subagent.unresolved")}`
-          : `${role} · ${title}`
+          : undefined
       }
       type="button"
       variant="outline"
@@ -189,7 +190,15 @@ function SubagentChip({
         }`}
       />
       <span className="shrink-0 font-medium text-primary">{role}</span>
-      <span className="min-w-0 truncate">{title}</span>
+      <TruncatedText
+        tooltip={
+          unresolved
+            ? `${role} · ${title} · ${t("conversation.subagent.unresolved")}`
+            : `${role} · ${title}`
+        }
+      >
+        {title}
+      </TruncatedText>
     </Button>
   );
 }

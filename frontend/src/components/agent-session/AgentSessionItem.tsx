@@ -18,6 +18,7 @@ import type {
   AgentSessionItemView,
 } from "../../types/agentSession";
 import { AgentSessionToolDetail } from "./AgentSessionToolDetail";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export interface AgentSessionItemProps {
   item: AgentSessionItemView;
@@ -88,13 +89,11 @@ export function AgentSessionItem({
               open={detailsOpen}
             >
               <summary className="cursor-pointer list-none rounded-md text-body-sm text-on-surface outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/45 [&::-webkit-details-marker]:hidden">
-                <span className="inline-flex items-center gap-2">
-                  <span className="text-label-caps uppercase text-on-surface-variant">
+                <span className="inline-flex max-w-full min-w-0 items-center gap-2">
+                  <span className="shrink-0 text-label-caps uppercase text-on-surface-variant">
                     {label}
                   </span>
-                  <span className="truncate">
-                    {isTool ? toolTitle : detail}
-                  </span>
+                  <TruncatedText>{isTool ? toolTitle : detail}</TruncatedText>
                 </span>
               </summary>
 

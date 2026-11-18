@@ -1,6 +1,7 @@
 import { ArrowRight, GitFork } from "lucide-react";
 import type { Translator } from "../../i18n/I18nProvider";
 import { Badge } from "../foundation/Badge";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 import type { SubagentDispatchPortalViewModel } from "./conversationSubagents";
 
@@ -44,24 +45,22 @@ export function SubagentPortalCard({
           >
             {role}
           </Badge>
-          <span
-            className="truncate text-body-sm font-semibold text-on-surface"
-            title={title || role}
-          >
+          <TruncatedText className="text-body-sm font-semibold text-on-surface">
             {title || t("conversation.subagent.untitled")}
-          </span>
+          </TruncatedText>
         </div>
         {portal.reportSummary ? (
-          <p
-            className="truncate text-body-sm text-on-surface-variant"
+          <TruncatedText
+            as="p"
+            className="text-body-sm text-on-surface-variant"
             data-subagent-report
-            title={portal.reportSummary}
+            tooltip={portal.reportSummary}
           >
             <span className="mr-1.5 text-on-surface-muted">
               {t("conversation.subagent.reportLabel")}
             </span>
             {portal.reportSummary}
-          </p>
+          </TruncatedText>
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-2">

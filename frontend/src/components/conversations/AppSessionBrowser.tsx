@@ -20,6 +20,7 @@ import {
 } from "../apps/AppShortcutIcon";
 import { ResizableColumns } from "../layout/ResizableColumns";
 import { useCollapsibleHeader } from "../common/CollapsibleHeader";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { DEFAULT_COLUMN_MIN_WIDTH } from "../../store/settings/settingsSchema";
 import type { Translator } from "../../i18n/I18nProvider";
 import { abbreviateHomePath } from "../../utils/path";
@@ -213,9 +214,12 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
               <p className="text-label-caps text-primary">
                 {t("conversation.column.sessions")}
               </p>
-              <h2 className="mt-1 truncate text-title-sm text-on-surface">
+              <TruncatedText
+                as="h2"
+                className="mt-1 text-title-sm text-on-surface"
+              >
                 {sessionHeaderTitle}
-              </h2>
+              </TruncatedText>
             </div>
           </div>
           {selectedProjectGroup ? (
@@ -322,9 +326,9 @@ function ProjectListItem({
         <Folder size={16} />
       </span>
       <span className="min-w-0">
-        <span className="block truncate font-mono text-code-sm font-semibold text-on-surface">
+        <TruncatedText className="font-mono text-code-sm font-semibold text-on-surface">
           {label}
-        </span>
+        </TruncatedText>
         <span className="mt-1 block text-code-sm text-on-surface-variant">
           {t("conversation.project.sessionCount", {
             count: group.sessions.length,
@@ -379,9 +383,9 @@ function AppListItem({
     >
       <ConversationAppIcon appName={group.app.name} shortcut={shortcut} />
       <span className="min-w-0">
-        <span className="block truncate text-body-sm font-semibold text-on-surface">
+        <TruncatedText className="text-body-sm font-semibold text-on-surface">
           {group.app.name}
-        </span>
+        </TruncatedText>
         <span className="mt-1 flex items-center gap-1.5 text-code-sm text-on-surface-variant">
           <span>
             {t("conversation.app.sessionCount", {
@@ -472,15 +476,15 @@ function SessionCard({
   return (
     <article className="conversation-session-card group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border px-4 py-4 text-left">
       <span className="min-w-0 select-text">
-        <span className="block truncate text-body-sm font-semibold text-on-surface">
+        <TruncatedText className="text-body-sm font-semibold text-on-surface">
           {session.title}
-        </span>
+        </TruncatedText>
         {showProjectPath ? (
-          <span className="mt-1 block truncate font-mono text-code-sm text-on-surface-variant">
+          <TruncatedText className="mt-1 font-mono text-code-sm text-on-surface-variant">
             {session.project_path || session.last_cwd
               ? abbreviateHomePath(session.project_path || session.last_cwd!)
               : t("conversation.session.noProject")}
-          </span>
+          </TruncatedText>
         ) : null}
         <SessionMetaChips
           executionOrigin={session.execution_origin}

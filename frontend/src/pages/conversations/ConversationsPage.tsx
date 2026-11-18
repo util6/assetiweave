@@ -88,6 +88,7 @@ import {
 } from "../../components/conversations/ConversationSkeleton";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { Badge } from "../../components/foundation/Badge";
+import { TruncatedText } from "../../components/foundation/TruncatedText";
 import { Button } from "../../components/ui/button";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import {
@@ -2594,18 +2595,22 @@ function QuestionListItem({
           aria-label={t("conversation.question.select", { title })}
           className="flex min-h-0 min-w-0 flex-col overflow-hidden py-3 pr-4 text-left"
           onClick={onSelect}
-          title={title}
           type="button"
         >
           <div className="flex min-w-0 items-start justify-between gap-3">
-            <h3 className="line-clamp-2 min-w-0 break-words text-body-sm font-semibold text-on-surface">
+            <TruncatedText
+              as="h3"
+              className="min-w-0 break-words text-body-sm font-semibold text-on-surface"
+              lines={2}
+              tooltip={title}
+            >
               {typeof index === "number" ? (
                 <span className="mr-1.5 inline-flex items-center justify-center rounded-full bg-theme-control px-1.5 py-0.5 font-mono text-code-xs font-semibold text-on-surface-muted align-middle">
                   #{index}
                 </span>
               ) : null}
               {title}
-            </h3>
+            </TruncatedText>
             <span
               aria-expanded={railExpanded}
               aria-label={railToggleAriaLabel}
@@ -2625,9 +2630,13 @@ function QuestionListItem({
               />
             </span>
           </div>
-          <p className="mt-2 line-clamp-2 text-body-sm text-on-surface-variant">
+          <TruncatedText
+            as="p"
+            className="mt-2 text-body-sm text-on-surface-variant"
+            lines={2}
+          >
             {answerPreview}
-          </p>
+          </TruncatedText>
           <p className="mt-auto pt-2 text-label-caps text-on-surface-muted">
             {questionOriginLabel(question, t)}
           </p>
@@ -2883,35 +2892,33 @@ export function QuestionPreview({
           {parentBreadcrumb?.agentRole ? (
             <Badge
               className="shrink-0 px-2.5 py-0.5 text-xs normal-case tracking-normal"
-              title={parentBreadcrumb.agentRole}
               tone="primary"
             >
               {parentBreadcrumb.agentRole}
             </Badge>
           ) : null}
           <div className="flex min-w-0 items-center gap-2">
-            <h2
-              className="truncate text-body-sm font-semibold text-on-surface"
-              title={
+            <TruncatedText
+              as="h2"
+              className="text-body-sm font-semibold text-on-surface"
+              tooltip={
                 session.session.title || t("conversation.session.untitled")
               }
             >
               {session.session.title || t("conversation.session.untitled")}
-            </h2>
+            </TruncatedText>
             {recordKind !== "web" &&
             (session.session.project_path || session.session.last_cwd) ? (
-              <span
-                className="hidden truncate font-mono text-code-xs text-on-surface-muted sm:inline-block"
-                title={
-                  session.session.project_path || session.session.last_cwd || ""
-                }
+              <TruncatedText
+                className="hidden font-mono text-code-xs text-on-surface-muted sm:inline-block"
+                inline
               >
                 {abbreviateHomePath(
                   session.session.project_path ||
                     session.session.last_cwd ||
                     "",
                 )}
-              </span>
+              </TruncatedText>
             ) : null}
           </div>
         </div>

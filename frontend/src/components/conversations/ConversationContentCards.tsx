@@ -27,6 +27,7 @@ import {
   type ConversationPartTranslationUpdateRequest,
 } from "../../services/cardTranslation";
 import { revealPath } from "../../services/catalog";
+import { TruncatedText } from "../foundation/TruncatedText";
 import {
   DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
   type ConversationCardRenderer,
@@ -324,12 +325,12 @@ function CompactActionRowSummary({ item }: { item: ParsedCompactAction }) {
       <span className="shrink-0 rounded-full bg-theme-control/60 px-2 py-0.5 text-label-caps font-mono text-on-surface-variant">
         {item.action}
       </span>
-      <span
-        className="truncate font-mono text-code-xs text-on-surface/90"
-        title={item.rawTarget ?? item.target}
+      <TruncatedText
+        className="font-mono text-code-xs text-on-surface/90"
+        tooltip={abbreviateHomePath(item.rawTarget ?? item.target)}
       >
         {item.target}
-      </span>
+      </TruncatedText>
       {item.lineRange ? (
         <span className="shrink-0 rounded-full border border-theme-card-border/50 bg-theme-control/45 px-2 py-0.5 font-mono text-code-xs text-on-surface-muted">
           {item.lineRange}
@@ -1082,13 +1083,13 @@ function ConversationContentCard({
             </span>
           ) : null}
           {block.commandLabel ? (
-            <span
-              className="max-w-72 truncate rounded-full border border-status-create/55 bg-status-create/10 px-2.5 py-0.5 text-label-caps text-status-create sm:max-w-96"
+            <TruncatedText
+              className="max-w-72 rounded-full border border-status-create/55 bg-status-create/10 px-2.5 py-0.5 text-label-caps text-status-create sm:max-w-96"
               data-command-label={block.commandLabel}
-              title={block.commandLabel}
+              inline
             >
               {block.commandLabel}
-            </span>
+            </TruncatedText>
           ) : null}
           {block.type === "command" && block.exitCode != null ? (
             block.exitCode === 0 ? (
@@ -1332,9 +1333,9 @@ function SubagentTreeCard({
             <GitFork size={14} />
           </span>
           <div className="flex items-center gap-2 min-w-0">
-            <span className="truncate text-body-sm font-semibold text-on-surface">
+            <TruncatedText className="text-body-sm font-semibold text-on-surface">
               {roleName}
-            </span>
+            </TruncatedText>
             <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-label-caps bg-theme-control/80 text-on-surface-variant border border-border/30">
               <span className="size-1.5 rounded-full bg-status-success" />
               <span>{status}</span>
@@ -1617,12 +1618,9 @@ function FileChangeResultSummary({
               <span className="w-4 shrink-0 text-center text-on-surface-muted">
                 {fileStatusMark(file.status, file.binary)}
               </span>
-              <span
-                className="min-w-0 flex-1 truncate text-on-surface"
-                title={file.path}
-              >
-                {file.path}
-              </span>
+              <TruncatedText className="min-w-0 flex-1 text-on-surface">
+                {abbreviateHomePath(file.path)}
+              </TruncatedText>
               <span className="shrink-0 text-status-create">
                 +{file.additions}
               </span>
@@ -1679,10 +1677,9 @@ function LocalPathCardBody({
         aria-label={revealLabel}
         className="flex min-w-0 items-center rounded-xl border border-inherit bg-theme-card/45 px-3 py-2.5 text-left font-mono text-code-sm text-primary transition-[transform,background-color,border-color,color] duration-200 hover:-translate-y-px hover:bg-theme-control hover:text-primary-strong active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
         onClick={() => void handleReveal()}
-        title={path}
         type="button"
       >
-        <span className="truncate">{abbreviateHomePath(path)}</span>
+        <TruncatedText>{abbreviateHomePath(path)}</TruncatedText>
       </button>
       {error ? (
         <div className="text-body-sm text-status-remove" role="alert">

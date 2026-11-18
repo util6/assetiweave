@@ -2,6 +2,7 @@ import { RotateCcw, Sparkles, Bot, Cpu, Plus, ChevronDown } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { AccountPill } from "../../common/AccountPill";
 import { Badge } from "../../foundation/Badge";
+import { TruncatedText } from "../../foundation/TruncatedText";
 import { Button } from "../../ui/button";
 import type { AgentWorkspaceDefinition } from "../../../types/agentWorkspace";
 
@@ -111,11 +112,14 @@ export function SingleChatHeader({
                     }`}
                   >
                     <Icon className="h-4 w-4 text-primary-strong shrink-0" />
-                    <div>
+                    <div className="min-w-0">
                       <div className="font-medium">{agent.displayName}</div>
-                      <div className="text-[11px] text-theme-muted line-clamp-1">
+                      <TruncatedText
+                        className="text-[11px] text-theme-muted"
+                        lines={1}
+                      >
                         {agent.description}
-                      </div>
+                      </TruncatedText>
                     </div>
                   </button>
                 );
