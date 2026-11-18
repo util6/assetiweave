@@ -300,17 +300,7 @@ impl AppService {
     ) -> AppResult<()> {
         let install_dir =
             crate::backend::infrastructure::path_utils::expand_path(&package.install_dir)?;
-        let is_official = crate::backend::infrastructure::conversations::is_official_adapter_id(
-            &package.adapter_id,
-        );
         let is_dev_override = package.origin == ConversationAdapterPackageOrigin::DevOverride;
-        if is_official && !is_dev_override {
-            let _ =
-                crate::backend::infrastructure::conversations::sync_official_adapter_to_package_dir(
-                    &package.adapter_id,
-                    &install_dir,
-                );
-        }
         let evaluated = crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(
             &install_dir,
         )
@@ -323,14 +313,10 @@ impl AppService {
                 )));
             }
             if validation.manifest.version != package.version {
-                if is_official {
-                    package.version = validation.manifest.version.clone();
-                } else {
-                    return Err(AppError::Validation(format!(
-                        "conversation adapter package manifest version {} does not match active version {}",
-                        validation.manifest.version, package.version
-                    )));
-                }
+                return Err(AppError::Validation(format!(
+                    "conversation adapter package manifest version {} does not match active version {}",
+                    validation.manifest.version, package.version
+                )));
             }
             let adapter = adapter.ok_or_else(|| {
                 AppError::NotFound(format!(
@@ -345,26 +331,21 @@ impl AppService {
                 )));
             }
             if package.origin != ConversationAdapterPackageOrigin::DevOverride {
-                if is_official {
-                    package.trusted_package_hash = Some(validation.content_hash.clone());
-                    package.installed_content_hash = Some(validation.content_hash.clone());
-                } else {
-                    let trusted_hash = package
-                        .trusted_package_hash
-                        .as_deref()
-                        .or(package.installed_content_hash.as_deref())
-                        .ok_or_else(|| {
-                            AppError::Validation(format!(
-                                "conversation adapter package has no trusted hash: {}",
-                                package.package_id
-                            ))
-                        })?;
-                    if validation.content_hash != trusted_hash {
-                        return Err(AppError::Validation(format!(
-                            "conversation adapter package content hash mismatch: {}",
+                let trusted_hash = package
+                    .trusted_package_hash
+                    .as_deref()
+                    .or(package.installed_content_hash.as_deref())
+                    .ok_or_else(|| {
+                        AppError::Validation(format!(
+                            "conversation adapter package has no trusted hash: {}",
                             package.package_id
-                        )));
-                    }
+                        ))
+                    })?;
+                if validation.content_hash != trusted_hash {
+                    return Err(AppError::Validation(format!(
+                        "conversation adapter package content hash mismatch: {}",
+                        package.package_id
+                    )));
                 }
             }
             Ok((validation.content_hash, validation.adapter_validation.content_hash, validation.adapter_manifest_path))
@@ -374,7 +355,6 @@ impl AppService {
         let previous_gate_status = package.runtime_gate_status;
         let previous_installed_content_hash = package.installed_content_hash.clone();
         let previous_trusted_package_hash = package.trusted_package_hash.clone();
-        let previous_version = package.version.clone();
         let previous_error_message = package.error_message.clone();
 
         let now = Utc::now().to_rfc3339();
@@ -406,7 +386,6 @@ impl AppService {
             || package.runtime_gate_status != previous_gate_status
             || package.installed_content_hash != previous_installed_content_hash
             || package.trusted_package_hash != previous_trusted_package_hash
-            || package.version != previous_version
             || package.error_message != previous_error_message;
 
         package.runtime_validated_at = Some(now.clone());

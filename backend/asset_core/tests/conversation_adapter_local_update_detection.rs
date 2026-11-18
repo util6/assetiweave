@@ -120,6 +120,40 @@ fn write_package_dir(
 const PROBE_OK: &str =
     "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"revision\":1}}'\n";
 
+/// Stage the official adapter packages that #196 stopped embedding in the
+/// binary. Production installs them from the market; these catalog assertions
+/// only need a realistic untouched managed directory.
+fn stage_official_adapter_packages(adapter_root: &Path) {
+    for adapter_id in [
+        "codex",
+        "claude-code",
+        "opencode",
+        "antigravity",
+        "zcode",
+        "codebuddy",
+    ] {
+        copy_tree(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../builtin-assets/adapters")
+                .join(adapter_id),
+            &adapter_root.join(adapter_id),
+        );
+    }
+}
+
+fn copy_tree(source: &Path, target: &Path) {
+    fs::create_dir_all(target).expect("create adapter fixture dir");
+    for entry in fs::read_dir(source).expect("read adapter fixture dir") {
+        let entry = entry.expect("read adapter fixture entry");
+        let destination = target.join(entry.file_name());
+        if entry.file_type().expect("fixture entry type").is_dir() {
+            copy_tree(&entry.path(), &destination);
+        } else {
+            fs::copy(entry.path(), &destination).expect("copy adapter fixture file");
+        }
+    }
+}
+
 async fn open_service(db_path: PathBuf) -> AppService {
     let runtime = AppService::bootstrap_runtime(db_path, RuntimeRole::OneShot)
         .await
@@ -285,6 +319,7 @@ async fn conversation_script_catalog_higher_local_version_is_an_available_update
 #[tokio::test(flavor = "multi_thread")]
 async fn conversation_script_catalog_builtin_adapters_are_not_reported_as_updates() {
     let temp = TempHome::new("builtin-baseline");
+    stage_official_adapter_packages(&temp.adapter_root());
     let service = open_service(temp.root().join("app.db")).await;
 
     let entries = service
