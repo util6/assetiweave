@@ -11,6 +11,10 @@ pub struct RecentConversationSessionRecord {
     pub recent_events: Vec<crate::backend::domain::RecentMemoryEvent>,
 }
 
+/// 内置来源的静态目录（只描述定义，不代表一定落库）。
+///
+/// 是否物化见 `seed_builtin_conversation_sources_sqlx`：只有对应当前租户已存在
+/// 适配器的条目才会写成来源行。
 pub(super) fn builtin_sources(now: &str) -> Vec<ConversationSource> {
     vec![
         ConversationSource {

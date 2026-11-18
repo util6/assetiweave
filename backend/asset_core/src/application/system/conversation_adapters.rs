@@ -24,6 +24,20 @@ pub async fn seed_prepared_builtin_adapters(
         .map_err(AppError::external)?;
     normalize_conversation_paths(pool, tenant_id).await?;
     reconcile_app_conversation_adapters(pool, tenant_id).await?;
+    // 对账过程可能投影出市场包适配器（例如从旧版本升级上来的库），其来源行
+    // 可能从未播种过。再补一次：只插入缺失行，不触碰用户改动。补播种是尽力
+    // 而为，失败不应阻断启动。
+    if let Err(error) =
+        crate::backend::store::seed_builtin_conversation_sources_sqlx(pool, tenant_id).await
+    {
+        tracing::warn!(
+            target: "assetiweave.operation",
+            operation = "app.conversation_adapter.builtin_source_seed",
+            tenant_id = %tenant_id,
+            error = %error,
+            "builtin conversation source backfill was skipped"
+        );
+    }
     Ok(())
 }
 
