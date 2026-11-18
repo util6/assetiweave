@@ -213,7 +213,8 @@ pub fn conversation_adapter_package_status(
             }
             .to_string();
         }
-        // 开发覆盖与 Git 来源是显式跟踪本地文件的来源，标签优先于更新态。
+        // Git 来源是显式跟踪本地文件的来源，标签优先于更新态。
+        // `dev_override` 已不再产生（#199），只为尚未迁移的遗留行保留读兼容标签。
         match package.origin {
             ConversationAdapterPackageOrigin::DevOverride => return "dev_override".to_string(),
             ConversationAdapterPackageOrigin::GitRef => return "git_registered".to_string(),

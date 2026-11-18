@@ -169,14 +169,25 @@ describe("packageLifecycleAction", () => {
     expect(packageLifecycleAction(makeEntry())).toBe("unregister");
   });
 
-  it("hides the lifecycle action when nothing is installed or runtime is gone", () => {
+  it("hides the lifecycle action when nothing is installed or the status is uninstalled", () => {
     expect(packageLifecycleAction(makeEntry({ installed: false }))).toBeNull();
-    expect(
-      packageLifecycleAction(makeEntry({ runtime_ready: false })),
-    ).toBeNull();
     expect(
       packageLifecycleAction(makeEntry({ status: "uninstalled" })),
     ).toBeNull();
+  });
+
+  it("offers unregister for a broken local package but none for a broken managed release", () => {
+    // #199: an unreadable local package keeps an actionable row so the user can
+    // unregister it and re-register a valid source directory.
+    expect(
+      packageLifecycleAction(makeEntry({ runtime_ready: false })),
+    ).toBe("unregister");
+    const managedBroken = makeEntry({ runtime_ready: false });
+    managedBroken.installed_package = {
+      ...managedBroken.installed_package!,
+      origin: "managed_release",
+    };
+    expect(packageLifecycleAction(managedBroken)).toBeNull();
   });
 });
 

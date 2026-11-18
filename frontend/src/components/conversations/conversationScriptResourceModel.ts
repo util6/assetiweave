@@ -86,12 +86,17 @@ export function packageLifecycleAction(
   if (!entry.installed) {
     return null;
   }
-  if (entry.status === "uninstalled" || !entry.runtime_ready) {
+  if (entry.status === "uninstalled") {
     return null;
   }
-  return entry.installed_package?.origin === "managed_release"
-    ? "uninstall"
-    : "unregister";
+  const origin = entry.installed_package?.origin;
+  if (!entry.runtime_ready) {
+    // #199: a broken local package keeps its row instead of being silently removed.
+    // The repair path is unregistering it and re-registering a valid source directory.
+    // Managed releases are repaired through the install path instead.
+    return origin === "managed_release" || !origin ? null : "unregister";
+  }
+  return origin === "managed_release" ? "uninstall" : "unregister";
 }
 
 export function statusLabelKey(

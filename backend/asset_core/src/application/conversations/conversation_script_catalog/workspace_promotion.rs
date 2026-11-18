@@ -76,11 +76,56 @@ pub fn discover_conversation_adapter_workspace_dirs(root: &Path) -> AppResult<Ve
     Ok(package_dirs)
 }
 
+/// Package metadata a promotion should persist on top of the snapshot defaults.
+///
+/// Workspace upgrades use [`WorkspacePromotionOptions::default`] (the directory
+/// must be named after its adapter and the result is `LocalDirectory`). Local
+/// registration allows arbitrary source directory names and may record git
+/// tracking metadata.
+#[derive(Debug, Clone)]
+pub struct WorkspacePromotionOptions {
+    pub enforce_directory_name: bool,
+    pub origin: ConversationAdapterPackageOrigin,
+    pub source_url: Option<String>,
+    pub git_ref: Option<String>,
+    pub git_commit: Option<String>,
+}
+
+impl Default for WorkspacePromotionOptions {
+    fn default() -> Self {
+        Self {
+            enforce_directory_name: true,
+            origin: ConversationAdapterPackageOrigin::LocalDirectory,
+            source_url: None,
+            git_ref: None,
+            git_commit: None,
+        }
+    }
+}
+
 pub async fn promote_conversation_adapter_workspace_package(
     service: &AppService,
     package_dir: &Path,
     managed_root: &Path,
     dry_run: bool,
+) -> AppResult<Value> {
+    promote_conversation_adapter_workspace_package_with_options(
+        service,
+        package_dir,
+        managed_root,
+        dry_run,
+        &WorkspacePromotionOptions::default(),
+    )
+    .await
+}
+
+/// Snapshot a package directory into the managed runtime layout.
+pub async fn promote_conversation_adapter_workspace_package_with_options(
+    service: &AppService,
+    package_dir: &Path,
+    managed_root: &Path,
+    dry_run: bool,
+    options: &WorkspacePromotionOptions,
 ) -> AppResult<Value> {
     let source_dir = package_dir
         .canonicalize()
@@ -96,7 +141,7 @@ pub async fn promote_conversation_adapter_workspace_package(
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
-    if directory_name != adapter_id {
+    if options.enforce_directory_name && directory_name != adapter_id {
         return Err(AppError::Validation(format!(
             "conversation adapter workspace directory must match adapter id: expected {adapter_id}, found {directory_name}"
         )));
@@ -262,10 +307,13 @@ pub async fn promote_conversation_adapter_workspace_package(
                 .as_str()
                 .to_string(),
             runtime_ready: true,
-            origin: ConversationAdapterPackageOrigin::LocalDirectory,
-            source_url: Some(source_dir.to_string_lossy().to_string()),
-            git_ref: None,
-            git_commit: None,
+            origin: options.origin,
+            source_url: options
+                .source_url
+                .clone()
+                .or_else(|| Some(source_dir.to_string_lossy().to_string())),
+            git_ref: options.git_ref.clone(),
+            git_commit: options.git_commit.clone(),
             catalog_url: None,
             update_policy: ConversationPackageUpdatePolicy::PinExact,
             latest_version: Some(final_validation.manifest.version.clone()),

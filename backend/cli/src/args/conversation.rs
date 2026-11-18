@@ -306,14 +306,14 @@ pub struct ConversationAdapterRegisterArgs {
 
     #[arg(
         long,
-        help = "Register adapter package directory in live dev_override mode (no copy to packages/)"
+        help = "Register a local adapter package directory by promoting it into a managed runtime snapshot"
     )]
     pub dev: bool,
 
     #[arg(
         short = 'd',
         long,
-        help = "Register all adapters from this repository's builtin-assets/adapters directory in dev_override mode"
+        help = "Promote all adapters from this repository's builtin-assets/adapters directory into managed runtime snapshots"
     )]
     pub developer: bool,
 

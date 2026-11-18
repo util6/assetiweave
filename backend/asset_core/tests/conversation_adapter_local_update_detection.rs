@@ -12,6 +12,7 @@ use asset_core::application::{
 use asset_core::domain::conversations::{
     ConversationAdapterPackageOrigin, ConversationAdapterTrustState,
 };
+use asset_core::infrastructure::path_utils::expand_path;
 use asset_core::infrastructure::runtime::RuntimeRole;
 use std::ffi::OsString;
 use std::fs;
@@ -418,9 +419,13 @@ async fn conversation_script_catalog_tampered_active_snapshot_stays_hash_mismatc
         .clone()
         .expect("registered package has a trusted hash");
     assert_eq!(registered.version, "1.0.0");
+    // #199: registration promotes the candidate into an immutable managed snapshot;
+    // the active runtime is the snapshot, not the candidate directory.
+    let active_snapshot = expand_path(&registered.install_dir).expect("expand install dir");
+    assert_ne!(active_snapshot, active_dir);
 
     fs::write(
-        active_dir.join("adapter.sh"),
+        active_snapshot.join("adapter.sh"),
         "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"revision\":99}}'\n",
     )
     .expect("tamper with the active snapshot");

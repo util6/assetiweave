@@ -1,6 +1,7 @@
 pub mod catalog_install;
 pub mod catalog_local_promotion;
 pub mod catalog_query;
+pub mod dev_override_migration;
 pub mod helpers;
 pub mod legacy_catalog;
 pub mod types;
@@ -12,6 +13,7 @@ pub mod workspace_promotion;
 pub use catalog_install::*;
 pub use catalog_local_promotion::*;
 pub use catalog_query::*;
+pub use dev_override_migration::*;
 pub use helpers::*;
 pub use legacy_catalog::*;
 pub use types::*;

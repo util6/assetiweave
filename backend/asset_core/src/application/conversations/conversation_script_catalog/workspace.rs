@@ -3,7 +3,6 @@ use crate::backend::application::prelude::*;
 use crate::backend::domain::{
     ConversationAdapterPackageChangeAction, ConversationAdapterPackageChangeRisk,
     ConversationAdapterPackageOrigin, ConversationAdapterPackageRecordKind,
-    ConversationAdapterRuntimeGateStatus, ConversationPackageUpdatePolicy,
 };
 use crate::backend::infrastructure::conversations::{
     ConversationAdapterPackageInstallSourceKind, ConversationAdapterPackageInstallSpec,
@@ -154,10 +153,9 @@ impl AppService {
             params.origin,
             ConversationAdapterPackageOrigin::LocalDirectory
                 | ConversationAdapterPackageOrigin::GitRef
-                | ConversationAdapterPackageOrigin::DevOverride
         ) {
             return Err(AppError::Validation(
-                "local conversation adapter registration requires local_directory, git_ref, or dev_override origin"
+                "local conversation adapter registration requires local_directory or git_ref origin"
                     .to_string(),
             ));
         }
@@ -195,56 +193,12 @@ impl AppService {
             }
         }
 
-        let preflight = self
-            .prepare_conversation_adapter_package_change(ConversationAdapterPackageChangeParams {
-                action: ConversationAdapterPackageChangeAction::Register,
-                package_id: None,
-                adapter_id: Some(validation.adapter_validation.manifest.id.clone()),
-            })
-            .await
+        // #199: local registration no longer stores the source tree as `install_dir`.
+        // It promotes an immutable snapshot and only then trusts its content hash.
+        let managed_root = crate::backend::infrastructure::app_settings::conversation_adapter_dir()
             .map_err(AppError::external)?;
-        reject_conversation_package_task_conflicts(&preflight)?;
-        let settings = self.app_settings_value();
-        let preview =
-            crate::backend::infrastructure::conversations::register_external_adapter_with_settings(
-                crate::backend::infrastructure::conversations::ExternalAdapterRegisterParams {
-                    manifest_path: validation.adapter_manifest_path.clone(),
-                    dry_run: params.dry_run,
-                    yes: params.yes,
-                },
-                &settings,
-            )
-            .await
-            .map_err(AppError::external)?;
-        if params.dry_run {
-            return Ok(json!({
-                "dry_run": true,
-                "registered": false,
-                "origin": params.origin,
-                "package_dir": package_dir,
-                "validation": validation,
-                "preflight": preflight,
-                "registration": preview
-            }));
-        }
-
-        let adapter =
-            crate::backend::infrastructure::conversations::adapter_from_registration_preview(
-                preview,
-            )
-            .map_err(AppError::external)?;
-        let now = Utc::now().to_rfc3339();
-        let package = ConversationAdapterPackage {
-            package_id: validation.manifest.package_id.clone(),
-            adapter_id: adapter.id.clone(),
-            name: validation.manifest.name.clone(),
-            version: validation.manifest.version.clone(),
-            record_kind: validation.manifest.record_kind,
-            install_dir: package_dir.to_string_lossy().to_string(),
-            manifest_path: validation.manifest_path.clone(),
-            adapter_manifest_path: validation.adapter_manifest_path.clone(),
-            runtime_protocol: validation.manifest.runtime.protocol.as_str().to_string(),
-            runtime_ready: true,
+        let options = WorkspacePromotionOptions {
+            enforce_directory_name: false,
             origin: params.origin,
             source_url: params
                 .source_url
@@ -255,35 +209,36 @@ impl AppService {
                 .git_commit
                 .as_deref()
                 .and_then(clean_non_empty_string),
-            catalog_url: None,
-            update_policy: ConversationPackageUpdatePolicy::PinExact,
-            latest_version: None,
-            last_checked_at: None,
-            runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
-            runtime_validated_at: Some(now.clone()),
-            installed_content_hash: Some(validation.content_hash.clone()),
-            trusted_package_hash: (params.origin != ConversationAdapterPackageOrigin::DevOverride)
-                .then(|| validation.content_hash.clone()),
-            error_message: None,
-            created_at: now.clone(),
-            updated_at: now,
         };
-        super::super::conversation_storage::activate_workspace(self.db.pool(), &adapter, &package)
-            .await
-            .map_err(AppError::external)?;
-        self.runtime.refresh_conversation_adapter_catalog().await?;
-
-        Ok(json!({
-            "dry_run": false,
-            "registered": true,
-            "origin": params.origin,
-            "package": package,
-            "adapter": adapter,
-            "validation": validation,
-            "preflight": preflight
-        }))
+        let mut promoted = promote_conversation_adapter_workspace_package_with_options(
+            self,
+            &package_dir,
+            &managed_root,
+            params.dry_run,
+            &options,
+        )
+        .await?;
+        if let Some(object) = promoted.as_object_mut() {
+            let skipped = object
+                .get("skipped")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            object.insert("origin".to_string(), json!(params.origin));
+            object.insert("registered".to_string(), json!(!params.dry_run && !skipped));
+        }
+        if !params.dry_run {
+            self.runtime.refresh_conversation_adapter_catalog().await?;
+        }
+        Ok(promoted)
     }
 
+    /// Register one or more local package directories through workspace promotion.
+    ///
+    /// This entry point used to create `DevOverride` packages that pointed straight
+    /// at the source tree and skipped the hash gate (#199). Registration now always
+    /// produces an immutable managed snapshot under
+    /// `packages/<package_id>/versions/<version>-<hash12>`, so the trust boundary is
+    /// identical for every local source.
     pub async fn register_conversation_adapter_dev(
         &self,
         package_dir: Option<String>,
@@ -295,6 +250,11 @@ impl AppService {
             return Err(AppError::Validation(
                 "developer conversation adapter registration cannot be combined with target path"
                     .to_string(),
+            ));
+        }
+        if !dry_run && !yes {
+            return Err(AppError::Validation(
+                "conversation adapter local registration requires confirmation".to_string(),
             ));
         }
         let (source_root, package_dirs) = if developer {
@@ -339,25 +299,31 @@ impl AppService {
             )));
         }
 
+        let managed_root = crate::backend::infrastructure::app_settings::conversation_adapter_dir()
+            .map_err(AppError::external)?;
         let mut registered = Vec::with_capacity(package_dirs.len());
         for dir in package_dirs {
             registered.push(
-                self.register_conversation_adapter_local(ConversationAdapterLocalRegisterParams {
-                    package_dir: dir.to_string_lossy().to_string(),
-                    origin: ConversationAdapterPackageOrigin::DevOverride,
-                    source_url: None,
-                    git_ref: None,
-                    git_commit: None,
+                promote_conversation_adapter_workspace_package_with_options(
+                    self,
+                    &dir,
+                    &managed_root,
                     dry_run,
-                    yes,
-                })
+                    &WorkspacePromotionOptions {
+                        enforce_directory_name: false,
+                        ..WorkspacePromotionOptions::default()
+                    },
+                )
                 .await?,
             );
+        }
+        if !dry_run {
+            self.runtime.refresh_conversation_adapter_catalog().await?;
         }
         Ok(json!({
             "dry_run": dry_run,
             "developer": developer,
-            "origin": "dev_override",
+            "origin": "local_directory",
             "source_root": source_root,
             "registered": registered,
         }))
