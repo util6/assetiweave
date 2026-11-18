@@ -206,7 +206,7 @@ pub async fn handle_conversation(args: ConversationArgs, format: OutputFormat) -
                         CliError::new_with_hint(
                             "INVALID_PARAMETER",
                             "missing adapter manifest path",
-                            "pass <manifest> or use --developer --dev to mount repo adapters",
+                            "pass <manifest> or use --dev <package-dir> to promote a local package, or --developer to sync this repository",
                         )
                     })?;
                     let expanded = asset_core::infrastructure::path_utils::expand_path(&target)?;

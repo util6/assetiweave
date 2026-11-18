@@ -1215,3 +1215,32 @@ async fn workspace_promotion_freezes_the_effective_common_scripts_into_the_snaps
     drop(service);
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn discover_workspace_dirs_skips_reserved_managed_entries() {
+    let root = std::env::temp_dir().join(format!("aiw-202-discover-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create managed root");
+    for name in [
+        "packages",
+        "staging",
+        "common",
+        "runtime",
+        ".dev-sync-temp",
+        "codex",
+    ] {
+        let dir = root.join(name);
+        fs::create_dir_all(&dir).expect("create candidate dir");
+        fs::write(dir.join("conversation-adapter-package.json"), "{}")
+            .expect("write package marker");
+    }
+
+    let discovered = discover_conversation_adapter_workspace_dirs(&root)
+        .expect("discover workspace directories");
+    assert_eq!(
+        discovered,
+        vec![root.join("codex")],
+        "reserved infrastructure directories and hidden transfer dirs must never be promoted as workspaces"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}

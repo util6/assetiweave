@@ -63,7 +63,7 @@ pub fn discover_conversation_adapter_workspace_dirs(root: &Path) -> AppResult<Ve
         .filter_map(|entry| {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if matches!(name.as_ref(), "packages" | "staging") {
+            if is_reserved_managed_entry(&name) {
                 return None;
             }
             let path = entry.path();
@@ -199,6 +199,7 @@ pub async fn promote_conversation_adapter_workspace_package_with_options(
         return Ok(json!({
             "dry_run": true,
             "source_dir": source_dir,
+            "snapshot_path": version_dir,
             "install_dir": version_dir,
             "package_id": source_validation.manifest.package_id,
             "adapter_id": adapter_id,
@@ -347,6 +348,9 @@ pub async fn promote_conversation_adapter_workspace_package_with_options(
             "dry_run": false,
             "upgraded": true,
             "source_dir": source_dir,
+            "snapshot_path": version_dir,
+            "activated_version": final_validation.manifest.version.clone(),
+            "activated_hash": effective_hash,
             "package": package,
             "adapter": adapter,
             "validation": final_validation,
@@ -394,7 +398,7 @@ pub fn discover_local_conversation_adapter_packages(
         .filter_map(|entry| {
             let file_name = entry.file_name();
             let file_name = file_name.to_string_lossy();
-            if matches!(file_name.as_ref(), "packages" | "staging") {
+            if is_reserved_managed_entry(&file_name) {
                 return None;
             }
             entry.file_type().ok()?.is_dir().then(|| entry.path())
