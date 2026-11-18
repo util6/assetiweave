@@ -37,6 +37,25 @@ pub fn overlay_effective_common_scripts(package_dir: &Path, managed_root: &Path)
     Ok(())
 }
 
+/// Reject a managed runtime snapshot as a promotion source.
+///
+/// #202：`packages/<id>/versions/<rev>` 是晋升产物，不是可编辑工作区。把快照
+/// 目录显式传给 upgrade/register 只会产生「用受信任内容再次晋升」的假动作，
+/// 甚至让内部快照被当作外部源重新冻结。这里给出明确拒绝，避免隐式绕过约定。
+fn reject_managed_snapshot_source(source_dir: &Path, managed_root: &Path) -> AppResult<()> {
+    let packages_root = managed_root.join("packages");
+    let Ok(packages_root) = packages_root.canonicalize() else {
+        return Ok(());
+    };
+    if source_dir.starts_with(&packages_root) {
+        return Err(AppError::Validation(format!(
+            "conversation adapter runtime snapshot cannot be promoted as a workspace: {}",
+            source_dir.display()
+        )));
+    }
+    Ok(())
+}
+
 pub fn find_developer_conversation_adapter_root(start: &Path) -> AppResult<PathBuf> {
     for ancestor in start.ancestors() {
         let candidate = ancestor.join("builtin-assets").join("adapters");
@@ -131,6 +150,7 @@ pub async fn promote_conversation_adapter_workspace_package_with_options(
         .canonicalize()
         .map_err(|error| format!("resolve adapter workspace failed: {error}"))
         .map_err(AppError::external)?;
+    reject_managed_snapshot_source(&source_dir, managed_root)?;
     let source_validation =
         crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(
             &source_dir,
@@ -215,6 +235,9 @@ pub async fn promote_conversation_adapter_workspace_package_with_options(
         fs::create_dir_all(parent).map_err(AppError::external)?;
     }
     crate::backend::infrastructure::filesystem::copy_dir(&source_dir, &prepared_dir)?;
+    // #195：快照 rename 之前不写任何受信任记录。登记（含 probe 执行）只在不可变
+    // 快照落位后进行，因此失败分支不会留下指向 `prepared/<uuid>` 的悬空行。
+    let mut created_snapshot: Option<PathBuf> = None;
     let promotion: AppResult<_> = async {
         // Fix the currently effective external helpers into the snapshot before
         // it becomes an immutable runtime revision.
@@ -238,16 +261,6 @@ pub async fn promote_conversation_adapter_workspace_package_with_options(
             &effective_hash[..12.min(effective_hash.len())]
         );
         let version_dir = package_root.join("versions").join(&revision);
-        crate::backend::infrastructure::conversations::register_external_adapter_with_settings(
-            crate::backend::infrastructure::conversations::ExternalAdapterRegisterParams {
-                manifest_path: prepared_validation.adapter_manifest_path,
-                dry_run: false,
-                yes: true,
-            },
-            &settings,
-        )
-        .await
-        .map_err(AppError::external)?;
 
         let created_version_dir = if version_dir.exists() {
             let existing =
@@ -272,14 +285,19 @@ pub async fn promote_conversation_adapter_workspace_package_with_options(
             fs::rename(&prepared_dir, &version_dir).map_err(AppError::external)?;
             true
         };
+        if created_version_dir {
+            created_snapshot = Some(version_dir.clone());
+        }
 
         let final_validation =
             crate::backend::infrastructure::conversations::validate_conversation_adapter_package_dir(&version_dir)
                 .map_err(AppError::external)?;
+        // Registering is an explicit trust action: it probes the immutable
+        // snapshot and only then signs its content hash.
         let preview = crate::backend::infrastructure::conversations::register_external_adapter_with_settings(
             crate::backend::infrastructure::conversations::ExternalAdapterRegisterParams {
                 manifest_path: final_validation.adapter_manifest_path.clone(),
-                dry_run: true,
+                dry_run: false,
                 yes: true,
             },
             &settings,
@@ -330,18 +348,12 @@ pub async fn promote_conversation_adapter_workspace_package_with_options(
                 .unwrap_or_else(|| now.clone()),
             updated_at: now,
         };
-        let activation = super::super::conversation_storage::activate_workspace(
+        super::super::conversation_storage::activate_workspace(
             service.db.pool(),
             &adapter,
             &package,
         )
-        .await;
-        if let Err(error) = activation {
-            if created_version_dir {
-                let _ = fs::remove_dir_all(&version_dir);
-            }
-            return Err(error);
-        }
+        .await?;
         let cleanup_warning =
             retain_only_active_workspace_runtime(&package_root, &version_dir).err();
         Ok(json!({
@@ -360,6 +372,9 @@ pub async fn promote_conversation_adapter_workspace_package_with_options(
     }.await;
     if promotion.is_err() {
         let _ = fs::remove_dir_all(&prepared_dir);
+        if let Some(snapshot) = created_snapshot.take() {
+            let _ = fs::remove_dir_all(snapshot);
+        }
     }
     promotion
 }
