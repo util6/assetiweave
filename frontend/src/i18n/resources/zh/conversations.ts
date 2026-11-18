@@ -73,7 +73,7 @@ export const conversationsZh = {
   "conversation.scriptMarket.checkUpdates": "检查更新",
   "conversation.scriptMarket.checkingUpdates": "正在检查更新…",
   "conversation.scriptMarket.checkUpdatesCompleted":
-    "更新检查完成，发现 {{count}} 个可更新插件。",
+    "更新检查完成，发现 {{count}} 个可更新或待修复插件。",
   "conversation.scriptMarket.packageId": "Package ID",
   "conversation.scriptMarket.adapterId": "Adapter ID",
   "conversation.scriptMarket.origin": "来源类型",
@@ -84,8 +84,11 @@ export const conversationsZh = {
   "conversation.scriptMarket.recordKind": "记录类型",
   "conversation.scriptMarket.path": "实际目录",
   "conversation.scriptMarket.manifest": "Adapter Manifest",
-  "conversation.scriptMarket.contentHash": "Content Hash",
-  "conversation.scriptMarket.trustedHash": "Trusted Hash",
+  "conversation.scriptMarket.contentHash": "当前内容 Hash",
+  "conversation.scriptMarket.trustedHash": "受信任 Hash",
+  "conversation.scriptMarket.trustedVersion": "受信任版本",
+  "conversation.scriptMarket.managedDirectoryVersion": "受管目录最新版本",
+  "conversation.scriptMarket.valueUnavailable": "暂无记录",
   "conversation.scriptMarket.devOverrideNotice":
     "本地覆盖处于调试模式，市场更新不会替换当前运行版本。",
   "conversation.scriptMarket.versionHistory": "版本历史与 Changelog",

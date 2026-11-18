@@ -77,7 +77,7 @@ export const conversationsEn = {
   "conversation.scriptMarket.checkUpdates": "Check for updates",
   "conversation.scriptMarket.checkingUpdates": "Checking for updates…",
   "conversation.scriptMarket.checkUpdatesCompleted":
-    "Update check completed; {{count}} plugins can be updated.",
+    "Update check completed; {{count}} plugins can be updated or repaired.",
   "conversation.scriptMarket.packageId": "Package ID",
   "conversation.scriptMarket.adapterId": "Adapter ID",
   "conversation.scriptMarket.origin": "Origin",
@@ -88,8 +88,12 @@ export const conversationsEn = {
   "conversation.scriptMarket.recordKind": "Record kind",
   "conversation.scriptMarket.path": "Actual path",
   "conversation.scriptMarket.manifest": "Adapter manifest",
-  "conversation.scriptMarket.contentHash": "Content hash",
+  "conversation.scriptMarket.contentHash": "Current content hash",
   "conversation.scriptMarket.trustedHash": "Trusted hash",
+  "conversation.scriptMarket.trustedVersion": "Trusted version",
+  "conversation.scriptMarket.managedDirectoryVersion":
+    "Managed directory version",
+  "conversation.scriptMarket.valueUnavailable": "Not recorded",
   "conversation.scriptMarket.devOverrideNotice":
     "This dev override is in debug mode; marketplace updates will not replace the active runtime.",
   "conversation.scriptMarket.versionHistory": "Version history and changelog",
