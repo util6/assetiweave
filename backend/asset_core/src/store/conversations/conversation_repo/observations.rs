@@ -79,13 +79,22 @@ pub async fn load_conversation_session_versions_sqlx(
     if contract.synced_adapter_hash.as_deref() != adapter_content_hash {
         // #204：适配器综合内容 Hash 漂移（含公共策略脚本晋升）意味着解析契约
         // 已改变，必须整源重解析；重复同步时 Hash 已回签，不会再触发。
-        tracing::info!(
-            action = "conversation.sync.adapter_hash_changed",
-            source_id = %source_id,
-            stored = ?contract.synced_adapter_hash,
-            current = ?adapter_content_hash,
-            "Adapter composite content hash changed; reparsing the whole source"
-        );
+        if contract.synced_adapter_hash.is_none() {
+            tracing::debug!(
+                action = "conversation.sync.adapter_hash_baseline",
+                source_id = %source_id,
+                current = ?adapter_content_hash,
+                "Source has no adapter hash watermark yet; reading the whole source"
+            );
+        } else {
+            tracing::info!(
+                action = "conversation.sync.adapter_hash_changed",
+                source_id = %source_id,
+                stored = ?contract.synced_adapter_hash,
+                current = ?adapter_content_hash,
+                "Adapter composite content hash changed; reparsing the whole source"
+            );
+        }
         return Ok(std::collections::BTreeMap::new());
     }
 
