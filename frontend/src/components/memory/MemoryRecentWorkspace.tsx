@@ -44,6 +44,7 @@ import { Badge } from "../foundation/Badge";
 import { EmptyState } from "../foundation/EmptyState";
 import { Panel } from "../foundation/Panel";
 import { AppSkeleton } from "../foundation/skeleton";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 import { RecentTopicTree, parseNodeAnchor } from "./RecentTopicTree";
 import { MemoryDateRailView } from "./recent/MemoryDateRailView";
@@ -562,11 +563,11 @@ export function MemoryRecentWorkspace({
           padding="sm"
           variant="inset"
         >
-          <span className="min-w-0 flex-1 truncate text-body-sm text-on-surface-variant">
+          <TruncatedText className="min-w-0 flex-1 text-body-sm text-on-surface-variant">
             {t("memory.recent.dismissedNotice", {
               summary: dismissedUndo.summary,
             })}
-          </span>
+          </TruncatedText>
           <div className="flex items-center gap-2">
             <Button
               onClick={() => void handleUndoDismiss()}

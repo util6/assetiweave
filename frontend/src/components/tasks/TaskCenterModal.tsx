@@ -30,10 +30,12 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { EmptyState } from "../foundation/EmptyState";
 import { ErrorBoundary } from "../foundation/ErrorBoundary";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 import { PillTabs } from "../common/PillTabs";
 import { ToolbarSearch } from "../common/DataToolbar";
 import { useI18n } from "../../i18n/I18nProvider";
+import { abbreviateHomePath } from "../../utils/path";
 import { useTaskCenter } from "../../app/backgroundTasks/TaskCenterProvider";
 import {
   AgentSessionWorkspace,
@@ -434,18 +436,18 @@ function TaskCenterModalContent({
                         {/* 中间：固定两行骨架（标题 + 单行元信息与内联百分比） */}
                         <div className="min-w-0 flex-1">
                           <div className="flex h-5 items-center gap-2">
-                            <span className="truncate text-body-sm font-semibold text-on-surface">
+                            <TruncatedText className="text-body-sm font-semibold text-on-surface">
                               {task.title}
-                            </span>
+                            </TruncatedText>
                           </div>
 
                           <div className="mt-1 flex h-4 min-w-0 items-center gap-1.5 whitespace-nowrap text-code-sm text-on-surface-variant">
-                            <span className="truncate capitalize">
+                            <TruncatedText className="capitalize">
                               {formatTaskCategoryLabel(
                                 task.category,
                                 task.kind,
                               )}
-                            </span>
+                            </TruncatedText>
                             <span className="shrink-0 text-on-surface-muted">
                               •
                             </span>
@@ -580,9 +582,12 @@ function TaskCenterModalContent({
                                   className="size-5 shrink-0 text-primary"
                                   kind={selectedTask.kind}
                                 />
-                                <h2 className="truncate text-title-lg font-semibold text-on-surface">
+                                <TruncatedText
+                                  as="h2"
+                                  className="text-title-lg font-semibold text-on-surface"
+                                >
                                   {selectedTask.title}
-                                </h2>
+                                </TruncatedText>
                                 <TaskStateBadge
                                   outcome={selectedTask.outcome}
                                   state={selectedTask.state}
@@ -1005,9 +1010,9 @@ function StageCard({
         {/* 阶段标题栏 */}
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-body-base font-semibold text-on-surface">
+            <TruncatedText className="text-body-base font-semibold text-on-surface">
               {stage.name}
-            </span>
+            </TruncatedText>
             {durationMs ? (
               <span className="shrink-0 rounded-full bg-theme-control/40 px-2 py-0.5 font-mono text-code-xs tabular-nums text-on-surface-variant">
                 耗时: {formatDuration(durationMs)}
@@ -1034,13 +1039,13 @@ function StageCard({
 
         {/* 阶段 Note 说明 (运行态预留固定单行槽位，终态保留单行截断) */}
         {stage.status === "running" || stage.progress?.note ? (
-          <p
-            className="h-5 truncate text-body-sm leading-5 text-on-surface-variant"
+          <TruncatedText
+            as="p"
+            className="h-5 text-body-sm leading-5 text-on-surface-variant"
             data-testid={`stage-note-${stage.id}`}
-            title={stage.progress?.note || undefined}
           >
             {stage.progress?.note ?? ""}
-          </p>
+          </TruncatedText>
         ) : null}
 
         {/* 阶段数值进度条（运行态常驻定高槽位，未知 total 时显示不确定态动画条） */}
@@ -1120,12 +1125,14 @@ function StageCard({
 
                   {fail.path || fail.identity ? (
                     <div className="flex items-center justify-between gap-2 rounded-xl bg-theme-control/20 px-2.5 py-1 font-mono text-code-xs text-on-surface-muted">
-                      <span
-                        className="truncate max-w-[420px]"
-                        title={fail.path ?? fail.identity ?? ""}
+                      <TruncatedText
+                        className="max-w-[420px]"
+                        tooltip={fail.path ?? fail.identity ?? ""}
                       >
-                        {fail.path ?? fail.identity}
-                      </span>
+                        {fail.path
+                          ? abbreviateHomePath(fail.path)
+                          : fail.identity}
+                      </TruncatedText>
                       <Button
                         aria-label="复制路径/标识"
                         className="size-6 shrink-0 rounded-full p-0 text-on-surface-muted transition-all duration-200 hover:-translate-y-px hover:text-on-surface active:translate-y-0"
@@ -1243,9 +1250,9 @@ function StageCard({
                               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
                               <span className="relative inline-flex size-2 rounded-full bg-primary" />
                             </span>
-                            <span className="truncate font-mono text-code-xs font-semibold text-primary">
-                              [{workerId}]
-                            </span>
+                            <TruncatedText className="font-mono text-code-xs font-semibold text-primary">
+                              {`[${workerId}]`}
+                            </TruncatedText>
                           </div>
                           {act.current != null && act.total != null ? (
                             <span className="shrink-0 font-mono text-code-xs tabular-nums text-on-surface-variant">
@@ -1253,21 +1260,18 @@ function StageCard({
                             </span>
                           ) : null}
                         </div>
-                        <div
-                          className="h-4 truncate text-body-xs font-medium leading-4 text-on-surface"
-                          title={act.operation}
-                        >
+                        <TruncatedText className="h-4 text-body-xs font-medium leading-4 text-on-surface">
                           {act.operation}
-                        </div>
+                        </TruncatedText>
                         <div
                           className="flex h-5 items-center justify-between gap-1 overflow-hidden rounded-xl bg-theme-control/25 px-2 font-mono text-code-xs text-on-surface-variant"
                           data-testid={`stage-activity-path-slot-${workerId}`}
                         >
                           {path ? (
                             <>
-                              <span className="min-w-0 truncate" title={path}>
-                                {path}
-                              </span>
+                              <TruncatedText className="min-w-0" tooltip={path}>
+                                {abbreviateHomePath(path)}
+                              </TruncatedText>
                               <Button
                                 aria-label="复制路径"
                                 className="size-4 shrink-0 rounded-full p-0 text-on-surface-muted transition-all duration-200 hover:-translate-y-px hover:text-on-surface active:translate-y-0"
@@ -1285,9 +1289,9 @@ function StageCard({
                               </Button>
                             </>
                           ) : (
-                            <span className="truncate text-on-surface-muted/70">
+                            <TruncatedText className="text-on-surface-muted/70">
                               —
-                            </span>
+                            </TruncatedText>
                           )}
                         </div>
                       </div>
@@ -1330,20 +1334,14 @@ function StageCard({
                 <div
                   className="flex min-w-0 flex-1 items-center gap-1.5 rounded-full border border-theme-control-border/50 bg-theme-control/25 px-2.5 py-0.5 text-code-xs text-on-surface-variant"
                   data-testid={`stage-latest-step-preview-${stage.id}`}
-                  title={[latestStep.operation, latestStep.detail]
-                    .filter(Boolean)
-                    .join(": ")}
                 >
-                  <span
-                    className="max-w-[40%] shrink-0 truncate font-mono font-medium text-primary"
-                    title={latestStep.operation}
-                  >
+                  <TruncatedText className="max-w-[40%] shrink-0 font-mono font-medium text-primary">
                     {latestStep.operation}
-                  </span>
+                  </TruncatedText>
                   {latestStep.detail ? (
-                    <span className="min-w-0 flex-1 truncate font-mono text-on-surface-variant">
+                    <TruncatedText className="min-w-0 flex-1 font-mono text-on-surface-variant">
                       {latestStep.detail}
-                    </span>
+                    </TruncatedText>
                   ) : null}
                   {latestStep.current != null && latestStep.total != null ? (
                     <span className="shrink-0 font-mono tabular-nums text-on-surface-muted">
@@ -1622,7 +1620,6 @@ function TaskSummaryBanner({
           ? "border-status-conflict/30 bg-status-conflict/10 text-status-conflict"
           : "border-status-create/30 bg-status-create/10 text-status-create",
       )}
-      title={message}
     >
       {isError ? (
         <AlertCircle className="size-4 shrink-0" />
@@ -1630,9 +1627,9 @@ function TaskSummaryBanner({
         <Check className="size-4 shrink-0" />
       )}
       <span className="shrink-0 font-medium">{label}</span>
-      <span className="min-w-0 flex-1 truncate text-caption text-on-surface-variant">
+      <TruncatedText className="min-w-0 flex-1 text-caption text-on-surface-variant">
         {message}
-      </span>
+      </TruncatedText>
     </div>
   );
 }

@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Translator } from "../../i18n/I18nProvider";
 import { memoryZh } from "../../i18n/resources/zh/memory";
@@ -364,6 +370,66 @@ describe("RecentTopicTree Unit & Stress Tests", () => {
       expect(screen.getByText(/已提炼 9 条会话/)).toBeTruthy();
       expect(screen.getByText("水位 9")).toBeTruthy();
       expect(screen.getByText("收起为近期切片")).toBeTruthy();
+    });
+
+    it("abbreviates projectPath with TruncatedText and shows full path tooltip on overflow without native title", async () => {
+      const project: RecentProjectView = {
+        projectKey: "alpha",
+        projectTitle: "Project Alpha",
+        projectPath: "/Users/demo/workspace/assetiweave",
+        summary: "",
+        noMaterialChange: false,
+        latestActivityAt: "2026-11-13T10:00:00Z",
+        sourceSessionCount: 1,
+        items: [],
+        topics: [
+          {
+            topicId: "topic-1",
+            topic: "Topic One",
+            updatedAt: "2026-11-13T10:00:00Z",
+            nodes: [
+              makeNode({
+                id: "node-1#T2",
+                sessionTitle: "Very long session title for truncation",
+              }),
+            ],
+          },
+        ],
+      };
+
+      render(<RecentTopicTree projects={[project]} t={mockT} />);
+
+      const pathEl = screen.getByText("~/workspace/assetiweave");
+      expect(pathEl.getAttribute("title")).toBeNull();
+      Object.defineProperty(pathEl, "clientWidth", {
+        configurable: true,
+        get: () => 80,
+      });
+      Object.defineProperty(pathEl, "scrollWidth", {
+        configurable: true,
+        get: () => 240,
+      });
+      Object.defineProperty(pathEl, "clientHeight", {
+        configurable: true,
+        get: () => 18,
+      });
+      Object.defineProperty(pathEl, "scrollHeight", {
+        configurable: true,
+        get: () => 18,
+      });
+
+      fireEvent.mouseEnter(pathEl);
+      await waitFor(() =>
+        expect(screen.getByRole("tooltip").textContent).toBe(
+          "/Users/demo/workspace/assetiweave",
+        ),
+      );
+      fireEvent.mouseLeave(pathEl);
+
+      const sessionTitleEl = screen.getByText(
+        "Very long session title for truncation",
+      );
+      expect(sessionTitleEl.getAttribute("title")).toBeNull();
     });
   });
 });

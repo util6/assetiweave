@@ -14,6 +14,7 @@ import {
   appShortcutIconFrameStyle,
 } from "../apps/AppShortcutIcon";
 import { Badge } from "../foundation/Badge";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 import {
   AgentCatalogIcon,
@@ -172,16 +173,19 @@ export function AgentConnectionRow({
           <span aria-hidden="true">·</span>
           <span>{agent.protocol}</span>
           {classifiedError ? (
-            <span
-              className="max-w-[28rem] truncate font-medium text-status-remove"
-              title={classifiedError.detail}
+            <TruncatedText
+              className="max-w-[28rem] font-medium text-status-remove"
+              tooltip={classifiedError.detail}
             >
               · {classifiedError.detail}
-            </span>
+            </TruncatedText>
           ) : connectionMessage ? (
-            <span className="max-w-[28rem] truncate" title={connectionMessage}>
+            <TruncatedText
+              className="max-w-[28rem]"
+              tooltip={connectionMessage}
+            >
               · {connectionMessage}
-            </span>
+            </TruncatedText>
           ) : null}
         </div>
       </div>
@@ -282,14 +286,13 @@ export function AgentConnectionRow({
           <Button
             aria-label={`${t("settings.agents.model")} ${agent.name}`}
             onClick={onSelectModel}
-            title={selectedModel || t("settings.agents.model")}
             type="button"
             variant="outline"
           >
             <BrainCircuit size={15} />
-            <span className="max-w-36 truncate">
+            <TruncatedText className="max-w-36" inline>
               {selectedModel || t("settings.agents.model")}
-            </span>
+            </TruncatedText>
           </Button>
         ) : null}
         {view === "settings" && onEdit ? (

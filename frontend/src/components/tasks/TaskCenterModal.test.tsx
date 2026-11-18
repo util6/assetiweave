@@ -1037,9 +1037,31 @@ describe("TaskCenterModal", () => {
       "解析会话 /very/long/path/session-latest.jsonl 的内容",
     );
     expect(previewDetail.className).toContain("truncate");
-    expect(preview.getAttribute("title")).toContain(
-      "解析会话 /very/long/path/session-latest.jsonl 的内容",
+    expect(preview.getAttribute("title")).toBeNull();
+    expect(previewDetail.getAttribute("title")).toBeNull();
+    Object.defineProperty(previewDetail, "clientWidth", {
+      configurable: true,
+      get: () => 120,
+    });
+    Object.defineProperty(previewDetail, "scrollWidth", {
+      configurable: true,
+      get: () => 320,
+    });
+    Object.defineProperty(previewDetail, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(previewDetail, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(previewDetail);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe(
+        "解析会话 /very/long/path/session-latest.jsonl 的内容",
+      ),
     );
+    fireEvent.mouseLeave(previewDetail);
 
     // 3. 当 running 阶段更新更多步骤或状态变为 failed 时，不会自动强行展开
     mockTasks = [
@@ -1276,13 +1298,34 @@ describe("TaskCenterModal", () => {
       </I18nProvider>,
     );
 
-    // 1. progress.note 单行截断并带完整 title 提示
+    // 1. progress.note 单行截断并带 TruncatedText 悬停提示
     const noteEl = await screen.findByTestId("stage-note-ingest-stage");
     expect(noteEl.className).toContain("truncate");
     expect(noteEl.className).toContain("h-5");
-    expect(noteEl.getAttribute("title")).toBe(
-      "正在扫描 /Users/demo/workspace/very-long-directory/sub-module/file.jsonl",
+    expect(noteEl.getAttribute("title")).toBeNull();
+    Object.defineProperty(noteEl, "clientWidth", {
+      configurable: true,
+      get: () => 120,
+    });
+    Object.defineProperty(noteEl, "scrollWidth", {
+      configurable: true,
+      get: () => 360,
+    });
+    Object.defineProperty(noteEl, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(noteEl, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(noteEl);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe(
+        "正在扫描 /Users/demo/workspace/very-long-directory/sub-module/file.jsonl",
+      ),
     );
+    fireEvent.mouseLeave(noteEl);
 
     // 2. 耗时数字使用 tabular-nums
     const durationEl = screen.getByText("耗时: 2.4s");
@@ -1359,12 +1402,33 @@ describe("TaskCenterModal", () => {
     );
     expect(withPathSlot.className).toContain("h-5");
     const pathText = within(withPathSlot).getByText(
-      "/Users/demo/very/long/path/to/session-01.jsonl",
+      "~/very/long/path/to/session-01.jsonl",
     );
     expect(pathText.className).toContain("truncate");
-    expect(pathText.getAttribute("title")).toBe(
-      "/Users/demo/very/long/path/to/session-01.jsonl",
+    expect(pathText.getAttribute("title")).toBeNull();
+    Object.defineProperty(pathText, "clientWidth", {
+      configurable: true,
+      get: () => 100,
+    });
+    Object.defineProperty(pathText, "scrollWidth", {
+      configurable: true,
+      get: () => 280,
+    });
+    Object.defineProperty(pathText, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(pathText, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(pathText);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe(
+        "/Users/demo/very/long/path/to/session-01.jsonl",
+      ),
     );
+    fireEvent.mouseLeave(pathText);
 
     const noPathSlot = screen.getByTestId("stage-activity-path-slot-w-no-path");
     expect(noPathSlot.className).toContain("h-5");
@@ -1648,6 +1712,27 @@ describe("TaskCenterModal", () => {
     expect(opEl.className).toContain("max-w-[40%]");
     expect(opEl.className).toContain("truncate");
     expect(opEl.className).toContain("shrink-0");
-    expect(opEl.getAttribute("title")).toBe(longOp);
+    expect(opEl.getAttribute("title")).toBeNull();
+    Object.defineProperty(opEl, "clientWidth", {
+      configurable: true,
+      get: () => 80,
+    });
+    Object.defineProperty(opEl, "scrollWidth", {
+      configurable: true,
+      get: () => 300,
+    });
+    Object.defineProperty(opEl, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(opEl, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(opEl);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe(longOp),
+    );
+    fireEvent.mouseLeave(opEl);
   });
 });

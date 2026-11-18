@@ -16,6 +16,7 @@ import type {
 } from "../../../types/memory";
 import { SessionShortIdChip } from "../../conversations/SessionShortIdChip";
 import { Badge } from "../../foundation/Badge";
+import { TruncatedText } from "../../foundation/TruncatedText";
 import { Button } from "../../ui/button";
 import {
   buildNodeNavigationTarget,
@@ -120,9 +121,9 @@ export function MemoryNodeCard({
       {showParentContext && node.parentSummary && (
         <div className="flex items-start gap-1.5 rounded-xl border border-theme-card-border/50 bg-theme-control/45 px-2.5 py-1.5 text-caption text-on-surface-muted">
           <CornerDownRight className="mt-0.5 shrink-0 text-outline" size={12} />
-          <span className="line-clamp-2">
+          <TruncatedText lines={2}>
             {t("memory.recent.parentContext", { summary: node.parentSummary })}
-          </span>
+          </TruncatedText>
         </div>
       )}
 
@@ -134,12 +135,12 @@ export function MemoryNodeCard({
         <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
           <div className="min-w-0 flex-1">
             {node.sessionTitle && (
-              <p
-                className="truncate text-caption text-on-surface-muted"
-                title={node.sessionTitle}
+              <TruncatedText
+                as="p"
+                className="text-caption text-on-surface-muted"
               >
                 {node.sessionTitle}
-              </p>
+              </TruncatedText>
             )}
             {isUnavailable && (
               <p className="text-caption text-outline">
