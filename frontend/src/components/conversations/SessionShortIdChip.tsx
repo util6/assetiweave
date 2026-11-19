@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import type { Translator } from "../../i18n/I18nProvider";
 import { conversationIdFragment } from "../../utils/conversationIds";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 const COPY_FEEDBACK_MS = 1600;
 
@@ -61,21 +62,25 @@ export function SessionShortIdChip({
     : t("conversation.session.copyShortId", { id: shortId });
 
   return (
-    <button
-      aria-label={label}
-      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-theme-control-border bg-theme-control/80 px-2.5 text-on-surface-variant shadow-[var(--theme-shadow-control-inset)] transition-colors hover:bg-theme-control hover:text-on-surface ${
-        copied ? "text-on-surface" : ""
-      } ${className}`}
-      onClick={handleCopy}
-      title={label}
-      type="button"
-    >
-      <span className="font-mono text-body-sm leading-none">{shortId}</span>
-      {copied ? (
-        <Check className="size-3 text-status-create" />
-      ) : (
-        <Copy className="size-3 opacity-60" />
-      )}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          aria-label={label}
+          className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-theme-control-border bg-theme-control/80 px-2.5 text-on-surface-variant shadow-[var(--theme-shadow-control-inset)] transition-colors hover:bg-theme-control hover:text-on-surface ${
+            copied ? "text-on-surface" : ""
+          } ${className}`}
+          onClick={handleCopy}
+          type="button"
+        >
+          <span className="font-mono text-body-sm leading-none">{shortId}</span>
+          {copied ? (
+            <Check className="size-3 text-status-create" />
+          ) : (
+            <Copy className="size-3 opacity-60" />
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }

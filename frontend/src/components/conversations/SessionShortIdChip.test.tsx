@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -9,6 +10,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
+import { TooltipProvider } from "../ui/tooltip";
 import { SessionShortIdChip } from "./SessionShortIdChip";
 
 const SESSION_ID =
@@ -26,12 +28,15 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
 });
 
 function renderChip() {
   return render(
     <I18nProvider>
-      <SessionShortIdChip sessionId={SESSION_ID} t={(key) => key} />
+      <TooltipProvider>
+        <SessionShortIdChip sessionId={SESSION_ID} t={(key) => key} />
+      </TooltipProvider>
     </I18nProvider>,
   );
 }
@@ -54,5 +59,22 @@ describe("SessionShortIdChip", () => {
         "conversation.content.copied",
       ),
     );
+  });
+
+  it("uses the unified glassmorphic Tooltip instead of a native title attribute", () => {
+    vi.useFakeTimers();
+    renderChip();
+
+    const button = screen.getByRole("button");
+    expect(button.hasAttribute("title")).toBe(false);
+
+    fireEvent.pointerMove(button, { pointerType: "mouse" });
+    act(() => {
+      vi.advanceTimersByTime(320);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.className).toContain("ui-tooltip");
+    expect(tooltip.textContent).toBe("conversation.session.copyShortId");
   });
 });
