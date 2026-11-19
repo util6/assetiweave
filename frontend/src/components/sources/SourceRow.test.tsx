@@ -105,6 +105,40 @@ describe("SourceRow", () => {
 
     expect(html).toContain('aria-label="拆分为独立 Git 源"');
   });
+
+  it("exposes reveal action via aria-label without native title on path button and truncates path via TruncatedText", () => {
+    const html = renderToStaticMarkup(
+      <I18nProvider>
+        <SourceRow
+          appShortcuts={[]}
+          assets={[]}
+          busy={false}
+          expanded={false}
+          expandedAssetIds={new Set()}
+          mountStatusesByAssetId={new Map<string, AssetMountStatus[]>()}
+          onAssetReveal={vi.fn()}
+          onDelete={vi.fn()}
+          onDeleteAsset={vi.fn()}
+          onEdit={vi.fn()}
+          onEditAsset={vi.fn()}
+          onReveal={vi.fn()}
+          onSetSourceMountProfile={vi.fn()}
+          onToggleAsset={vi.fn()}
+          onToggleExpanded={vi.fn()}
+          onToggleMount={vi.fn()}
+          profiles={[]}
+          source={{
+            ...source,
+            root_path: "/Users/util6/code-space/skills",
+          }}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).toContain(
+      '<button aria-label="显示来源目录" class="mt-2 block max-w-full text-left font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary" type="button"><span class="block min-w-0 truncate">~/code-space/skills</span></button>',
+    );
+  });
 });
 
 const asset: Asset = {

@@ -3,6 +3,7 @@ import { Users2, Plus, ChevronDown, Crown, User, KeyRound } from "lucide-react";
 import { PillTabs, type PillTabItem } from "../../common/PillTabs";
 import { TeamViewToggle } from "./TeamViewToggle";
 import { Button } from "../../ui/button";
+import { TruncatedText } from "../../foundation/TruncatedText";
 import { AccountManagerModal } from "../../common/AccountManagerModal";
 import type {
   TeamDefinition,
@@ -101,8 +102,10 @@ export function TeamHeader({
                           : "text-theme-text hover:bg-theme-panel/70"
                       }`}
                     >
-                      <div className="truncate">
-                        <div className="font-medium truncate">{t.name}</div>
+                      <div className="min-w-0">
+                        <TruncatedText className="font-medium">
+                          {t.name}
+                        </TruncatedText>
                         <div className="text-[11px] text-theme-muted">
                           {t.members.length} 名智能体成员
                         </div>

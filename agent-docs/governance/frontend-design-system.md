@@ -27,8 +27,8 @@ AssetIWeave 是面向开发者的本地优先（Local-first）桌面工具。前
 
 ```text
 frontend/src/
-├── components/foundation/     ← 第一层：原子级设计系统基石（通用容器、全局骨架、基础控件）
-├── components/ui/             ← 第一层补充：标准控件原语（Button, Input, Select, Switch）
+├── components/foundation/     ← 第一层：原子级设计系统基石（通用容器、全局骨架、基础控件，含 TruncatedText）
+├── components/ui/             ← 第一层补充：标准控件原语（Button, Input, Select, Switch, Tooltip）
 ├── components/common/         ← 第二层：跨业务通用的复合组件（DataToolbar, ConfirmDialog, 虚拟列表）
 └── components/{domain}/       ← 第三层：业务领域特性组件（conversations, catalog, mounts, tasks 等）
 ```
@@ -40,6 +40,8 @@ frontend/src/
    - 按钮：统一使用 `import { Button } from "@/components/ui/button"`（或 `components/foundation/SurfaceButton`）。
    - 弹窗：统一使用 `import { DialogFrame } from "@/components/foundation/DialogFrame"`。
    - 标签：统一使用 `import { Badge } from "@/components/foundation/Badge"`。
+   - 悬停提示原语：统一使用 `import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"`（`components/ui/tooltip.tsx`），基于 Radix Tooltip 封装毛玻璃浮层样式（`rounded-xl`、`backdrop-blur-xl`）及统一延迟/跳过延迟策略（`DEFAULT_TOOLTIP_DELAY_MS` / `DEFAULT_TOOLTIP_SKIP_DELAY_MS`）。
+   - 截断文本原语：统一使用 `import { TruncatedText } from "@/components/foundation/TruncatedText"`（`components/foundation/TruncatedText.tsx`），封装单行（`lines={1}`，默认）及 2–3 行摘要截断（`lines={2 | 3}`），通过真实几何溢出检测与惰性 Tooltip 挂载在仅发生视觉溢出时按需展示完整内容。
    - 输入与表单容器：使用 `controlRecipe` 或 `FieldFrame`。
 3. **工具栏必须使用 DataToolbar**：任何列表或页面的搜索、排序、筛选、批量操作工具条，统一采用 `DataToolbar` 及子组件（`ToolbarSearch`、`ToolbarSingleSelectDropdown`、`ToolbarActionButton`），严禁手写散乱的 Flex 工具条。
 
@@ -118,7 +120,29 @@ frontend/src/
 
 ---
 
-## 7. 六大禁止反模式 (Six Strict Anti-Patterns)
+## 7. 截断文本与溢出提示规范 (Truncated Text & Overflow Tooltip)
+
+> [!CAUTION]
+> **强制唯一入口与静态双门禁！**  
+> 所有受宽度约束的单行文本及 1–3 行摘要截断，**必须**使用 `<TruncatedText>`（`components/foundation/TruncatedText.tsx`）。严禁在业务组件或通用组件中裸写 `truncate`、`text-ellipsis`、`line-clamp-1`、`line-clamp-2`、`line-clamp-3`、编写 CSS `text-overflow: ellipsis` / `-webkit-line-clamp`，或在截断文本上使用浏览器原生 `title=` 属性。该约束由 ESLint 架构检查（`pnpm lint` / `pnpm lint:architecture`）与架构边界测试（`architectureBoundaries.test.ts`）双层强制守卫。
+
+### 强制规范
+
+1. **统一组件入口**：
+   - 单行截断（默认 `lines={1}`）与 2–3 行摘要截断（`lines={2}` / `lines={3}`）统一使用 `<TruncatedText>`。
+   - 仅当文本发生真实溢出时才挂载并展示毛玻璃 `Tooltip`；嵌套在 `<button>` 或行交互控件内时默认保持 `focusable={false}`，避免点击后焦点回落误弹。
+2. **路径缩写口径一致**：
+   - 所有目录与文件便携路径显示（含可见文本与悬停 Tooltip 完整值），统一通过 `abbreviateHomePath`（`frontend/src/utils/path.ts`）转换为 `~` 缩写形态，严禁界面显示 `~` 缩写而悬停提示却回退为未缩写系统绝对路径。
+3. **交互路径按钮与行动作文案收口**：
+   - 承载路径展示的可点击按钮或表格行（如“在访达中显示”或整行点击说明），**严禁**将动作说明写在 `title` 上遮挡截断路径提示；动作说明统一迁入 `aria-label`，截断路径完整值交由内部 `<TruncatedText>` 独立提示。
+4. **明确豁免项**：
+   - **6–8 行长正文预览卡片**：如 `PromptOverviewPage.tsx` 中的长正文折叠预览区域（`line-clamp-6` / `line-clamp-8` 等 6 行及以上多行截断）不强制改用 `<TruncatedText>`。
+   - **纯图标操作按钮**：不含截断文本的纯图标按钮（如侧边导航栏折叠按钮或图标工具动作气泡）允许保留其非文本截断用途的提示机制。
+   - **原生可编辑表单控件**：`<input>`、`<textarea>` 内部的文本滚动或原生输入截断行为不在本规范限制范围内。
+
+---
+
+## 8. 七大禁止反模式 (Seven Strict Anti-Patterns)
 
 1. **反模式 1：方角小按钮**  
    ❌ 错误：`<button className="h-8 rounded-md border border-gray-300 px-2 text-sm">操作</button>`  
@@ -137,3 +161,6 @@ frontend/src/
    ✅ 正确：统一使用 `<PillTabs>` 组件，享受自带平滑滑动的 `ui-pill-indicator` 与温润象牙色微光。
 6. **反模式 6：丢失交互动效**  
    可点击控件必须具备平滑微动效：Hover 阶段轻微位移（`hover:-translate-y-px`）与发光扩散，点击阶段复位（`active:translate-y-0`），过渡时长 `duration-200`。
+7. **反模式 7：裸写截断类、CSS 省略号或用原生 `title=` 替代溢出提示**  
+   ❌ 错误：`<span className="truncate" title={rawPath}>{abbreviateHomePath(rawPath)}</span>`、`<button title="在访达中显示"><span className="line-clamp-2">{path}</span></button>`，或在 `.css` 中手写 `text-overflow: ellipsis` / `-webkit-line-clamp`。  
+   ✅ 正确：`<button aria-label="在访达中显示" type="button"><TruncatedText>{abbreviateHomePath(rawPath)}</TruncatedText></button>`，摘要多行截断使用 `<TruncatedText lines={2}>...</TruncatedText>`。

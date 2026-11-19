@@ -25,5 +25,6 @@ describe("SkillBackupDirectorySetting", () => {
     expect(html).toContain("Skill 备份目录");
     expect(html).toContain("/Volumes/Assets/skills");
     expect(html).toContain("更改目录");
+    expect(html).not.toContain('title="/Volumes/Assets/skills"');
   });
 });

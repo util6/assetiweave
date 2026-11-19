@@ -17,6 +17,7 @@ import * as agentRuntime from "../../services/agentRuntime";
 import type { AppShortcut } from "../../types";
 import { Badge } from "../foundation/Badge";
 import { DialogFrame } from "../foundation/DialogFrame";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 import {
   AgentCatalogIcon,
@@ -203,14 +204,20 @@ export function AgentCapabilityDialog({
             <p className="text-label-caps uppercase text-outline">
               {t("settings.agentCapabilities.selectedLabel")}
             </p>
-            <p className="mt-1 truncate text-body-md font-semibold text-on-surface">
+            <TruncatedText
+              as="p"
+              className="mt-1 text-body-md font-semibold text-on-surface"
+            >
               {selectedAgent?.name ?? agentId}
-            </p>
-            <p className="mt-1 truncate text-body-sm text-on-surface-variant">
+            </TruncatedText>
+            <TruncatedText
+              as="p"
+              className="mt-1 text-body-sm text-on-surface-variant"
+            >
               {model
                 ? t("settings.agentCapabilities.usingModel", { model })
                 : t("settings.agentCapabilities.usingDefaultModel")}
-            </p>
+            </TruncatedText>
           </div>
         </div>
 
@@ -316,13 +323,13 @@ function CapabilityAgentOption({
               </Badge>
             ) : null}
           </span>
-          <span className="mt-1 block truncate text-body-xs text-on-surface-variant">
+          <TruncatedText className="mt-1 text-body-xs text-on-surface-variant">
             {currentModel
               ? t("settings.agentCapabilities.usingModel", {
                   model: currentModel,
                 })
               : t("settings.agentCapabilities.usingDefaultModel")}
-          </span>
+          </TruncatedText>
         </span>
       </button>
       <div className="flex shrink-0 items-center gap-1">

@@ -889,6 +889,55 @@ describe("PromptOverviewPage", () => {
       "idea",
     ]);
   });
+
+  it("shows ~-abbreviated projectPath in prompt side-card tooltip on overflow", async () => {
+    seedPromptCards([
+      createStoredPromptCard(
+        "Active Prompt",
+        "active body",
+        [],
+        "",
+        "",
+        "2026-01-02T00:00:00.000Z",
+      ),
+      createStoredPromptCard(
+        "Home Path Prompt",
+        "body",
+        [],
+        "/Users/demo/workspace/prompts",
+        "",
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ]);
+    renderPromptPage();
+
+    const pathEl = screen.getByText("~/workspace/prompts");
+    expect(pathEl.getAttribute("title")).toBeNull();
+    Object.defineProperty(pathEl, "clientWidth", {
+      configurable: true,
+      get: () => 80,
+    });
+    Object.defineProperty(pathEl, "scrollWidth", {
+      configurable: true,
+      get: () => 240,
+    });
+    Object.defineProperty(pathEl, "clientHeight", {
+      configurable: true,
+      get: () => 18,
+    });
+    Object.defineProperty(pathEl, "scrollHeight", {
+      configurable: true,
+      get: () => 18,
+    });
+
+    fireEvent.mouseEnter(pathEl);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe(
+        "~/workspace/prompts",
+      ),
+    );
+    fireEvent.mouseLeave(pathEl);
+  });
 });
 
 function seedPromptCards(cards: ReturnType<typeof createStoredPromptCard>[]) {

@@ -22,6 +22,7 @@ import type {
 } from "../../app/backgroundTasks/ConversationSearchProvider";
 import { Button } from "../ui/button";
 import { DialogFrame } from "../foundation/DialogFrame";
+import { TruncatedText } from "../foundation/TruncatedText";
 import {
   type ConversationSearchAppChipMeta,
   filterVisibleConversationSearchHits,
@@ -618,11 +619,11 @@ export function ConversationSearchDialog({
             >
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <Loader2 className="size-4 shrink-0 animate-spin text-status-update" />
-                <span className="truncate font-medium">
+                <TruncatedText className="font-medium">
                   {t("conversation.search.runningBanner", {
                     query: activeTask.query,
                   })}
-                </span>
+                </TruncatedText>
                 {activeTask.task?.stages.find((s) => s.status === "running")
                   ?.name ? (
                   <span className="hidden rounded-full bg-theme-control/80 px-2 py-0.5 text-[11px] font-medium text-on-surface-variant sm:inline-block">

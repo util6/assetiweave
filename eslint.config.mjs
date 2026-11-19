@@ -55,6 +55,41 @@ const generalConfig = isArchitectureOnly
       },
     ];
 
+const tauriDynamicImportSyntaxRule = {
+  selector: "ImportExpression[source.value=/^@tauri-apps\\/(api|plugin-)/]",
+  message:
+    "Dynamic imports of Tauri runtime APIs are restricted to frontend/src/services/**. Use a service method instead.",
+};
+
+const rawTruncationPattern = String.raw`\b(?:truncate|text-ellipsis|line-clamp-[123])\b`;
+const rawTruncationMessage =
+  "Raw truncation classes (`truncate`, `text-ellipsis`, `line-clamp-1..3`) are forbidden outside TruncatedText/UI primitives. Use <TruncatedText> from `@/components/foundation/TruncatedText` instead.";
+
+const rawTruncationSyntaxRules = [
+  {
+    selector: `JSXAttribute[name.name=/^(?:className|.*ClassName)$/] Literal[value=/${rawTruncationPattern}/]`,
+    message: rawTruncationMessage,
+  },
+  {
+    selector: `JSXAttribute[name.name=/^(?:className|.*ClassName)$/] TemplateElement[value.raw=/${rawTruncationPattern}/]`,
+    message: rawTruncationMessage,
+  },
+  {
+    selector: `CallExpression[callee.name=/^(?:cn|clsx|cva)$/] Literal[value=/${rawTruncationPattern}/]`,
+    message: rawTruncationMessage,
+  },
+  {
+    selector: `CallExpression[callee.name=/^(?:cn|clsx|cva)$/] TemplateElement[value.raw=/${rawTruncationPattern}/]`,
+    message: rawTruncationMessage,
+  },
+];
+
+const rawTruncationIgnores = [
+  "frontend/src/components/foundation/TruncatedText.tsx",
+  "frontend/src/components/ui/**",
+  "frontend/src/**/*.test.{ts,tsx}",
+];
+
 const architectureRulesConfig = [
   {
     files: ["frontend/src/**/*.{ts,tsx,js,mjs}"],
@@ -79,14 +114,24 @@ const architectureRulesConfig = [
           ],
         },
       ],
+      "no-restricted-syntax": ["error", tauriDynamicImportSyntaxRule],
+    },
+  },
+  {
+    files: ["frontend/src/**/*.{ts,tsx}"],
+    ignores: rawTruncationIgnores,
+    rules: {
+      "no-restricted-syntax": ["error", ...rawTruncationSyntaxRules],
+    },
+  },
+  {
+    files: ["frontend/src/**/*.{ts,tsx}"],
+    ignores: ["frontend/src/services/**", ...rawTruncationIgnores],
+    rules: {
       "no-restricted-syntax": [
         "error",
-        {
-          selector:
-            "ImportExpression[source.value=/^@tauri-apps\\/(api|plugin-)/]",
-          message:
-            "Dynamic imports of Tauri runtime APIs are restricted to frontend/src/services/**. Use a service method instead.",
-        },
+        tauriDynamicImportSyntaxRule,
+        ...rawTruncationSyntaxRules,
       ],
     },
   },

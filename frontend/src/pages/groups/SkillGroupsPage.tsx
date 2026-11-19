@@ -40,6 +40,7 @@ import {
 } from "../../components/groups/GroupExclusiveMountControls";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { AppSkeleton } from "../../components/foundation/skeleton";
+import { TruncatedText } from "../../components/foundation/TruncatedText";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { SkillGroupCreateDialog } from "../../components/groups/SkillGroupCreateDialog";
 import { SkillGroupExclusiveMountDialog } from "../../components/groups/SkillGroupExclusiveMountDialog";
@@ -965,13 +966,16 @@ function GroupColumnView({
                     compact
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold">
+                    <TruncatedText className="font-mono text-code-md font-semibold">
                       {detail.group.name}
-                    </span>
-                    <span className="mt-1 line-clamp-1 text-body-sm text-on-surface-variant">
+                    </TruncatedText>
+                    <TruncatedText
+                      className="mt-1 text-body-sm text-on-surface-variant"
+                      lines={1}
+                    >
                       {detail.group.description ||
                         summarizeRules(detail, sourceById, t)}
-                    </span>
+                    </TruncatedText>
                     <span className="mt-1 text-body-sm text-outline">
                       {t("group.memberCount", { count: memberCount })}
                     </span>
@@ -1007,9 +1011,9 @@ function GroupColumnView({
                 >
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold text-on-surface">
+                      <TruncatedText className="font-mono text-code-md font-semibold text-on-surface">
                         {asset.name}
-                      </span>
+                      </TruncatedText>
                       <span className={kindBadgeClass(asset.kind)}>
                         {assetKindLabel(asset.kind, t)}
                       </span>
@@ -1019,12 +1023,12 @@ function GroupColumnView({
                       />
                     </div>
                     <button
-                      className="mt-1 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
+                      aria-label={t("asset.revealPath")}
+                      className="mt-1 block max-w-full text-left font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
                       onClick={() => onAssetReveal(asset.stored_path)}
-                      title={t("asset.revealPath")}
                       type="button"
                     >
-                      {displayAssetPath(asset)}
+                      <TruncatedText>{displayAssetPath(asset)}</TruncatedText>
                     </button>
                   </div>
                   <QuickMountButtons
@@ -1142,12 +1146,15 @@ function GroupColumnHeader({ meta, title }: { meta: string; title: string }) {
   return (
     <header className="ui-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
-        <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">
+        <TruncatedText
+          as="h3"
+          className="text-body-md font-semibold text-on-surface"
+        >
           {title}
-        </h3>
-        <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">
+        </TruncatedText>
+        <TruncatedText as="p" className="mt-0.5 text-body-sm text-outline">
           {meta}
-        </p>
+        </TruncatedText>
       </div>
     </header>
   );
@@ -1165,14 +1172,15 @@ function GroupDetailRow({
   return (
     <div className="min-w-0">
       <div className="text-label-caps uppercase text-outline">{label}</div>
-      <div
+      <TruncatedText
+        as="div"
         className={clsx(
-          "mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-on-surface",
+          "mt-1 text-body-sm text-on-surface",
           mono && "font-mono",
         )}
       >
         {value}
-      </div>
+      </TruncatedText>
     </div>
   );
 }
@@ -1190,12 +1198,12 @@ function GroupRuleList({ label, rules }: { label: string; rules: string[] }) {
       ) : (
         <div className="mt-1 flex flex-wrap gap-1.5">
           {rules.map((rule) => (
-            <span
-              className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 font-mono text-body-sm text-on-surface-variant"
+            <TruncatedText
+              className="max-w-full rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 font-mono text-body-sm text-on-surface-variant"
               key={rule}
             >
               {rule}
-            </span>
+            </TruncatedText>
           ))}
         </div>
       )}
@@ -1344,9 +1352,12 @@ function GroupRow({
           />
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h3 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md text-on-surface">
+              <TruncatedText
+                as="h3"
+                className="font-mono text-code-md text-on-surface"
+              >
                 {detail.group.name}
-              </h3>
+              </TruncatedText>
               <span className="rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
                 {t("group.memberCount", { count: assets.length })}
               </span>
@@ -1356,9 +1367,13 @@ function GroupRow({
                 </span>
               )}
             </div>
-            <p className="mt-2 line-clamp-1 text-body-sm text-on-surface-variant">
+            <TruncatedText
+              as="p"
+              className="mt-2 text-body-sm text-on-surface-variant"
+              lines={1}
+            >
               {detail.group.description || ruleSummary}
-            </p>
+            </TruncatedText>
           </div>
         </div>
 

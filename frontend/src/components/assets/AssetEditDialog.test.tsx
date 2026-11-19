@@ -33,6 +33,51 @@ describe("AssetEditDialog", () => {
 
     expect(html).toContain("备份到目录");
   });
+
+  it("abbreviates home paths and omits native title on ReadonlyRow values", () => {
+    const html = renderToStaticMarkup(
+      <I18nProvider>
+        <AssetEditDialog
+          asset={{
+            ...skillAsset,
+            stored_path: "/Users/alice/skills/skill-a",
+          }}
+          busy={false}
+          groups={[]}
+          mountStatuses={[]}
+          onBackup={vi.fn()}
+          onClose={vi.fn()}
+          onSetGroupMembership={vi.fn()}
+          onSubmit={vi.fn()}
+          onToggleMount={vi.fn()}
+          profiles={[]}
+          source={{
+            id: "source-a",
+            name: "source-a",
+            kind: "local",
+            root_path: "/Users/alice/skills",
+            scanner_kind: "skill",
+            source_origin: "local_folder",
+            repo_root: null,
+            scan_root: "",
+            origin_app_kind: null,
+            include_globs: ["**/SKILL.md"],
+            exclude_globs: [],
+            default_kind: "skill",
+            enabled: true,
+            priority: 0,
+            last_scanned_at: null,
+            last_scan_status: null,
+          }}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).toContain("~/skills/skill-a");
+    expect(html).not.toContain('title="~/skills/skill-a"');
+    expect(html).not.toContain('title="source-a"');
+    expect(html).not.toContain("/Users/alice/skills/skill-a");
+  });
 });
 
 const skillAsset: Asset = {

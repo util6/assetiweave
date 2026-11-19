@@ -21,6 +21,7 @@ import type { ConversationContentCardColorSettings } from "../../store/settings/
 import { abbreviateHomePath } from "../../utils/path";
 import { conversationIdFragment } from "../../utils/conversationIds";
 import { Button } from "../ui/button";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { RenderSafeScrollSurface } from "../common/rendering/RenderSafeScrollSurface";
 import {
   type ConversationSearchAppChipMeta,
@@ -195,18 +196,21 @@ export function ConversationSearchHitPreview({
         </div>
 
         {/* Session title */}
-        <h3 className="mt-2.5 truncate text-body-base font-bold text-on-surface">
+        <TruncatedText
+          as="h3"
+          className="mt-2.5 text-body-base font-bold text-on-surface"
+        >
           {activeHit.session.title}
-        </h3>
+        </TruncatedText>
 
         {/* Secondary metadata */}
         <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-code-xs text-on-surface-variant">
           {activeHit.session.project_path ? (
-            <span className="flex min-w-0 items-center gap-1.5 truncate font-mono text-on-surface-muted">
+            <span className="flex min-w-0 items-center gap-1.5 font-mono text-on-surface-muted">
               <Folder className="size-3.5 shrink-0 text-outline" />
-              <span className="truncate">
+              <TruncatedText>
                 {abbreviateHomePath(activeHit.session.project_path)}
-              </span>
+              </TruncatedText>
             </span>
           ) : null}
           {activeHit.turn_id ? (
@@ -232,9 +236,13 @@ export function ConversationSearchHitPreview({
               <span className="text-caption font-semibold uppercase tracking-wider text-primary/80">
                 关联提问
               </span>
-              <p className="mt-0.5 text-body-sm font-medium text-on-surface line-clamp-2">
+              <TruncatedText
+                as="p"
+                className="mt-0.5 text-body-sm font-medium text-on-surface"
+                lines={2}
+              >
                 {activeHit.question_title}
-              </p>
+              </TruncatedText>
             </div>
           </div>
         ) : null}
@@ -298,9 +306,9 @@ export function ConversationSearchHitPreview({
 
         {/* Session Details Footer Card */}
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-theme-card-border/40 bg-theme-card/30 px-3.5 py-2.5 text-code-xs text-on-surface-muted">
-          <span className="truncate font-mono">
-            Session: {activeHit.session.id}
-          </span>
+          <TruncatedText className="font-mono">
+            {`Session: ${activeHit.session.id}`}
+          </TruncatedText>
           <button
             className="inline-flex items-center gap-1 text-primary hover:underline"
             onClick={() => handleCopySessionId(activeHit.session.id)}

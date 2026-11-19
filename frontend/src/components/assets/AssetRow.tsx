@@ -19,6 +19,7 @@ import { InlineMeta } from "./InlineMeta";
 import { MountStatePill } from "./MountStatePill";
 import { QuickMountButtons } from "./QuickMountButtons";
 import { SkillBackupBadge } from "./SkillBackupBadge";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export function AssetRow({
   asset,
@@ -68,9 +69,9 @@ export function AssetRow({
       <div className="grid min-h-[116px] grid-cols-[minmax(0,1fr)_auto] items-start gap-5 px-5 py-4 max-[980px]:grid-cols-1 max-[980px]:gap-3">
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[14px] font-semibold leading-5 text-on-surface">
+            <TruncatedText className="max-w-full font-mono text-[14px] font-semibold leading-5 text-on-surface">
               {asset.name}
-            </span>
+            </TruncatedText>
             <span
               className={clsx(
                 "rounded-full border px-2.5 py-1 text-label-caps uppercase shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.14)]",
@@ -86,15 +87,22 @@ export function AssetRow({
             </span>
           </div>
           <button
-            className="asset-description mt-2 block max-w-full font-mono text-body-sm text-on-surface-variant/80 transition-colors hover:text-primary"
+            aria-label={t("asset.revealPath")}
+            className="mt-2 block max-w-full text-left"
             onClick={(event) => {
               event.stopPropagation();
               onRevealPath(asset.stored_path);
             }}
-            title={t("asset.revealPath")}
             type="button"
           >
-            {displayAssetPath(asset)}
+            <TruncatedText
+              className={clsx(
+                "font-mono text-body-sm transition-colors group-hover:text-primary hover:text-primary",
+                expanded ? "text-primary" : "text-on-surface-variant/80",
+              )}
+            >
+              {displayAssetPath(asset)}
+            </TruncatedText>
           </button>
           <div className="mt-3 flex min-w-0 items-start gap-5 max-[980px]:flex-col max-[980px]:gap-2">
             <InlineMeta

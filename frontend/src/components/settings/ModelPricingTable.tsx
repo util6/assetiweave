@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Panel } from "@/components/foundation/Panel";
 import { Badge } from "@/components/foundation/Badge";
+import { TruncatedText } from "@/components/foundation/TruncatedText";
 import { PillTabs } from "@/components/common/PillTabs";
 import type { ModelPriceEntry } from "@/types/usage";
 import {
@@ -405,23 +406,20 @@ export const ModelPricingTable: React.FC<ModelPricingTableProps> = ({
                     {isLocalTab ? (
                       <>
                         {/* 原始模型名 */}
-                        <td
-                          className="py-2.5 px-3 align-middle font-mono text-code-sm text-on-surface font-medium max-w-[210px] truncate"
-                          title={rawName}
-                        >
-                          {rawName}
+                        <td className="py-2.5 px-3 align-middle font-mono text-code-sm text-on-surface font-medium max-w-[210px]">
+                          <TruncatedText>{rawName}</TruncatedText>
                         </td>
 
                         {/* 匹配模型 + 搜索选底座 + 恢复自动 */}
                         <td className="py-2.5 px-3 align-middle">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span
-                              className="font-mono text-code-sm text-on-surface truncate max-w-[180px]"
-                              title={entry.matchedModelId || "未匹配"}
+                            <TruncatedText
+                              className="font-mono text-code-sm text-on-surface max-w-[180px]"
+                              tooltip={entry.matchedModelId || "未匹配"}
                             >
                               {entry.matchedModelId ||
                                 (entry.isIgnored ? "已忽略" : "未匹配")}
-                            </span>
+                            </TruncatedText>
                             <Badge
                               tone={matchMeta.tone}
                               className="rounded-full px-2 py-0.5 text-[11px] font-medium normal-case"
@@ -462,11 +460,10 @@ export const ModelPricingTable: React.FC<ModelPricingTableProps> = ({
                         </td>
                       </>
                     ) : (
-                      <td
-                        className="py-2.5 px-3 align-middle font-mono text-code-sm text-on-surface font-medium max-w-xs truncate"
-                        title={entry.modelPatterns.join(", ")}
-                      >
-                        {entry.modelPatterns.join(", ")}
+                      <td className="py-2.5 px-3 align-middle font-mono text-code-sm text-on-surface font-medium max-w-xs">
+                        <TruncatedText>
+                          {entry.modelPatterns.join(", ")}
+                        </TruncatedText>
                       </td>
                     )}
 

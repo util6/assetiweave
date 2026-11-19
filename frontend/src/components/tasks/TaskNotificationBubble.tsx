@@ -16,6 +16,7 @@ import {
 } from "../../app/backgroundTasks/TaskCenterProvider";
 import { useOptionalConversationSearch } from "../../app/backgroundTasks/ConversationSearchProvider";
 import { useAppUiStore } from "../../store/ui/appUiStore";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export function TaskNotificationBubble() {
   const taskCenter = useOptionalTaskCenter();
@@ -59,8 +60,9 @@ function TaskNotificationBubbleContent({
         dismissNotification(currentNotification.id);
         if (currentNotification.task.kind === "conversationcontentsearch") {
           const recordKind =
-            conversationSearch?.getTaskRecordKind(currentNotification.task.id) ??
-            "session";
+            conversationSearch?.getTaskRecordKind(
+              currentNotification.task.id,
+            ) ?? "session";
           const targetPath =
             recordKind === "web"
               ? "/conversations/web-records"
@@ -153,7 +155,7 @@ function NotificationItem({
       }}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 overflow-hidden">
+        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
           {isFailed ? (
             <AlertCircle className="size-4 shrink-0 text-status-remove" />
           ) : isPartial ? (
@@ -161,9 +163,9 @@ function NotificationItem({
           ) : (
             <CheckCircle2 className="size-4 shrink-0 text-status-create" />
           )}
-          <span className="text-body-sm font-semibold truncate leading-tight">
+          <TruncatedText className="text-body-sm font-semibold leading-tight">
             {notification.title}
-          </span>
+          </TruncatedText>
         </div>
         <button
           aria-label="关闭通知"
@@ -179,14 +181,13 @@ function NotificationItem({
       </div>
 
       <div className="flex flex-col gap-1 pl-6">
-        <p
-          className={clsx(
-            "text-body-xs text-on-surface-variant break-all leading-relaxed whitespace-pre-wrap font-mono",
-            !expanded && "line-clamp-2",
-          )}
+        <TruncatedText
+          as="p"
+          className="text-body-xs text-on-surface-variant break-all leading-relaxed whitespace-pre-wrap font-mono"
+          lines={expanded ? false : 2}
         >
           {notification.message}
-        </p>
+        </TruncatedText>
 
         {hasLongMessage ? (
           <div className="flex items-center justify-between pt-1">

@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { Building2, Loader2 } from "lucide-react";
 import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
+import { TruncatedText } from "../../components/foundation/TruncatedText";
 import { Button } from "../../components/ui/button";
 import {
   Select,
@@ -58,12 +59,12 @@ export function TenantSwitcher({
         ) : null}
       </span>
       {expanded ? (
-        <span
-          className="min-w-0 truncate text-left text-body-sm font-medium"
+        <TruncatedText
+          className="text-left text-body-sm font-medium"
           data-side-rail-label=""
         >
           {activeTenantName}
-        </span>
+        </TruncatedText>
       ) : null}
     </button>
   );

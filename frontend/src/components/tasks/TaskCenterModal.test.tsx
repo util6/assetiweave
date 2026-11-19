@@ -1037,9 +1037,31 @@ describe("TaskCenterModal", () => {
       "解析会话 /very/long/path/session-latest.jsonl 的内容",
     );
     expect(previewDetail.className).toContain("truncate");
-    expect(preview.getAttribute("title")).toContain(
-      "解析会话 /very/long/path/session-latest.jsonl 的内容",
+    expect(preview.getAttribute("title")).toBeNull();
+    expect(previewDetail.getAttribute("title")).toBeNull();
+    Object.defineProperty(previewDetail, "clientWidth", {
+      configurable: true,
+      get: () => 120,
+    });
+    Object.defineProperty(previewDetail, "scrollWidth", {
+      configurable: true,
+      get: () => 320,
+    });
+    Object.defineProperty(previewDetail, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(previewDetail, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(previewDetail);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe(
+        "解析会话 /very/long/path/session-latest.jsonl 的内容",
+      ),
     );
+    fireEvent.mouseLeave(previewDetail);
 
     // 3. 当 running 阶段更新更多步骤或状态变为 failed 时，不会自动强行展开
     mockTasks = [
@@ -1276,13 +1298,34 @@ describe("TaskCenterModal", () => {
       </I18nProvider>,
     );
 
-    // 1. progress.note 单行截断并带完整 title 提示
+    // 1. progress.note 单行截断并带 TruncatedText 悬停提示
     const noteEl = await screen.findByTestId("stage-note-ingest-stage");
     expect(noteEl.className).toContain("truncate");
     expect(noteEl.className).toContain("h-5");
-    expect(noteEl.getAttribute("title")).toBe(
-      "正在扫描 /Users/demo/workspace/very-long-directory/sub-module/file.jsonl",
+    expect(noteEl.getAttribute("title")).toBeNull();
+    Object.defineProperty(noteEl, "clientWidth", {
+      configurable: true,
+      get: () => 120,
+    });
+    Object.defineProperty(noteEl, "scrollWidth", {
+      configurable: true,
+      get: () => 360,
+    });
+    Object.defineProperty(noteEl, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(noteEl, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(noteEl);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe(
+        "正在扫描 /Users/demo/workspace/very-long-directory/sub-module/file.jsonl",
+      ),
     );
+    fireEvent.mouseLeave(noteEl);
 
     // 2. 耗时数字使用 tabular-nums
     const durationEl = screen.getByText("耗时: 2.4s");
@@ -1359,12 +1402,33 @@ describe("TaskCenterModal", () => {
     );
     expect(withPathSlot.className).toContain("h-5");
     const pathText = within(withPathSlot).getByText(
-      "/Users/demo/very/long/path/to/session-01.jsonl",
+      "~/very/long/path/to/session-01.jsonl",
     );
     expect(pathText.className).toContain("truncate");
-    expect(pathText.getAttribute("title")).toBe(
-      "/Users/demo/very/long/path/to/session-01.jsonl",
+    expect(pathText.getAttribute("title")).toBeNull();
+    Object.defineProperty(pathText, "clientWidth", {
+      configurable: true,
+      get: () => 100,
+    });
+    Object.defineProperty(pathText, "scrollWidth", {
+      configurable: true,
+      get: () => 280,
+    });
+    Object.defineProperty(pathText, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(pathText, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(pathText);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe(
+        "~/very/long/path/to/session-01.jsonl",
+      ),
     );
+    fireEvent.mouseLeave(pathText);
 
     const noPathSlot = screen.getByTestId("stage-activity-path-slot-w-no-path");
     expect(noPathSlot.className).toContain("h-5");
@@ -1648,6 +1712,108 @@ describe("TaskCenterModal", () => {
     expect(opEl.className).toContain("max-w-[40%]");
     expect(opEl.className).toContain("truncate");
     expect(opEl.className).toContain("shrink-0");
-    expect(opEl.getAttribute("title")).toBe(longOp);
+    expect(opEl.getAttribute("title")).toBeNull();
+    Object.defineProperty(opEl, "clientWidth", {
+      configurable: true,
+      get: () => 80,
+    });
+    Object.defineProperty(opEl, "scrollWidth", {
+      configurable: true,
+      get: () => 300,
+    });
+    Object.defineProperty(opEl, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(opEl, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(opEl);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe(longOp),
+    );
+    fireEvent.mouseLeave(opEl);
+  });
+
+  it("removes native title from task row button while preserving note in aria-label, and shows abbreviated fail.path tooltip", async () => {
+    mockSelectedTaskId = "task-path-tooltip";
+    mockTasks = [
+      {
+        id: "task-path-tooltip",
+        kind: "ConversationSync",
+        title: "路径缩写提示测试",
+        state: "failed",
+        outcome: "failure",
+        progress: {
+          current: 1,
+          total: 2,
+          note: "任务行进度备注",
+        },
+        stages: [
+          {
+            id: "scan-stage",
+            name: "扫描阶段",
+            status: "failed",
+            steps: [],
+            metrics: [],
+            failures: [
+              {
+                code: "read_error",
+                message: "读取失败",
+                stage: "scan-stage",
+                path: "/Users/demo/very/long/failed/file.jsonl",
+                retryable: true,
+                timestamp: "2026-09-10T03:00:00Z",
+              },
+            ],
+            currentActivities: [],
+            skipped: [],
+          },
+        ],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: false, retryable: true, clearable: true },
+        revision: 1,
+      },
+    ];
+
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    const taskList = await screen.findByTestId("task-list");
+    const rowButton = within(taskList).getByRole("button", { pressed: true });
+    expect(rowButton.getAttribute("title")).toBeNull();
+    expect(rowButton.getAttribute("aria-label")).toContain("路径缩写提示测试");
+    expect(rowButton.getAttribute("aria-label")).toContain("任务行进度备注");
+
+    const failPathEl = screen.getByText("~/very/long/failed/file.jsonl");
+    expect(failPathEl.getAttribute("title")).toBeNull();
+    Object.defineProperty(failPathEl, "clientWidth", {
+      configurable: true,
+      get: () => 80,
+    });
+    Object.defineProperty(failPathEl, "scrollWidth", {
+      configurable: true,
+      get: () => 280,
+    });
+    Object.defineProperty(failPathEl, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(failPathEl, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    fireEvent.mouseEnter(failPathEl);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip").textContent).toBe(
+        "~/very/long/failed/file.jsonl",
+      ),
+    );
+    fireEvent.mouseLeave(failPathEl);
   });
 });

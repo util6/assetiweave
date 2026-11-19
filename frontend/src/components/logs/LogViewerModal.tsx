@@ -24,6 +24,7 @@ import {
 } from "../../utils/logViewer";
 import { abbreviateHomePath } from "../../utils/path";
 import { DialogFrame } from "../foundation/DialogFrame";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 import { SimpleSelect } from "../ui/select";
 import "./LogViewerModal.css";
@@ -352,17 +353,19 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
           ) : (
             <>
               <FileText size={14} />
-              <span className="log-viewer-path-text">-</span>
+              <TruncatedText className="max-w-[280px] max-[900px]:max-w-[180px]">
+                -
+              </TruncatedText>
             </>
           )}
         </div>
         <div className="log-viewer-meta-item">
           <FolderOpen size={14} />
-          <span className="log-viewer-path-text">
+          <TruncatedText className="max-w-[280px] max-[900px]:max-w-[180px]">
             {snapshot?.log_dir_path
               ? abbreviateHomePath(snapshot.log_dir_path)
               : "-"}
-          </span>
+          </TruncatedText>
         </div>
         <div className="log-viewer-meta-item">
           <RefreshCw size={14} />

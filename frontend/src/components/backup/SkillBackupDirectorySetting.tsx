@@ -1,6 +1,7 @@
 import { Archive, FolderOpen } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
 import { abbreviateHomePath } from "../../utils/path";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 
 export function SkillBackupDirectorySetting({
@@ -25,12 +26,12 @@ export function SkillBackupDirectorySetting({
           <div className="text-body-md font-semibold text-on-surface">
             {t("backup.setting.directory")}
           </div>
-          <div
-            className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant"
-            title={displayPath}
+          <TruncatedText
+            as="div"
+            className="mt-1 font-mono text-body-sm text-on-surface-variant"
           >
             {displayPath}
-          </div>
+          </TruncatedText>
         </div>
       </div>
       <Button

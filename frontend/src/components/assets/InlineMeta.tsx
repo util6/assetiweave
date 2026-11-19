@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import { openExternalLink } from "../../utils/externalLinks";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export function InlineMeta({
   href,
@@ -13,7 +14,7 @@ export function InlineMeta({
   mono?: boolean;
 }) {
   const valueClassName = clsx(
-    "block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm font-semibold text-on-surface/90",
+    "text-body-sm font-semibold text-on-surface/90",
     mono && "font-mono text-primary",
     href &&
       "hover:text-primary-strong hover:underline hover:decoration-primary/55 hover:underline-offset-2",
@@ -30,7 +31,8 @@ export function InlineMeta({
         {label}
       </span>
       {href ? (
-        <a
+        <TruncatedText
+          as="a"
           className={valueClassName}
           href={href}
           onClick={(event) => {
@@ -40,14 +42,11 @@ export function InlineMeta({
           }}
           rel="noreferrer"
           target="_blank"
-          title={value}
         >
           {value}
-        </a>
+        </TruncatedText>
       ) : (
-        <span className={valueClassName} title={value}>
-          {value}
-        </span>
+        <TruncatedText className={valueClassName}>{value}</TruncatedText>
       )}
     </div>
   );

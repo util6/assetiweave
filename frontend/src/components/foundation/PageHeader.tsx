@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { TruncatedText } from "./TruncatedText";
 
 export function PageHeader({
   actions,
@@ -31,23 +32,29 @@ export function PageHeader({
         {eyebrow ? (
           <div className="flex min-w-0 items-center gap-2 text-status-update">
             {icon ? <span className="shrink-0">{icon}</span> : null}
-            <span className="truncate whitespace-nowrap text-label-caps uppercase">
+            <TruncatedText className="whitespace-nowrap text-label-caps uppercase">
               {eyebrow}
-            </span>
+            </TruncatedText>
           </div>
         ) : null}
         <div className="mt-1 flex min-w-0 items-center gap-3 overflow-hidden">
-          <h1 className="min-w-0 truncate whitespace-nowrap text-h2 text-on-surface">
+          <TruncatedText
+            as="h1"
+            className="whitespace-nowrap text-h2 text-on-surface"
+          >
             {title}
-          </h1>
+          </TruncatedText>
           {titleAction ? (
             <div className="mt-1 shrink-0">{titleAction}</div>
           ) : null}
         </div>
         {description ? (
-          <p className="mt-2 max-w-3xl truncate whitespace-nowrap text-body-sm text-on-surface-variant">
+          <TruncatedText
+            as="p"
+            className="mt-2 max-w-3xl whitespace-nowrap text-body-sm text-on-surface-variant"
+          >
             {description}
-          </p>
+          </TruncatedText>
         ) : null}
       </div>
       {actions ? (

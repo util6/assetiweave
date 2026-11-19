@@ -19,6 +19,7 @@ import type { SkillAcquireResult, SkillSearchCandidate } from "../../types";
 import { openExternalLink } from "../../utils/externalLinks";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { EmptyState } from "../foundation/EmptyState";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
@@ -360,13 +361,20 @@ function CandidateRow({
     <article className="grid gap-2 rounded-xl border border-theme-control-border bg-theme-control/75 p-3">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm font-semibold text-on-surface">
+          <TruncatedText
+            as="h3"
+            className="font-mono text-body-sm font-semibold text-on-surface"
+          >
             {candidate.name}
-          </h3>
+          </TruncatedText>
           {candidate.description && (
-            <p className="mt-1 line-clamp-2 text-body-sm text-on-surface-variant">
+            <TruncatedText
+              as="p"
+              className="mt-1 text-body-sm text-on-surface-variant"
+              lines={2}
+            >
               {candidate.description}
-            </p>
+            </TruncatedText>
           )}
           {candidate.match_reason && (
             <p className="mt-1 rounded-md border border-theme-card-border bg-theme-card px-2 py-1 text-body-sm text-on-surface-variant">

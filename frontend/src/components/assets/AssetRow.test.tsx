@@ -1,5 +1,14 @@
+/* @vitest-environment jsdom */
+
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type { Asset, Source } from "../../types";
 import { AssetRow } from "./AssetRow";
@@ -11,6 +20,12 @@ describe("AssetRow", () => {
       setItem: vi.fn(),
     });
     vi.stubGlobal("navigator", { language: "zh-CN" });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("shows the precise repository remote instead of the source id", () => {
@@ -55,6 +70,59 @@ describe("AssetRow", () => {
     expect(html).toContain(
       'href="https://github.com/anthropics/skills/tree/main/packages/claude-skills"',
     );
+  });
+
+  it("exposes Reveal in Finder via aria-label without native title and shows TruncatedText tooltip only when path overflows", () => {
+    vi.useFakeTimers();
+    render(
+      <I18nProvider>
+        <AssetRow
+          appShortcuts={[]}
+          asset={asset}
+          expanded={false}
+          mountStatuses={[]}
+          onRevealPath={vi.fn()}
+          onToggleExpanded={vi.fn()}
+          onToggleMount={vi.fn()}
+          profiles={[]}
+          source={source}
+        />
+      </I18nProvider>,
+    );
+
+    const revealButton = screen.getByRole("button", {
+      name: "在文件管理器中显示",
+    });
+    expect(revealButton.hasAttribute("title")).toBe(false);
+    expect(revealButton.className).not.toContain("asset-description");
+
+    const pathText = screen.getByText("~/fork-code/skills-fork/claude-skills");
+    expect(pathText.className).toContain("truncate");
+
+    Object.defineProperty(pathText, "clientWidth", {
+      configurable: true,
+      get: () => 120,
+    });
+    Object.defineProperty(pathText, "scrollWidth", {
+      configurable: true,
+      get: () => 280,
+    });
+    Object.defineProperty(pathText, "clientHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+    Object.defineProperty(pathText, "scrollHeight", {
+      configurable: true,
+      get: () => 20,
+    });
+
+    fireEvent.mouseEnter(pathText);
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.textContent).toBe("~/fork-code/skills-fork/claude-skills");
   });
 });
 

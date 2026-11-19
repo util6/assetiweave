@@ -67,6 +67,7 @@ import { SimpleSelect } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { FullscreenDialogFrame } from "@/components/foundation/FullscreenDialogFrame";
 import { DialogFrame } from "@/components/foundation/DialogFrame";
+import { TruncatedText } from "@/components/foundation/TruncatedText";
 import {
   AppShortcutIcon,
   AppShortcutIconForShortcut,
@@ -974,12 +975,13 @@ export function GlobalSettingsDialog({
                 <p className="text-label-caps uppercase text-outline">
                   AssetIWeave
                 </p>
-                <h2
-                  className="truncate text-h2 text-on-surface"
+                <TruncatedText
+                  as="h2"
+                  className="text-h2 text-on-surface"
                   id="global-settings-title"
                 >
                   {t("settings.title")}
-                </h2>
+                </TruncatedText>
               </div>
             </div>
           </div>
@@ -1055,9 +1057,9 @@ export function GlobalSettingsDialog({
               <p className="text-label-caps uppercase text-outline">
                 {activeScope}
               </p>
-              <h3 className="truncate text-h2 text-on-surface">
+              <TruncatedText as="h3" className="text-h2 text-on-surface">
                 {activePanelConfig.label}
-              </h3>
+              </TruncatedText>
             </div>
             <Button
               className="text-on-surface-variant hover:text-on-surface"
@@ -1281,10 +1283,10 @@ export function GlobalSettingsDialog({
                   label={t("settings.memory.generationSkill")}
                 >
                   <div className="flex w-[min(38rem,52vw)] min-w-0 items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 text-body-sm text-on-surface-variant">
+                    <TruncatedText className="min-w-0 flex-1 rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 text-body-sm text-on-surface-variant">
                       {selectedMemorySkill?.name ??
                         t("settings.memory.builtinGenerationSkill")}
-                    </span>
+                    </TruncatedText>
                     <Button
                       onClick={duplicateMemorySkill}
                       type="button"
@@ -1340,12 +1342,12 @@ export function GlobalSettingsDialog({
                       {t("settings.memory.manualGenerateDescription")}
                     </p>
                     <div className="flex items-center justify-between gap-3">
-                      <span
+                      <TruncatedText
                         aria-live="polite"
-                        className="min-w-0 truncate text-body-sm text-outline"
+                        className="min-w-0 text-body-sm text-outline"
                       >
                         {memoryTaskStatusText}
-                      </span>
+                      </TruncatedText>
                       <Button
                         className={
                           isMemoryGenerating
@@ -1852,12 +1854,12 @@ export function GlobalSettingsDialog({
                       {t("settings.conversation.fullSyncDescription")}
                     </p>
                     <div className="flex items-center justify-between gap-3">
-                      <span
+                      <TruncatedText
                         aria-live="polite"
-                        className="min-w-0 truncate text-body-sm text-outline"
+                        className="min-w-0 text-body-sm text-outline"
                       >
                         {fullConversationSyncStatus}
-                      </span>
+                      </TruncatedText>
                       <Button
                         className={
                           fullSyncAnimating
@@ -2575,12 +2577,18 @@ function SortableShortcutEditRow({
           <AppShortcutIconForShortcut className="size-5" shortcut={shortcut} />
         </span>
         <div className="min-w-0">
-          <p className="truncate text-body-md font-bold text-on-surface">
+          <TruncatedText
+            as="p"
+            className="text-body-md font-bold text-on-surface"
+          >
             {shortcut.profileName}
-          </p>
-          <p className="truncate font-mono text-code-md uppercase text-outline">
+          </TruncatedText>
+          <TruncatedText
+            as="p"
+            className="font-mono text-code-md uppercase text-outline"
+          >
             {shortcut.appKind}
-          </p>
+          </TruncatedText>
         </div>
       </div>
 
@@ -2809,9 +2817,9 @@ function SettingRow({
         <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-theme-control-border bg-theme-control text-primary">
           {icon}
         </span>
-        <span className="min-w-0 truncate text-body-md font-semibold text-on-surface">
+        <TruncatedText className="min-w-0 text-body-md font-semibold text-on-surface">
           {label}
-        </span>
+        </TruncatedText>
       </div>
       <div className="shrink-0">{children}</div>
     </div>
@@ -2896,12 +2904,17 @@ function SettingsPathRow({
   openLabel: string;
   value: string;
 }) {
+  const displayValue = abbreviateHomePath(value);
+
   return (
     <SettingRow icon={icon} label={label}>
       <div className="flex w-[min(38rem,52vw)] min-w-0 items-center gap-2">
-        <code className="min-w-0 flex-1 truncate rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-code-md text-on-surface-variant">
-          {value}
-        </code>
+        <TruncatedText
+          as="code"
+          className="min-w-0 flex-1 rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-code-md text-on-surface-variant"
+        >
+          {displayValue}
+        </TruncatedText>
         <Button onClick={onOpen} type="button" variant="outline">
           <FolderOpen size={15} />
           <span>{openLabel}</span>
@@ -2935,15 +2948,14 @@ function DataBackupDirectoryRow({
       label={t("settings.storage.customDataBackupDir")}
     >
       <div className="flex w-[min(38rem,52vw)] min-w-0 items-center gap-2">
-        <span
+        <TruncatedText
           className={clsx(
-            "min-w-0 flex-1 truncate rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-code-md text-on-surface-variant",
+            "min-w-0 flex-1 rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-code-md text-on-surface-variant",
             !hasCustomDirectory && "font-sans",
           )}
-          title={displayPath}
         >
           {displayPath}
-        </span>
+        </TruncatedText>
         {hasCustomDirectory && (
           <Button onClick={onOpen} type="button" variant="outline">
             <FolderOpen size={15} />
@@ -3017,26 +3029,26 @@ function CliToolsInstallRow({
               )}
               aria-hidden="true"
             />
-            <span className="truncate text-body-sm font-semibold text-on-surface">
+            <TruncatedText className="text-body-sm font-semibold text-on-surface">
               {statusText}
-            </span>
+            </TruncatedText>
           </div>
-          <p
+          <TruncatedText
+            as="p"
             className={clsx(
-              "mt-1 truncate text-body-sm",
+              "mt-1 text-body-sm",
               error ? "text-status-remove" : "text-on-surface-variant",
             )}
-            title={detail}
           >
             {detail}
-          </p>
+          </TruncatedText>
           {status?.install_dir && (
-            <code
-              className="mt-1 block truncate text-code-md text-on-surface-variant"
-              title={status.install_dir}
+            <TruncatedText
+              as="code"
+              className="mt-1 text-code-md text-on-surface-variant"
             >
-              {status.install_dir}
-            </code>
+              {abbreviateHomePath(status.install_dir)}
+            </TruncatedText>
           )}
         </div>
         <Button
@@ -3418,9 +3430,9 @@ function AdapterRuntimeStatusRow({
                 )}
                 aria-hidden="true"
               />
-              <span className="truncate text-body-sm font-semibold text-on-surface">
+              <TruncatedText className="text-body-sm font-semibold text-on-surface">
                 {statusText}
-              </span>
+              </TruncatedText>
             </div>
             <Button
               disabled={loading}
@@ -3451,33 +3463,33 @@ function AdapterRuntimeStatusRow({
                     {status.kind}
                   </span>
                   <div className="min-w-0">
-                    <p
-                      className="truncate font-mono text-code-md text-on-surface-variant"
-                      title={status.program}
+                    <TruncatedText
+                      as="p"
+                      className="font-mono text-code-md text-on-surface-variant"
                     >
-                      {status.program}
-                    </p>
+                      {abbreviateHomePath(status.program)}
+                    </TruncatedText>
                     {status.required_version && (
-                      <p
-                        className="mt-0.5 truncate text-body-sm text-on-surface-variant"
-                        title={status.required_version}
+                      <TruncatedText
+                        as="p"
+                        className="mt-0.5 text-body-sm text-on-surface-variant"
                       >
                         {t("settings.conversation.runtimeRequires")}{" "}
                         {status.required_version}
-                      </p>
+                      </TruncatedText>
                     )}
                     {(status.version || status.error) && (
-                      <p
+                      <TruncatedText
+                        as="p"
                         className={clsx(
-                          "mt-0.5 truncate text-body-sm",
+                          "mt-0.5 text-body-sm",
                           status.available
                             ? "text-on-surface-variant"
                             : "text-status-remove",
                         )}
-                        title={status.version ?? status.error ?? undefined}
                       >
                         {status.version ?? status.error}
-                      </p>
+                      </TruncatedText>
                     )}
                     {!status.available && status.hint && (
                       <p
@@ -3562,9 +3574,9 @@ function ThemePaletteControl({
                 <span key={color} style={{ backgroundColor: color }} />
               ))}
             </span>
-            <span className="min-w-0 truncate text-body-sm font-semibold">
+            <TruncatedText className="min-w-0 text-body-sm font-semibold">
               {t(option.labelKey)}
-            </span>
+            </TruncatedText>
           </button>
         );
       })}

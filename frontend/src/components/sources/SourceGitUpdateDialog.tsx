@@ -10,8 +10,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useCatalogTasks } from "../../app/backgroundTasks/CatalogTaskProvider";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { GitSourcePullItemResult, Source } from "../../types";
+import { abbreviateHomePath } from "../../utils/path";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { EmptyState } from "../foundation/EmptyState";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
@@ -366,9 +368,9 @@ export function SourceGitUpdateDialog({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate font-mono text-body-sm font-medium text-on-surface">
+                        <TruncatedText className="font-mono text-body-sm font-medium text-on-surface">
                           {group.name}
-                        </span>
+                        </TruncatedText>
                         {group.sources.length > 1 && (
                           <span className="shrink-0 rounded-full border border-theme-control-border bg-theme-control px-2 py-0.5 text-label-xs text-on-surface-variant">
                             {t("source.gitPull.multiSourceBadge", {
@@ -410,20 +412,25 @@ export function SourceGitUpdateDialog({
                           </span>
                         )}
                       </div>
-                      <div className="truncate font-mono text-label-xs text-outline">
-                        {group.repoRoot}
-                      </div>
+                      <TruncatedText
+                        as="div"
+                        className="font-mono text-label-xs text-outline"
+                      >
+                        {abbreviateHomePath(group.repoRoot)}
+                      </TruncatedText>
                       {/* Pull result details message if any */}
                       {groupResult?.message && (
-                        <div
-                          className={`mt-1 line-clamp-2 font-mono text-label-xs ${
+                        <TruncatedText
+                          as="div"
+                          className={`mt-1 font-mono text-label-xs ${
                             groupResult.success
                               ? "text-on-surface-variant"
                               : "text-status-remove"
                           }`}
+                          lines={2}
                         >
                           {groupResult.message}
-                        </div>
+                        </TruncatedText>
                       )}
                     </div>
                   </label>

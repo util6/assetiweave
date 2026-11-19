@@ -1,6 +1,7 @@
 import { PlugZap } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { AppShortcut } from "../../types";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
 import { AgentCatalogIcon } from "./AgentCatalogIcon";
 import { agentCatalog } from "./agentCatalog";
@@ -20,6 +21,9 @@ export function AgentCapabilitySetting({
 }) {
   const { t } = useI18n();
   const selectedAgent = agentCatalog.find((agent) => agent.id === agentId);
+  const buttonLabel = `${selectedAgent?.name ?? agentId}${
+    model ? ` · ${model}` : ` · ${t("settings.agents.modelDefault")}`
+  }`;
 
   return (
     <div className="flex w-[min(38rem,52vw)] items-center justify-between gap-4">
@@ -31,7 +35,6 @@ export function AgentCapabilitySetting({
       <Button
         className="max-w-[18rem] shrink-0"
         onClick={onOpen}
-        title={selectedAgent?.name ?? agentId}
         type="button"
         variant="outline"
       >
@@ -45,10 +48,9 @@ export function AgentCapabilitySetting({
         ) : (
           <PlugZap size={15} />
         )}
-        <span className="truncate">
-          {selectedAgent?.name ?? agentId}
-          {model ? ` · ${model}` : ` · ${t("settings.agents.modelDefault")}`}
-        </span>
+        <TruncatedText inline tooltip={buttonLabel}>
+          {buttonLabel}
+        </TruncatedText>
       </Button>
     </div>
   );

@@ -16,6 +16,7 @@ import type {
 } from "../../../types/memory";
 import { SessionShortIdChip } from "../../conversations/SessionShortIdChip";
 import { Badge } from "../../foundation/Badge";
+import { TruncatedText } from "../../foundation/TruncatedText";
 import { Button } from "../../ui/button";
 import {
   buildNodeNavigationTarget,
@@ -31,7 +32,10 @@ export interface MemoryNodeCardProps {
   highlightUnexplored?: boolean;
   node: RecentTreeNodeView;
   onNavigateSession?: (target: MemoryNavigationTarget) => void;
-  onStatusChange?: (node: RecentTreeNodeView, nextStatus: MemoryNodeStatus) => void;
+  onStatusChange?: (
+    node: RecentTreeNodeView,
+    nextStatus: MemoryNodeStatus,
+  ) => void;
   showParentContext?: boolean;
   t: Translator;
   updating?: boolean;
@@ -85,9 +89,7 @@ export function MemoryNodeCard({
             {t(`memory.recent.status.${node.status}`)}
           </Badge>
 
-          {contextLabel && (
-            <Badge tone="neutral">{contextLabel}</Badge>
-          )}
+          {contextLabel && <Badge tone="neutral">{contextLabel}</Badge>}
 
           {turnLabel && (
             <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border/75 bg-theme-control/75 px-2.5 py-0.5 font-mono text-caption text-on-surface-variant">
@@ -120,9 +122,9 @@ export function MemoryNodeCard({
       {showParentContext && node.parentSummary && (
         <div className="flex items-start gap-1.5 rounded-xl border border-theme-card-border/50 bg-theme-control/45 px-2.5 py-1.5 text-caption text-on-surface-muted">
           <CornerDownRight className="mt-0.5 shrink-0 text-outline" size={12} />
-          <span className="line-clamp-2">
+          <TruncatedText lines={2}>
             {t("memory.recent.parentContext", { summary: node.parentSummary })}
-          </span>
+          </TruncatedText>
         </div>
       )}
 
@@ -130,16 +132,19 @@ export function MemoryNodeCard({
         {node.summary}
       </p>
 
-      {(node.sessionTitle || isUnavailable || onStatusChange || onNavigateSession) && (
+      {(node.sessionTitle ||
+        isUnavailable ||
+        onStatusChange ||
+        onNavigateSession) && (
         <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
           <div className="min-w-0 flex-1">
             {node.sessionTitle && (
-              <p
-                className="truncate text-caption text-on-surface-muted"
-                title={node.sessionTitle}
+              <TruncatedText
+                as="p"
+                className="text-caption text-on-surface-muted"
               >
                 {node.sessionTitle}
-              </p>
+              </TruncatedText>
             )}
             {isUnavailable && (
               <p className="text-caption text-outline">

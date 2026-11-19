@@ -20,7 +20,9 @@ import type {
 } from "../../types/memory";
 import { Badge } from "../foundation/Badge";
 import { Panel } from "../foundation/Panel";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { Button } from "../ui/button";
+import { abbreviateHomePath } from "../../utils/path";
 import { MemoryNodeCard } from "./recent/MemoryNodeCard";
 import {
   buildTreeHierarchy,
@@ -33,7 +35,11 @@ import {
 } from "./recent/recentModel";
 
 export { buildTreeHierarchy, parseNodeAnchor };
-export type { NodeAnchor, TreeHierarchyNode, TreeHierarchyNode as HierarchyNode };
+export type {
+  NodeAnchor,
+  TreeHierarchyNode,
+  TreeHierarchyNode as HierarchyNode,
+};
 
 export interface RecentTopicTreeProps {
   expandedHistorySlugs?: Set<string>;
@@ -172,9 +178,12 @@ function ProjectTopicTreePanel({
           </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="truncate text-title-sm font-semibold text-on-surface">
+              <TruncatedText
+                as="h3"
+                className="text-title-sm font-semibold text-on-surface"
+              >
                 {effectiveProject.projectTitle}
-              </h3>
+              </TruncatedText>
               <Badge tone="neutral">
                 {effectiveTopics.length} {t("memory.recent.topics")}
               </Badge>
@@ -197,12 +206,12 @@ function ProjectTopicTreePanel({
               )}
             </div>
             {effectiveProject.projectPath && (
-              <p
-                className="mt-0.5 truncate font-mono text-caption text-outline"
-                title={effectiveProject.projectPath}
+              <TruncatedText
+                as="p"
+                className="mt-0.5 font-mono text-caption text-outline"
               >
-                {effectiveProject.projectPath}
-              </p>
+                {abbreviateHomePath(effectiveProject.projectPath)}
+              </TruncatedText>
             )}
           </div>
         </div>
@@ -277,7 +286,10 @@ function TopicBranchSection({
   updatingNodeId,
 }: {
   onNavigateSession?: (target: MemoryNavigationTarget) => void;
-  onStatusChange?: (node: RecentTreeNodeView, nextStatus: MemoryNodeStatus) => void;
+  onStatusChange?: (
+    node: RecentTreeNodeView,
+    nextStatus: MemoryNodeStatus,
+  ) => void;
   t: Translator;
   topic: RecentTopicView;
   updatingNodeId?: string | null;
@@ -308,9 +320,12 @@ function TopicBranchSection({
             {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
           </span>
           <Layers className="shrink-0 text-primary" size={14} />
-          <h4 className="truncate text-body-sm font-semibold text-on-surface">
+          <TruncatedText
+            as="h4"
+            className="text-body-sm font-semibold text-on-surface"
+          >
             {topic.topic}
-          </h4>
+          </TruncatedText>
         </button>
 
         <div className="flex items-center gap-1.5">
@@ -357,7 +372,10 @@ function TreeBranchNode({
 }: {
   branch: TreeHierarchyNode;
   onNavigateSession?: (target: MemoryNavigationTarget) => void;
-  onStatusChange?: (node: RecentTreeNodeView, nextStatus: MemoryNodeStatus) => void;
+  onStatusChange?: (
+    node: RecentTreeNodeView,
+    nextStatus: MemoryNodeStatus,
+  ) => void;
   t: Translator;
   updatingNodeId?: string | null;
   visibleNodeIds: Set<string>;

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/foundation/Badge";
 import { DialogFrame } from "@/components/foundation/DialogFrame";
+import { TruncatedText } from "@/components/foundation/TruncatedText";
 import { PillTabs } from "@/components/common/PillTabs";
 import type { ModelPriceEntry } from "@/types/usage";
 
@@ -250,13 +251,13 @@ export const ModelRebindPickerDialog: React.FC<
                       {candidate.provider}
                     </Badge>
                     <div className="flex flex-col min-w-0">
-                      <span className="font-mono text-body-sm font-medium text-on-surface truncate">
+                      <TruncatedText className="font-mono text-body-sm font-medium text-on-surface">
                         {isLocalSource ? candidateRawName : candidateId}
-                      </span>
+                      </TruncatedText>
                       {showBaseSubline && (
-                        <span className="font-mono text-[11px] text-on-surface-variant truncate">
-                          底座: {candidate.matchedModelId}
-                        </span>
+                        <TruncatedText className="font-mono text-[11px] text-on-surface-variant">
+                          {`底座: ${candidate.matchedModelId}`}
+                        </TruncatedText>
                       )}
                     </div>
                     {isCurrent && (

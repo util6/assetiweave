@@ -13,6 +13,7 @@ import type {
   AgentSessionStepGroupStatus,
 } from "../../types/agentSession";
 import { AgentSessionItem } from "./AgentSessionItem";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export interface AgentSessionStepGroupProps {
   groupId: string;
@@ -51,9 +52,7 @@ export function AgentSessionStepGroup({
         type="button"
       >
         <span className="shrink-0 text-primary">{icon}</span>
-        <span className="truncate">
-          {title} · {logicalCount}
-        </span>
+        <TruncatedText>{`${title} · ${logicalCount}`}</TruncatedText>
         <span className="text-label-caps uppercase text-on-surface-variant/80">
           {status}
         </span>

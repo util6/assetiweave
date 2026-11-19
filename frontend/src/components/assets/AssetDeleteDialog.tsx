@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ConfirmDialog } from "../common/ConfirmDialog";
+import { TruncatedText } from "../foundation/TruncatedText";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { Asset, AssetMountStatus } from "../../types";
 import { displayAssetPath } from "../../utils/path";
@@ -49,9 +50,12 @@ export function AssetDeleteDialog({
           <div className="text-label-caps uppercase text-outline">
             {t("asset.deleteDialog.path")}
           </div>
-          <div className="mt-1 truncate font-mono text-body-sm text-on-surface">
+          <TruncatedText
+            as="div"
+            className="mt-1 font-mono text-body-sm text-on-surface"
+          >
             {displayAssetPath(asset)}
-          </div>
+          </TruncatedText>
         </div>
         {mountedCount > 0 && (
           <>

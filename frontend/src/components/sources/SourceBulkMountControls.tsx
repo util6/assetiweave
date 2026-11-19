@@ -10,6 +10,7 @@ import type {
 } from "../../types";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { AppShortcutIconForShortcut } from "../apps/AppShortcutIcon";
+import { TruncatedText } from "../foundation/TruncatedText";
 
 export function SourceBulkMountControls({
   appShortcuts,
@@ -149,14 +150,14 @@ export function SourceBulkMountControls({
                 className="size-4 shrink-0"
                 shortcut={shortcut}
               />
-              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm font-semibold">
+              <TruncatedText className="text-body-sm font-semibold">
                 {variant === "panel"
                   ? shortcut.profileName
                   : t("source.bulk.progress", {
                       selected: mountedCount,
                       total: skillAssets.length,
                     })}
-              </span>
+              </TruncatedText>
               {variant === "panel" && (
                 <span className="ml-auto shrink-0 font-mono text-body-sm">
                   {t("source.bulk.progress", {
