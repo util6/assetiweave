@@ -124,6 +124,7 @@ Tooltip.displayName = "Tooltip";
 
 const TooltipTrigger = TooltipPrimitive.Trigger;
 const TooltipPortal = TooltipPrimitive.Portal;
+const TooltipArrow = TooltipPrimitive.Arrow;
 
 export interface TooltipContentProps extends React.ComponentPropsWithoutRef<
   typeof TooltipPrimitive.Content
@@ -137,25 +138,33 @@ const TooltipContent = React.forwardRef<
 >(
   (
     {
+      align = "start",
+      children,
       className,
       collisionPadding = 12,
       portalContainer,
-      sideOffset = 6,
+      side = "top",
+      sideOffset = 8,
       ...props
     },
     ref,
   ) => (
     <TooltipPrimitive.Portal container={portalContainer}>
       <TooltipPrimitive.Content
+        align={align}
         className={cn(
-          "ui-menu pointer-events-auto z-[110] max-h-[min(16rem,var(--radix-tooltip-content-available-height,16rem))] max-w-[min(28rem,calc(100vw-2rem))] overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-xl border border-theme-card-border/80 bg-theme-card/95 px-3 py-2 text-caption leading-relaxed text-on-surface shadow-[var(--theme-shadow-panel)] backdrop-blur-xl",
+          "ui-tooltip pointer-events-auto z-[110] max-w-[min(24rem,calc(100vw-2rem))] [overflow-wrap:anywhere] text-on-surface",
           className,
         )}
         collisionPadding={collisionPadding}
         ref={ref}
+        side={side}
         sideOffset={sideOffset}
         {...props}
-      />
+      >
+        <div className="ui-tooltip-scroll">{children}</div>
+        <span aria-hidden="true" className="ui-tooltip-arrow" />
+      </TooltipPrimitive.Content>
     </TooltipPrimitive.Portal>
   ),
 );
@@ -163,6 +172,7 @@ TooltipContent.displayName = TooltipPrimitive.Content.displayName;
 
 export {
   Tooltip,
+  TooltipArrow,
   TooltipContent,
   TooltipPortal,
   TooltipProvider,

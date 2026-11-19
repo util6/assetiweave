@@ -430,4 +430,67 @@ describe("TruncatedText", () => {
       "Second overflowing path text",
     );
   });
+
+  it("portals its anchor into document.body outside contain/transform containers and renders Scheme C glass tooltip structure", () => {
+    render(
+      <TooltipProvider>
+        <div
+          className="deferred-render-boundary"
+          data-testid="contained-wrapper"
+          style={{
+            contain: "layout paint style",
+            transform: "translateY(-1px)",
+          }}
+        >
+          <TruncatedText data-testid="contained-target">
+            ~/Documents/very/long/path/inside/contained/transform/parent
+          </TruncatedText>
+        </div>
+      </TooltipProvider>,
+    );
+
+    const wrapper = screen.getByTestId("contained-wrapper");
+    const target = screen.getByTestId("contained-target");
+    mockElementMetrics(target, {
+      clientWidth: 140,
+      scrollWidth: 420,
+      clientHeight: 20,
+      scrollHeight: 20,
+    });
+    target.getBoundingClientRect = () =>
+      ({
+        top: 240,
+        left: 88,
+        right: 228,
+        bottom: 260,
+        width: 140,
+        height: 20,
+        x: 88,
+        y: 240,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    fireEvent.mouseEnter(target);
+    act(() => {
+      vi.advanceTimersByTime(310);
+    });
+
+    // Anchor must live directly in document.body rather than inside contain/transform wrapper
+    const anchor = document.body.querySelector(
+      "[data-truncated-tooltip-anchor]",
+    ) as HTMLElement | null;
+    expect(anchor).not.toBeNull();
+    expect(wrapper.contains(anchor)).toBe(false);
+    expect(anchor?.style.top).toBe("240px");
+    expect(anchor?.style.left).toBe("88px");
+
+    // Scheme C tooltip structure: outer .ui-tooltip (overflow visible) + inner .ui-tooltip-scroll + .ui-tooltip-arrow
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.className).toContain("ui-tooltip");
+    expect(tooltip.getAttribute("data-align")).toBe("start");
+    expect(tooltip.querySelector(".ui-tooltip-scroll")?.textContent).toBe(
+      "~/Documents/very/long/path/inside/contained/transform/parent",
+    );
+    expect(tooltip.querySelector(".ui-tooltip-arrow")).not.toBeNull();
+  });
 });

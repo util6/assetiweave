@@ -1,4 +1,5 @@
 import * as React from "react";
+import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
 import {
@@ -80,9 +81,9 @@ function TruncatedTextInner<T extends React.ElementType = "span">(
     onPointerLeave,
     tabIndex,
     tooltip,
-    tooltipAlign,
+    tooltipAlign = "start",
     tooltipClassName,
-    tooltipSide,
+    tooltipSide = "top",
     ...restProps
   }: TruncatedTextProps<T>,
   forwardedRef: React.ForwardedRef<HTMLElement>,
@@ -141,11 +142,22 @@ function TruncatedTextInner<T extends React.ElementType = "span">(
       return;
     }
     const rect = el.getBoundingClientRect();
-    setAnchorRect({
-      top: rect.top,
-      left: rect.left,
-      width: rect.width,
-      height: rect.height,
+    setAnchorRect((prev) => {
+      if (
+        prev &&
+        Math.abs(prev.top - rect.top) <= 0.5 &&
+        Math.abs(prev.left - rect.left) <= 0.5 &&
+        Math.abs(prev.width - rect.width) <= 0.5 &&
+        Math.abs(prev.height - rect.height) <= 0.5
+      ) {
+        return prev;
+      }
+      return {
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+      };
     });
   }, []);
 
@@ -193,6 +205,21 @@ function TruncatedTextInner<T extends React.ElementType = "span">(
     if (!open) {
       return;
     }
+    syncAnchorRect();
+
+    let rafId: number | null = null;
+    let remainingFrames = 16;
+    const syncTransitionFrames = () => {
+      syncAnchorRect();
+      remainingFrames -= 1;
+      if (remainingFrames > 0) {
+        rafId = window.requestAnimationFrame(syncTransitionFrames);
+      }
+    };
+    if (typeof window.requestAnimationFrame === "function") {
+      rafId = window.requestAnimationFrame(syncTransitionFrames);
+    }
+
     const handleScroll = (event: Event) => {
       if (
         hostRef.current &&
@@ -202,11 +229,18 @@ function TruncatedTextInner<T extends React.ElementType = "span">(
         closeTooltip();
       }
     };
+    const handleResize = () => syncAnchorRect();
+
     window.addEventListener("scroll", handleScroll, { capture: true });
+    window.addEventListener("resize", handleResize);
     return () => {
+      if (rafId !== null && typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(rafId);
+      }
       window.removeEventListener("scroll", handleScroll, { capture: true });
+      window.removeEventListener("resize", handleResize);
     };
-  }, [closeTooltip, open]);
+  }, [closeTooltip, open, syncAnchorRect]);
 
   React.useEffect(() => {
     return () => {
@@ -250,6 +284,7 @@ function TruncatedTextInner<T extends React.ElementType = "span">(
       return;
     }
 
+    syncAnchorRect();
     setMounted(true);
     const delay = getOpenDelay();
     if (delay <= 0) {
@@ -453,45 +488,51 @@ function TruncatedTextInner<T extends React.ElementType = "span">(
     </Component>
   );
 
+  const tooltipNode =
+    mounted && canShowTooltip ? (
+      <Tooltip
+        disableHoverableContent
+        onOpenChange={handleRadixOpenChange}
+        open={open}
+      >
+        <TooltipTrigger asChild>
+          <span
+            aria-hidden="true"
+            className="pointer-events-none fixed"
+            data-truncated-tooltip-anchor=""
+            style={
+              anchorRect
+                ? {
+                    top: anchorRect.top,
+                    left: anchorRect.left,
+                    width: anchorRect.width,
+                    height: anchorRect.height,
+                  }
+                : undefined
+            }
+          />
+        </TooltipTrigger>
+        <TooltipContent
+          align={tooltipAlign}
+          className={tooltipClassName}
+          id={tooltipId}
+          onMouseEnter={handleContentEnter}
+          onMouseLeave={handleContentLeave}
+          onPointerEnter={handleContentEnter}
+          onPointerLeave={handleContentLeave}
+          side={tooltipSide}
+        >
+          {resolvedTooltip}
+        </TooltipContent>
+      </Tooltip>
+    ) : null;
+
   return (
     <>
       {hostElement}
-      {mounted && canShowTooltip ? (
-        <Tooltip
-          disableHoverableContent
-          onOpenChange={handleRadixOpenChange}
-          open={open}
-        >
-          <TooltipTrigger asChild>
-            <span
-              aria-hidden="true"
-              className="pointer-events-none fixed"
-              style={
-                anchorRect
-                  ? {
-                      top: anchorRect.top,
-                      left: anchorRect.left,
-                      width: anchorRect.width,
-                      height: anchorRect.height,
-                    }
-                  : undefined
-              }
-            />
-          </TooltipTrigger>
-          <TooltipContent
-            align={tooltipAlign}
-            className={tooltipClassName}
-            id={tooltipId}
-            onMouseEnter={handleContentEnter}
-            onMouseLeave={handleContentLeave}
-            onPointerEnter={handleContentEnter}
-            onPointerLeave={handleContentLeave}
-            side={tooltipSide}
-          >
-            {resolvedTooltip}
-          </TooltipContent>
-        </Tooltip>
-      ) : null}
+      {tooltipNode && typeof document !== "undefined"
+        ? createPortal(tooltipNode, document.body)
+        : tooltipNode}
     </>
   );
 }
