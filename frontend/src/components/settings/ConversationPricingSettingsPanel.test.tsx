@@ -6,6 +6,7 @@ import {
   screen,
   cleanup,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationPricingSettingsPanel } from "./ConversationPricingSettingsPanel";
@@ -349,7 +350,7 @@ describe("ConversationPricingSettingsPanel", () => {
     });
   });
 
-  it("supports searchable base-model picker rebinding and unbinding", async () => {
+  it("supports searchable base-model picker rebinding from local and online lists and unbinding", async () => {
     vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(
       mockStatus,
     );
@@ -363,15 +364,33 @@ describe("ConversationPricingSettingsPanel", () => {
     render(<ConversationPricingSettingsPanel />);
     await screen.findByText("custom-unpriced-x");
 
-    // Open picker for first row (custom-unpriced-x)
+    // Open picker for first row (custom-unpriced-x): defaults to local models when available
     const rebindBtns = screen.getAllByRole("button", { name: /改绑/ });
     fireEvent.click(rebindBtns[0]);
 
-    const pickerSearch =
-      await screen.findByPlaceholderText("搜索全网参考底座模型或厂商...");
-    fireEvent.change(pickerSearch, { target: { value: "deepseek" } });
+    const dialog = await screen.findByRole("dialog");
+    const dialogScope = within(dialog);
 
-    const deepseekOption = await screen.findByRole("button", {
+    // Local tab should list priced/locked local models and exclude ignored/unmatched/self
+    const localSearch = await dialogScope.findByPlaceholderText(
+      "搜索本地已用模型名、匹配底座或厂商...",
+    );
+    expect(
+      dialogScope.getByRole("button", { name: /qwen-2\.5-free/ }),
+    ).toBeDefined();
+    expect(
+      dialogScope.getByRole("button", { name: /Claude 3\.7 Sonnet \(High\)/ }),
+    ).toBeDefined();
+    expect(dialogScope.queryByRole("button", { name: /ERROR:/ })).toBeNull();
+
+    // Searching an online-only model from local tab offers quick jump to allModels
+    fireEvent.change(localSearch, { target: { value: "deepseek" } });
+    const jumpToAllBtn = await dialogScope.findByRole("button", {
+      name: /在全网参考库中查看/,
+    });
+    fireEvent.click(jumpToAllBtn);
+
+    const deepseekOption = await dialogScope.findByRole("button", {
       name: /deepseek-chat/,
     });
     fireEvent.click(deepseekOption);
@@ -383,6 +402,25 @@ describe("ConversationPricingSettingsPanel", () => {
       );
     });
 
+    // Re-open picker and select directly from local used models (e.g. user_override qwen-2.5-free)
+    fireEvent.click(screen.getAllByRole("button", { name: /改绑/ })[0]);
+    const dialog2 = await screen.findByRole("dialog");
+    const dialog2Scope = within(dialog2);
+    const localSearch2 = await dialog2Scope.findByPlaceholderText(
+      "搜索本地已用模型名、匹配底座或厂商...",
+    );
+    fireEvent.change(localSearch2, { target: { value: "qwen" } });
+    fireEvent.click(
+      await dialog2Scope.findByRole("button", { name: /qwen-2\.5-free/ }),
+    );
+
+    await waitFor(() => {
+      expect(rebindSpy).toHaveBeenCalledWith(
+        "custom-unpriced-x",
+        "qwen-2.5-free",
+      );
+    });
+
     // Unbind manual rebind row (Claude 3.7 Sonnet (High))
     const unbindBtn = screen.getByRole("button", { name: /恢复自动/ });
     fireEvent.click(unbindBtn);
@@ -390,6 +428,63 @@ describe("ConversationPricingSettingsPanel", () => {
     await waitFor(() => {
       expect(rebindSpy).toHaveBeenCalledWith("Claude 3.7 Sonnet (High)", null);
     });
+  });
+
+  it("rebinds to local model's resolved base id and displays subline when raw differs from matched id", async () => {
+    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue(
+      mockStatus,
+    );
+    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(
+      mockCatalog,
+    );
+    const rebindSpy = vi
+      .spyOn(usageService, "rebindModelPricingAlias")
+      .mockResolvedValue(mockStatus);
+
+    render(<ConversationPricingSettingsPanel />);
+    await screen.findByText("custom-unpriced-x");
+
+    // Pick Claude 3.7 Sonnet (High) from local list -> sends its matchedModelId (claude-3-7-sonnet*)
+    fireEvent.click(screen.getAllByRole("button", { name: /改绑/ })[0]);
+    const dialog = within(await screen.findByRole("dialog"));
+    const localCandidate = await dialog.findByRole("button", {
+      name: /Claude 3\.7 Sonnet \(High\)/,
+    });
+    expect(
+      within(localCandidate).getByText("底座: claude-3-7-sonnet*"),
+    ).toBeDefined();
+    fireEvent.click(localCandidate);
+
+    await waitFor(() => {
+      expect(rebindSpy).toHaveBeenCalledWith(
+        "custom-unpriced-x",
+        "claude-3-7-sonnet*",
+      );
+    });
+  });
+
+  it("defaults picker to online reference list when no selectable local models exist", async () => {
+    const onlyUnmatchedLocalCatalog = {
+      ...mockCatalog,
+      localModels: [mockCatalog.localModels[0]],
+    };
+    vi.spyOn(usageService, "getModelPricingStatus").mockResolvedValue({
+      ...mockStatus,
+      localModelsCount: 1,
+    });
+    vi.spyOn(usageService, "getModelPricingCatalog").mockResolvedValue(
+      onlyUnmatchedLocalCatalog,
+    );
+
+    render(<ConversationPricingSettingsPanel />);
+    await screen.findByText("custom-unpriced-x");
+
+    fireEvent.click(screen.getByRole("button", { name: /改绑/ }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(
+      await dialog.findByPlaceholderText("搜索全网参考底座模型或厂商..."),
+    ).toBeDefined();
+    expect(dialog.getByRole("button", { name: /deepseek-chat/ })).toBeDefined();
   });
 
   it("supports unlocking locked prices and ignoring/restoring raw models", async () => {

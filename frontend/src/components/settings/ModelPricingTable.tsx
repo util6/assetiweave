@@ -19,9 +19,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Panel } from "@/components/foundation/Panel";
 import { Badge } from "@/components/foundation/Badge";
-import { DialogFrame } from "@/components/foundation/DialogFrame";
 import { PillTabs } from "@/components/common/PillTabs";
 import type { ModelPriceEntry } from "@/types/usage";
+import {
+  getRawModelName,
+  getReferenceModelId,
+  matchesModelPricingQuery,
+  ModelRebindPickerDialog,
+} from "./ModelRebindPickerDialog";
 
 const PAGE_SIZE = 15;
 
@@ -43,14 +48,6 @@ interface ModelPricingTableProps {
   ) => Promise<void>;
   savingModel: boolean;
   notice: string | null;
-}
-
-function getRawModelName(entry: ModelPriceEntry): string {
-  return entry.rawModel || entry.modelPatterns[0] || "";
-}
-
-function getReferenceModelId(entry: ModelPriceEntry): string {
-  return entry.matchedModelId || entry.rawModel || entry.modelPatterns[0] || "";
 }
 
 function getMatchSourceMeta(entry: ModelPriceEntry): {
@@ -122,7 +119,7 @@ export const ModelPricingTable: React.FC<ModelPricingTableProps> = ({
   // Searchable base-model picker state
   const [pickerTargetEntry, setPickerTargetEntry] =
     useState<ModelPriceEntry | null>(null);
-  const [pickerSearch, setPickerSearch] = useState<string>("");
+  const [pickerError, setPickerError] = useState<string | null>(null);
 
   const isLocalTab = activeTab === "local";
   const activeSourceModels = isLocalTab ? localModels : allModels;
@@ -181,8 +178,13 @@ export const ModelPricingTable: React.FC<ModelPricingTableProps> = ({
 
   const handleOpenPicker = (entry: ModelPriceEntry) => {
     setPickerTargetEntry(entry);
-    setPickerSearch("");
+    setPickerError(null);
     setLocalError(null);
+  };
+
+  const handleClosePicker = () => {
+    setPickerTargetEntry(null);
+    setPickerError(null);
   };
 
   const handleSelectPickerModel = async (targetModelId: string | null) => {
@@ -191,36 +193,18 @@ export const ModelPricingTable: React.FC<ModelPricingTableProps> = ({
     try {
       await onRebindModel(rawName, targetModelId);
       setPickerTargetEntry(null);
-      setPickerSearch("");
+      setPickerError(null);
       setLocalError(null);
     } catch (err) {
-      setLocalError(err instanceof Error ? err.message : String(err));
+      setPickerError(err instanceof Error ? err.message : String(err));
     }
   };
 
   const filteredModels = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return activeSourceModels;
-    return activeSourceModels.filter(
-      (m) =>
-        m.provider.toLowerCase().includes(query) ||
-        (m.rawModel ?? "").toLowerCase().includes(query) ||
-        (m.matchedModelId ?? "").toLowerCase().includes(query) ||
-        m.modelPatterns.some((p) => p.toLowerCase().includes(query)),
-    );
+    return activeSourceModels.filter((m) => matchesModelPricingQuery(m, query));
   }, [activeSourceModels, searchQuery]);
-
-  const filteredPickerModels = useMemo(() => {
-    const query = pickerSearch.trim().toLowerCase();
-    if (!query) return allModels;
-    return allModels.filter(
-      (m) =>
-        m.provider.toLowerCase().includes(query) ||
-        (m.rawModel ?? "").toLowerCase().includes(query) ||
-        (m.matchedModelId ?? "").toLowerCase().includes(query) ||
-        m.modelPatterns.some((p) => p.toLowerCase().includes(query)),
-    );
-  }, [allModels, pickerSearch]);
 
   const totalPages = Math.max(1, Math.ceil(filteredModels.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -276,7 +260,7 @@ export const ModelPricingTable: React.FC<ModelPricingTableProps> = ({
               setPage(1);
               setEditingKey(null);
               setEditDraft(null);
-              setPickerTargetEntry(null);
+              handleClosePicker();
             }}
             size="sm"
           />
@@ -725,94 +709,15 @@ export const ModelPricingTable: React.FC<ModelPricingTableProps> = ({
 
       {/* Searchable Base-Model Picker Dialog */}
       {pickerTargetEntry && (
-        <DialogFrame
-          title="选择匹配底座模型"
-          description={`原始模型名：${getRawModelName(pickerTargetEntry)}`}
-          icon={<Link2 className="h-4 w-4" />}
-          layer="nested"
-          size="md"
-          busy={savingModel}
-          onClose={() => setPickerTargetEntry(null)}
-          footer={
-            <div className="flex w-full items-center justify-between gap-2">
-              <div>
-                {pickerTargetEntry.isManualRebind && onRebindModel && (
-                  <Button
-                    variant="outline"
-                    disabled={savingModel}
-                    onClick={() => void handleSelectPickerModel(null)}
-                  >
-                    <RotateCcw className="mr-1.5 h-4 w-4" />
-                    恢复自动匹配
-                  </Button>
-                )}
-              </div>
-              <Button
-                variant="outline"
-                disabled={savingModel}
-                onClick={() => setPickerTargetEntry(null)}
-              >
-                取消
-              </Button>
-            </div>
-          }
-        >
-          <div className="flex flex-col gap-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-outline" />
-              <Input
-                value={pickerSearch}
-                onChange={(e) => setPickerSearch(e.target.value)}
-                placeholder="搜索全网参考底座模型或厂商..."
-                className="pl-9 h-10 rounded-xl bg-theme-control border-theme-control-border text-body-sm"
-                autoFocus
-              />
-            </div>
-
-            <div className="max-h-72 overflow-y-auto flex flex-col gap-1.5 pr-1">
-              {filteredPickerModels.length === 0 ? (
-                <div className="py-8 text-center text-caption text-on-surface-variant">
-                  未找到匹配的全网底座模型
-                </div>
-              ) : (
-                filteredPickerModels.map((candidate, idx) => {
-                  const candidateId = getReferenceModelId(candidate);
-                  const isCurrent =
-                    pickerTargetEntry.matchedModelId === candidateId;
-                  return (
-                    <Button
-                      key={`${candidate.provider}::${candidateId}::${idx}`}
-                      variant="ghost"
-                      disabled={savingModel}
-                      onClick={() => void handleSelectPickerModel(candidateId)}
-                      className={`h-auto w-full justify-between rounded-xl border px-3 py-2.5 text-left ${
-                        isCurrent
-                          ? "border-primary/45 bg-primary/10 text-primary"
-                          : "border-theme-card-border/60 bg-theme-control/50 hover:border-primary/40 hover:bg-theme-control-hover"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Badge
-                          tone="neutral"
-                          className="rounded-full px-2 py-0.5 text-[11px] font-mono uppercase shrink-0"
-                        >
-                          {candidate.provider}
-                        </Badge>
-                        <span className="font-mono text-body-sm font-medium text-on-surface truncate">
-                          {candidateId}
-                        </span>
-                      </div>
-                      <span className="font-mono text-caption text-on-surface-variant shrink-0 ml-2">
-                        ¥{candidate.inputPerMillion.toFixed(2)} / ¥
-                        {candidate.outputPerMillion.toFixed(2)}
-                      </span>
-                    </Button>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </DialogFrame>
+        <ModelRebindPickerDialog
+          targetEntry={pickerTargetEntry}
+          localModels={localModels}
+          allModels={allModels}
+          saving={savingModel}
+          error={pickerError}
+          onSelect={handleSelectPickerModel}
+          onClose={handleClosePicker}
+        />
       )}
     </Panel>
   );
