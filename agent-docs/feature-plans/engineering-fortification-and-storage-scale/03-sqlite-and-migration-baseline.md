@@ -134,6 +134,18 @@ let pool = SqlitePoolOptions::new()
 >
 > **一条自我限定与它的解除**：附录 B 的探针复现的是 `SQLITE_BUSY`（primary code 5）——它证明的是"零命中 DML 也会抢写锁"（A.6 的论点），**不是** 517 本身，因为该探针是写优先，不经过"读→升级"。
 > 为此我另写了 **附录 C** 的时序探针（A 先 `BEGIN`+`SELECT` → B 期间写入并提交 → A 再 `UPDATE`），**实测复现到 `errorcode=517` / `SQLITE_BUSY_SNAPSHOT`** `[实测]`。所以本节结论是"机制已实测 + 8 处代码结构识别"，不再是纯推断。
+>
+> **而且 517 与普通 BUSY 对 `busy_timeout` 的反应完全不同**（我在附录 C 里跑了对照矩阵 `[实测]`）：
+>
+> | 场景 | `busy_timeout=0` | `800` | `5000` | `10000` |
+> |---|---|---|---|---|
+> | **517**（读优先，快照过期） | 0.000 s | **0.000 s** | **0.000 s** | **0.000 s** |
+> | **primary BUSY**（写优先，锁被占） | — | 0.886 s | 5.363 s | — |
+>
+> ⇒ **517 立即返回、完全不消耗 `busy_timeout`**：重试一个已过期的快照毫无意义，SQLite 直接拒绝，连 busy handler 都不进。
+> ⇒ 所以这 8 处读优先事务在并发写期间是**必然失败**（不是"可能超时"），**任何调大 `busy_timeout` 的方案对它们零收益**——不是收益小，而是完全没有。唯一解是让事务以写开始（`BEGIN IMMEDIATE`）。
+> ⇒ 反过来，A.6 那条启动链遇到的是 primary BUSY（0.886 s / 5.363 s 说明它会等），它**才是** `busy_timeout` 能缓解的那一类；但我们仍然反对调大它（见 A.6 末），因为那是把失败推迟而不是消除。
+> 这两类错误码的文本**完全相同**（都是 `database is locked`），只能靠 `code` 区分——仓里 `is_retryable_db_lock_err`（`conversation_repo/common.rs:360-370`）同时判 `"code: 517"` 与 `"code: 5"`，方向正确；缺口只是那 8 处没接上重试助手。
 
 | 风险 | 判据 | 位置 |
 |---|---|---|
@@ -595,7 +607,10 @@ let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
 
 ### 第 2 档：把 8 处 🔴 读优先 DEFERRED 换成 `begin_immediate_with_retry`
 
-逐处核对后的真实数量是 **8 处**（清单见 A.4；我此前估的"22 处"已作废）。改动量比原估小 2/3，收益仍是消掉 `SQLITE_BUSY_SNAPSHOT (517)` 这一类偶发失败（`database.rs:37-41` 已写明该机制）。优先 `import.rs:108`（最热）与 `import.rs:183`。
+逐处核对后的真实数量是 **8 处**（清单见 A.4；我此前估的"22 处"已作废）。改动量比原估小 2/3。
+
+**定性要改**：这不是"偶发超时"，而是**在并发写期间的必然失败**——517 实测 0.000 s 立即返回、完全不消耗 `busy_timeout`（附录 C.2 的对照矩阵：517 恒 0.000 s，primary BUSY 则是 0.886 s / 5.363 s）。所以调大 `busy_timeout` 对这 8 处零收益，**唯一解是让事务以写开始**。优先 `import.rs:108`（最热）与 `import.rs:183`。
+
 另外 `usage_repo.rs:111` 属另一类（读在事务外），应把读挪进事务，不在本档范围。
 
 ### 第 3 档：空间治理（SQLite 域内收益最大，但需停机窗口）
@@ -751,4 +766,22 @@ B: 已写入并提交
 A: UPDATE 失败 -> database is locked | errorcode=517 | errorname=SQLITE_BUSY_SNAPSHOT
 ```
 
-⇒ **517 已在真实时序下复现**（`errorcode=517`，而非 primary code 5）。这解释了为什么 A.4 的判据是"事务内**首条**语句是否为读"：只有首条为读（DEFERRED + SELECT）才会走到"升级写锁"这一步；首条即写的事务在 B.1 里得到的是 `SQLITE_BUSY`，那是锁冲突而不是快照冲突。
+⇒ **517 已在真实时序下复现**（`errorcode=517`，而非 primary code 5）。这解释了为什么 A.4 的判据是"事务内**首条**语句是否为读"：只有首条为读（DEFERRED + SELECT）才会走到"升级写锁"这一步；首条即写的事务在附录 B 里得到的是 `SQLITE_BUSY`，那是锁冲突而不是快照冲突。
+
+### 附录 C.2 关键对照：517 不消耗 `busy_timeout`
+
+把上面的时序按 `busy_timeout` 取 0 / 800 / 5000 / 10000 各跑一遍，再用"写优先撞别人写事务"做对照（同一台机器、同一临时库、SQLite 3.50.4）：
+
+| 场景 | `bt=0` | `bt=800` | `bt=5000` | `bt=10000` | 错误码 |
+|---|---|---|---|---|---|
+| **517**（读优先 → 快照过期） | 0.000 s | **0.000 s** | **0.000 s** | **0.000 s** | 517 |
+| **primary BUSY**（写优先 → 锁被占） | — | 0.886 s | 5.363 s | — | 5 |
+
+⇒ **517 立即返回、完全不进入 busy handler**（耗时与 `busy_timeout` 无关，恒 0.000 s）；primary BUSY 则会等满超时（0.886 / 5.363 s 随 timeout 线性变化）。
+
+**这条对方案选择是决定性的**：
+- 对 **517**（本仓 8 处读优先事务）：调大 `busy_timeout` **零收益**——不是收益小，是完全没有；它在并发写期间是**必然失败**。唯一解是让事务以写开始（`BEGIN IMMEDIATE`），`begin_immediate_with_retry` 正是为此存在。
+- 对 **primary BUSY**（A.6 的启动链、`build` 时的写冲突）：`busy_timeout` 确实会等（0.886 s / 5.363 s 可证），但我们仍反对靠加长它解决——那是把失败推迟，不是消除（见 A.6 末）。
+- 两者错误文本**完全相同**（`database is locked`），只能靠 `code` 区分；`conversation_repo/common.rs:360-370` 的 `is_retryable_db_lock_err` 同时匹配 `"code: 517"` / `"code: 5"` / `"database is locked"`，方向正确。
+
+> 分工：本表的**耗时矩阵**由 03 维护（`[实测]`）；04 附录 B.2 引用本结论、不复述矩阵，只写 IPC 侧的复现脚本与启动链影响。
