@@ -167,17 +167,19 @@ res-ipc 实测：另一进程持 `BEGIN IMMEDIATE` 时，`aiwc overview`（纯�
 - `dirty_version` / `list_applied_migrations` 都是 SELECT；
 - 8 段自愈里 `normalize_legacy_part_ids`（无 `id` 列即 return）、`fold_*`（marker 命中即 return）、`converge_portable_paths`（`write_pending` 在 `pending.is_empty()` 时 return，`path_convergence.rs:155-157`）稳态都是零写。
 
-**但 `open_migrated_pool` 返回之后，`bootstrap.rs:46` 立刻进入 `seed_defaults_with_catalog`，那里还有 **5 处**无条件写（res-ipc 复读源码后补出第 5 处 `normalize_existing_profiles_sqlx`，我原表漏了）：**
+**但 `open_migrated_pool` 返回之后，`bootstrap.rs:46` 立刻进入 `seed_defaults_with_catalog`，那里还有 5 个必写点 + 1 个扇出器（共 6 个函数）。计数口径固定为「必写点」，避免把扇出器重复计数：**
 
 | 位置 | 行为 | 是否读守卫 |
 |---|---|---|
-| `store/system/tenant_repo.rs:16-37` `ensure_local_identity_sqlx` | `pool.begin()` + 4 条 UPSERT（principal / tenant / membership / tenant_state） | ❌ **无守卫，且是 `seed_defaults_with_catalog` 的第一件事**（`defaults.rs:26`）→ 修完 126 后它立刻接手 |
-| `application/system/defaults.rs:111-115` `ensure_system_skill_source_sqlx` | 直接 `upsert_source_sqlx` | ❌ 无守卫 |
-| `application/system/defaults.rs:117-122` `normalize_existing_sources_sqlx` | 读出**全部** sources 再逐条 upsert（未变更也写） | ❌ 无差异判断 |
-| `application/system/defaults.rs:124-129` `normalize_existing_profiles_sqlx` | 读出全部 profiles 再逐条 upsert | ❌ 无差异判断 |
-| `application/system/defaults.rs:132-146` `normalize_all_tenant_paths_sqlx` | 对每个非默认租户重复上面 `sources` + `profiles` 两步 | ❌ 无守卫 |
-| `defaults.rs:95-109` `ensure_library_source_sqlx` | 先 `load_source_sqlx(...).is_some()` 再写 | ✅ 有守卫 |
+| `application/system/defaults.rs:26` → `store/system/tenant_repo.rs:14` `ensure_local_identity_sqlx`（事务 `16-33`） | `pool.begin()` + 4 条 UPSERT（principal / tenant / membership / tenant_state） | ❌ **必写点 #1**，且是 `seed_defaults_with_catalog` 的第一件事 → 修完 126 后它立刻接手 |
+| `application/system/defaults.rs:111` `ensure_system_skill_source_sqlx` | 直接 `upsert_source_sqlx` | ❌ **必写点 #2** |
+| `application/system/defaults.rs:117` `normalize_existing_sources_sqlx` | 读出**全部** sources 再逐条 upsert（未变更也写） | ❌ **必写点 #3**，无差异判断 |
+| `application/system/defaults.rs:124` `normalize_existing_profiles_sqlx` | 读出全部 profiles 再逐条 upsert | ❌ **必写点 #4**，无差异判断 |
+| `application/system/defaults.rs:132` `normalize_all_tenant_paths_sqlx` | **扇出器**：对每个非默认租户调上面 #3 + #4 各一遍 | ⚠ **自身不写**，但会让 #3/#4 对每个租户重跑（多租户时成倍放大） |
+| `application/system/defaults.rs:95` `ensure_library_source_sqlx` | 先 `load_source_sqlx(...).is_some()` 再写 | ✅ 有守卫 |
 | `store/system/menu_repo.rs:25+` / `shortcut_repo.rs:42+` | 先读现有集合再补缺 | ✅ 有守卫 |
+
+> 加上 `database.rs:126`，全链共 **5 个必写点**（126 / `ensure_local_identity_sqlx` / `ensure_system_skill_source_sqlx` / `normalize_existing_sources_sqlx` / `normalize_existing_profiles_sqlx`）+ **1 个扇出器**（`normalize_all_tenant_paths_sqlx`）。按"函数"数会数出 6 个，按"必写点"是 5 个 —— 本文统一用**必写点**口径。
 
 → **所以只改 `database.rs:126`，只读命令会在 `tenant_repo.rs:16` 的 `pool.begin()` + 第一条 UPSERT 上再死一次**（同样是 10 s 后 `code: 5`）。
 
@@ -192,7 +194,7 @@ res-ipc 实测：另一进程持 `BEGIN IMMEDIATE` 时，`aiwc overview`（纯�
   - **R1**：只读 WAL 连接**无法执行崩溃恢复**，遇到未恢复的 `-wal` 会返回 `SQLITE_READONLY_RECOVERY` ⇒ 捕获后**回退一次读写打开**（此时允许短暂取写锁做恢复，之后再降级）。
   - **R2**：只读 WAL 需要 `-shm` 已存在或可创建；都不可用时回退 `immutable=1`，且**仅在确认没有其它 GUI 实例在跑时**才允许（`immutable=1` 会忽略 `-wal`，读到旧快照）。
   - 正面证据（res-ipc 实测）：另一进程只持**读**快照时 `aiwc overview` **成功**（4.65 s 冷缓存 / 0.72 s 热），说明 WAL 读路径本就不与写互斥 ⇒ "只读命令不该被写锁连坐"是机制上可实现的，不是奢望。
-- **第 0.5 档（低成本，收益大）**：把上述 5 处无条件写改成"状态签名不变则不写"：
+- **第 0.5 档（低成本，收益大）**：把上述 5 个必写点改成"状态签名不变则不写"：
   `database.rs:126` 改成先 `SELECT MIN(version) FROM _sqlx_migrations` 判定；`ensure_local_identity_sqlx` 包一层 `EXISTS`；
   `normalize_existing_*` 改成逐行比较后再写。目标是**稳态启动零写事务**。
 - **明确反对**：调大 `busy_timeout`（res-ipc 的判断正确）——10 s 变 30 s 只是把失败推迟，`user` CPU 0.01 s 说明它根本没事可做，等更久纯属惩罚用户。
@@ -353,7 +355,7 @@ res-ipc 实测：另一进程持 `BEGIN IMMEDIATE` 时，`aiwc overview`（纯�
 
 | 对象 | 大小 | 备注 |
 |---|---|---|
-| `conversation_parts`（表） | **220 MiB** | 160,465 行；**平均 1,059 B 正文/行（字节口径），p50 仅 253 B**，只有 24.6% 的行正文 > 1 KiB |
+| `conversation_parts`（表） | **220 MiB** | 160,465 行；正文**平均 1,059 B/行、p50 253 B**（分母=全表）；剔除 5,717 条空串后 1,098 B / p50 275 B（分母=非空 154,748） |
 | `conversation_turns` | 68 MiB | 7,336 行（`process`/`response` 很长） |
 | `sqlite_autoindex_conversation_parts_1` | **18.34 MiB** | UNIQUE(tenant_id, turn_id, part_index)，占**全部索引的 45%** |
 | `web_record_turns` / `web_record_parts` | 13 / 10 MiB | |
@@ -366,9 +368,16 @@ res-ipc 实测：另一进程持 `BEGIN IMMEDIATE` 时，`aiwc overview`（纯�
 | 范围 | `leaf` | `overflow` | `internal` |
 |---|---|---|---|
 | 全库 | 60,337 页 / **247.1 MB**（63.75%）· 页内未用 45.2 MB | 33,894 页 / **138.8 MB**（35.80%）· 页内未用仅 0.88 MB | 447 页 / **1.83 MB**（0.47%） |
-| `conversation_parts` | 39,096 页 / **160.1 MB**（69.1%）· 页内未用 28.8 MB | 17,339 页 / **71.0 MB**（30.7%） | 109 页 / 0.45 MB（0.2%） |
+| `conversation_parts` | 39,096 页 / **160.1 MB**（69.1%）· 未用 28.8 MB · **payload 129.8 MB** | 17,339 页 / **71.0 MB**（30.7%）· **payload 70.4 MB** | 109 页 / 0.45 MB（0.2%） |
+
+> `parts` 两级 payload 相加 = 129.8 + 70.4 = **200.2 MB**（= 该表 payload 总和），与 `pgsize` 汇总 220 MiB 是两个独立口径，不要混用。
 
 **这组数纠正了我此前一句错话**：我原先写"`content` 溢出页占大头"——**不对**。溢出链只占该表 30.7%（71.0 MB），69.1%（160.1 MB）仍在 leaf 页。正确表述是"**leaf 页吃掉 69.1%、溢出链吃掉 30.7%，两者都是靶子**"。
+
+**压缩靶子的边界要写全（res-storage 补充，我采纳）**：说"消灭溢出链省 71 MB"会**低估 1.8 倍**。真实靶子是两块：
+- **overflow 的 70.4 MB payload** = `content` 的溢出部分；
+- **leaf 的 129.8 MB payload** = `content` 的本地前缀（SQLite 对溢出值只把 maxLocal ≈ 1 KB 留在 leaf）+ `turn_id`（13.2 MB）+ `attrs_json`（9.8 MB）+ `id_key`。
+→ 所以 **138.8 MB（全库 overflow）只是压缩收益的下界**；正文压缩后 leaf 里的前缀部分同样会缩小。
 
 由此得到三个可执行结论（与 res-storage 的 §A.7 交叉验证）：
 
@@ -376,7 +385,17 @@ res-ipc 实测：另一进程持 `BEGIN IMMEDIATE` 时，`aiwc overview`（纯�
 2. ⇒ 空间治理的**内部顺序是：先压缩把正文压到 ≤ ~980 B（1/4 页）以内以消灭溢出链，再用 `VACUUM` 收 leaf 碎片**，不能反过来。当前 **81.55% 的字节来自正文 >1 KiB 的行**（该数双向独立复测完全一致），所以压缩收益集中在这批行。
 3. ⇒ **`page_size` 不进候选**：`internal` 全库只有 447 页 / 1.83 MB，任何"调大 page_size 减少 B 树层数"的收益天花板就是 **1.83 MB**，且 WAL 下改 page_size 必须整库重建。收益/风险不成比例。
 
-> 行数占比的口径差异（记录以免误引）：我按 `length(cast(content as blob)) > 1024` 测得 **24.57%** 的行、占 **81.55%** 字节；res-storage 报行数占比 39.4%。**唯一双方独立复测完全一致的是 81.55% 这个字节占比**，对外请只用它；行数占比待口径统一后再引。
+> **口径声明（易误用，务必带分母）**：`conversation_parts.content` 的统计有两套分母，**两组都对，只是分母不同**：
+>
+> | 指标 | 分母 = 全表 160,465 | 分母 = 非空 154,748 |
+> |---|---:|---:|
+> | 行均正文 | 1,059.1 B | 1,098.3 B |
+> | p50 | 253 B | 275 B |
+> | >1 KiB 行数占比 | 24.57% | 25.48% |
+> | >1 KiB **字节**占比 | **81.55%** | **81.55%（天然相同）** |
+>
+> 全表里有 **5,717 行是空串**，会把 p50 拉低。字节占比不依赖分母，所以两边恒等——**这是唯一可以不带分母直接引的数**。行数占比必须标分母。
+> （另：`conversation_turns.process` 7,064 行无空串，不存在分母歧义。）
 
 其他表行数参考：`conversation_sessions` 2,109 · `assets` 185 · `sources` 13 · `memory_recall_turns` **0**。
 
@@ -482,15 +501,28 @@ let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
 - `idx_conversation_sessions_tenant_source(tenant_id, source_id, missing)` — 与 `U(tenant_id, source_id, external_id)` 共享前两列但第 3 列不同（`missing` 是高频对账谓词），不是前缀重复。
 - `idx_team_tasks_dispatch` — 部分唯一索引 `WHERE dispatch_key IS NOT NULL`，与 `team_task_claims` 上的唯一索引**不是同一张表**，不重复。
 
-**比"删索引"大 3 倍的一块：`conversation_parts` 的唯一索引列宽**
+**比"删索引"大 5 倍的一块：`conversation_parts` 的 `turn_id` 列宽（表 + 索引双侧）**
 
 `sqlite_autoindex_conversation_parts_1`（`UNIQUE(tenant_id, turn_id, part_index)`）= **18.34 MiB，占全部索引的 45%**。
-表只有 160,465 行，却在 4 KiB 页上把 `tenant_id TEXT` + `turn_id TEXT(UUID/哈希)` 各存了两遍（表内 + 索引内）。
-实测键长：`turn_id` **恒为 82 字符**（`conversation-turn-<64 hex>`，min=max=82）、`tenant_id` 7 字符 ⇒ 每条索引项 ≈ 82+7+2+rowid ≈ 95–110 B，`160,465 × ~110 B ≈ 17.6 MB`，与实测 18.34 MiB 吻合。
-**不能删**（它是唯一性约束，也是快照替换 `DELETE ... WHERE turn_id IN (...)` 的唯一可用索引），
-但如果把 `turn_id` 换成整数代理键（键长降到 ~23 B），索引可落到 ~4 MB，单项省 **≈14–15 MiB** ——
-是我上面 5 个可删索引合计（4.9 MiB）的 3 倍，且同时降低 `conversation_parts` 的每次写入成本。
-代价是 DDL 重构 + 全表重建（正好可以和 baseline 一起做）。列为 P2，不进 Wave 2 短期范围。
+表只有 160,465 行，却在 4 KiB 页上把 `tenant_id TEXT` + `turn_id TEXT` 各存了两遍（表内 + 索引内）。
+
+实测（三项都已独立复核）：
+
+| 事实 | 值 |
+|---|---|
+| `turn_id` 长度 | **恒为 82 字符**（min=max=82，`conversation-turn-<64 hex>`） |
+| `tenant_id` 长度 | 7 字符 |
+| **distinct `turn_id`** | **仅 5,458 个** ⇒ 同一串 82 字符平均重复 **29.4 次** |
+| `turn_id` 明文总量（表内） | `sum(length(turn_id))` = 13,158,130 B ≈ **12.5 MiB** |
+| 索引项估算 | `160,465 × ~110 B ≈ 17.6 MB`，与实测 18.34 MiB 吻合 |
+
+⇒ 换整数代理键（键长 ~23 B）：
+- **索引侧**：18.34 MiB → ~4 MB，省 **≈14 MiB**；
+- **表侧**：12.5 MiB 明文 → 1.2 MiB（`160,465 × 8 B`），省 **≈11 MiB**；
+- **合计 ≈25 MiB**，是我上面 5 个可删索引合计（4.9 MiB）的 **5 倍**。
+
+**不能只删索引**（它是唯一性约束，也是快照替换 `DELETE ... WHERE turn_id IN (...)` 的唯一可用索引）。
+**改造范围的诚实说明**：`parts.turn_id` 必须与 `conversation_turns.id` **同时**换（否则 join 要退化成字符串转换，收益被抵消）；`turns` 只有 7,336 行，那边额外收益很小，但改造成本覆盖两表。代价是 DDL 重构 + 全表重建（正好可以和 baseline 一起做）。列为 P2，不进 Wave 2 短期范围。
 
 ---
 
@@ -507,7 +539,7 @@ let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
 两条一起做，无迁移、可回滚（详见 A.6）：
 
 1. **根因**：只读 CLI 不走 `bootstrap_runtime` 的写链（`bootstrap.rs:44-52`），改用 `read_only(true)` 池并跳过 `seed_defaults_with_catalog`。否则只要链上剩 1 处写，就仍会 10 s 后 `code: 5`。**必须带 R1/R2 回退**（只读无法做 WAL 崩溃恢复 → 回退一次读写打开；`-shm` 不可用 → 仅无 GUI 时用 `immutable=1`），详见 A.6。
-2. **稳态零写**：`database.rs:126` 的零命中 `UPDATE` 先加 `SELECT MIN(version)` 判定；`tenant_repo.rs:16-37`、`defaults.rs:111/117/124/132` 共 **5 处**无条件 upsert 加存在性/差异判断。实测证明 `UPDATE`/`INSERT OR IGNORE` 零命中也抢写锁，而 `SELECT` 与已存在的 `CREATE TABLE IF NOT EXISTS` 不抢。前提：库已迁移**且** checksum 一致（不一致时 sqlx 直接报 `VersionMismatch`，不属稳态）。
+2. **稳态零写**：`database.rs:126` 的零命中 `UPDATE` 先加 `SELECT MIN(version)` 判定；`tenant_repo.rs` 的 `ensure_local_identity_sqlx` + `defaults.rs` 的 `ensure_system_skill_source_sqlx` / `normalize_existing_sources_sqlx` / `normalize_existing_profiles_sqlx`，合计 **5 个必写点**加存在性/差异判断（`normalize_all_tenant_paths_sqlx` 是扇出器、自身不写，不必单独改）。实测证明 `UPDATE`/`INSERT OR IGNORE` 零命中也抢写锁，而 `SELECT` 与已存在的 `CREATE TABLE IF NOT EXISTS` 不抢。前提：库已迁移**且** checksum 一致（不一致时 sqlx 直接报 `VersionMismatch`，不属稳态）。
 
 > 不要靠调大 `busy_timeout` 解决——那只是把 10 s 失败变成 30 s 失败。
 
@@ -534,7 +566,7 @@ let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
 
 内部顺序要写死（依据 B.4 的页类型拆分）：
 
-1. **先消灭溢出链**：把 `conversation_parts.content` 压到 ≤ ~980 B（1/4 页）以内。81.55% 的字节集中在正文 >1 KiB 的行，压下去后 33,894 个 overflow 页（138.8 MB）整条消失——这是最"干净"的一块，不依赖 VACUUM。
+1. **先压缩**：把 `conversation_parts.content` 压到 ≤ ~980 B（1/4 页）以内。81.55% 的字节集中在正文 >1 KiB 的行，压下去后**溢出链 138.8 MB（全库）整条消失，同时 leaf 里的正文前缀也一起缩小**——注意 138.8 MB 只是**下界**，真实靶子是 overflow 70.4 MB + leaf payload 129.8 MB 两块，只盯溢出会低估约 1.8 倍。这一步不依赖 VACUUM。
 2. **再 `VACUUM`**（回收 ≈1.24 GiB freelist，落地后 ≈350–388 MiB）→ 收回 leaf 页的 45.2 MB 页内碎片。必须无写入时执行，用独立一次性连接或离线路径。
 3. **然后**才切 `auto_vacuum=INCREMENTAL` + 定期 `PRAGMA incremental_vacuum(N)`。顺序不能反：`auto_vacuum=0` 时 `incremental_vacuum` 是空操作，而改 `auto_vacuum` 本身也要一次 `VACUUM` 才生效。
 4. 顺带 `PRAGMA optimize` 建 `sqlite_stat1`（当前查询计划完全没有统计信息）。

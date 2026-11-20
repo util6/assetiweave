@@ -406,8 +406,41 @@ active_generation = generation-8e175746…
 **同一份数据，"怎么存"比"压不压"影响更大（2.61x → 5.24x，差 2 倍）。** 而且块级模型**工程上更简单**：不需要阈值判断、不需要逐行 frame 头、不需要为 48% 的小行做特殊分支。
 
 > **换成字节数**：块级模型省下 **214,959,485 B = 205.0 MiB**；逐行模型只省 164.0 MB = 156.4 MiB。**块级模型多省 49 MiB，且代码更少。**
->
-> **代价（必须在方案里写清）**：块级存储下**单行原地 UPDATE 会放大成整块重写**。`conversation_parts` 确实存在原地更新——`store/database.rs:257-264` 有 `UPDATE conversation_parts SET attrs_json = json_remove(...)`，`translated_text` 也会被回填。所以块级方案需要：① 块内预留 slack，或 ② copy-on-write 整块重写 + 后台合并。**如果团队不接受这两条，就退回逐行模型（2.61x，但零写放大）。** 这是本次实测唯一没有覆盖到的工程约束。
+
+### C.5.1 块级模型的写放大约束（已与代码侧核对，结论：可行）
+
+我原先只写"单行原地 UPDATE 会放大成整块重写，需 slack 或 CoW"，属**过度保守**。路径侧核过写入路径后，实际情况是**主流写入是整包替换，块级天然友好**：
+
+| 写入路径 | 语义 | 对块级的影响 |
+|---|---|---|
+| **`snapshot.rs:431-470`（唯一写入口）** | `DELETE FROM parts WHERE turn_id IN (…session_id=?)` → `DELETE FROM turns` → 逐条 `INSERT`，**整个会话全删全插，无 UPDATE** | ✅ **完全友好**：块可按会话边界整体重算，不需要 slack、不需要 CoW |
+| 调用它的 6 处（`import.rs:142`、`import_single.rs:57`、`web_record_repo/import.rs:68`、`reproject.rs:297+366`、`subagent_fold.rs:319+328`） | 同一语义（含子代理折算、重解析，都是重算整会话再整包替换） | ✅ 友好 |
+
+**但有 5 处原地 UPDATE 会打破这个友好性**（按影响排序列出）：
+
+| 位置 | 改哪列 | 频率 | 影响 |
+|---|---|---|---|
+| `conversation_repo/projection.rs:12-24` | `parts.translated_text` | 每次翻译一条 | 中 |
+| `web_record_repo/list.rs:389-405` | `web_record_parts.translated_text` | 同上 | 中 |
+| **`conversation_repo/triad_update.rs:74`** | `turns.process = ?1`（**整段 JSON 覆写**） | 翻译回填 | **重：`process` 列 33.4 MB，整段重写** |
+| `store/database.rs:257-264` | `parts.attrs_json = json_remove(...)` | 一次性自愈（checksum 匹配才跑） | 中，低频 |
+| **`store/path_convergence.rs:107-142,150-167`** | 启动期 `UPDATE process/attrs_json`（全表 GLOB 扫描） | **每次启动** | **重：冷路径但触发大量块重写** |
+
+**折中方案（推荐）：只对 `content` / `process` / `attrs_json` 走块级；`translated_text` 保持逐行或明文。**
+
+这条折中在本机数据上**几乎零成本**——实测 `translated_text` 基本是空的：
+
+| 列 | 非空行数 | 字节 |
+|---|---:|---:|
+| `conversation_parts.translated_text` | **3** | 6,812 |
+| `web_record_parts.translated_text` | **1** | 219 |
+| 合计 | 4 | **7,031 B（6.9 KiB）** |
+
+→ 把 7 KB 的列留在逐行模型，等于不付代价地消除了 2 处高频原地 UPDATE。
+剩余痛点是 `triad_update.rs:74`（`process` 整段覆写）和 `path_convergence.rs`（启动期全表扫）。后者可用"收敛过一次就置位"消除；前者可在翻译回填时按"整会话重算 + 整包替换"复用 snapshot 路径来规避。
+
+**结论：块级的写放大问题是可解的，不是硬阻断。** 只有在"既不接受状态位优化、又要求高频随机单行更新"的前提下，才需要退回逐行模型（损失 49 MiB）。
+
 
 ### C.6 决定压缩比的是「块大小」，不是「分组方式」（实测排除）
 
@@ -562,9 +595,33 @@ active_generation = generation-8e175746…
 **两条终点，按写放大约束二选一：**
 - **块级模型（推荐）：1.72 GB → 186 MB（-89.2%，9.2 倍）**，正文压缩 **205.0 MiB**，代码更简单（无阈值、无 frame 头）。
 - **逐行模型（保守）：1.72 GB → 209 MB（-87.8%，8.2 倍）**，无写放大，但每行要挂 frame 头，且需阈值分流。
-- 两者相比，块级只多省 23 MB，但**代价是单行 UPDATE 要整块重写**（`parts.attrs_json` / `translated_text` 确实会被 UPDATE）。若团队不接受写放大，选逐行，别硬上块级。
+- 两者相比，块级多省 23 MB。**写放大不是硬阻断**（见 C.5.1）：主流写入是整会话 DELETE + INSERT，块可按会话边界整体重算；只要把 `translated_text`（实测全库仅 **6.9 KiB**/4 行）留在逐行模型，块级的不良 UPDATE 面就只剩 `triad_update.rs:74` 与 `path_convergence.rs` 两处，且都可用"整会话重算"或"收敛置位"消除。**建议直接上块级。**
 
 但无论哪条，**1.24 GiB（占总收益的 74%）都来自 `VACUUM` 一行命令**；整个"压缩 + 去重"工程只贡献 163~205 MiB。
+
+**分期切分点（若 P2 要分多期上线）**——块级模型下各列收益极不均匀：
+
+| 列 | 块级比 | 省下字节 | 占总收益 |
+|---|---:|---:|---:|
+| **`parts.content`** | 5.382 | **138,378,454** | **64.4%** |
+| `turns.process` | 6.642 | 28,407,659 | 13.2% |
+| `turns.response` | 2.988 | 12,395,856 | 5.8% |
+| `turns.prompt` | 8.091 | 10,744,612 | 5.0% |
+| `parts.attrs_json` | 18.221 | 9,298,900 | 4.3% |
+| `wr_parts.content` | 7.123 | 8,453,009 | 3.9% |
+| `wr_turns.response` | 2.625 | 6,593,248 | 3.1% |
+| `wr_turns.prompt` + `wr_turns.process` | 2.855 / 87.3 | 687,747 | 0.3% |
+| **合计** | **5.241** | **214,959,485（205.0 MiB）** | 100% |
+
+**第一期只做 `parts.content` 就能拿到 64.4% 的收益，且完全不触碰 `turns.process` 的整段覆写风险**（`triad_update.rs:74`）。这是风险最低的切分点，建议作为 P2 的默认分期方式。
+
+**三期切分（收益与风险对齐）**
+
+| 期 | 范围 | 收益 | 累计 | 主要风险 |
+|---|---|---:|---:|---|
+| 一期 | `parts.content` | **138,378,454（64.4%）** | 64.4% | 无（无原地 UPDATE） |
+| 二期 | `turns.process` + `parts.attrs_json` | 37,706,559（17.5%） | 81.9% | `triad_update.rs:74` 整段覆写 + `path_convergence.rs` 启动扫 |
+| 三期 | 其余 4 列（`prompt`/`response`/`wr_*`） | 38,874,472（18.1%） | 100% | 无 |
 
 ### E.2 25 GB 索引是否才是第一优化目标
 
@@ -588,7 +645,7 @@ active_generation = generation-8e175746…
 | **P1** | 建孤儿副本清理策略（白名单命名 + 尺寸等于某代主库 → 判为孤儿）；`auto_vacuum=INCREMENTAL` 防碎片复发 | 防止 1.24 GiB 复发 + 防止再攒 11 GiB 裸副本 | 低 | — |
 | **P2（附带）** | 补备份降级可观测性：`or_else` 打 `warn!` 并回填降级标记；产物断言 `freelist_count≈0`；`quick_check` 升级为尺寸+freelist 双校验（**无需改 `busy_timeout`，默认 5000 ms 已够**） | 让"压缩效果"可被自证；无可回收字节，纯可观测性 | 低 | — |
 | **P1** | 修 Tantivy merge 饥饿（93 segment → 1~4） | 索引 ~-35%（~110 MiB） | 中 | 中 |
-| **P2** | 正文压缩，二选一：**A. 块级 4 MB 打包（推荐，5.241x，省 205 MiB，但单行 UPDATE 需整块重写）** / B. 逐行 Zstd（>1 KB 阈值，省 163 MiB，无写放大） | **163~205 MiB** | 中高（改 schema + 迁移） | 中 |
+| **P2** | 正文压缩：**A. 块级 4 MB 打包（推荐，5.241x，省 205 MiB；写放大可解，见 C.5.1）** / B. 逐行 Zstd（>1 KB 阈值，省 163 MiB，零写放大） | **163~205 MiB** | 中高（改 schema + 迁移） | 中 |
 | **P3** | `conversation_parts` 的 `turn_id`（实测**恒为 82 字符**，且 160,465 行只有 **5,458 个不同值**）改整数代理键 | **≈26 MiB**（表内 12.5 MiB + 唯一索引 14 MiB） | 低 | 低 |
 | **✗ 不建议** | BLAKE3 大块 CDC 去重 | **~0.4 个百分点增量** | 高 | 高 |
 | **✗ 不建议** | 按时间分片 | 无证据支持；当前瓶颈是泄漏与碎片，不是单表规模 | — | — |
