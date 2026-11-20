@@ -52,14 +52,29 @@ Tantivy 只索引 prompt / 最终回答 / 变更文件路径 / 命令标签，**
 
 ### 1.3 典型体量证据
 
+**实测分布**（来源：res-storage 对现网库的只读采样，报告 `02-storage.md`；我未复现，仅引用）：
+
+| 指标 | `conversation_parts.content` |
+|---|---|
+| 非空行数 | 154,748 |
+| max | 218,555 B（≈213 KB） |
+| p99 | 12,249 B |
+| 中位数 | 275 B |
+
+这条数据**推翻了代码里的上限直觉**：
+
 | 证据 | 含义 |
 |---|---|
-| `infrastructure/conversations/types.rs:8-10`：控制行 8MB / 单 item 行 64MB / 总量 256MB | 单条 part 的**上限**在数十 MB 级 |
-| `search_index_documents.rs:237`：`MAX_SESSION_DOCUMENT_BYTES = 512 * 1024` | 单个会话聚合进 Tantivy 的正文上限 512KB，说明会话正文经常超过该量级 |
-| `migrations/20261111000003_conversation_part_turn_indexes.sql:8-9`：「17 万零件」「单会话零件加载 2.5~8.7 秒」 | 现网量级的直接观测值 |
-| ADR-0008（`agent-docs/adr/0008-adapter-stage-noise-cleansing-and-truncation.md`） | 大体积纯读命令输出已在 adapter 侧前置裁剪；**存储层不做二次截断**（代码中未见 content 截断）→ 存的是裁剪后的完整正文 |
+| `infrastructure/conversations/types.rs:8-10`：控制行 8MB / 单 item 行 64MB / 总量 256MB | 这是 adapter **协议层的天花板**，不是实际分布；实战最长仅 213 KB，差 300 倍 |
+| `search_index_documents.rs:237`：`MAX_SESSION_DOCUMENT_BYTES = 512 * 1024` | 会话级聚合正文上限 512KB，与「中位数 275 B」并存 → 说明分布极度长尾（少数巨会话 + 大量短零件） |
+| `migrations/20261111000003_conversation_part_turn_indexes.sql:8-9`：「17 万零件」「单会话零件加载 2.5~8.7 秒」 | 与 154,748 行同量级，互相印证 |
+| ADR-0008 | 大体积纯读命令输出已在 adapter 侧前置裁剪；存储层不做二次截断（代码中未见 content 截断） |
 
-「日均 3 亿 Token」的换算、以及各列实际字节占比：**未验证**（需要现网 `pragma_table_info` / `sum(length(...))` 采样）。
+设计含义：**块大小不需要为「单行超大堂」留余量**——4 MB 甚至 1 MB 的分块上限都能覆盖实测最大值（213 KB），
+且中位数 275 B 意味着「按行压缩 + 每行头部开销」会显著劣化小行（275 B 上挂 20~30 B 头 = 10% 白白浪费）。
+→ 压缩单位应偏向**会话级/轮次级大块**，而不是逐行；这一点与「不按时间分片」的方向一致。
+
+「日均 3 亿 Token」的换算、`process` 列的实际字节占比：**未验证**（需 `sum(length(process))` 采样）。
 
 ---
 
@@ -217,8 +232,26 @@ repository 层（b/b'）与现有代码结构最匹配——因为写入已收�
 
 - **优化器/索引**：正文上没有索引、没有 UNIQUE、没有 `ORDER BY content`、也没有 `LENGTH(content)`
   （全仓 grep `LENGTH(` 仅命中 `sessions.rs:256-280` 的 `updated_at`）。→ 压缩本身不破坏任何查询计划。
-- **备份兼容**：`VACUUM INTO` 是整库文件拷贝（`infrastructure/backup/mod.rs:157-175`），压缩后备份仍可用，
-  但**旧版本 App / 外部 sqlite 工具读该备份会看到 BLOB**。是否接受：属于产品决策，未验证。
+- **备份语义**：App 内置备份是 `VACUUM INTO` 优先 + `checkpoint_and_copy` 兜底
+  （`infrastructure/backup/mod.rs:154-176`（快照编排）、`:179-189`（VACUUM INTO）、`:191-200`（裸拷贝兜底），
+  命名规则 `assetiweave-app-<ts>-<uuid8>.db`，`:204-208`）。
+  `VACUUM INTO` 会**重建库**，因此压缩写入的行在备份里仍是压缩态、语义一致；
+  但兜底的 `checkpoint_and_copy` 是裸文件拷贝，两者产物无法区分。
+  旧版本 App 读新备份会看到 BLOB（是否接受：产品决策，未验证）。
+
+### 5.1 明文落盘位置清单（压缩/加密方案必须一起处理）
+
+这一节超出「SQL 列」范围，但直接决定压缩能带来多少实证收益。数据来源为 res-storage 的磁盘实测（`02-storage.md`），我未复现。
+
+| 位置 | 实测 | 与压缩的关系 |
+|---|---|---|
+| 备份目录 | 7 份库文件，**每份精确 = 1,720,578,048 B**（与主库一字不差），合计 11.21 GiB；命名 `app.db.bak_*` / `bak_data_clean_*` / `bak_pathfix_*` / `bak_cwdfix_*` / `bak_compact_*` | **不符合 App 备份命名规则**（`:204-208`），说明是人工/修复脚本 `cp` 出来的裸副本。**只压主库不会让这 11 GiB 变小**，压缩的真实收益要先扣掉这部分 |
+| Tantivy 索引目录 | `conversation-search-index` 24.69 GiB，其中 22.68 GiB 是 81 个 `generation-*.tmp` 废弃代数，从未清理 | 索引里是分词 term + 位置（`schema.rs:62-74` 只索引不 STORED），不是原文，但**term 本身即明文派生**。压缩不会自动回收这 22.68 GiB |
+| 主库 | 1.6 GiB | 压缩目标 |
+
+推论：**「正文压缩」只能解决主库里那部分；磁盘占用的大头目前在备份副本（11.21 GiB）与废弃索引代数（22.68 GiB）上。**
+如果 Wave 2 的目标是「3 亿 Token/天可持续」，必须先回答这两块归谁管（清理策略 vs 压缩）——
+否则压缩做完，机器占用仍从 ~37 GiB 起步。
 
 ---
 
@@ -252,8 +285,10 @@ repository 层（b/b'）与现有代码结构最匹配——因为写入已收�
 ### 候选 6：不做列级压缩，改做「冷热分层 + 不按时间分片的前提重估」
 - 观察：`conversation_parts` 有 `(tenant_id, turn_id)` 与 `(tenant_id, id_key)` 索引
   （`migrations/20261111000003:17-21`、`20261025000001:345`），读取几乎全部「先定会话再按 turn_id 取」。
-- 意味着：正文的访问局部性极强（一个会话一个包），**大块（会话级）压缩**比逐行压缩收益更高、CPU 更省，
-  但会与「不按时间分片」正交——需要确认 SQLite 单行 blob 上限与单会话密文大小（未验证）。
+- 意味着：正文的访问局部性极强（一个会话一个包），**大块（会话级）压缩**比逐行压缩收益更高、CPU 更省。
+- 实测支撑：中位数 275 B、max 213 KB（§1.3）→ 逐行压缩的每行头部开销约 10%，而会话级块压缩可以摊薄到 0；
+  「单行超大 BLOB」的担忧被实测排除（213 KB 远低于 SQLite 默认 1 GB blob 上限）。
+- 仍需确认：单会话全部正文密文化后的行大小分布（`process` 列未采样，未验证）。
 
 ---
 
@@ -264,6 +299,12 @@ repository 层（b/b'）与现有代码结构最匹配——因为写入已收�
    它们不会抛错，只会让功能静默失效——上线后很难被发现。
 3. **迁移脚本是 raw SQL**，因此任何透明层都必须容忍「明文与密文共存」，或提供一次性回填 + 版本列。
 
+补充两条（来自 §5.1 的实测）：
+
+4. **不要承诺「压缩后磁盘立刻下降」**：当前 37 GiB 占用里，主库只有 1.6 GiB，备份副本 11.21 GiB、
+   废弃 Tantivy 代数 22.68 GiB。压缩只主库收益有限，必须与备份保留策略/索引代数 GC 同批设计。
+5. **压缩单位取会话级/轮次级，不取行级**：行级在中位数 275 B 上会被头部开销吃掉 ~10%。
+
 ---
 
 ## 附：待补充验证
@@ -271,3 +312,4 @@ repository 层（b/b'）与现有代码结构最匹配——因为写入已收�
 - 现网各正文列的实际字节占比（`sum(length(content))` / `sum(length(process))` 采样）。
 - `process` 中 `items[].content` 占 process 总字节的比例（决定候选 2 的收益）。
 - 桌面端（`desktop/src/adapters/tauri/commands/conversations/*`）是否存在额外的正文读取；本次只确认它通过应用服务间接调用 store，未逐行核对其返回体裁剪。
+- §1.3 的体量分布与 §5.1 的磁盘占用均为 res-storage 的实测引用（`/tmp/wayfinder-209/02-storage.md`），我未复现。
