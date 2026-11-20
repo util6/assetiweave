@@ -8,7 +8,7 @@
 
 ## 0. 结论速览
 
-1. **`database is locked` 的第一根因不是「两个写者抢 WAL」，而是「每个进程启动都无条件发若干条 DML」。** 第一条是 `repair_legacy_migration_ledger_versions` 里的 `UPDATE _sqlx_migrations SET version = ...`（`backend/asset_core/src/store/database.rs:126`；`open_migrated_pool` 是 GUI 与 CLI 的唯一入口，`database.rs:61`，被 `application/system/bootstrap.rs:44` 调用）；紧接着 `seed_defaults_with_catalog`（`bootstrap.rs:46`）里还有 4 处：`store/system/tenant_repo.rs` 的 `ensure_local_identity_sqlx`（事务 `16-33`，4 条 UPSERT）、`application/system/defaults.rs` 的 `ensure_system_skill_source_sqlx`(:111) / `normalize_existing_sources_sqlx`(:117) / `normalize_existing_profiles_sqlx`(:124) / `normalize_all_tenant_paths_sqlx`(:132)。**只修 126 只会把失败顺延到下一条。** 而且**并发写者至少有三类**：GUI 主进程、`aiwc`、以及 GUI 在跑 recall agent 时用 `current_exe()` 自己再拉起的 `--memory-recall-mcp-stdio` 子进程（`agent_engine/src/infrastructure/backends/acp.rs:382-407`）。实测：另一进程持有写锁时，`aiwc` 在 **10.57 s / 10.75 s** 后抛 `(code: 5) database is locked` 并退出，`user` CPU 仅 0.01 s——它几乎什么都没干就死在了第一条写语句上。
+1. **`database is locked` 的第一根因不是「两个写者抢 WAL」，而是「每个进程启动都无条件发若干条 DML」。** 第一条是 `repair_legacy_migration_ledger_versions` 里的 `UPDATE _sqlx_migrations SET version = ...`（`backend/asset_core/src/store/database.rs:126`；`open_migrated_pool` 是 GUI 与 CLI 的唯一入口，`database.rs:61`，被 `application/system/bootstrap.rs:44` 调用）；紧接着 `seed_defaults_with_catalog`（`bootstrap.rs:46`）里还有 4 个必写点：`store/system/tenant_repo.rs` 的 `ensure_local_identity_sqlx`（事务 `16-33`，4 条 UPSERT）、`application/system/defaults.rs` 的 `ensure_system_skill_source_sqlx`(:111) / `normalize_existing_sources_sqlx`(:117) / `normalize_existing_profiles_sqlx`(:124)，外加 1 个只扇出不写自己的 `normalize_all_tenant_paths_sqlx`(:132)。**只修 126 只会把失败顺延到下一条。** 而且**并发写者至少有三类**：GUI 主进程、`aiwc`、以及 GUI 在跑 recall agent 时用 `current_exe()` 自己再拉起的 `--memory-recall-mcp-stdio` 子进程（`agent_engine/src/infrastructure/backends/acp.rs:382-407`）。实测：另一进程持有写锁时，`aiwc` 在 **10.57 s / 10.75 s** 后抛 `(code: 5) database is locked` 并退出，`user` CPU 仅 0.01 s——它几乎什么都没干就死在了第一条写语句上。
 2. **这些 DML 在稳态下全是空操作，但只要执行就要写锁**（实测 `UPDATE ... WHERE` 命中 0 行、`INSERT OR IGNORE` 零命中照样 `database is locked`；而 `CREATE TABLE IF NOT EXISTS` 与 `SELECT` 0.00 s 通过）。 因此 **100% 的 `aiwc` 命令（包括纯只读命令）在 GUI 持锁期间都会启动失败**，而不是只有写命令会失败。这决定了「只把写操作转发出去」并不能修掉 CLI 的故障。
 3. **Tantivy 的单写者问题在本仓库已经被降解为「单写者 + DB 逻辑租约」**，且 CLI 根本不写索引（事件消费者只在 `ResidentHost` 启动，`desktop/src/lib.rs:228`）。真正的抢锁面只剩「GUI + 手工跑 `assetiweave-engine` 二进制」。但租约有一个真实缺陷：**10 分钟 TTL 且不续租**（`application/conversations/conversation_search.rs:70`、`:218`），超过 10 分钟的整代重建会被第二方抢走。
 4. **ADR-0004 是「零调用的活契约」**：`assetiweave-engine` 二进制仍在构建与打包（`scripts/bundle-cli.js:39`、`desktop/tauri.conf.json:31`），252 条命令的契约仍在生成（`cli/internal/schema/contract.json`，protocol=1 / contract=3），但 `aiwc` 已改 in-process（`backend/cli/src/service/mod.rs:23`），**没有任何代码路径拉起它**。它的 stdio 实现还是「一次性读完 stdin → 一条响应」（`desktop/src/adapters/engine/transport.rs:91-95`），不是长连服务。
@@ -82,12 +82,16 @@ Tantivy 版本：`0.26.1`（`Cargo.toml` 依赖声明 `tantivy = "0.26.1"`，`Ca
 盲区（按危险度排序）：
 
 1. **startup 链完全不参与重试**。`bootstrap.rs:44` 起整条链（`open_migrated_pool` → `seed_defaults_with_catalog` → `seed_discovered_conversation_adapters` → `migrate_legacy_adapter_hashes`）全部用 `?` 直抛。这是唯一一个「失败即进程退出、用户看不到任何降级」的路径。
-2. **`bootstrap` 内部至少 5 处无条件写**，它们让「只读命令」也必须写锁。**`database.rs:126` 只是第一个凶手**——只修它，失败会往后挪几行：
-   - `store/database.rs:126` `UPDATE _sqlx_migrations`（无条件，全表条件 `version < 1e13`）
-   - `store/system/tenant_repo.rs:14` `ensure_local_identity_sqlx`（事务 `16-33`）：**4 条 UPSERT 包在一个 `pool.begin()` 里，无任何读守卫**，且是 `bootstrap.rs:46 → defaults.rs:26` 的第一件事
-   - `application/system/defaults.rs:111` `ensure_system_skill_source_sqlx`：直接 `upsert_source_sqlx`，无守卫
-   - `application/system/defaults.rs:117` `normalize_existing_sources_sqlx`：读出全部 sources 再逐条 upsert，**无差异判断**
-   - `application/system/defaults.rs:124` `normalize_existing_profiles_sqlx` + `:132` `normalize_all_tenant_paths_sqlx`：对每个非默认租户重复上面两步
+2. **`bootstrap` 内部有 5 个「必写点」+ 1 个扇出器**，它们让「只读命令」也必须写锁。**`database.rs:126` 只是第一个凶手**——只修它，失败会往后挪几行：
+   
+   **必写点（5 个，全部无条件）**
+   1. `store/database.rs:126` `UPDATE _sqlx_migrations`（条件 `version < 1e13`，稳态命中 0 行）
+   2. `store/system/tenant_repo.rs:14` `ensure_local_identity_sqlx`（事务 `16-33`）：**4 条 UPSERT 包在一个 `pool.begin()` 里，无任何读守卫**，且是 `bootstrap.rs:46 → defaults.rs:26` 的第一件事
+   3. `application/system/defaults.rs:111` `ensure_system_skill_source_sqlx`：直接 `upsert_source_sqlx`，无守卫
+   4. `application/system/defaults.rs:117` `normalize_existing_sources_sqlx`：读出全部 sources 再逐条 upsert，**无差异判断**
+   5. `application/system/defaults.rs:124` `normalize_existing_profiles_sqlx`：同上，profiles 版
+   
+   **扇出器（1 个，自身不写）**：`application/system/defaults.rs:132` `normalize_all_tenant_paths_sqlx` —— 它自己不执行任何 DML，但会对**每个非默认租户**重跑 #4/#5（`sources` + `profiles` 两条），多租户下把写入量成倍放大。计数口径统一为「**5 个必写点 + 1 个扇出器 = 6 个函数**」，与 `03-sqlite.md` §A.6 一致。
    
    有守卫、无需改的对照：`defaults.rs:95` `ensure_library_source_sqlx` 先 `load_source_sqlx(...).is_some()` 才写。
    实测依据（res-sqlite 在临时库 WAL + 持写锁 + `busy_timeout=800ms` 下逐条验证，见 `03-sqlite.md` §A.6）：`UPDATE`/`INSERT`/`DELETE` **只要执行就开写事务，与 `rows_affected` 是否为 0 无关**；`INSERT OR IGNORE` 零命中同样 `database is locked`；而 `CREATE TABLE IF NOT EXISTS <已存在>` 与纯 `SELECT` 均 0.00 s 通过。
@@ -111,7 +115,7 @@ Tantivy 版本：`0.26.1`（`Cargo.toml` 依赖声明 `tantivy = "0.26.1"`，`Ca
 | 高级导入（batch-first + 逐条降级） | `conversation_repo/import_advanced.rs:139-141` | 25 会话 / 批 | 否（后台任务） |
 | 用量事件写入 | `store/conversations/usage_repo.rs:75-120` | 单事务批量 upsert | 部分（翻译/统计命令同步触发） |
 | **Tantivy 整代重建** | `application/conversations/conversation_search.rs:87-129` + `storage.rs:124-138` | `spawn_blocking`，持 DB 租约 10 分钟，全量 2.5 万文档 | 否（后台任务，`tauri/commands/conversations/search.rs:72-130`） |
-| **`VACUUM INTO` 备份** | `infrastructure/backup/mod.rs:179-190` | 单条语句，**长读快照**（不拿写锁但阻塞 checkpoint，1.6 GB ⇒ 数十秒） | App 关闭路径 |
+| **`VACUUM INTO` 备份** | `infrastructure/backup/mod.rs:179-190` | 单条语句，**长读快照**（不拿写锁但阻塞 checkpoint，1.6 GB ⇒ 数十秒）；耗时随库体积线性增长，与其能回收多少空间是两件事 | App 关闭路径 |
 
 结论：**Tauri 命令的同步路径上没有长写事务**（已按 ADR-0017 全面后台化），这部分的架构是健康的。真正的痛点在 **bootstrap 这条「同步、无重试、且必须写」的启动路径**。
 
@@ -236,7 +240,7 @@ Tantivy 版本：`0.26.1`（`Cargo.toml` 依赖声明 `tantivy = "0.26.1"`，`Ca
 | WAL 读并发 | 已开（`database.rs:66`） | 读-读、读-写已经不冲突（`sqlite.org/wal.html` §2.2） | 已用尽 ✅ |
 | `synchronous` | 已 `NORMAL`（`:67`） | 再降 `OFF` 有丢数据风险，收益是写延迟 | 不建议 |
 | `wal_autocheckpoint` / `journal_size_limit` | 未设 | 可减少长读快照下的 WAL 膨胀（当前 `-wal` 实测 36 MB） | 小收益 |
-| **把 5 处无条件写改成条件写**（`database.rs:126` + `tenant_repo.rs` `ensure_local_identity_sqlx` + `defaults.rs` `ensure_system_skill_source_sqlx`/`normalize_existing_sources_sqlx`/`normalize_existing_profiles_sqlx`/`normalize_all_tenant_paths_sqlx`） | 全部无条件 | 修完后整条启动链可做到**稳态零写事务**，只读命令在别人持写锁时能正常启动（`MIGRATOR.run` 在库已迁移完时不抢锁：`ensure_migrations_table` 是 `CREATE TABLE IF NOT EXISTS`，SQLite 对已存在表短路，实测 0.00 s） | ✅ **最高性价比**，但**只改 126 不够**，会顺延到下一条 |
+| **把 5 处无条件写改成条件写**（`database.rs:126` + `tenant_repo.rs` `ensure_local_identity_sqlx` + `defaults.rs` `ensure_system_skill_source_sqlx`/`normalize_existing_sources_sqlx`/`normalize_existing_profiles_sqlx`/`normalize_all_tenant_paths_sqlx`） | 全部无条件 | 修完后整条启动链可做到**稳态零写事务**，只读命令在别人持写锁时能正常启动（`MIGRATOR.run` 在库已迁移完时不抢锁：`ensure_migrations_table` 是 `CREATE TABLE IF NOT EXISTS`，SQLite 对已存在表短路，实测 0.00 s） | ✅ **最高性价比**，但**只改 126 不够**，会顺延到下一条（5 个必写点 + 1 个扇出器，口径见 §A.3） |
 | **只读命令不复用 `bootstrap_runtime`**（`read_only(true)` 池 + 跳过 `seed_defaults_with_catalog`） | 结构性 | **唯一能兜住「还剩任何一处写」的方案**；也是 CLI 转发方案的天然第一步 | ✅ **结构性**，但需处理 WAL 恢复边界（见下） |
 | `busy_timeout` 分级（CLI 2–3 s 快速失败 / GUI 30 s） | 单一常数 | 让 CLI 从"卡 10 s 再死"变成"卡 2 s 后走降级" | ✅ 配合降级契约必需 |
 
@@ -416,6 +420,8 @@ ASSETIWEAVE_HOME=/tmp/aiwc-bench /usr/bin/time -p target/debug/aiwc overview
 ## 附录 B：语句级精确定位探针（res-sqlite 提供，`busy_timeout=800 ms`）
 
 > 目的：把「整条 bootstrap 10.57 s 失败」拆成「哪一条语句失败、失败多快」。全部在临时库上跑，不触碰真实库。
+>
+> ⚠️ **脚本里的 `_sqlx_migrations` 建表语句是为跑通探针手写的精简版**（省掉了 `installed_on` 的 `DEFAULT CURRENT_TIMESTAMP`、`description` 的约束、`checksum` 的 BLOB 语义等），**只用于复现加锁行为，不可当真实账本 DDL 引用**。真实 DDL 由 sqlx 的 `ensure_migrations_table` 生成，字段与默认值语义见 `03-sqlite.md` §B.3；漏掉 `installed_on` 的默认值会误判账本的时间语义。
 
 ```python
 # python3 /tmp/lock_probe.py

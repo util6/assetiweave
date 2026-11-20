@@ -646,7 +646,7 @@ active_generation = generation-8e175746…
 | **P2（附带）** | 补备份降级可观测性：`or_else` 打 `warn!` 并回填降级标记；产物断言 `freelist_count≈0`；`quick_check` 升级为尺寸+freelist 双校验（**无需改 `busy_timeout`，默认 5000 ms 已够**） | 让"压缩效果"可被自证；无可回收字节，纯可观测性 | 低 | — |
 | **P1** | 修 Tantivy merge 饥饿（93 segment → 1~4） | 索引 ~-35%（~110 MiB） | 中 | 中 |
 | **P2** | 正文压缩：**A. 块级 4 MB 打包（推荐，5.241x，省 205 MiB；写放大可解，见 C.5.1）** / B. 逐行 Zstd（>1 KB 阈值，省 163 MiB，零写放大） | **163~205 MiB** | 中高（改 schema + 迁移） | 中 |
-| **P3** | `conversation_parts` 的 `turn_id`（实测**恒为 82 字符**，且 160,465 行只有 **5,458 个不同值**）改整数代理键 | **≈26 MiB**（表内 12.5 MiB + 唯一索引 14 MiB） | 低 | 低 |
+| **P3** | `conversation_parts.turn_id`（实测**恒为 82 字符**、160,465 行仅 **5,458 个不同值**、明文 **13.16 MB**）改整数代理键。**必须与 `conversation_turns.id` 同时换**——否则 `DELETE … WHERE turn_id IN (SELECT id FROM conversation_turns WHERE session_id=?)` 这个快照替换核心语句要退化成字符串转换，收益被抵消；`turns` 侧仅 7,336 行、额外收益 ~0.6 MB，改造成本需覆盖两表 | **≈25 MiB**（表侧 11.3 + 索引侧 14） | 低（两表同步） | 低 |
 | **✗ 不建议** | BLAKE3 大块 CDC 去重 | **~0.4 个百分点增量** | 高 | 高 |
 | **✗ 不建议** | 按时间分片 | 无证据支持；当前瓶颈是泄漏与碎片，不是单表规模 | — | — |
 
@@ -766,6 +766,7 @@ python3 -c "... ZSTD_compressCCtx over 4MB buffers ..."
 | 项 | 说明 |
 |---|---|
 | 只读保证 | 全程 `file:...?mode=ro`；未建临时表、未 `VACUUM`、未 `ANALYZE`、未写任何文件到 `~/.assetiweave` |
+| **单位约定** | 本报告凡 B / KB / MB / GB 均按 **10^6 进制**；凡标 MiB / GiB 均按 **2^20 进制**。同一批数据两种写法会差 4.9%，跨文档引用前请确认对方用的是哪一种（例如 `conversation_parts` payload = **200.20 MB = 190.92 MiB**，`pgsize` = **231.60 MB = 220.88 MiB**，两者都对，只是口径不同） |
 | 已核实（非引用） | `rusqlite-0.37.0/src/inner_connection.rs:119` 在每次 open 时调用 `sqlite3_busy_timeout(db, 5000)` ⇒ **默认 5000 ms**（本报告初稿误写为 0，已更正） |
 | 口径（易误用） | `parts.content` 的"行均 / p50 / 行数占比"随**分母**变化：非空行 154,748 → 1,098.3 B / 275 B / >1KB 占 25.48%；全表 160,465 行 → 1,059.1 B / 253 B / 24.57%。**只有"字节占比 81.55%"与分母无关**，对外优先引它 |
 | 哈希替代 | **sha256 代替 BLAKE3 计块，去重率结论等价**（碰撞概率差异对"内容是否相同"的判定无影响） |

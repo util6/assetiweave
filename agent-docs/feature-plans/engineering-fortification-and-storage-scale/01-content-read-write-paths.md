@@ -316,24 +316,50 @@ repository 层（b/b'）与现有代码结构最匹配——因为写入已收�
 
 ### 5.2 块级压缩的唯一硬约束：原地 UPDATE 会放大成整块重写
 
-这是块级方案相对逐行方案的**唯一结构性代价**（res-storage `02-storage.md` §C.5/§E.1 已标为"实测未覆盖的工程约束"）。
-把正文写入按「是否原地改写」分类后，结论是**本项目对块级相对友好，但不是全友好**：
+这是块级方案相对逐行方案的**唯一结构性代价**。
+把正文写入按「是否原地改写」分类后，结论是**本项目对块级友好，写放大不是硬阻断**：
 
 | 写入模式 | 位置 | 对块级的影响 |
 |---|---|---|
-| **会话整包 DELETE + INSERT**（主流） | `snapshot.rs:440-467`；调用方 6 处（§2.1 W1-W5） | **天然友好**：整会话重写，块可以整段重算，不需要 slack 也不需要 COW |
-| 原地 `UPDATE translated_text` | `conversation_repo/projection.rs:12-24`、`web_record_repo/list.rs:389-405` | **不友好**：改一个零件 → 必须重写它所在的整块（或 COW + 后台合并） |
-| 原地 `UPDATE attrs_json = json_remove(...)` | `store/database.rs:257-264` | 同上（一次性自愈，低频） |
-| 原地 `UPDATE process = ?1`（整段 JSON 覆写） | `conversation_repo/triad_update.rs:74` | 同上，但改的是 process 列、体量更大 |
-| 启动期路径收敛原地改 JSON | `store/path_convergence.rs:107-142,150-167` | 同上，且是**全表遍历式**，冷路径但会触发大量块重写 |
+| **会话整包 DELETE + INSERT**（主流） | `snapshot.rs:440-467`；调用方 6 处（§2.1 W1-W5） | **天然友好**：整会话重写，块可整段重算，不需要 slack 也不需要 COW |
+| 原地 `UPDATE translated_text` | `conversation_repo/projection.rs:12-24`、`web_record_repo/list.rs:389-405` | 不友好，但**实测这两列是空的**（见下），不纳入块级即可 |
+| 原地 `UPDATE attrs_json = json_remove(...)` | `store/database.rs:257-264` | 一次性自愈（checksum 匹配才跑），低频 |
+| 原地 `UPDATE process = ?1`（整段 JSON 覆写） | `conversation_repo/triad_update.rs:74` | 同上，改 process 列、体量更大 |
+| 启动期路径收敛原地改 JSON | `store/path_convergence.rs:107-142,150-167` | **全表 GLOB 遍历式**，冷路径但会触发大量块重写 |
 
-→ 工程取舍：**要么接受"翻译回填 = 整块重写"（低频、可接受），要么在块内留 slack**。
-不建议为了这一条退回逐行模型——那要少赚 23 MB（209 MB vs 186 MB）。
-一个更省的折中：**只对 `content`/`process` 走块级，`translated_text` 保持逐行或明文**（译文列未采样，收益未知）。
+**折中是零成本的（实测支撑）**：`translated_text` 两列合计只有 **4 行非空 / 7,031 B（6.9 KiB）**
+（res-storage `02-storage.md` §C.5.1）。在 160,465 行里只有 3 行有译文 → **把这一列留在逐行或明文，等于不付任何代价就消掉 2 处高频原地 UPDATE**。
+顺带一个产品信号：**翻译功能实际上从未被大规模使用**；若 Wave 2 要正式上翻译，这一列会从 6.9 KiB 涨到几十 MB，届时再决定是否纳入块级。
+
+**`path_convergence` 可以直接复用仓内已有的「一次性标记」范式**：
+`conversation_subagent_fold.rs:19,53,152-160,204-222` 已把 `settings_id = conversation.subagent_session_fold_v1`
+写进 `app_settings`，启动时只查一行就短路。`converge_portable_paths` 目前没有这道闸门，
+照抄这个范式加一个 `conversation.path_converged_v1`，就能把唯一一处「冷路径全表块重写」彻底消掉。
+
+→ 结论：**不建议为写放大退回逐行模型**——那要少赚 23 MB（186 MB vs 209 MB）。
 
 ---
 
 ## 6. 「压缩层落点」候选判断
+
+### 候选 0：先切一期只做 `parts.content`（风险最低，拿 67% 收益）
+
+各列对 205.0 MiB 总收益的贡献（res-storage 全量实测）：
+
+| 列 | 压缩比 | 省下 | 占总收益 |
+|---|---:|---:|---:|
+| `parts.content` | 5.382 | 138,378,454 | **61.4%** |
+| `turns.process` | 6.642 | 28,407,659 | 12.6% |
+| `turns.response` | 2.988 | 12,395,856 | 5.5% |
+| `turns.prompt` | 8.091 | 10,744,612 | 4.8% |
+| `parts.attrs_json` | 18.221 | 9,298,900 | 4.1% |
+| `wr_parts.content` | 7.123 | 8,453,009 | 3.8% |
+| `wr_turns.response` | 2.625 | 6,593,248 | 2.9% |
+| 其余两列 | — | ~1,013,000 | 0.5% |
+
+**只做 `parts.content` 一期 = 138 MB / 205 MB ≈ 67% 收益**，而且**完全绕开 `process` 的整段覆写风险**
+（`triad_update.rs:74`）和所有 JSON 侧破坏（B4/B6/B7/B10 里与 process/attrs_json 相关的部分）。
+→ 建议把这一期作为 Wave 2 的**第一刀**：收益最大、关联风险最少、回滚最容易。
 
 ### 候选 1：写入漏斗编码 + repo 层解码（推荐）
 **落点**：`snapshot.rs:499-580`（两个 insert）+ `row_mappers.rs:359-367` / `snapshot.rs:264-273` / `search_records.rs:146-155` 等读点。
@@ -396,15 +422,17 @@ repository 层（b/b'）与现有代码结构最匹配——因为写入已收�
 6. **块级模型下只有一套策略**：两列不需分流（分叉只在逐行模型成立，见 §1.5）；差异仅体现在压缩比
    （`attrs_json` 18.2x / `process` 6.64x / `content` 5.38x / `response` 2.6~3.0x）。
 7. **`prompt` 的正解是去重不是压缩**：p50 仅 152 B、去重率 36.7%（全库最高）、4 MB 块压缩比 8.09x（全库最高）。
-8. **块级压缩必须回答原地 UPDATE**：整包快照替换天然友好，但 5 处原地改写（§5.2）会放大成整块重写。
-   要么接受低频整块重写，要么块内留 slack；**不要为这一条退回逐行模型**（少赚 23 MB）。
+8. **块级压缩的写放大可解，不是阻断**：整包快照替换天然友好；`translated_text` 实测仅 6.9 KiB（§5.2），
+   留逐行等于零成本；`path_convergence` 照抄 `conversation_subagent_fold` 的 `app_settings` 一次性标记即可消掉。
+   **不要为写放大退回逐行模型**（少赚 23 MB）。
+9. **分期切分点明确**：第一期只做 `parts.content` 拿 67% 收益、避开关联风险（§6 候选 0）。
 
 ---
 
 ## 附：待补充验证
 
 - ~~现网各正文列的实际字节占比~~ —— 已由 res-storage 全量实测补齐（§1.3/§1.4）。
+- ~~`translated_text` 的体量~~ —— 实测 4 行 / 6.9 KiB（§5.2），已排除出块级范围。
 - `process` 中 `items[].content` 占 `process` 总字节的比例（决定候选 2 的真实收益上限）。
-- `translated_text` 两列的字节占比与去重率（译文副本可能与原文高度相似，影响去重与是否纳入块级）。
 - 桌面端（`desktop/src/adapters/tauri/commands/conversations/*`）是否存在额外的正文读取；本次只确认它通过应用服务间接调用 store，未逐行核对其返回体裁剪。
-- §1.3/§1.4/§1.5/§5.1/§5.2 的体量、压缩比与压测方法均为 res-storage 的实测引用（`/tmp/wayfinder-209/02-storage.md`），我未复现。
+- §1.3~§1.5、§5.1、§5.2、§6 候选 0 的体量、压缩比与压测方法均为 res-storage 的实测引用（`/tmp/wayfinder-209/02-storage.md`），我未复现。
