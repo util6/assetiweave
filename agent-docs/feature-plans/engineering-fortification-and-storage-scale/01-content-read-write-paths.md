@@ -332,9 +332,19 @@ repository 层（b/b'）与现有代码结构最匹配——因为写入已收�
 顺带一个产品信号：**翻译功能实际上从未被大规模使用**；若 Wave 2 要正式上翻译，这一列会从 6.9 KiB 涨到几十 MB，届时再决定是否纳入块级。
 
 **`path_convergence` 可以直接复用仓内已有的「一次性标记」范式**：
-`conversation_subagent_fold.rs:19,53,152-160,204-222` 已把 `settings_id = conversation.subagent_session_fold_v1`
+`conversation_subagent_fold.rs:19,53,146-178,204-222` 已把 `settings_id = conversation.subagent_session_fold_v1`
 写进 `app_settings`，启动时只查一行就短路。`converge_portable_paths` 目前没有这道闸门，
 照抄这个范式加一个 `conversation.path_converged_v1`，就能把唯一一处「冷路径全表块重写」彻底消掉。
+
+**但照抄时必须改一个地方（比事务边界重要得多）**：`subagent_fold` 的标记语义是「**数据代际**」
+（`FoldMarker.data_generation = (session_count, latest_imported_at, source_revisions)`，`:163-178` 要求 `recorded == current`），
+而路径收敛的触发条件是「**这一版代码跑过没有**」，不是「数据变没变」。
+所以正确做法是用 **`app_settings.schema_version` 做版本闸门**，而不是照抄 `data_generation`。
+否则将来往扫描列表里加一个新列（例如把 `last_cwd` 也纳入归一化），老安装的 v1 标记会**永久跳过新列**——
+这是这套范式唯一真正的坑，且与事务无关。
+
+事务边界方面 res-storage 已核（`02-storage.md` §C.5.1）：标记在 `tx.commit()` 之后单独写（`:146-148`），
+靠「**标记最后写 + 函数幂等**」保证安全（崩在写标记前只会多跑一次，不会漏跑）。我原先标的「未验证」据此撤销。
 
 → 结论：**不建议为写放大退回逐行模型**——那要少赚 23 MB（186 MB vs 209 MB）。
 
