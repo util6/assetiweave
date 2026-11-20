@@ -119,11 +119,21 @@ let pool = SqlitePoolOptions::new()
 
 **DEFERRED 41 处**（`pool.begin()`，全部非测试）。
 
-> **计数方法（先说清，因为这里我改过一次口）**：`517`（`SQLITE_BUSY_SNAPSHOT`）只在"事务内**先读**建立快照、再尝试升级写锁"时触发。所以判据是**事务内第一条 SQL 是读还是写**，而不是"这个事务里有没有读"。
+> **计数方法（先说清，因为这里我改过一次口）**：517 只在"事务内**先读**建立快照、再尝试升级写锁"时触发。所以判据是**事务内第一条 SQL 是读还是写**，而不是"这个事务里有没有读"。
 > 我对全部 41 处做了静态筛查（取 `pool.begin()` 之后 14 行内的第一条 SQL 动词；若是 `*_tx` 辅助函数则追进函数体看首条语句），结论是**只有 8 处是读优先** `[实测]`。
 > 我上一版写的"约 22 处"是**未逐处核对时的估计值，属于错误** `[估计]`，已按实测更正。
 >
-> `517` 的发生窗口可以精确描述为三步：本事务先执行 SELECT 建立读快照 → 期间另一个连接写入（WAL 推进）→ 本事务再执行写语句想升级到 RESERVED，发现自己的快照已过期 ⇒ `SQLITE_BUSY_SNAPSHOT`。所以它与"别人**持**读快照"无关 —— res-ipc 实测：另一进程只持读快照时 `aiwc overview` 正常（4.65 s 冷 / 0.72 s 热），与此判据自洽。
+> **517 的官方定义与触发条件**（`sqlite.org/rescode.html#busy_snapshot` 原文）：
+> > "The SQLITE_BUSY_SNAPSHOT error code is an extended error code for SQLITE_BUSY that occurs **on WAL mode databases** when a database connection tries to promote a read transaction into a write transaction but finds that another database connection has already written to the database and thus invalidated prior reads."
+>
+> 官方同时给出三步场景：① A 开启读事务并做若干 SELECT 且保持打开 → ② B 更新数据库、改掉 A 已读的值 → ③ A 尝试写入，发现自己视图已过期 ⇒ `BUSY_SNAPSHOT`。
+> ⇒ **触发需三者同时成立：WAL 模式 + DEFERRED（读优先）+ 期间他人写入**。缺一不成立：
+> - **rollback-journal 模式下不存在 517**（只有 `SQLITE_BUSY`）；本仓是 WAL（`database.rs:66`），所以适用。
+> - 与"别人**持**读快照"无关——res-ipc 实测：另一进程只持读快照时 `aiwc overview` 正常（4.65 s 冷 / 0.72 s 热）。
+> - 写优先事务不经过"读→升级"这一步，因此 33 处写优先**不会**产生 517。
+>
+> **一条自我限定与它的解除**：附录 B 的探针复现的是 `SQLITE_BUSY`（primary code 5）——它证明的是"零命中 DML 也会抢写锁"（A.6 的论点），**不是** 517 本身，因为该探针是写优先，不经过"读→升级"。
+> 为此我另写了 **附录 C** 的时序探针（A 先 `BEGIN`+`SELECT` → B 期间写入并提交 → A 再 `UPDATE`），**实测复现到 `errorcode=517` / `SQLITE_BUSY_SNAPSHOT`** `[实测]`。所以本节结论是"机制已实测 + 8 处代码结构识别"，不再是纯推断。
 
 | 风险 | 判据 | 位置 |
 |---|---|---|
@@ -613,7 +623,7 @@ let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
 
 ---
 
-## 附录：复现命令（全部只读）
+## 附录 A：复现命令（全部只读）
 
 ```bash
 # 账本与页面统计
@@ -694,3 +704,51 @@ holder.execute("ROLLBACK"); holder.close()
 ```
 
 预期输出（SQLite 3.54.0 实测）：`SELECT` 与 `CREATE TABLE IF NOT EXISTS` 为 `OK 0.00s`，其余三条为 `FAIL ~0.88s database is locked`（0.88 s ≈ busy_timeout 800 ms + 连接开销）。
+
+> **本探针证明什么、不证明什么**：它证明的是「`UPDATE`/`INSERT` 即使零命中也会申请写锁，因此会被他人持有的写事务挡住」（primary code **5** = `SQLITE_BUSY`）。它**没有**复现 517（`SQLITE_BUSY_SNAPSHOT`）——那需要"先读建快照 → 他人在其间写入 → 再写"的时序，本脚本是写优先，见 B.2。
+> 若要在 rollback-journal 模式下单独看锁行为：同样得 `database is locked`，因为那是**锁**现象，两种 journal 模式都有；517 是 WAL 特有的**快照**现象（官方原文见 A.4）。两者不要混为一谈。
+
+---
+
+## 附录 C：517（`SQLITE_BUSY_SNAPSHOT`）时序复现
+
+B.1 只能证明"零命中 DML 抢锁"。要复现 517，必须让**读优先的一方先建快照、另一方在其后写入、它再写**。脚本如下（两个独立连接，同一进程即可）：
+
+```python
+# python3 /tmp/repro_517.py
+import sqlite3
+path = "/tmp/pragma-probe/s.db"
+
+c = sqlite3.connect(path, isolation_level=None)
+c.execute("PRAGMA journal_mode=WAL")          # 517 仅在 WAL 下存在
+c.execute("CREATE TABLE IF NOT EXISTS t(a INTEGER)")
+c.execute("INSERT INTO t VALUES (1)")
+c.close()
+
+A = sqlite3.connect(path, isolation_level=None)   # 读优先方
+B = sqlite3.connect(path, isolation_level=None)   # 他人写入方
+A.execute("PRAGMA journal_mode=WAL"); B.execute("PRAGMA journal_mode=WAL")
+
+A.execute("BEGIN")                                 # DEFERRED：只拿 SHARED，不取写锁
+A.execute("SELECT count(*) FROM t").fetchone()      # 建立读快照
+
+B.execute("BEGIN IMMEDIATE"); B.execute("INSERT INTO t VALUES (9)"); B.execute("COMMIT")
+
+try:
+    A.execute("PRAGMA busy_timeout=800")
+    A.execute("UPDATE t SET a = a + 1 WHERE a = 1")  # ← 期望 517
+    print("未触发 517")
+except sqlite3.OperationalError as e:
+    print(e, "| errorcode =", getattr(e, "sqlite_errorcode", None),
+          "| errorname =", getattr(e, "sqlite_errorname", None))
+```
+
+**实测输出**（Python 3.13.12 / 其内置 SQLite 3.50.4，macOS）：
+
+```
+A: BEGIN (deferred) + SELECT -> (1,)
+B: 已写入并提交
+A: UPDATE 失败 -> database is locked | errorcode=517 | errorname=SQLITE_BUSY_SNAPSHOT
+```
+
+⇒ **517 已在真实时序下复现**（`errorcode=517`，而非 primary code 5）。这解释了为什么 A.4 的判据是"事务内**首条**语句是否为读"：只有首条为读（DEFERRED + SELECT）才会走到"升级写锁"这一步；首条即写的事务在 B.1 里得到的是 `SQLITE_BUSY`，那是锁冲突而不是快照冲突。

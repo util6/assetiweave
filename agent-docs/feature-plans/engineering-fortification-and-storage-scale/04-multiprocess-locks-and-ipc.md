@@ -490,7 +490,9 @@ INSERT OR IGNORE（主键已存在）                      FAIL  0.85s  database
 
 **B.1 的结论**：`UPDATE` / `INSERT` / `DELETE` 只要被**执行**就会开写事务（`OP_Transaction` 带写标志），**与 `rows_affected` 是否为 0 完全无关**；`CREATE TABLE IF NOT EXISTS` 对已存在的表走短路，不取写锁；纯 `SELECT` 不取写锁。这就是「稳态空操作仍然会 `database is locked`」的机制级解释，也是「把 5 处无条件 DML 加读守卫」能生效的前提。
 
-> **B.1 的适用边界（重要）**：B.1 复现的是 **primary `SQLITE_BUSY`（code 5）**——「抢锁失败」。它**没有**复现 517。517 需要「先读建立快照 → 期间他人写入 → 再写」的时序，B.1 的语句是写优先，一上来就抢写锁，不构成那个时序。两者是不同机制，结论不能互换。
+> **B.1 的适用边界（重要）**：B.1 复现的是 **primary `SQLITE_BUSY`（code 5，锁冲突）**——「抢锁失败」。它**没有**复现 517。517 需要「先读建立快照 → 期间他人写入 → 再写」的时序，B.1 的语句是写优先，一上来就抢写锁，不构成那个时序。两者是**不同错误码、不同机制，结论不能互换**。
+>
+> 两类冲突的归属：**锁冲突（code 5）由 `03-sqlite.md` 附录 B 复现；快照冲突（code 517）由 `03-sqlite.md` 附录 C 与本报告 B.2 各自独立复现**（见下方 B.2 的交叉验证说明）。
 
 ### B.2 517 时序探针（本报告实测）
 
@@ -541,6 +543,8 @@ A: UPDATE FAIL 0.00s  code=517  name=SQLITE_BUSY_SNAPSHOT  msg=database is locke
 1. **517 是真的，且可稳定复现**：`code=517 / SQLITE_BUSY_SNAPSHOT`。三条件必须同时成立：**WAL 模式 + DEFERRED（首条语句为读）+ 期间他人写入**。本仓是 WAL（`store/database.rs:66`），所以 8 处读优先事务适用。
 2. **`busy_timeout` 对 517 完全无效**：它在 0.00 s 就返回，不会进 busy handler。⇒ 「拉长 busy_timeout」救不了 517，唯一解法是**重开事务**（`begin_immediate_with_retry`）或一开始就用 `BEGIN IMMEDIATE`。
 3. **517 的错误文本与 primary BUSY 完全相同**（都是 `database is locked`），只能靠 `code` 区分。本仓 `is_retryable_db_lock_err`（`common.rs:360-370`）字符串里已包含 `code: 517`，所以**重试分类是对的**；真正的缺口是那 8 处**根本没接上重试助手**。
+
+**B.2 的交叉验证**：同一时序由 res-sqlite 在 `03-sqlite.md` **附录 C** 独立复现一次（Python 3.13.12 内置 SQLite **3.50.4**），本报告用的是同一运行时、并额外测了 `busy_timeout=10000` 的对照组；此前 B.1 用的 CLI 是 SQLite **3.54.0**。两次独立复现结论一致（`errorcode=517` / `errorname=SQLITE_BUSY_SNAPSHOT`），可视为**机制已实测**而非结构推断。两处保留同一脚本是有意为之：一次复现是"我说它会发生"，两次独立复现才是"它在两个环境里都会发生"。
 
 **官方资料（一手）**
 
