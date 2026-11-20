@@ -20,6 +20,7 @@
 | 7 | 索引 106 个（44 命名 + 62 自建），实测可安全删除 **5 个**，其中最干净的一个是 `UNIQUE(tenant_id, model_id)` 的**逐列完全副本** | 见 C.3 |
 | 8 | **11.21 GiB 的 `app.db.bak_*` 是"孤儿资产"**：不是 App 产物（App 产物名 `assetiweave-app-*.db`，一个都没有），是人工/脚本 `cp` 的裸副本；App 备份轮转不覆盖它们，压缩上线后也不会缩小。App 的 `VACUUM INTO` 逻辑本身正确 | 见 B.5；`backup/mod.rs:204-208` |
 | 9 | **优先级提醒**：SQLite 引擎侧上限 1.24 GiB，而 `conversation-search-index` 垃圾代数 22.68 GiB（res-storage 实测，为本项 18 倍）→ 引擎参数是 P1/P2，不是主线 | 见 D 开头 |
+| 10 | **只读命令会被写锁连坐**：`database.rs:124-131` 的零命中 `UPDATE` 每次启动都抢 RESERVED 锁；别人持写事务时 `aiwc overview` 10 s 后 `code:5` 启动失败。且修它**不够**——`bootstrap.rs:46` 的 `seed_defaults` 里还有 4 处无条件 upsert（`tenant_repo.rs:14-35` 等）。实测：`UPDATE`/`INSERT OR IGNORE` 零命中也抢锁，`SELECT` 与已存在的 `CREATE TABLE IF NOT EXISTS` 不抢 | 见 A.6（含实测表）；res-ipc 原始复现 |
 
 ---
 
@@ -140,6 +141,54 @@ let pool = SqlitePoolOptions::new()
 本仓是**长连接池**（`SqlitePool`，5 连接常驻），按第 2 条应：连接建立后跑 `PRAGMA optimize=0x10002`（只做轻量分析，带 `analysis_limit` 保护），再加一个每日/每小时的 `PRAGMA optimize`。sqlx 0.9 已把这个能力内置成 `optimize_on_close(enabled, analysis_limit)`（docs.rs 明确 "Not enabled by default"），开启后连接归还/关闭时自动执行——**这是零代码侵入的接入点**，建议第 1 档先只开它，观察 `sqlite_stat1` 是否出现、慢查询是否变化。
 
 > 注：`cache_size` / `mmap_size` / `temp_store` / `wal_autocheckpoint` / `journal_size_limit` 在 sqlx 里**没有专用方法**，统一用 `.pragma("名字", "值")`。
+
+### A.6 启动期无条件写 ⇒ 只读命令被写锁「连坐」（实测，含对 res-ipc 结论的修正）
+
+res-ipc 实测：另一进程持 `BEGIN IMMEDIATE` 时，`aiwc overview`（纯只读命令）在 10.57 s 后报
+`(code: 5) database is locked` 而 `user` CPU 仅 0.01 s。我在临时库上把机制拆开验证（结果确定性、可复现）：
+
+**实测（WAL 模式，另一进程持 `BEGIN IMMEDIATE`，busy_timeout=800 ms）**
+
+| 语句 | 结果 | 结论 |
+|---|---|---|
+| `SELECT count(*) FROM t` | OK 0.00s | 读不受影响（WAL） |
+| `UPDATE ... WHERE version < 1e13`（**命中 0 行**） | **FAIL** 0.88s `database is locked` | **零命中也照样开写事务** |
+| `UPDATE ... SET version=version WHERE 0` | **FAIL** 0.88s | 同上，与是否命中无关 |
+| `CREATE TABLE IF NOT EXISTS <已存在的表>` | OK 0.00s | **SQLite 会短路，不取写锁** |
+| `INSERT OR IGNORE`（主键已存在） | **FAIL** 0.88s | 任何 DML 都取写锁 |
+
+→ 机制：`UPDATE`/`INSERT`/`DELETE` 在执行时即开写事务（`OP_Transaction` 带写标志），**与 rows_affected 无关**；
+`SELECT` 与"已存在的 `CREATE TABLE IF NOT EXISTS`"不会。这条正是 `database.rs:124-131` 每次启动都抢 RESERVED 锁的原因。
+
+**但要修正 res-ipc 的"第 0 档"：只改 `database.rs:126` 不够，失败点会往后挪几行。**
+
+修好它之后，`open_migrated_pool` 剩下的部分确实是纯读的（重要正面结论）：
+- `MIGRATOR.run()` 里的 `ensure_migrations_table` 是 `CREATE TABLE IF NOT EXISTS` → 已存在时**不取锁**（上表实测）；
+- `dirty_version` / `list_applied_migrations` 都是 SELECT；
+- 8 段自愈里 `normalize_legacy_part_ids`（无 `id` 列即 return）、`fold_*`（marker 命中即 return）、`converge_portable_paths`（`write_pending` 在 `pending.is_empty()` 时 return，`path_convergence.rs:155-157`）稳态都是零写。
+
+**但 `open_migrated_pool` 返回之后，`bootstrap.rs:46` 立刻进入 `seed_defaults_with_catalog`，那里还有 ≥4 处无条件写：**
+
+| 位置 | 行为 | 是否读守卫 |
+|---|---|---|
+| `store/system/tenant_repo.rs:14-35` `ensure_local_identity_sqlx` | 4 条 UPSERT（principal / tenant / membership / tenant_state）在一个 DEFERRED 事务里 | ❌ **无守卫，每次启动必写** |
+| `application/system/defaults.rs:111-115` `ensure_system_skill_source_sqlx` | 直接 `upsert_source_sqlx` | ❌ 无守卫 |
+| `application/system/defaults.rs:117-122` `normalize_existing_sources_sqlx` | 读出**全部** sources 再逐条 upsert（未变更也写） | ❌ 无差异判断 |
+| `application/system/defaults.rs:132-146` `normalize_all_tenant_paths_sqlx` | 对每个非默认租户重复上面两步 | ❌ 无守卫 |
+| `defaults.rs:95-109` `ensure_library_source_sqlx` | 先 `load_source_sqlx(...).is_some()` 再写 | ✅ 有守卫 |
+| `store/system/menu_repo.rs:25+` / `shortcut_repo.rs:42+` | 先读现有集合再补缺 | ✅ 有守卫 |
+
+→ **所以只改 `database.rs:126`，只读命令会在 `tenant_repo.rs:16` 的 `pool.begin()` + 第一条 UPSERT 上再死一次**（同样是 10 s 后 `code: 5`）。
+
+**正确排序（替换我 D 节原第 1 档之前的位置）**
+
+- **第 0 档（根因）**：只读命令**不复用** `bootstrap_runtime`。`aiwc overview/list` 这类命令应当走"只读启动"：
+  用 `SqliteConnectOptions::new().filename(..).read_only(true)` 建池 + 跳过 `seed_defaults_with_catalog` / `migrate_legacy_*` / 适配器播种。
+  这是唯一能保证"别人持写锁时只读命令仍 100% 可用"的方案；否则无论怎么优化写点，只要有 1 处写就可能被锁住。
+- **第 0.5 档（低成本，收益大）**：把上述 5 处无条件写改成"状态签名不变则不写"：
+  `database.rs:126` 改成先 `SELECT MIN(version) FROM _sqlx_migrations` 判定；`ensure_local_identity_sqlx` 包一层 `EXISTS`；
+  `normalize_existing_*` 改成逐行比较后再写。目标是**稳态启动零写事务**。
+- **明确反对**：调大 `busy_timeout`（res-ipc 的判断正确）——10 s 变 30 s 只是把失败推迟，`user` CPU 0.01 s 说明它根本没事可做，等更久纯属惩罚用户。
 
 ---
 
@@ -425,6 +474,15 @@ let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
 > （51%，内含 22.68 GiB 的 81 个 `generation-*.tmp` 废弃代数）—— 那是本项收益的 **18 倍**。
 > 所以：**搜索引擎垃圾代数是 P0；SQLite 参数/空间治理是 P1/P2，不是主线。**
 > 下面 5 档只在 SQLite 域内排序。
+
+### 第 0 档（最高性价比）：让只读命令不被写锁连坐
+
+两条一起做，无迁移、可回滚（详见 A.6）：
+
+1. **根因**：只读 CLI 不走 `bootstrap_runtime` 的写链（`bootstrap.rs:44-52`），改用 `read_only(true)` 池并跳过 `seed_defaults_with_catalog`。否则只要链上剩 1 处写，就仍会 10 s 后 `code: 5`。
+2. **稳态零写**：`database.rs:126` 的零命中 `UPDATE` 先加 `SELECT MIN(version)` 判定；`tenant_repo.rs:14-35`、`defaults.rs:111,117,132` 共 4 处无条件 upsert 加存在性/差异判断。实测证明 `UPDATE`/`INSERT OR IGNORE` 零命中也抢写锁，而 `SELECT` 与已存在的 `CREATE TABLE IF NOT EXISTS` 不抢。
+
+> 不要靠调大 `busy_timeout` 解决——那只是把 10 s 失败变成 30 s 失败。
 
 ### 第 1 档：纯参数，改动 8 行、无迁移、可回滚
 
