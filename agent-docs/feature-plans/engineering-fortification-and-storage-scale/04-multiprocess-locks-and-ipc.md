@@ -3,6 +3,9 @@
 > 范围：只读代码考古 + 官方一手资料 + 一次隔离库上的可复现实测。
 > 协作边界：SQLite 参数/迁移/索引见 `03-sqlite.md`，Tantivy 体积与 `.tmp` 泄漏见 `02-storage.md`，路径便携化见 `01-paths.md`。本文不重复推导，只做交叉引用。
 > 实测环境：macOS 26 (`Darwin 27.2.0` / arm64)，真实库 `~/.assetiweave/app.db` = 1.6 GB，隔离副本上跑 `target/debug/aiwc`（debug 构建，未 strip）。
+>
+> **数值来源标记（沿用 `03-sqlite.md` 顶部约定）**：`[实测]` = 可原样复现；`[推算]` = 由实测值算术推导；`[估计]` = 人工估算、未经逐处核对，**引用前需自行验证**；未标注的整数均为 `[实测]`。
+> **同一数字只在一份文档维护**：`8 处读优先 DEFERRED` 由 `03-sqlite.md` §A.4 维护；本文件只维护**工作量行数估算**与**本机实测时延**（0.72–0.84 s / 4.65–5.84 s / 10.57 s）。别处只引用、不复制，避免多轮引用后漂移。
 
 ---
 
@@ -12,7 +15,8 @@
 2. **这些 DML 在稳态下全是空操作，但只要执行就要写锁**（实测 `UPDATE ... WHERE` 命中 0 行、`INSERT OR IGNORE` 零命中照样 `database is locked`；而 `CREATE TABLE IF NOT EXISTS` 与 `SELECT` 0.00 s 通过）。 因此 **100% 的 `aiwc` 命令（包括纯只读命令）在 GUI 持锁期间都会启动失败**，而不是只有写命令会失败。这决定了「只把写操作转发出去」并不能修掉 CLI 的故障。
 3. **Tantivy 的单写者问题在本仓库已经被降解为「单写者 + DB 逻辑租约」**，且 CLI 根本不写索引（事件消费者只在 `ResidentHost` 启动，`desktop/src/lib.rs:228`）。真正的抢锁面只剩「GUI + 手工跑 `assetiweave-engine` 二进制」。但租约有一个真实缺陷：**10 分钟 TTL 且不续租**（`application/conversations/conversation_search.rs:70`、`:218`），超过 10 分钟的整代重建会被第二方抢走。
 4. **ADR-0004 是「零调用的活契约」**：`assetiweave-engine` 二进制仍在构建与打包（`scripts/bundle-cli.js:39`、`desktop/tauri.conf.json:31`），252 条命令的契约仍在生成（`cli/internal/schema/contract.json`，protocol=1 / contract=3），但 `aiwc` 已改 in-process（`backend/cli/src/service/mod.rs:23`），**没有任何代码路径拉起它**。它的 stdio 实现还是「一次性读完 stdin → 一条响应」（`desktop/src/adapters/engine/transport.rs:91-95`），不是长连服务。
-5. **不建议现在建 UDS 写队列。** 先做三件成本不高的事：①把启动链改成「稳态零写」（5 处无条件写加守卫，或把只读命令切到独立 `read_only` bootstrap）；②修 `.tmp` 代际泄漏（25 GB 里约 24 GB 是垃圾，见 `02-storage.md` §B）；③给 bootstrap 链加分级重试。这三件能吃掉绝大多数冲突。UDS 的**真正**收益不是「避免锁冲突」，而是「CLI 冷启动从 0.72–0.84 s（热缓存）/ 4.65–5.84 s（冷缓存）降到 ~10–55 ms」——这是一个 15–100× 的**提速**，不是降级。
+5. **`busy_timeout` 不能救 517，这条要单独记一笔。** 实测（附录 B.2）：`BEGIN`(DEFERRED)+`SELECT` 建快照 → 他人写入 → 本事务再写 ⇒ `SQLITE_BUSY_SNAPSHOT(517)`，**0.00 s 立即失败**，`busy_timeout` 设 800 ms 还是 10 s 都一样。⇒ 对本仓 8 处读优先事务，唯一解法是**重开事务**（`begin_immediate_with_retry`）或一开始就用 `BEGIN IMMEDIATE`；「拉长 busy_timeout」连这一类都碰不到。
+6. **不建议现在建 UDS 写队列。** 先做三件成本不高的事：①把启动链改成「稳态零写」（5 处无条件写加守卫，或把只读命令切到独立 `read_only` bootstrap）；②修 `.tmp` 代际泄漏（25 GB 里约 24 GB 是垃圾，见 `02-storage.md` §B）；③给 bootstrap 链加分级重试。这三件能吃掉绝大多数冲突。UDS 的**真正**收益不是「避免锁冲突」，而是「CLI 冷启动从 0.72–0.84 s（热缓存）/ 4.65–5.84 s（冷缓存）降到 ~10–55 ms」——这是一个 15–100× 的**提速**，不是降级。
 
 ---
 
@@ -98,9 +102,13 @@ Tantivy 版本：`0.26.1`（`Cargo.toml` 依赖声明 `tantivy = "0.26.1"`，`Ca
 3. **重试只在 `conversation_repo` 子树里**。`memory_recall_repo/turns.rs:241`、`web_record_repo/import.rs:34/44/81`、`observations.rs:281`、`path_convergence.rs:159` 都是裸 `begin_immediate` / `pool.begin()`，没有重试。
    另有 **8 处「读优先」`DEFERRED` 事务**（清单见 `03-sqlite.md` §A.4），才是 `SQLITE_BUSY_SNAPSHOT (517)` 的真实风险面：`import.rs:108`、`import.rs:183`、`reproject.rs:77`、`memory_recall_repo/turns.rs:112`、`:194`、`pricing_repo_ops.rs:342`、`conversation_turn_identity.rs:99`、`:107`。
    **判据是「事务内第一条 SQL 是否为读」，不是「事务内有没有读」**——这是本条最容易反复踩的坑：写优先的 DEFERRED 事务（其余 33 处）首条语句即写，本来就要拿写锁，换 `IMMEDIATE` 不改变任何行为。
+   **517 已实测复现（本报告附录 B.2）**：`BEGIN`(DEFERRED) + `SELECT` 建立快照 → 另一连接写入并提交 → 本事务 `UPDATE` ⇒ `code=517 / SQLITE_BUSY_SNAPSHOT`，且**在 0.00 s 内立刻失败**（把 `busy_timeout` 从 800 ms 调到 10 s 仍然 0.00 s）。
+   ⚠️ **不要从「仓库里 DEFERRED 事务共约 41 处（8 + 33）」直接推出「要改 41 处」**：真实改造量只有 8 处 + 1 处挪读。这个数字过去一轮被当作 22 处引用过，是 `[估计]` 失真的典型案例。
    还有一个第三类：`usage_repo.rs:111` 是「读在事务外、写在事务内」（`load_valid_turn_indices_sqlx` 在 `pool.begin()` 之前），**不触发 517**，但会基于陈旧快照写入——这是逻辑风险，修法是把读挪进事务，不是换 `IMMEDIATE`。
 4. **重试语义是「重开事务」，不是「重放事务」**——只对 `BEGIN` 阶段的冲突有效；事务中途遇到 `SQLITE_BUSY` 仍然直接失败。
-5. **`busy_timeout` 是「安静地等 10 秒再死」**，对交互式 CLI 而言 10 秒等待 ≈ 卡死；对 GUI 后台任务而言 10 秒又太短。一个全局常数无法同时满足两种调用方。
+5. **`busy_timeout` 只对「抢锁失败（primary `SQLITE_BUSY`=5）」有效，对「快照过期（`SQLITE_BUSY_SNAPSHOT`=517）」完全无效**。实测：primary BUSY 会等满 busy_timeout 再报错（本报告 10.57 s 那组）；517 无论 `busy_timeout` 是 800 ms 还是 10 s 都是 **0.00 s 立刻失败**（附录 B.2）。
+   因此「拉长 busy_timeout」这条路对 517 这一类**根本不起作用**；而 517 的唯一解法是**重开事务**（`begin_immediate_with_retry`）或一开始就用 `BEGIN IMMEDIATE`。
+   另一半问题依旧存在：对交互式 CLI 而言 10 秒等待 ≈ 卡死，对 GUI 后台任务而言 10 秒又太短——一个全局常数无法同时满足两种调用方。
 6. **Tantivy 侧零处理**（见 §A.2）。
 
 ### A.4 长写事务 / 长锁持有清单
@@ -239,7 +247,7 @@ Tantivy 版本：`0.26.1`（`Cargo.toml` 依赖声明 `tantivy = "0.26.1"`，`Ca
 
 | 参数 | 现状 | 加大后的效果 | 判断 |
 |---|---|---|---|
-| `busy_timeout` 10 s → 30/60 s | `database.rs:68` | 只把「10 s 后死」变成「30 s 后死」。对 CLI 是**体验更差**（卡更久），对后台任务是边际改善 | 单独加长 ❌ |
+| `busy_timeout` 10 s → 30/60 s | `database.rs:68` | 只对 primary `SQLITE_BUSY`（抢锁失败）生效，把「10 s 后死」变成「30 s 后死」；对 `SQLITE_BUSY_SNAPSHOT(517)` **完全无效**（实测 0.00 s 立即失败，与 timeout 无关，见附录 B.2）。对 CLI 是**体验更差** | 单独加长 ❌ |
 | WAL 读并发 | 已开（`database.rs:66`） | 读-读、读-写已经不冲突（`sqlite.org/wal.html` §2.2） | 已用尽 ✅ |
 | `synchronous` | 已 `NORMAL`（`:67`） | 再降 `OFF` 有丢数据风险，收益是写延迟 | 不建议 |
 | `wal_autocheckpoint` / `journal_size_limit` | 未设 | 可减少长读快照下的 WAL 膨胀（当前 `-wal` 实测 36 MB） | 小收益 |
@@ -420,7 +428,9 @@ ASSETIWEAVE_HOME=/tmp/aiwc-bench /usr/bin/time -p target/debug/aiwc overview
 #    python3: BEGIN; SELECT count(*) FROM conversation_parts; sleep(25);
 ```
 
-## 附录 B：语句级精确定位探针（res-sqlite 提供，`busy_timeout=800 ms`）
+## 附录 B：两套锁层探针
+
+### B.1 零命中 DML 是否申请写锁（res-sqlite 提供，`busy_timeout=800 ms`）
 
 > 目的：把「整条 bootstrap 10.57 s 失败」拆成「哪一条语句失败、失败多快」。全部在临时库上跑，不触碰真实库。
 >
@@ -478,12 +488,65 @@ CREATE TABLE IF NOT EXISTS（已存在）                OK    0.00s
 INSERT OR IGNORE（主键已存在）                      FAIL  0.85s  database is locked
 ```
 
-**结论**：`UPDATE` / `INSERT` / `DELETE` 只要被**执行**就会开写事务（`OP_Transaction` 带写标志），**与 `rows_affected` 是否为 0 完全无关**；`CREATE TABLE IF NOT EXISTS` 对已存在的表走短路，不取写锁；纯 `SELECT` 不取写锁。这就是「稳态空操作仍然会 `database is locked`」的机制级解释，也是「把 5 处无条件 DML 加读守卫」能生效的前提。
+**B.1 的结论**：`UPDATE` / `INSERT` / `DELETE` 只要被**执行**就会开写事务（`OP_Transaction` 带写标志），**与 `rows_affected` 是否为 0 完全无关**；`CREATE TABLE IF NOT EXISTS` 对已存在的表走短路，不取写锁；纯 `SELECT` 不取写锁。这就是「稳态空操作仍然会 `database is locked`」的机制级解释，也是「把 5 处无条件 DML 加读守卫」能生效的前提。
+
+> **B.1 的适用边界（重要）**：B.1 复现的是 **primary `SQLITE_BUSY`（code 5）**——「抢锁失败」。它**没有**复现 517。517 需要「先读建立快照 → 期间他人写入 → 再写」的时序，B.1 的语句是写优先，一上来就抢写锁，不构成那个时序。两者是不同机制，结论不能互换。
+
+### B.2 517 时序探针（本报告实测）
+
+> 目的：把「8 处读优先 DEFERRED 会撞 517」从**结构推断**升级为**实测**。全部在临时库上跑。
+
+```python
+# python3 probe517.py   —— 只在临时库跑
+import sqlite3, time
+path = "/tmp/p517/w.db"
+
+c = sqlite3.connect(path, isolation_level=None)
+c.execute("PRAGMA journal_mode=WAL")
+c.execute("CREATE TABLE IF NOT EXISTS t(a INTEGER)")
+c.execute("INSERT INTO t VALUES(1)"); c.close()
+
+A = sqlite3.connect(path, isolation_level=None)
+A.execute("PRAGMA busy_timeout=10000")     # 故意放到 10 s，验证它对 517 是否有效
+A.execute("BEGIN")                         # DEFERRED，不取写锁
+A.execute("SELECT count(*) FROM t")        # 建立读快照   <-- 关键：先读
+
+B = sqlite3.connect(path, isolation_level=None)
+B.execute("BEGIN IMMEDIATE"); B.execute("INSERT INTO t VALUES(9)"); B.execute("COMMIT")
+#                                                    <-- 关键：他人在 A 的快照之后写入
+
+t0 = time.time()
+try:
+    A.execute("UPDATE t SET a=a+1 WHERE a=1")   # <-- 关键：此时再写
+    print(f"UPDATE 成功 {time.time()-t0:.2f}s  -> 未复现 517")
+except Exception as e:
+    print(f"FAIL {time.time()-t0:.2f}s  code={e.sqlite_errorcode} "
+          f"name={e.sqlite_errorname}  msg={e}")
+A.close(); B.close()
+```
+
+实测输出（SQLite 3.50.4）：
+
+```
+A: BEGIN (deferred)
+A: SELECT -> (1,)                 # 读快照已建立
+B: 写入并提交完成                  # A 的快照由此过期
+A: UPDATE FAIL 0.00s  code=517  name=SQLITE_BUSY_SNAPSHOT  msg=database is locked
+```
+
+`busy_timeout=800` 与 `busy_timeout=10000` 两次跑，**都是 0.00 s 立刻失败**。
+
+**B.2 的三个结论**
+
+1. **517 是真的，且可稳定复现**：`code=517 / SQLITE_BUSY_SNAPSHOT`。三条件必须同时成立：**WAL 模式 + DEFERRED（首条语句为读）+ 期间他人写入**。本仓是 WAL（`store/database.rs:66`），所以 8 处读优先事务适用。
+2. **`busy_timeout` 对 517 完全无效**：它在 0.00 s 就返回，不会进 busy handler。⇒ 「拉长 busy_timeout」救不了 517，唯一解法是**重开事务**（`begin_immediate_with_retry`）或一开始就用 `BEGIN IMMEDIATE`。
+3. **517 的错误文本与 primary BUSY 完全相同**（都是 `database is locked`），只能靠 `code` 区分。本仓 `is_retryable_db_lock_err`（`common.rs:360-370`）字符串里已包含 `code: 517`，所以**重试分类是对的**；真正的缺口是那 8 处**根本没接上重试助手**。
 
 **官方资料（一手）**
 
 - SQLite WAL 并发模型：<https://www.sqlite.org/wal.html> §2.2（"there can only be one writer at a time"；readers/writers 互不阻塞；§9 列出 WAL 下仍会 `SQLITE_BUSY` 的三种情形：独占锁模式、最后连接清理、崩溃后恢复）
 - SQLite `PRAGMA busy_timeout`：<https://www.sqlite.org/pragma.html#pragma_busy_timeout>
+- SQLite 扩展结果码 `SQLITE_BUSY_SNAPSHOT` (517)：<https://www.sqlite.org/rescode.html#busy_snapshot>（"occurs on WAL mode databases when a database connection tries to promote a read transaction into a write transaction but finds that another database connection has already written"）
 - `interprocess` 2.4.9 文档与平台分级：<https://docs.rs/interprocess/latest/interprocess/>
 - `interprocess::local_socket`（无自带分帧承诺、按平台映射到 UDS / named pipe）：<https://docs.rs/interprocess/2.4.8/interprocess/local_socket/index.html>
 - `interprocess::local_socket::GenericFilePath`（Windows 只认 `\\.\pipe\`）：<https://docs.rs/interprocess/2.4.9/interprocess/local_socket/enum.GenericFilePath.html>
