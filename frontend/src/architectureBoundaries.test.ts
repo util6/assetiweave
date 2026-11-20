@@ -179,4 +179,101 @@ describe("frontend architecture boundaries", () => {
       expect(content, relativePath).not.toMatch(/-webkit-line-clamp\s*:/i);
     }
   });
+
+  it("blocks new raw native/control title= attributes via ESLint and ratchets legacy occurrences", async () => {
+    const eslint = new ESLint({
+      cwd: repoRoot,
+      overrideConfigFile: path.join(repoRoot, "eslint.config.mjs"),
+    });
+
+    const lintSnippet = async (code: string, relativePath: string) => {
+      const [result] = await eslint.lintText(code, {
+        filePath: path.join(repoRoot, relativePath),
+      });
+      return result.messages;
+    };
+
+    for (const blocked of [
+      `export const A = () => <span title="原生提示">text</span>;`,
+      `export const B = () => <button type="button" title="关闭">x</button>;`,
+      `export const C = ({ Button }: any) => <Button title="按钮">ok</Button>;`,
+      `export const D = ({ Badge }: any) => <Badge title="徽标">tag</Badge>;`,
+      `export const E = ({ TruncatedText }: any) => <TruncatedText title="文本">hi</TruncatedText>;`,
+    ]) {
+      const messages = await lintSnippet(
+        blocked,
+        "frontend/src/components/example/SampleCard.tsx",
+      );
+      expect(
+        messages.some(
+          (m) =>
+            m.ruleId === "no-restricted-syntax" &&
+            m.message.includes("GlobalNativeTitleBridge"),
+        ),
+        blocked,
+      ).toBe(true);
+    }
+
+    // Custom component heading props and SVG <title> elements remain allowed
+    for (const allowed of [
+      `export const F = ({ DialogFrame }: any) => <DialogFrame title="标题" />;`,
+      `export const G = ({ PageHeader }: any) => <PageHeader title="页面标题" />;`,
+      `export const H = () => <svg><title>图标语义</title></svg>;`,
+    ]) {
+      const messages = await lintSnippet(
+        allowed,
+        "frontend/src/components/example/SampleCard.tsx",
+      );
+      expect(
+        messages.filter((m) => m.ruleId === "no-restricted-syntax"),
+        allowed,
+      ).toEqual([]);
+    }
+
+    // Legacy files cannot grow above their documented native title= ratchet baseline
+    const baseline = JSON.parse(
+      readFileSync(
+        path.join(repoRoot, "scripts/native-title-baseline.json"),
+        "utf8",
+      ),
+    ) as { selector: string; counts: Record<string, number> };
+
+    const tseslint = await import("typescript-eslint");
+    const ratchetEslint = new ESLint({
+      cwd: repoRoot,
+      overrideConfigFile: true,
+      overrideConfig: [
+        tseslint.default.configs.base,
+        {
+          files: ["frontend/src/**/*.{ts,tsx}"],
+          ignores: [
+            "frontend/src/**/*.test.{ts,tsx}",
+            "frontend/src/**/__fixtures__/**",
+          ],
+          rules: {
+            "no-restricted-syntax": [
+              "warn",
+              { selector: baseline.selector, message: "NATIVE_TITLE_HIT" },
+            ],
+          },
+        },
+      ],
+    });
+
+    const results = await ratchetEslint.lintFiles(Object.keys(baseline.counts));
+    for (const result of results) {
+      const rel = path
+        .relative(repoRoot, result.filePath)
+        .split(path.sep)
+        .join("/");
+      const actual = result.messages.filter(
+        (m) => m.message === "NATIVE_TITLE_HIT",
+      ).length;
+      const limit = baseline.counts[rel] ?? 0;
+      expect(
+        actual,
+        `${rel} exceeded native title= baseline`,
+      ).toBeLessThanOrEqual(limit);
+    }
+  });
 });

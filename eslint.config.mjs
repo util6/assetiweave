@@ -1,7 +1,15 @@
+import { readFileSync } from "node:fs";
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
 import eslintConfigPrettier from "eslint-config-prettier";
+
+const nativeTitleBaseline = JSON.parse(
+  readFileSync(
+    new URL("./scripts/native-title-baseline.json", import.meta.url),
+    "utf8",
+  ),
+);
 
 const isArchitectureOnly = process.env.ESLINT_ARCHITECTURE_ONLY === "1";
 
@@ -90,6 +98,20 @@ const rawTruncationIgnores = [
   "frontend/src/**/*.test.{ts,tsx}",
 ];
 
+const rawNativeTitleRule = {
+  selector: nativeTitleBaseline.selector,
+  message:
+    "New raw HTML/control `title=` attributes are forbidden (existing ones are handled globally by GlobalNativeTitleBridge). Use <Tooltip> (with `aria-label` on icon controls) or <TruncatedText> instead.",
+};
+
+const legacyNativeTitleFiles = Object.keys(nativeTitleBaseline.counts);
+const rawNativeTitleIgnores = [
+  "frontend/src/components/ui/**",
+  "frontend/src/**/*.test.{ts,tsx}",
+  "frontend/src/**/__fixtures__/**",
+  ...legacyNativeTitleFiles,
+];
+
 const architectureRulesConfig = [
   {
     files: ["frontend/src/**/*.{ts,tsx,js,mjs}"],
@@ -117,21 +139,55 @@ const architectureRulesConfig = [
       "no-restricted-syntax": ["error", tauriDynamicImportSyntaxRule],
     },
   },
+  // Non-service TypeScript/TSX modules: enforce Tauri + truncation + new-native-title rules cleanly without overwriting.
   {
     files: ["frontend/src/**/*.{ts,tsx}"],
-    ignores: rawTruncationIgnores,
+    ignores: [
+      "frontend/src/services/**",
+      ...rawTruncationIgnores,
+      ...rawNativeTitleIgnores,
+    ],
     rules: {
-      "no-restricted-syntax": ["error", ...rawTruncationSyntaxRules],
+      "no-restricted-syntax": [
+        "error",
+        tauriDynamicImportSyntaxRule,
+        ...rawTruncationSyntaxRules,
+        rawNativeTitleRule,
+      ],
     },
   },
+  // Non-service legacy native-title files: preserve Tauri + truncation enforcement (title= ratcheted via architectureBoundaries.test.ts).
   {
-    files: ["frontend/src/**/*.{ts,tsx}"],
+    files: legacyNativeTitleFiles,
     ignores: ["frontend/src/services/**", ...rawTruncationIgnores],
     rules: {
       "no-restricted-syntax": [
         "error",
         tauriDynamicImportSyntaxRule,
         ...rawTruncationSyntaxRules,
+      ],
+    },
+  },
+  // TruncatedText.tsx is allowed to use truncation classes, still enforces Tauri + new-native-title rules.
+  {
+    files: ["frontend/src/components/foundation/TruncatedText.tsx"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        tauriDynamicImportSyntaxRule,
+        rawNativeTitleRule,
+      ],
+    },
+  },
+  // Services modules: exempt from Tauri runtime import rule, enforce truncation + new-native-title rules.
+  {
+    files: ["frontend/src/services/**/*.{ts,tsx}"],
+    ignores: [...rawTruncationIgnores, ...rawNativeTitleIgnores],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...rawTruncationSyntaxRules,
+        rawNativeTitleRule,
       ],
     },
   },

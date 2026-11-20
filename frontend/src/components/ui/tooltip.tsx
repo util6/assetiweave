@@ -1,5 +1,6 @@
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import * as React from "react";
+import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
 
@@ -170,7 +171,123 @@ const TooltipContent = React.forwardRef<
 );
 TooltipContent.displayName = TooltipPrimitive.Content.displayName;
 
+export interface TooltipAnchorRect {
+  height: number;
+  left: number;
+  top: number;
+  width: number;
+}
+
+export function measureTooltipAnchorRect(
+  element: HTMLElement | null,
+): TooltipAnchorRect | null {
+  if (!element) {
+    return null;
+  }
+  const rect = element.getBoundingClientRect();
+  return {
+    top: rect.top,
+    left: rect.left,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+export function isSameTooltipAnchorRect(
+  prev: TooltipAnchorRect | null,
+  next: TooltipAnchorRect | null,
+): boolean {
+  if (prev === next) {
+    return true;
+  }
+  if (!prev || !next) {
+    return false;
+  }
+  return (
+    Math.abs(prev.top - next.top) <= 0.5 &&
+    Math.abs(prev.left - next.left) <= 0.5 &&
+    Math.abs(prev.width - next.width) <= 0.5 &&
+    Math.abs(prev.height - next.height) <= 0.5
+  );
+}
+
+export interface AnchoredTooltipPortalProps {
+  align?: TooltipContentProps["align"];
+  anchorDataAttr?: Record<string, string>;
+  anchorRect: TooltipAnchorRect | null;
+  ariaDescribedbyId?: string;
+  children: React.ReactNode;
+  className?: string;
+  onContentMouseEnter?: React.MouseEventHandler<HTMLDivElement>;
+  onContentMouseLeave?: React.MouseEventHandler<HTMLDivElement>;
+  onContentPointerEnter?: React.PointerEventHandler<HTMLDivElement>;
+  onContentPointerLeave?: React.PointerEventHandler<HTMLDivElement>;
+  onOpenChange: (open: boolean) => void;
+  open: boolean;
+  side?: TooltipContentProps["side"];
+}
+
+/**
+ * Portals a floating Tooltip + fixed anchor to document.body so ancestors using
+ * `contain: layout paint` or CSS `transform` cannot trap fixed positioning.
+ */
+const AnchoredTooltipPortal: React.FC<AnchoredTooltipPortalProps> = ({
+  align = "start",
+  anchorDataAttr,
+  anchorRect,
+  ariaDescribedbyId,
+  children,
+  className,
+  onContentMouseEnter,
+  onContentMouseLeave,
+  onContentPointerEnter,
+  onContentPointerLeave,
+  onOpenChange,
+  open,
+  side = "top",
+}) => {
+  const node = (
+    <Tooltip disableHoverableContent onOpenChange={onOpenChange} open={open}>
+      <TooltipTrigger asChild>
+        <span
+          aria-hidden="true"
+          className="pointer-events-none fixed"
+          {...anchorDataAttr}
+          style={
+            anchorRect
+              ? {
+                  top: anchorRect.top,
+                  left: anchorRect.left,
+                  width: anchorRect.width,
+                  height: anchorRect.height,
+                }
+              : undefined
+          }
+        />
+      </TooltipTrigger>
+      <TooltipContent
+        align={align}
+        className={className}
+        id={ariaDescribedbyId}
+        onMouseEnter={onContentMouseEnter}
+        onMouseLeave={onContentMouseLeave}
+        onPointerEnter={onContentPointerEnter}
+        onPointerLeave={onContentPointerLeave}
+        side={side}
+      >
+        {children}
+      </TooltipContent>
+    </Tooltip>
+  );
+
+  if (typeof document !== "undefined") {
+    return createPortal(node, document.body);
+  }
+  return node;
+};
+
 export {
+  AnchoredTooltipPortal,
   Tooltip,
   TooltipArrow,
   TooltipContent,

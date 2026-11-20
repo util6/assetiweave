@@ -135,7 +135,10 @@ frontend/src/
    - 所有目录与文件便携路径显示（含可见文本与悬停 Tooltip 完整值），统一通过 `abbreviateHomePath`（`frontend/src/utils/path.ts`）转换为 `~` 缩写形态，严禁界面显示 `~` 缩写而悬停提示却回退为未缩写系统绝对路径。
 3. **交互路径按钮与行动作文案收口**：
    - 承载路径展示的可点击按钮或表格行（如“在访达中显示”或整行点击说明），**严禁**将动作说明写在 `title` 上遮挡截断路径提示；动作说明统一迁入 `aria-label`，截断路径完整值交由内部 `<TruncatedText>` 独立提示。
-4. **明确豁免项**：
+4. **全局原生 `title=` 接管与静态门禁**：
+   - 运行时由挂载于 [AppProviders.tsx](file:///Users/util6/code-space/assetiweave/frontend/src/app/AppProviders.tsx) 的 `GlobalNativeTitleBridge`（[NativeTitleBridge.tsx](file:///Users/util6/code-space/assetiweave/frontend/src/components/ui/NativeTitleBridge.tsx)）全局扫描并拦截 DOM 上的原生 HTML `title` 属性（搬运至 `data-aw-tooltip` 并在必要时补齐无障碍 `aria-label`），统一交由 Scheme C 样式 `Tooltip` Portal 渲染，避免操作系统/WebKit 弹出原生深灰色提示框（`[data-native-title-exempt]` 与 `<svg><title>` 保持豁免）。
+   - ESLint（`eslint.config.mjs`）禁止在新代码或干净文件中于原生 HTML 标签、`<Button>`、`<Badge>`、`<TruncatedText>` 上新增 `title=` 属性；存量文件受 `scripts/native-title-baseline.json` 与 `architectureBoundaries.test.ts` 棘轮门禁约束，只允许减少不允许新增。
+5. **明确豁免项**：
    - **6–8 行长正文预览卡片**：如 `PromptOverviewPage.tsx` 中的长正文折叠预览区域（`line-clamp-6` / `line-clamp-8` 等 6 行及以上多行截断）不强制改用 `<TruncatedText>`。
    - **纯图标操作按钮**：不含截断文本的纯图标按钮（如侧边导航栏折叠按钮或图标工具动作气泡）允许保留其非文本截断用途的提示机制。
    - **原生可编辑表单控件**：`<input>`、`<textarea>` 内部的文本滚动或原生输入截断行为不在本规范限制范围内。

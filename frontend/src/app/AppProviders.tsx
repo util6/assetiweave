@@ -19,6 +19,7 @@ import { ConversationDataMaintenanceProvider } from "./backgroundTasks/Conversat
 import { ConversationSearchProvider } from "./backgroundTasks/ConversationSearchProvider";
 import { TaskCenterProvider } from "./backgroundTasks/TaskCenterProvider";
 import { TooltipProvider } from "../components/ui/tooltip";
+import { GlobalNativeTitleBridge } from "../components/ui/NativeTitleBridge";
 
 const appQueryClient = createAppQueryClient();
 
@@ -33,6 +34,7 @@ export function AppProviders({ children, i18n }: AppProvidersProps) {
       <QueryScopeProvider>
         <I18nProvider i18n={i18n}>
           <TooltipProvider delayDuration={300} skipDelayDuration={150}>
+            <GlobalNativeTitleBridge />
             <I18nEffects />
             <SettingsEffects />
             <ConversationCardKindRegistryProvider>

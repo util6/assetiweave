@@ -1,12 +1,12 @@
 import * as React from "react";
-import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
 import {
-  Tooltip,
-  TooltipContent,
+  AnchoredTooltipPortal,
+  isSameTooltipAnchorRect,
+  measureTooltipAnchorRect,
+  type TooltipAnchorRect,
   type TooltipContentProps,
-  TooltipTrigger,
   useTooltipTiming,
 } from "../ui/tooltip";
 
@@ -94,12 +94,9 @@ function TruncatedTextInner<T extends React.ElementType = "span">(
 
   const [mounted, setMounted] = React.useState(false);
   const [open, setOpen] = React.useState(false);
-  const [anchorRect, setAnchorRect] = React.useState<{
-    height: number;
-    left: number;
-    top: number;
-    width: number;
-  } | null>(null);
+  const [anchorRect, setAnchorRect] = React.useState<TooltipAnchorRect | null>(
+    null,
+  );
   const tooltipId = React.useId();
 
   const openRef = React.useRef(false);
@@ -137,28 +134,13 @@ function TruncatedTextInner<T extends React.ElementType = "span">(
   }, []);
 
   const syncAnchorRect = React.useCallback(() => {
-    const el = hostRef.current;
-    if (!el) {
+    const next = measureTooltipAnchorRect(hostRef.current);
+    if (!next) {
       return;
     }
-    const rect = el.getBoundingClientRect();
-    setAnchorRect((prev) => {
-      if (
-        prev &&
-        Math.abs(prev.top - rect.top) <= 0.5 &&
-        Math.abs(prev.left - rect.left) <= 0.5 &&
-        Math.abs(prev.width - rect.width) <= 0.5 &&
-        Math.abs(prev.height - rect.height) <= 0.5
-      ) {
-        return prev;
-      }
-      return {
-        top: rect.top,
-        left: rect.left,
-        width: rect.width,
-        height: rect.height,
-      };
-    });
+    setAnchorRect((prev) =>
+      isSameTooltipAnchorRect(prev, next) ? prev : next,
+    );
   }, []);
 
   const openTooltipNow = React.useCallback(() => {
@@ -473,6 +455,9 @@ function TruncatedTextInner<T extends React.ElementType = "span">(
         truncationClass,
         className,
       )}
+      data-truncated-tooltip-active={
+        mounted && canShowTooltip ? "true" : undefined
+      }
       onBlur={handleHostBlur}
       onFocus={handleHostFocus}
       onKeyDown={handleHostKeyDown}
@@ -490,49 +475,28 @@ function TruncatedTextInner<T extends React.ElementType = "span">(
 
   const tooltipNode =
     mounted && canShowTooltip ? (
-      <Tooltip
-        disableHoverableContent
+      <AnchoredTooltipPortal
+        align={tooltipAlign}
+        anchorDataAttr={{ "data-truncated-tooltip-anchor": "" }}
+        anchorRect={anchorRect}
+        ariaDescribedbyId={tooltipId}
+        className={tooltipClassName}
+        onContentMouseEnter={handleContentEnter}
+        onContentMouseLeave={handleContentLeave}
+        onContentPointerEnter={handleContentEnter}
+        onContentPointerLeave={handleContentLeave}
         onOpenChange={handleRadixOpenChange}
         open={open}
+        side={tooltipSide}
       >
-        <TooltipTrigger asChild>
-          <span
-            aria-hidden="true"
-            className="pointer-events-none fixed"
-            data-truncated-tooltip-anchor=""
-            style={
-              anchorRect
-                ? {
-                    top: anchorRect.top,
-                    left: anchorRect.left,
-                    width: anchorRect.width,
-                    height: anchorRect.height,
-                  }
-                : undefined
-            }
-          />
-        </TooltipTrigger>
-        <TooltipContent
-          align={tooltipAlign}
-          className={tooltipClassName}
-          id={tooltipId}
-          onMouseEnter={handleContentEnter}
-          onMouseLeave={handleContentLeave}
-          onPointerEnter={handleContentEnter}
-          onPointerLeave={handleContentLeave}
-          side={tooltipSide}
-        >
-          {resolvedTooltip}
-        </TooltipContent>
-      </Tooltip>
+        {resolvedTooltip}
+      </AnchoredTooltipPortal>
     ) : null;
 
   return (
     <>
       {hostElement}
-      {tooltipNode && typeof document !== "undefined"
-        ? createPortal(tooltipNode, document.body)
-        : tooltipNode}
+      {tooltipNode}
     </>
   );
 }
