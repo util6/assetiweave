@@ -66,7 +66,7 @@ let pool = SqlitePoolOptions::new()
 | `txlock` | ⚠ **不存在该 API** | sqlx `SqliteConnectOptions` 无 `txlock`；只能像 `database.rs:42-52` 那样显式 `BEGIN IMMEDIATE` | 保持现状方案，靠改调用点（A.4） |
 | `locking_mode` | 未设 → NORMAL | docs.rs："The default locking mode is NORMAL." | 保持（改 EXCLUSIVE 会挡住备份/外部工具） |
 | `shared_cache` | 未设 → 关闭 | docs.rs："By default, this is disabled." | **保持关闭**（WAL + shared cache 已知有锁语义坑） |
-| `page_size` | 未设 → 4096 | 库内实测 4096 | 保持；改它必须 VACUUM 且 WAL 下受限 |
+| `page_size` | 未设 → 4096 | 库内实测 4096 | **保持 4096，不进候选**：`internal` 页全库仅 447 页 / 1.83 MB，靠调大 page_size 减少 B 树层数的收益上限就是 1.83 MB，且 WAL 下改 page_size 必须整库重建（见 B.4） |
 
 > 注：`mmap_size` / `temp_store` / `wal_autocheckpoint` / `journal_size_limit` / `cache_size` 在 sqlx 里**没有专用方法**，统一用 `.pragma("名字", "值")`（docs.rs `pragma` 签名：`pragma<K: Into<Cow<'static,str>>, V: Into<Cow<'static,str>>>(self, key: K, value: V)`）。
 
@@ -346,7 +346,7 @@ res-ipc 实测：另一进程持 `BEGIN IMMEDIATE` 时，`aiwc overview`（纯�
 
 | 对象 | 大小 | 备注 |
 |---|---|---|
-| `conversation_parts`（表） | **220 MiB** | 160,465 行 → 平均 ~1.4 KiB/行，`content` 溢出页占大头 |
+| `conversation_parts`（表） | **220 MiB** | 160,465 行；**平均 1,059 B 正文/行（字节口径），p50 仅 253 B**，只有 24.6% 的行正文 > 1 KiB |
 | `conversation_turns` | 68 MiB | 7,336 行（`process`/`response` 很长） |
 | `sqlite_autoindex_conversation_parts_1` | **18.34 MiB** | UNIQUE(tenant_id, turn_id, part_index)，占**全部索引的 45%** |
 | `web_record_turns` / `web_record_parts` | 13 / 10 MiB | |
@@ -354,7 +354,26 @@ res-ipc 实测：另一进程持 `BEGIN IMMEDIATE` 时，`aiwc overview`（纯�
 | 全部索引合计 | **40.8 MiB** | |
 | 全部表合计 | **369.8 MiB** | |
 
+**页类型拆分（`dbstat.pagetype`，与 res-storage 独立复测，逐行完全一致）**
+
+| 范围 | `leaf` | `overflow` | `internal` |
+|---|---|---|---|
+| 全库 | 60,337 页 / **247.1 MB**（63.75%）· 页内未用 45.2 MB | 33,894 页 / **138.8 MB**（35.80%）· 页内未用仅 0.88 MB | 447 页 / **1.83 MB**（0.47%） |
+| `conversation_parts` | 39,096 页 / **160.1 MB**（69.1%）· 页内未用 28.8 MB | 17,339 页 / **71.0 MB**（30.7%） | 109 页 / 0.45 MB（0.2%） |
+
+**这组数纠正了我此前一句错话**：我原先写"`content` 溢出页占大头"——**不对**。溢出链只占该表 30.7%（71.0 MB），69.1%（160.1 MB）仍在 leaf 页。正确表述是"**leaf 页吃掉 69.1%、溢出链吃掉 30.7%，两者都是靶子**"。
+
+由此得到三个可执行结论（与 res-storage 的 §A.7 交叉验证）：
+
+1. **溢出链几乎不浪费**（全库页内未用仅 0.88 MB），浪费几乎全在 leaf（45.2 MB，其中 `parts` 28.8 MB）。
+2. ⇒ 空间治理的**内部顺序是：先压缩把正文压到 ≤ ~980 B（1/4 页）以内以消灭溢出链，再用 `VACUUM` 收 leaf 碎片**，不能反过来。当前 **81.55% 的字节来自正文 >1 KiB 的行**（该数双向独立复测完全一致），所以压缩收益集中在这批行。
+3. ⇒ **`page_size` 不进候选**：`internal` 全库只有 447 页 / 1.83 MB，任何"调大 page_size 减少 B 树层数"的收益天花板就是 **1.83 MB**，且 WAL 下改 page_size 必须整库重建。收益/风险不成比例。
+
+> 行数占比的口径差异（记录以免误引）：我按 `length(cast(content as blob)) > 1024` 测得 **24.57%** 的行、占 **81.55%** 字节；res-storage 报行数占比 39.4%。**唯一双方独立复测完全一致的是 81.55% 这个字节占比**，对外请只用它；行数占比待口径统一后再引。
+
 其他表行数参考：`conversation_sessions` 2,109 · `assets` 185 · `sources` 13 · `memory_recall_turns` **0**。
+
+> **口径指针**：备份/压缩后的磁盘占用见 `02-storage.md §E.3`（三笔账分开报，压缩只动 1.60 GiB 那一档），本文所有数字仅限 SQLite 这一档。
 
 > **VACUUM 注意**：1.6 GiB 库执行 `VACUUM` 需要**约等于回收后大小 + 回滚日志**的临时磁盘（≈400 MiB 量级），并全程持有写锁（启动期做会阻塞整个 app）。`auto_vacuum=INCREMENTAL` 也**必须先 `VACUUM` 一次**才生效（docs.rs `auto_vacuum`："For existing databases, a change to this value does not take effect unless a VACUUM command is executed"）。压缩本身建议用一次性独立连接或离线路径，不要复用 `infrastructure/backup` 的 `snapshot_sqlite_database`——那条路失败时会静默退化（见 B.5，低严重度但不可观测）。
 
@@ -460,8 +479,9 @@ let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
 
 `sqlite_autoindex_conversation_parts_1`（`UNIQUE(tenant_id, turn_id, part_index)`）= **18.34 MiB，占全部索引的 45%**。
 表只有 160,465 行，却在 4 KiB 页上把 `tenant_id TEXT` + `turn_id TEXT(UUID/哈希)` 各存了两遍（表内 + 索引内）。
+实测键长：`turn_id` **恒为 82 字符**（`conversation-turn-<64 hex>`，min=max=82）、`tenant_id` 7 字符 ⇒ 每条索引项 ≈ 82+7+2+rowid ≈ 95–110 B，`160,465 × ~110 B ≈ 17.6 MB`，与实测 18.34 MiB 吻合。
 **不能删**（它是唯一性约束，也是快照替换 `DELETE ... WHERE turn_id IN (...)` 的唯一可用索引），
-但如果把 `turn_id` 换成整数代理键（或至少把 `tenant_id` 走字典序/不使用 TEXT），单项可省 **≈15 MiB** ——
+但如果把 `turn_id` 换成整数代理键（键长降到 ~23 B），索引可落到 ~4 MB，单项省 **≈14–15 MiB** ——
 是我上面 5 个可删索引合计（4.9 MiB）的 3 倍，且同时降低 `conversation_parts` 的每次写入成本。
 代价是 DDL 重构 + 全表重建（正好可以和 baseline 一起做）。列为 P2，不进 Wave 2 短期范围。
 
@@ -505,9 +525,13 @@ let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
 
 ### 第 3 档：空间治理（SQLite 域内收益最大，但需停机窗口）
 
-1. `VACUUM`（回收 ≈1.24 GiB，落地后 ≈350–388 MiB）→ **必须**在无写入时执行；用独立的一次性连接或离线路径。
-2. **然后**才切 `auto_vacuum=INCREMENTAL` + 定期 `PRAGMA incremental_vacuum(N)`。顺序不能反：`auto_vacuum=0` 时 `incremental_vacuum` 是空操作，而改 `auto_vacuum` 本身也要一次 `VACUUM` 才生效。
-3. 顺带 `PRAGMA optimize` 建 `sqlite_stat1`（当前查询计划完全没有统计信息）。
+内部顺序要写死（依据 B.4 的页类型拆分）：
+
+1. **先消灭溢出链**：把 `conversation_parts.content` 压到 ≤ ~980 B（1/4 页）以内。81.55% 的字节集中在正文 >1 KiB 的行，压下去后 33,894 个 overflow 页（138.8 MB）整条消失——这是最"干净"的一块，不依赖 VACUUM。
+2. **再 `VACUUM`**（回收 ≈1.24 GiB freelist，落地后 ≈350–388 MiB）→ 收回 leaf 页的 45.2 MB 页内碎片。必须无写入时执行，用独立一次性连接或离线路径。
+3. **然后**才切 `auto_vacuum=INCREMENTAL` + 定期 `PRAGMA incremental_vacuum(N)`。顺序不能反：`auto_vacuum=0` 时 `incremental_vacuum` 是空操作，而改 `auto_vacuum` 本身也要一次 `VACUUM` 才生效。
+4. 顺带 `PRAGMA optimize` 建 `sqlite_stat1`（当前查询计划完全没有统计信息）。
+5. **不要碰 `page_size`**：`internal` 只有 447 页 / 1.83 MB，天花板 1.83 MB，且 WAL 下要整库重建。
 
 ### 第 4 档：Migration Baseline（工程量最大）
 
