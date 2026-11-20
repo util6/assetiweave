@@ -342,24 +342,36 @@ repository 层（b/b'）与现有代码结构最匹配——因为写入已收�
 
 ## 6. 「压缩层落点」候选判断
 
-### 候选 0：先切一期只做 `parts.content`（风险最低，拿 67% 收益）
+### 候选 0：分三期切，第一刀只做 `parts.content`（风险最低，拿 64.4% 收益）
 
-各列对 205.0 MiB 总收益的贡献（res-storage 全量实测）：
+各列对总收益 **214,959,485 B（205.0 MiB）** 的贡献（res-storage 全量实测，比例为复算后的值）：
 
-| 列 | 压缩比 | 省下 | 占总收益 |
-|---|---:|---:|---:|
-| `parts.content` | 5.382 | 138,378,454 | **61.4%** |
-| `turns.process` | 6.642 | 28,407,659 | 12.6% |
-| `turns.response` | 2.988 | 12,395,856 | 5.5% |
-| `turns.prompt` | 8.091 | 10,744,612 | 4.8% |
-| `parts.attrs_json` | 18.221 | 9,298,900 | 4.1% |
-| `wr_parts.content` | 7.123 | 8,453,009 | 3.8% |
-| `wr_turns.response` | 2.625 | 6,593,248 | 2.9% |
-| 其余两列 | — | ~1,013,000 | 0.5% |
+| 列 | 压缩比 | 省下 | 占总收益 | 期次 |
+|---|---:|---:|---:|---|
+| `parts.content` | 5.382 | 138,378,454 | **64.37%** | 一 |
+| `turns.process` | 6.642 | 28,407,659 | 13.22% | 二 |
+| `turns.response` | 2.988 | 12,395,856 | 5.77% | 三 |
+| `turns.prompt` | 8.091 | 10,744,612 | 5.00% | 三 |
+| `parts.attrs_json` | 18.221 | 9,298,900 | 4.33% | 二 |
+| `wr_parts.content` | 7.123 | 8,453,009 | 3.93% | 一 |
+| `wr_turns.response` | 2.625 | 6,593,248 | 3.07% | 三 |
+| `wr_turns.prompt` + `wr_turns.process` | — | 687,747 | 0.32% | 三 |
+| **合计** | — | **214,959,485** | 100% | — |
 
-**只做 `parts.content` 一期 = 138 MB / 205 MB ≈ 67% 收益**，而且**完全绕开 `process` 的整段覆写风险**
-（`triad_update.rs:74`）和所有 JSON 侧破坏（B4/B6/B7/B10 里与 process/attrs_json 相关的部分）。
-→ 建议把这一期作为 Wave 2 的**第一刀**：收益最大、关联风险最少、回滚最容易。
+分期建议：
+
+| 期 | 范围 | 收益 | 风险 |
+|---|---|---:|---|
+| **一** | `parts.content` + `wr_parts.content` | **146.8 MB / 68.3%** | 最低：不碰 `turns.process` 整段 JSON 覆写（`triad_update.rs:74`），不碰 JSON 侧破坏（B4/B6/B7） |
+| **二** | `turns.process` + `parts.attrs_json` | 37.7 MB / 17.6% | 中：需处理 `triad_update.rs:74`、`path_convergence.rs`、B6 |
+| **三** | `prompt` / `response` 四列 | 30.4 MB / 14.2% | 低：无原地更新；但 `prompt` 应先做去重（36.7%） |
+
+> 期次划分与 res-storage 的 `02-storage.md` §E.1 有一处差异：他把 `wr_parts.content`（8.45 MB）放在第三期，
+> 我放在第一期（同为 `content` 列、同一套读写路径、同一风险面）。三期合计均为 214,959,485 B，
+> 差别只在切点位置；**建议按"同一列、同一路径、同一风险"归期**，避免第一期做完还要为 web 表再开一次工。
+
+只做第一期主体 `parts.content` 一列 = **138.4 MB / 64.4%**，且完全绕开 `process` 风险。
+→ 建议把第一期作为 Wave 2 的**第一刀**：收益最大、关联风险最少、回滚最容易。
 
 ### 候选 1：写入漏斗编码 + repo 层解码（推荐）
 **落点**：`snapshot.rs:499-580`（两个 insert）+ `row_mappers.rs:359-367` / `snapshot.rs:264-273` / `search_records.rs:146-155` 等读点。
@@ -425,7 +437,8 @@ repository 层（b/b'）与现有代码结构最匹配——因为写入已收�
 8. **块级压缩的写放大可解，不是阻断**：整包快照替换天然友好；`translated_text` 实测仅 6.9 KiB（§5.2），
    留逐行等于零成本；`path_convergence` 照抄 `conversation_subagent_fold` 的 `app_settings` 一次性标记即可消掉。
    **不要为写放大退回逐行模型**（少赚 23 MB）。
-9. **分期切分点明确**：第一期只做 `parts.content` 拿 67% 收益、避开关联风险（§6 候选 0）。
+9. **分期切分点明确**：第一期只做 `content` 两列（`parts` + `wr_parts`）= **146.8 MB / 68.3%**，
+   零 `process` 风险；第二期 `process`+`attrs_json`（17.6%）；第三期 `prompt`/`response`（14.2%，`prompt` 先去重）。
 
 ---
 
