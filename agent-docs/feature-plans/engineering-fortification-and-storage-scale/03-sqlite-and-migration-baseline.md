@@ -18,7 +18,7 @@
 | 5 | 97 个迁移的版本号已全部统一 14 位；但 **6 个迁移里的 `PRAGMA foreign_keys = OFF` 全是空操作**（sqlx 把每个迁移包在事务里，SQLite 文档明确该 pragma 在事务内 no-op） | `sqlx-sqlite/src/migrate.rs` + sqlite.org/pragma |
 | 6 | 启动期有 8 段自愈逻辑，其中 `converge_portable_paths` 每次启动**全表扫 220 MiB 的 `conversation_parts`**，且当前仍命中 110 行、永远收敛不到 0 | `path_convergence.rs:42` |
 | 7 | 索引 106 个（44 命名 + 62 自建），实测可安全删除 **5 个**，其中最干净的一个是 `UNIQUE(tenant_id, model_id)` 的**逐列完全副本** | 见 C.3 |
-| 8 | **备份"压缩"会静默降级成同尺寸副本**：`vacuum_into` 没设 `busy_timeout`（默认 0）→ 遇锁即失败 → `or_else` 里 `fs::copy` 兜底且丢弃错误；`verify_sqlite_snapshot` 只跑 `quick_check`，胖副本照样 `ok` | 见 B.5；`backup/mod.rs:154-200` |
+| 8 | **11.21 GiB 的 `app.db.bak_*` 是"孤儿资产"**：不是 App 产物（App 产物名 `assetiweave-app-*.db`，一个都没有），是人工/脚本 `cp` 的裸副本；App 备份轮转不覆盖它们，压缩上线后也不会缩小。App 的 `VACUUM INTO` 逻辑本身正确 | 见 B.5；`backup/mod.rs:204-208` |
 | 9 | **优先级提醒**：SQLite 引擎侧上限 1.24 GiB，而 `conversation-search-index` 垃圾代数 22.68 GiB（res-storage 实测，为本项 18 倍）→ 引擎参数是 P1/P2，不是主线 | 见 D 开头 |
 
 ---
@@ -128,7 +128,7 @@ let pool = SqlitePoolOptions::new()
 | **5** | `temp_store` | `MEMORY` | 用量报表 `ORDER BY u.timestamp ASC` + `model IN (?)` + `DISTINCT model ORDER BY` 会建临时 B 树；默认 0/DEFAULT 走磁盘临时文件 | 低。排序规模 ≤ 24,493 行，内存可控；大结果集排序时会吃 RAM |
 | **6** | `statement_cache_capacity` | `256` | 默认 **100 条/连接**（docs.rs 原文："The default cache capacity is 100 statements."）；本仓 SQL 数量（含动态拼的 usage 报表、`ASSERT_SQL_SAFE` 的 `{parts}` 模板）远超 500 条，LRU 会频繁重编译 | 低。只吃内存 |
 | **7** | `wal_autocheckpoint` | `2000`（≈8 MB）后再调 | 当前默认 1000 页（≈4 MB）却有 36.8 MB WAL → 说明 checkpoint 长期被读快照顶住。**这是症状不是病因**，先显式化再观测 | 中。调大只会让 WAL 更长；真正解法是排查长读事务/主动 `wal_checkpoint(TRUNCATE)` |
-| **8** | `auto_vacuum` | 先 `VACUUM` 再 `INCREMENTAL` | 77.5% 空洞的根因是"只删不还页"。切增量回收可避免复发 | 高成本：必须先做一次全库 `VACUUM`（≈370 MiB 临时盘 + 全程写锁）。官方："For existing databases, a change to this value does not take effect unless a VACUUM command is executed." |
+| 8 | `auto_vacuum` | 先 `VACUUM` 再 `INCREMENTAL` | 77.5% 空洞的根因是"只删不还页"。**当前 `auto_vacuum=0` 时 `PRAGMA incremental_vacuum` 是空操作**——碎片会持续复发，这是机制性的 | 高成本：必须先做一次全库 `VACUUM`（≈400 MiB 临时盘 + 全程写锁），之后 `INCREMENTAL` 才生效。官方："For existing databases, a change to this value does not take effect unless a VACUUM command is executed." |
 | **9** | `synchronous` | **保持 `NORMAL`，勿改 FULL** | 改 FULL 会让每次 commit 多一次 fsync；导入是"8 会话/事务"的批式提交，代价被放大 | 不建议改 |
 
 **`PRAGMA optimize` 的官方最佳实践**（三条，直接对应本仓形态）：
@@ -307,24 +307,34 @@ let pool = SqlitePoolOptions::new()
 
 其他表行数参考：`conversation_sessions` 2,109 · `assets` 185 · `sources` 13 · `memory_recall_turns` **0**。
 
-> **VACUUM 注意**：1.6 GiB 库执行 `VACUUM` 需要**约等于回收后大小 + 回滚日志**的临时磁盘（≈400 MiB 量级），并全程持有写锁（启动期做会阻塞整个 app）。`auto_vacuum=INCREMENTAL` 也**必须先 `VACUUM` 一次**才生效（docs.rs `auto_vacuum`："For existing databases, a change to this value does not take effect unless a VACUUM command is executed"）。**建议不要走 `infrastructure/backup` 那条路去做压缩——见 B.5，它会静默降级成同尺寸副本。**
+> **VACUUM 注意**：1.6 GiB 库执行 `VACUUM` 需要**约等于回收后大小 + 回滚日志**的临时磁盘（≈400 MiB 量级），并全程持有写锁（启动期做会阻塞整个 app）。`auto_vacuum=INCREMENTAL` 也**必须先 `VACUUM` 一次**才生效（docs.rs `auto_vacuum`："For existing databases, a change to this value does not take effect unless a VACUUM command is executed"）。压缩本身建议用一次性独立连接或离线路径，不要复用 `infrastructure/backup` 的 `snapshot_sqlite_database`——那条路失败时会静默退化（见 B.5，低严重度但不可观测）。
 
 ---
 
-### B.5 备份/压缩路径会「静默降级」成同尺寸副本（实测 + 代码双向确认）
+### B.5 备份降级链与「孤儿备份」（含一条归因更正）
 
-这是本次考古里**最值得单独修**的一条，比 `auto_vacuum` 参数更重要。起因是 res-storage 发现 7 个 `app.db.bak_*` 与主库**字节数完全相同**（全部 1,720,578,048 B），其中两个还叫 `bak_compact_*`（2026-11-15 11:10 与 11:17，间隔 7 分钟）。
+**一、先更正归因：那 7 个 `app.db.bak_*` 不是 App 产物**
 
-**一、那 7 个文件不是本仓代码产出的**
+res-storage 早前观察到 7 个 `app.db.bak_*` 与主库**字节数完全相同**（全部 1,720,578,048 B，合计 11.21 GiB），其中两个叫 `bak_compact_*`（2026-11-15 11:10 / 11:17）。经三方核对后**该归因撤回**：
 
-`backup_file_name()`（`infrastructure/backup/mod.rs:202-206`）生成的名字是
-`assetiweave-app-{YYYYMMDD-HHMMSS-mmm}-{uuid8}.db`，而 7 个文件叫 `app.db.bak_*`。
-`~/.assetiweave` 下也没有任何 `assetiweave-app-*.db`。
-→ 那两次"压缩"是**外部 `cp` / 手写脚本**干的，不能据此判定 Rust 侧 compact 失效。
+- App 产物命名是 `assetiweave-app-{YYYYMMDD-HHMMSS-mmm}-{uuid8}.db`（`infrastructure/backup/mod.rs:204-208`），7 个文件全不符合；
+- `~/.assetiweave` 下**没有任何** `assetiweave-app-*.db`；
+- 仓内 `grep bak_compact|bak_data_clean|bak_pathfix|bak_cwdfix` 零命中。
 
-**二、但本仓的 compact 路径确实有同款缺陷，而且更隐蔽**
+→ 它们是**人工/修复脚本 `cp` 出来的裸副本**，不是 App 备份路径的产物。**App 的 `VACUUM INTO` 逻辑本身是正确的**（`mod.rs:179-189` 优先，`:191-200` 才是兜底）。
 
-`snapshot_sqlite_database`（`mod.rs:154-177`）：
+**二、真正值得写的结论：11.21 GiB「孤儿资产」不受任何生命周期管辖**
+
+这 7 个文件（4.68 + 4.68 + … 合计 11.21 GiB）：
+- App 不知道它们存在，备份轮转/清理逻辑也不覆盖它们；
+- 压缩方案上线后它们**一个字节都不会变小**；
+- 它们还和主库同尺寸，肉眼看不出哪份是"压缩产物"。
+
+→ 需要独立的孤儿清理策略（建议：白名单命名模式 + 尺寸等于某一代主库 ⇒ 判为孤儿）。**这属于 res-storage 的域，此处只做标记，不计入 SQLite 引擎收益。**
+
+**三、代码路径上仍有一个低严重度的可观测性缺口（不是 bug，别夸大）**
+
+`snapshot_sqlite_database`（`mod.rs:154-177`）的降级链：
 
 ```rust
 let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
@@ -333,31 +343,18 @@ let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
 });
 ```
 
-- `vacuum_into`（`mod.rs:179-188`）：`Connection::open_with_flags(READ_WRITE | NO_MUTEX)` + `VACUUM main INTO ?1`，
-  **没有设 `busy_timeout`**（grep 全文件只有 `OpenFlags`，无 `busy_timeout`/`busy_handler`）→ rusqlite 默认 0，
-  遇到任何锁竞争**立即** `SQLITE_BUSY`。
-- 失败后走 `checkpoint_and_copy`（`mod.rs:190-200`）：`PRAGMA wal_checkpoint(TRUNCATE)` + **`fs::copy`**
-  → 产物与源库**逐字节同级**，含 77.5% 空洞。
-- 降级**完全静默**：`or_else` 把 `vacuum_error` 丢掉，只要 copy 成功就不返回错误。
-- 唯一的校验 `verify_sqlite_snapshot`（`mod.rs:128-141`）只跑 `PRAGMA quick_check`，
-  一个含 1.24 GiB 空洞的完整副本照样返回 `ok`（quick_check 只查结构一致性，不看空间）。
+- 失败兜底是 `checkpoint_and_copy`（`mod.rs:191-200`）= `PRAGMA wal_checkpoint(TRUNCATE)` + **`fs::copy`** → 产物与源库逐字节同级（含 77.5% 空洞）。
+- **降级是静默的**：`or_else` 把 `vacuum_error` 丢弃，只要 copy 成功就返回 `Ok`。
+- 唯一校验 `verify_sqlite_snapshot`（`mod.rs:128-141`）只跑 `PRAGMA quick_check`，一个 1.6 GiB 的胖副本照样返回 `ok`（quick_check 只验结构，不看空间）。
+- **更正一条我此前写错的事实**：`vacuum_into` 并没有显式设 `busy_timeout`，但 **rusqlite 0.37.0 会在每次 open 时默认设 5000 ms**（`rusqlite-0.37.0/src/inner_connection.rs:119`：`sqlite3_busy_timeout(db, 5000)`）。所以不是"遇锁立即失败"，而是"**锁等待超过 5 s 才失败**"。对一个 1.6 GiB 库的 `VACUUM INTO`（分钟级），5 s 的窗口偏窄，但触发概率不高——这也是为什么我把本条降为低严重度。
 
-**三、后果**
+**四、结论与修法（随手做，不必单列优先级）**
 
-用户在"压缩/备份"后拿到的是一个 1.6 GiB 的胖副本；因为 `verify_sqlite_snapshot` 通过、
-`fs::rename` 成功、函数返回 `Ok(DatabaseBackupTarget)`，**上层无法区分"真压缩"与"纯拷贝"**。
-而 `VACUUM INTO` 在长连接池运行期间恰恰**很容易**失败：它要求拿读事务、且不能被写事务挡住，
-10s busy_timeout 都没设。
+正确表述是：**"App 备份在正常路径下语义正确；只在 VACUUM INTO 失败时会静默退化成一个不可区分的胖副本。"** 修法 3 行 + 1 个断言：
 
-**四、修法（3 行 + 1 个断言）**
-
-1. `vacuum_into` 与 `checkpoint_and_copy` 都 `.busy_timeout(Duration::from_secs(30))`；
-2. `or_else` 里至少 `tracing::warn!(%vacuum_error, "VACUUM INTO failed, degrading to raw copy")`，
-   并把"是否降级"回填到 `DatabaseBackupTarget`；
-3. **加一个体积断言**：若产物 `page_count` 与源库相同（或 `freelist_count` 未下降），
-   说明没压缩，应当报错或明确标注 `compacted: false`。
-4. 校验升级：除 `quick_check` 外，对产物做一次
-   `SELECT freelist_count FROM pragma_freelist_count()` —— 压缩后应接近 0。
+1. `vacuum_into` / `checkpoint_and_copy` 显式 `.busy_timeout(Duration::from_secs(30))`（覆盖 5 s 默认）；
+2. `or_else` 里加 `tracing::warn!(%vacuum_error, "VACUUM INTO failed, degrading to raw copy")`，并把"是否降级"回填到 `DatabaseBackupTarget`；
+3. 对产物断言 `freelist_count ≈ 0`（或 `page_count` 未下降即判为未压缩），否则报错或标 `compacted: false`。
 
 ---
 
@@ -448,24 +445,24 @@ let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
 
 单点改动，收益是消掉 `SQLITE_BUSY_SNAPSHOT (517)` 这一类偶发失败（`database.rs:37-41` 已写明该机制）。优先 `import.rs:108`。
 
-### 第 3 档：修 B.5 的备份静默降级（3 行 + 1 个断言，投入最小、防信任事故）
+### 第 3 档：空间治理（SQLite 域内收益最大，但需停机窗口）
 
-`infrastructure/backup/mod.rs:179-200` 两处加 `busy_timeout(30s)`；`or_else` 里加 `tracing::warn!` 并把"是否降级"回填到 `DatabaseBackupTarget`；对产物断言 `freelist_count ≈ 0`。
-这是"用户以为压缩了其实没压"的唯一直接修复点。
-
-### 第 4 档：空间治理（SQLite 域内收益最大，但需停机窗口）
-
-1. `VACUUM`（回收 ≈1.24 GiB，落地后 ≈350–388 MiB）→ **必须**在无写入时执行；**不要**走 `snapshot_sqlite_database`（会静默降级，见 B.5），用独立的一次性连接或离线路径。
-2. 之后可选 `auto_vacuum=INCREMENTAL` + 定期 `PRAGMA incremental_vacuum(N)`，避免再次长到 77.5% 碎片。
+1. `VACUUM`（回收 ≈1.24 GiB，落地后 ≈350–388 MiB）→ **必须**在无写入时执行；用独立的一次性连接或离线路径。
+2. **然后**才切 `auto_vacuum=INCREMENTAL` + 定期 `PRAGMA incremental_vacuum(N)`。顺序不能反：`auto_vacuum=0` 时 `incremental_vacuum` 是空操作，而改 `auto_vacuum` 本身也要一次 `VACUUM` 才生效。
 3. 顺带 `PRAGMA optimize` 建 `sqlite_stat1`（当前查询计划完全没有统计信息）。
 
-### 第 5 档：Migration Baseline（工程量最大）
+### 第 4 档：Migration Baseline（工程量最大）
 
 按 **B.3 M1** 落地：`0001_baseline.sql` + 老库 `skip(Some(1))` + 单次 `ignore_missing`；同步删除 B.2 的 #1–#7 元数据类自愈（保留 #4 的数据修复一个版本，#8 保留 marker 版，#9 改造为 marker 版）。
 
-### 第 6 档：索引清理
+### 第 5 档：索引清理
 
 按 C.3 删 4–5 个（先删零风险的 `idx_pricing_catalog_lookup` + `idx_usage_events_observation` + `idx_web_record_turns_tenant_session`），`idx_conversation_turns_tenant_session` 需连带改 `projection.rs` 与 2 处测试断言。
+
+### 附带项（低严重度，随手做）：备份降级链加可观测性
+
+`infrastructure/backup/mod.rs` 三处：显式 `busy_timeout(30s)`、`or_else` 加 `tracing::warn!`、对产物断言 `freelist_count ≈ 0`。
+**不是 bug**（正常路径正确），只是"VACUUM INTO 失败 → 静默产出不可区分的胖副本"这个观测缺口。详见 B.5。
 
 ---
 

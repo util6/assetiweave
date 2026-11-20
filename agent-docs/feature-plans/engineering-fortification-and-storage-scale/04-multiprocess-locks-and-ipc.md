@@ -1,101 +1,403 @@
-# Wave 2 · 多进程冲突面与本机 IPC 候选
+# Wave 2 · 本机并发冲突、IPC 遗产与「共享写队列」可行性
 
-> 采集方式：源码只读考古 + 实测 CLI 冷启动 + crates.io / Cargo.toml 一手核实。
-> 相关工单：[#212 多进程消锁与 ADR-0004 演进](https://github.com/util6/assetiweave/issues/212)
+> 范围：只读代码考古 + 官方一手资料 + 一次隔离库上的可复现实测。
+> 协作边界：SQLite 参数/迁移/索引见 `03-sqlite.md`，Tantivy 体积与 `.tmp` 泄漏见 `02-storage.md`，路径便携化见 `01-paths.md`。本文不重复推导，只做交叉引用。
+> 实测环境：macOS 26 (`Darwin 27.2.0` / arm64)，真实库 `~/.assetiweave/app.db` = 1.6 GB，隔离副本上跑 `target/debug/aiwc`（debug 构建，未 strip）。
 
-## 1. 到底有几个进程打开同一个库
+---
 
-| 进程 | 入口 | 打开 | 证据 |
-| --- | --- | --- | --- |
-| Tauri 桌面宿主（GUI） | `AppService::bootstrap_runtime` | `app.db` + Tantivy 索引 | `application/system/bootstrap.rs:44` |
-| `aiwc`（Rust 原生 CLI） | 同 `bootstrap_runtime`（In-Process） | 同上 | `backend/cli` → `AppService` |
-| `assetiweave-engine --memory-recall-mcp-stdio` | `run_memory_recall_mcp_stdio()` | 同上（只读 MCP 桥） | `desktop/src/bin/assetiweave-engine.rs:2` |
-| `assetiweave-engine`（stdio Engine 模式） | `adapters::engine::run_stdio()` | 同上 | `desktop/src/lib.rs:658` |
+## 0. 结论速览
 
-**第三个进程不是"可能"，而是必然。** `agent_engine/src/infrastructure/backends/acp.rs:393`
-在跑 Recall Agent 时会拉起 `assetiweave-engine --memory-recall-mcp-stdio`，
-而此时 GUI 很可能正在同步入库 —— 这是历史 `database is locked` 最直接的解释。
+1. **`database is locked` 的第一根因不是「两个写者抢 WAL」，而是「每个进程启动都无条件发一条 UPDATE」。** `repair_legacy_migration_ledger_versions` 在任何库上都会执行 `UPDATE _sqlx_migrations SET version = ...`（`backend/asset_core/src/store/database.rs:126`），而 `open_migrated_pool` 是 GUI 与 CLI 的唯一入口（`database.rs:61`，被 `application/system/bootstrap.rs:44` 调用）。而且**并发写者至少有三类**：GUI 主进程、`aiwc`、以及 GUI 在跑 recall agent 时用 `current_exe()` 自己再拉起的 `--memory-recall-mcp-stdio` 子进程（`agent_engine/src/infrastructure/backends/acp.rs:382-407`）。实测：另一进程持有写锁时，`aiwc` 在 **10.57 s / 10.75 s** 后抛 `(code: 5) database is locked` 并退出，`user` CPU 仅 0.01 s——它几乎什么都没干就死在了第一条写语句上。
+2. **这条 UPDATE 在稳态下是空操作，但它依然要写锁。** 因此 **100% 的 `aiwc` 命令（包括纯只读命令）在 GUI 持锁期间都会启动失败**，而不是只有写命令会失败。这决定了「只把写操作转发出去」并不能修掉 CLI 的故障。
+3. **Tantivy 的单写者问题在本仓库已经被降解为「单写者 + DB 逻辑租约」**，且 CLI 根本不写索引（事件消费者只在 `ResidentHost` 启动，`desktop/src/lib.rs:228`）。真正的抢锁面只剩「GUI + 手工跑 `assetiweave-engine` 二进制」。但租约有一个真实缺陷：**10 分钟 TTL 且不续租**（`application/conversations/conversation_search.rs:70`、`:218`），超过 10 分钟的整代重建会被第二方抢走。
+4. **ADR-0004 是「零调用的活契约」**：`assetiweave-engine` 二进制仍在构建与打包（`scripts/bundle-cli.js:39`、`desktop/tauri.conf.json:31`），252 条命令的契约仍在生成（`cli/internal/schema/contract.json`，protocol=1 / contract=3），但 `aiwc` 已改 in-process（`backend/cli/src/service/mod.rs:23`），**没有任何代码路径拉起它**。它的 stdio 实现还是「一次性读完 stdin → 一条响应」（`desktop/src/adapters/engine/transport.rs:91-95`），不是长连服务。
+5. **不建议现在建 UDS 写队列。** 先做三件成本极低的事：①把启动期无条件 UPDATE 改成条件写；②修 `.tmp` 代际泄漏（25 GB 里约 24 GB 是垃圾，见 `02-storage.md` §B）；③给 bootstrap 链加分级重试。这三件能吃掉绝大多数冲突。UDS 的**真正**收益不是「避免锁冲突」，而是「CLI 冷启动从 0.72–0.84 s（热缓存）/ 4.65–5.84 s（冷缓存）降到 ~10–55 ms」——这是一个 15–100× 的**提速**，不是降级。
 
-数据库入口是唯一的（`open_migrated_pool`），所以"谁在写"可控；但每个进程都各自持有
-**独立的 5 连接池**，彼此之间只有 SQLite 文件锁与 `busy_timeout` 协调。
+---
 
-## 2. 索引侧的锁比数据库侧更硬
+## A. 冲突面测绘
 
-| 机制 | 位置 | 语义 | 跨进程失效点 |
-| --- | --- | --- | --- |
-| SQLite 写事务 | `BEGIN IMMEDIATE` | 单写者，WAL 下读不阻塞 | 有 `busy_timeout` 兜底 |
-| 重建写者租约 | `conversation_search.rs:71-83` | DB 表内租约，10 分钟过期 | 只在"走同一套 AppService"时有效 |
-| Tantivy `IndexWriter` | `engine.rs:259`、`:319`（`index.writer(50_000_000)`） | 独占 `.tantivy-writer.lock` | **第二者直接失败，错误原样透出，无重试、无排队** |
+### A.1 谁在独立打开 SQLite
 
-→ 结论：**即使把 SQLite 的 BUSY 全部消掉，索引重建仍需要一套跨进程写者仲裁。**
-Tantivy 的单写者锁不受数据库租约保护，两套机制必须一起设计。
+全仓库只有**一个**建池函数 `open_migrated_pool`（`backend/asset_core/src/store/database.rs:61`），所有进程都收敛到它。
 
-## 3. 现有兜底与盲区
+| # | 进程 / 入口 | 角色 | 建库调用链（文件:行号） |
+|---|---|---|---|
+| 1 | `AssetIWeave.app` 主进程 | `RuntimeRole::ResidentHost` | `desktop/src/lib.rs:186` → `bootstrap.rs:44` |
+| 2 | `AssetIWeave.app --startup-self-check` | `OneShot` | `desktop/src/lib.rs:99` |
+| 3 | `assetiweave-engine`（stdio 二进制） | `OneShot` | `desktop/src/lib.rs:607`（入口）→ `:690`（建池） |
+| 4 | `AssetIWeave.app --memory-recall-mcp-stdio`（**GUI 把自己当子进程再拉起**） | `OneShot` | 拉起方：`backend/agent_engine/src/infrastructure/backends/acp.rs:382-407`（`std::env::current_exe()` + `ASSETIWEAVE_DB_PATH` 注入）；建池：`desktop/src/lib.rs:628` |
+| 5 | `aiwc`（Rust CLI，唯一在用的 CLI） | `OneShot` | `backend/cli/src/service/mod.rs:23` → `backend/asset_core/src/application/system/system.rs:38-49` |
+| 6 | 测试 / 集成测试 | `OneShot` | `backend/asset_core/tests/*.rs`、`backend/cli/tests/cli_tests.rs:1227` 等 |
 
-| 兜底 | 位置 | 覆盖 | 盲区 |
-| --- | --- | --- | --- |
-| `busy_timeout = 10s` | `store/database.rs:68` | 瞬态 BUSY | 长事务（整包快照替换）超时后仍失败 |
-| `begin_immediate_with_retry(pool, 8)`，退避 50+80n ms | `conversation_repo/common.rs:342-356` | 写锁升级冲突 | **只被 3 个文件使用**（packages / reproject / import_advanced）；最热的 `import.rs:108` 仍是 `pool.begin()`（DEFERRED） |
-| 索引重建租约 | `conversation_search.rs:71` | 双进程重建 | 不管 Tantivy 文件锁；进程崩溃后需等 10 分钟过期 |
-| 用户脚本重试 | 外部 shell 循环 | 人为绕过 | 不是产品行为 |
+要点：
 
-写事务全貌（详见 `03-sqlite-and-migration-baseline.md` §A.4）：**41 处 DEFERRED vs 16 处 IMMEDIATE**，
-其中约 22 处属于"先读后写"的高风险形态（正是 `SQLITE_BUSY_SNAPSHOT` 517 的成因）。
+- #1 与 #5 是**生产常态下的并发对**。二者之间没有任何单实例保护——`tauri-plugin-single-instance` 未引入（`desktop/Cargo.toml` 无该依赖），所以**同时开两个 GUI 也会互撞**。
+- #2 到 #4 都在 `RuntimeRole::OneShot` 下建自己的池（`desktop/src/lib.rs:690`、`:628`，入口分别是 `:607` 与 `:674`），都会与 GUI 争同一把写锁。
+- **#4 是最容易被忽略、却最频繁的一个**：它不是"手动跑二进制"，而是 **GUI 在正常 AI 使用中被自动拉起的第三个进程**。`recall_mcp_servers` 用 `std::env::current_exe()` 把自己再 exec 一遍，并显式注入 `ASSETIWEAVE_DB_PATH`（`agent_engine/src/infrastructure/backends/acp.rs:388-392`、`:397-400`）。⇒ 每跑一次 recall agent，就多一个进程完整 bootstrap 同一个 1.6 GB 库（并按 §A.5 实测要拿一次写锁）。这条路径把"第三个写者"从理论可能性变成了**每次 AI 回忆都会发生的事实**，而且它与 GUI 自身的 `SessionMemoryConsumer`（`desktop/src/lib.rs:213`）在时间上高度重叠。
+- #5 的 `CliService::bootstrap()` 对失败**不做任何重试**，只把错误包装成 `context("failed to bootstrap AppService in OneShot CLI mode")`（`backend/cli/src/service/mod.rs:38`）。这就是「CLI 只能靠 shell 循环重试」的代码出处。
 
-## 4. 被忽略的事实：CLI 冷启动已经 1.2 秒
+### A.2 谁在打开 Tantivy（单写者语义）
 
-本机实测（GUI 同时运行，3 次）：
+Tantivy 版本：`0.26.1`（`Cargo.toml` 依赖声明 `tantivy = "0.26.1"`，`Cargo.lock` 解析同版本），中文分词 `tantivy-jieba 0.20.0`。
 
-| 命令 | 耗时 |
-| --- | --- |
-| `aiwc --help` | 0.01 s |
-| `aiwc conversation list --limit 1` | **1.06 / 1.33 / 1.45 s** |
+| 操作 | 位置 | 是否抢写锁 |
+|---|---|---|
+| `Index::open_in_dir` | `backend/asset_core/src/infrastructure/search/conversation/engine.rs:219` | 否（只读 meta） |
+| `Index::create_in_dir` | `engine.rs:193` | 否（仅建目录） |
+| `index.writer(50_000_000)` 整代替换 | `engine.rs:259`（`replace_documents_with_checkpoint`） | **是** |
+| `index.writer(50_000_000)` 增量推进 | `engine.rs:319`（`apply_session_documents`） | **是** |
+| `index.reader()` | `engine.rs:231` / `:349` / `:401` | 否 |
+| 调用入口 | `infrastructure/search/conversation/storage.rs:161`（读）、`:174`（写）、`:184`（读） | — |
 
-参数解析只占 10 ms，其余全是 bootstrap：`open_migrated_pool`（8 段启动自愈）+ 默认种子 +
-受管适配器目录发现 + 租户装载。其中 `converge_portable_paths` 每次启动都对 220 MiB 的
-`conversation_parts` 做 `GLOB '/*'` 全表扫（`store/path_convergence.rs:66-67`），
-且永远收敛不到 0（当前仍命中 110 行）。
+`IndexWriter` 的独占语义（读 tantivy 0.26.1 源码确认，非记忆）：
 
-这改变了 IPC 的价值排序：
+- `Index::writer_with_options` 调 `directory.acquire_lock(&INDEX_WRITER_LOCK)`，失败即 `TantivyError::LockFailure(...)`，提示语明确写着 *"there is already an `IndexWriter` working on this `Directory`, in this process or in a different process"*（`tantivy-0.26.1/src/index/index.rs:536-556`）。
+- `INDEX_WRITER_LOCK` 定义为 `{ filepath: ".tantivy-writer.lock", is_blocking: false }`（`tantivy-0.26.1/src/directory/directory_lock.rs:45-49`），`is_blocking: false` ⇒ `retry_policy` 为 `no_retry`（`directory.rs:89-96`）。
+- 实现方式是 **`O_CREAT|O_EXCL` 语义的独占建文件**：`try_acquire_lock` 用 `directory.open_write(filepath)`，遇到 `FileAlreadyExists` 直接返回 `LockBusy`（`directory.rs:74-87`、`:191-212`）。**第二个进程会立刻失败，不会等待。**
+- 锁文件**在 Drop 时删除**：`DirectoryLockGuard::drop → directory.delete(&path)`（`directory.rs:56-62`）。
+  ⇒ **进程被 SIGKILL / abort / panic 后锁文件残留，此后所有写者永久失败**，官方注释也承认这点并说「确认无进程后再手工删」（`directory_lock.rs:38-44`、`index.rs:523-526`）。
 
-- 「OneShot 直连是微秒级」（ADR-0004 语境）**不成立**，实际是秒级；
-- 常驻进程转发不只消锁，还能摊掉每次 1.2 s 的启动开销 —— 脚本连续调用 N 次可省 N×1.2 s；
-- 但**先修启动期全表扫描 + 迁移自愈**可能比上 IPC 更划算，且两者不冲突。
+**当前代码没有任何抢占失败处理分支**：`engine.rs:259` 与 `:319` 都是 `index.writer(50_000_000).map_err(InfraError::external)?` —— 无重试、无 stale-lock 识别、无「降级为只读」分支。这是最干净的盲区。
 
-## 5. 依赖现状（一手核实）
+已被一层「应用级串行化」挡住的部分：
 
-| 候选 | 版本 / 来源 | 与现有依赖的关系 |
-| --- | --- | --- |
-| `tokio::net::UnixListener`（macOS/Linux） | tokio 1.x 内置，`cfg(unix)` | 已有 tokio，但 `backend/asset_core` 与 `desktop` 的 feature 列表**都没开 `net`**，需加一行 |
-| `tokio::net::windows::named_pipe` | tokio 1.x 内置，`cfg(windows)` | 同上；跨平台需两套 `cfg` 分支 |
-| `interprocess` crate | **2.4.9**（2026-11-18 发布，1,835 万次下载，活跃维护） | 新依赖；一套 API 抹平 UDS 与 Named Pipe，省掉 `cfg` 分支 |
+- 所有索引写都必须先拿 DB 内的写入租约 `try_acquire_conversation_search_writer_lease_sqlx`（`application/conversations/conversation_search.rs:71-83`、`:219-231`；实现 `store/conversations/search_index_repo.rs:160-188`，条件 `lease_owner IS NULL OR lease_expires_at <= now`）。
+- 拿不到时**直接返回 `AppError::Conflict`**，不排队、不重试（`conversation_search.rs:79-83`、`:227-231`）。
+- 缺陷：租约 `expires_at = now + Duration::minutes(10)`（`conversation_search.rs:70`、`:218`），**中途不续租**。25 GB 级别的整代重建（当前真实规模见 §A.5）很容易超过 10 分钟 ⇒ 第二方会合法抢走租约，两边同时 `index.writer()` ⇒ 后来者拿到 `LockFailure`（被 `.map_err(InfraError::external)` 吞成通用外部错误），或先者 `commit` 后被 `source_revision` CAS 挡住（`conversation_search.rs:100-116`）。
 
-> 来源：crates.io API `GET /api/v1/crates/interprocess`；本地各 `Cargo.toml` 的 tokio feature 列表。
+### A.3 已有的锁冲突处理，与它们的覆盖盲区
 
-## 6. 三方案对照
+| 手段 | 位置 | 覆盖范围 |
+|---|---|---|
+| `busy_timeout = 10 s` | `store/database.rs:68` | 所有经该池的语句 |
+| `journal_mode = WAL` + `synchronous = NORMAL` | `database.rs:66-67` | 读不阻塞写、写不阻塞读（`https://www.sqlite.org/wal.html` §2.2） |
+| `max_connections(5)` | `database.rs:70` | 进程内并发上限 |
+| `BEGIN IMMEDIATE` 显式立即写事务 | `database.rs:42-52`（注释解释 `SQLITE_BUSY_SNAPSHOT (517)`） | 11 处业务写路径 |
+| `begin_immediate_with_retry(pool, 8)` | `store/conversations/conversation_repo/common.rs:342-358` | 11 个调用点 |
+| `is_retryable_db_lock_err` 字符串匹配 | `common.rs:360-370`（`database is locked` / `code: 517` / `code: 5` / `busy` / `timed out`） | 同上 |
+| 索引写入租约 | `search_index_repo.rs:160` | 跨进程索引写串行化（不排队） |
 
-| | A. 只调参数（`busy_timeout` + 全写路径 IMMEDIATE） | B. 本机 IPC 单一写者（UDS / Named Pipe） | C. 先修启动与锁模式，不引入新机制 |
-| --- | --- | --- | --- |
-| 消除 SQLITE_BUSY | 覆盖大部分瞬态；长事务仍会撞 | 写操作串行化后理论归零 | 同 A |
-| Tantivy 单写者 | 不解决 | 可一并纳管 | 不解决 |
-| CLI 1.2 s 启动 | 不变 | 可摊销（转发到常驻进程） | 显著下降（去掉全表扫描） |
-| 跨平台成本 | 零 | UDS + Named Pipe 两套端点与生命周期 | 零 |
-| 新增故障面 | 无 | 端点不可达 → 必须无感降级 | 无 |
-| 与 ADR-0004 关系 | 无冲突 | 需演进（OneShot 与常驻并存） | 无冲突 |
+盲区（按危险度排序）：
 
-**判断**：A 与 C 是 B 的前置条件，不是替代品。先把 22 处高风险 DEFERRED 改成 IMMEDIATE、
-把启动期全表扫降下来，再评估 B —— 否则会拿 IPC 掩盖住真正的原因。
+1. **startup 链完全不参与重试**。`bootstrap.rs:44` 起整条链（`open_migrated_pool` → `seed_defaults_with_catalog` → `seed_discovered_conversation_adapters` → `migrate_legacy_adapter_hashes`）全部用 `?` 直抛。这是唯一一个「失败即进程退出、用户看不到任何降级」的路径。
+2. **`bootstrap` 内部还有一条无条件 UPDATE**（`database.rs:126`），它让「只读命令」也必须写锁。
+3. **重试只在 `conversation_repo` 子树里**。`memory_recall_repo/turns.rs:241`、`web_record_repo/import.rs:34/44/81`、`observations.rs:281`、`path_convergence.rs:159` 都是裸 `begin_immediate` / `pool.begin()`，没有重试（另有约 22 处 `DEFERRED` 事务，见 `03-sqlite.md` §A.4）。
+4. **重试语义是「重开事务」，不是「重放事务」**——只对 `BEGIN` 阶段的冲突有效；事务中途遇到 `SQLITE_BUSY` 仍然直接失败。
+5. **`busy_timeout` 是「安静地等 10 秒再死」**，对交互式 CLI 而言 10 秒等待 ≈ 卡死；对 GUI 后台任务而言 10 秒又太短。一个全局常数无法同时满足两种调用方。
+6. **Tantivy 侧零处理**（见 §A.2）。
 
-「只转发写」还是「读写全转发」：
-- 只转发写 → 消锁够用，但无法摊销启动开销，也无法复用 SQLite page cache 与 Tantivy 内存索引；
-- 读写全转发 → 收益最大，但把"读也必须依赖常驻进程"变成新的单点，降级契约必须更严格。
-- 折中：**写转发 + 读直连**，并在端点可用时把"索引重建/搜索"这类重活交给宿主。
+### A.4 长写事务 / 长锁持有清单
 
-## 7. 降级契约（若走 B，必须逐条验收）
+| 路径 | 位置 | 事务粒度 | 是否在 Tauri 同步命令路径 |
+|---|---|---|---|
+| 启动期无条件 `UPDATE _sqlx_migrations` | `store/database.rs:126` | 单语句自动提交 | 每次 bootstrap 必经（GUI 与 CLI 都是） |
+| `repair_positional_turn_identities` | `store/conversation_turn_identity.rs:29-115` | 400 轮 / 批（`:31`、`:99`、`:107`） | bootstrap 同步路径 |
+| `normalize_legacy_part_ids` | `store/database.rs:373-420+` | 全表扫 `conversation_parts`（实测 16 万行）后单事务逐行 UPDATE | bootstrap 同步路径 |
+| `converge_portable_paths` | `store/path_convergence.rs:42-70`、`:150-175` | 8 个列 GLOB 扫描 + 单事务 `write_pending` | bootstrap 同步路径 |
+| `fold_legacy_subagent_pseudo_turns` | `store/conversation_subagent_fold.rs:99-160` | 按会话独立事务；有 marker 短路 | bootstrap 同步路径（稳态 O(1)） |
+| 会话快照整包替换 | `store/conversations/snapshot.rs:431-468` | **8 会话 / 事务**（`common.rs:3` 的 `CONVERSATION_IMPORT_BATCH_SIZE = 8`，`import.rs:107`） | 否（后台任务，`desktop/src/adapters/tauri/commands/conversations/sync.rs:12`） |
+| 高级导入（batch-first + 逐条降级） | `conversation_repo/import_advanced.rs:139-141` | 25 会话 / 批 | 否（后台任务） |
+| 用量事件写入 | `store/conversations/usage_repo.rs:75-120` | 单事务批量 upsert | 部分（翻译/统计命令同步触发） |
+| **Tantivy 整代重建** | `application/conversations/conversation_search.rs:87-129` + `storage.rs:124-138` | `spawn_blocking`，持 DB 租约 10 分钟，全量 2.5 万文档 | 否（后台任务，`tauri/commands/conversations/search.rs:72-130`） |
+| **`VACUUM INTO` 备份** | `infrastructure/backup/mod.rs:179-190` | 单条语句，**长读快照**（不拿写锁但阻塞 checkpoint，1.6 GB ⇒ 数十秒） | App 关闭路径 |
 
-1. 端点不存在 / 连接被拒 / 握手超时 **≤ 300 ms** 内切到 OneShot，退出码与输出不变。
-2. 无 GUI 的纯 CLI 环境（终端、CI、脚本批量）**零退化**：不依赖任何常驻进程。
-3. 转发失败不得静默降级为"部分成功"：写操作要么全部生效，要么明确失败并可重试。
-4. 端点归属唯一（GUI 持有、进程退出即回收），禁止两个进程同时自认为写者。
-5. 并发压测门禁：N 路 `aiwc` + GUI 同步同时写入，零 `database is locked`、零丢失。
-6. 索引重建在端点可用时必须走宿主，禁止客户端直接抢 `.tantivy-writer.lock`。
+结论：**Tauri 命令的同步路径上没有长写事务**（已按 ADR-0017 全面后台化），这部分的架构是健康的。真正的痛点在 **bootstrap 这条「同步、无重试、且必须写」的启动路径**。
+
+### A.5 实测：冲突矩阵
+
+隔离副本（`/tmp`，`ASSETIWEAVE_HOME` 指向副本，不触碰真实库），1.6 GB 库，debug 构建：
+
+| 场景 | 命令 | 实测结果 |
+|---|---|---|
+| 无竞争，页缓存热 | `aiwc overview` | **0.72 / 0.73 / 0.74 / 0.84 s** |
+| 无竞争，页缓存冷 | `aiwc overview` | **4.78 / 5.84 s** |
+| 另一进程持 `BEGIN IMMEDIATE`（写锁） | `aiwc overview` | **10.57 s / 10.75 s 后 `Error: failed to bootstrap AppService in OneShot CLI mode: error returned from database: (code: 5) database is locked`**，`user 0.01 s` |
+| 另一进程持 `BEGIN` + `SELECT`（读快照） | `aiwc overview` | **成功**（4.65 s 冷缓存 / 0.72 s 热） |
+| 不 bootstrap 的基线 | `aiwc --version` | **0.01–0.05 s** |
+
+配套的 SQL 级探针（同一把写锁被占用时逐条执行）：
+
+| 语句 | 结果 |
+|---|---|
+| `PRAGMA journal_mode=WAL` | ✅ `wal` |
+| `PRAGMA foreign_keys=ON` | ✅ |
+| `CREATE TABLE IF NOT EXISTS _sqlx_migrations (...)` | ✅ |
+| `SELECT count(*) FROM sqlite_master` | ✅ `157` |
+| `INSERT ... ON CONFLICT DO NOTHING` | ❌ `database is locked` |
+
+**冲突矩阵（谁挡谁）**：
+
+| 持有方 → / 请求方 ↓ | 无竞争 | 别人持读快照 | 别人持写事务 | 别人持 Tantivy writer |
+|---|---|---|---|---|
+| CLI 只读命令（`overview`/`list`） | 0.7 s ✅ | ✅（WAL 保证） | ❌ 10 s 后死 | ✅ |
+| CLI 只读命令（`skill list` 等同样 bootstrap） | 同上 | 同上 | **同上 ❌** | ✅ |
+| CLI 写命令（`conversation sync`/`memory commit`） | ✅ | ✅ | ⚠️ 11 处有重试，其余直死 | ✅ |
+| GUI 后台同步 | ✅ | ✅ | ❌（`begin_immediate_with_retry(8)` 约 8×0.6 s 后仍可能死） | ✅ |
+| GUI 索引重建 | ✅ | ✅ | ❌ | ❌ `LockFailure`（无处理） |
+| GUI 关闭时 `VACUUM INTO` | ✅（读） | ✅ | ✅ | ✅ |
+| 手工 `assetiweave-engine` | ✅ | ✅ | ❌ | ❌ |
+
+> 注意最反直觉的一格：**「CLI 只读命令」在别人持写事务时同样会死**，因为它要执行 `database.rs:126` 的 UPDATE。这就是为什么「读走 WAL 直连、写走队列」的方案不能修掉用户感知到的故障。
+
+---
+
+## B. 现存的 IPC 遗产（ADR-0004 考古）
+
+### B.1 ADR-0004 原文主张 vs 当前事实
+
+`agent-docs/adr/0004-engine-stdio-protocol-and-appservice-authority.md` 四条决策，逐条核对：
+
+| ADR-0004 条款 | 原文 | 当前事实 | 判定 |
+|---|---|---|---|
+| ① 唯一业务权威 `AppService` | `ADR:18` | ✅ 仍然成立。GUI / CLI / engine / MCP 全部经 `AppService`（`bootstrap.rs:44`、`cli/src/service/mod.rs:23`） | **活契约** |
+| ② Go CLI 通过 Stdio JSON 与 `assetiweave-engine` 通信 | `ADR:19` | ❌ Go CLI 留在 `cli/`（115 个 `.go` 文件）但**只用于归档测试**（`package.json: "cli:test:go:archive"`）；真实发布的 `aiwc` 是 Rust（`scripts/build-cli.js:21` `cargo build -p cli --bin aiwc`） | **历史** |
+| ③ 契约 CodeGen 到 `cli/internal/schema/contract.json` | `ADR:20` | ✅ 文件仍在生成（2026-11-13，`protocol_version=1`、`contract_version=3`、252 条命令），生产脚本 `pnpm cli:contract` 仍在 | **活契约（但是"无人消费的契约"）** |
+| ④ 禁止 CLI 直连数据库 | `ADR:21` | ❌ **已被推翻**。`aiwc` 现在就是直连：`CliService::bootstrap()` → `AppService::open_for_engine()` → `bootstrap_runtime(..., RuntimeRole::OneShot)`（`cli/src/service/mod.rs:23`、`system.rs:38-49`），自己建池。CLI 版本静态声明里也直接写了 `"in_process_runtime"`（`cli/src/service/mod.rs:51`） | **历史（且与现状冲突）** |
+
+**结论**：ADR-0004 需要一次明确的演进（见 §E），因为它现在同时是「唯一权威」的活基石和「禁止 CLI 直连」的失效教条。任何 Wave 2 的 IPC 方案都在事实上挑战第 ④ 条。
+
+### B.2 stdio engine 协议：活着，但零调用
+
+- **二进制在**：`desktop/src/bin/assetiweave-engine.rs` 编译为 `assetiweave` crate 的第二个 bin。
+- **被打包**：`scripts/bundle-cli.js:39` 构建并把 `target/release/assetiweave-engine` 复制进 `desktop/bundled-cli/cli/`；`desktop/tauri.conf.json:31` 的 `resources: ["bundled-cli/cli"]` 整体打包；`desktop/src/adapters/cli_tools.rs:28,89` 还会给它装 PATH shim。
+- **协议在**：`desktop/src/adapters/engine/protocol.rs:8-9`（`PROTOCOL_VERSION = 1`、`CONTRACT_VERSION = 3`），`transport.rs` 完整实现 JSON 请求/响应 + 策略鉴权 + 参数校验。
+- **但没有任何调用方**：`grep` 全仓，除 `desktop/src/lib.rs:607`（`run_engine_stdio` 自身入口）与测试外，无 `Command::new("assetiweave-engine")`；`aiwc` 的 `schema` / `api` 子命令也已改为 in-process（`cli/src/commands/system.rs:91-113` → `service.system().schema_get(...)` / `api_call(...)`，而 `api_call` 只硬编码代理 7 个方法，`cli/src/service/system.rs:103-165`）。
+
+**它是什么形态的协议**：`run_stdio` 用 `io::stdin().read_to_string(&mut input)` 一次性读完整个 stdin，解析**一个**请求对象，写**一个**响应后退出（`transport.rs:91-95`、`:139`、`:148-154`；文件头注释还写着 "逐行读取"，与实现不符）。也就是说它**不是**长连守护进程，而是「一次调用 = 一次进程启动 = 一次 bootstrap」。这与 §A.5 的实测吻合：每调用一次就付一次 0.7–5 s 的 bootstrap 成本 + 一次写锁风险。
+
+### B.3 能否复用 `desktop/adapters/engine/` 作为 UDS 传输层
+
+可以复用的部分（占比约 70%）：
+
+| 层 | 位置 | 复用判断 |
+|---|---|---|
+| 请求/响应 DTO | `transport.rs:17-89`（`WireEngineRequest` / `EngineResponse` / `EngineError`） | ✅ 直接复用 |
+| 方法注册表 + 参数校验 | `registry/mod.rs:19-42`、`registry/dispatch.rs:15-120` | ✅ 直接复用（252 条命令已登记） |
+| 风险分级 + 确认 | `registry/types.rs:17-21`、`dispatch.rs:11-13` | ✅ 直接复用（134 条写命令已被标 `Write`/`HighRiskWrite`） |
+| 调用钩子/计时 | `engine/runtime.rs` | ✅ 直接复用 |
+| 版本握手 | `transport.rs:173-198` | ✅ 改成连接级握手 |
+
+必须重写的部分（关键）：
+
+1. **消息边界**：现在是「读完整 stdin = 一条消息」，`Stream` 上没有帧。UDS 上必须改成 **NDJSON 行分帧**（或 `u32` 长度前缀），否则无法长连复用。
+2. **进程生命周期**：现在进程 = 一次请求（`lib.rs:607-672` 里 `run_engine_stdio` 处理完一个请求就退出）。要长连必须把 `bootstrap_runtime` 提到监听循环之前，并常驻。
+3. **单实例语义**：`install_process_runtime` 是 `OnceLock::set`，重复安装返回 `Conflict`（`infrastructure/runtime/app_runtime.rs:472-476`）。长连服务里没问题，但要保证 `desktop/src/lib.rs:186` 的 ResidentHost 和 UDS 监听**不重复安装**——二者只能有一个进程装。
+4. **错误→退出码的契约**：`run_engine_stdio` 里任何 init 失败直接 `std::process::exit(1)`（`lib.rs:607-672` 内有 5 处 `std::process::exit(1)`）。改成常驻后必须换成「启动失败→端点不可达」的可观测信号，否则客户端无法区分「服务没起」和「服务崩了」。
+
+---
+
+## C. 本机 IPC 方案调研（一手资料）
+
+### C.1 `interprocess` crate
+
+- **当前版本**：`2.4.9`，2026-11-18 发布（`https://crates.io/api/v1/crates/interprocess`，`max_version=2.4.9`，`updated_at=2026-11-18T22:48:09Z`），累计下载 18,355,300 次。**活跃维护**。
+- **平台支持（官方原文分级）**（`https://docs.rs/interprocess/latest/interprocess/`）：
+  - *Explicit support*：**Windows、Linux、macOS** —— "guaranteed to compile and succeed in running all tests"，GitHub Actions 三平台 CI。
+  - *Explicit support with incomplete CI*：FreeBSD、Android；*without CI*：OpenBSD、NetBSD；*by association*：iOS/tvOS/watchOS 等；*assumed*：其余 `#[cfg(unix)]`。
+- **local_socket 抽象**：`Listener` / `Stream` / `RecvHalf` / `SendHalf` 是 enum-dispatch 类型（`https://docs.rs/interprocess/2.4.8/interprocess/local_socket/index.html`），**"there is only one underlying local socket implementation per platform, with Windows only using named pipe based local sockets and Unix only using Unix-domain socket based local sockets"**。
+- **关键承诺（对复用 stdio 协议极其有利）**：*"Interprocess never inserts its own message framing or any other type of metadata into the stream – the bytes you write are the exact bytes that come out the other end."* ⇒ 我们可以在上面直接铺 NDJSON，与 `transport.rs` 的 DTO 完全兼容。
+- **命名**：`GenericFilePath` 在 Unix 上是 UDS 路径原样，在 Windows 上**只接受 `\\.\pipe\` 前缀**，其它路径（含 `\\?\`）直接报错（`https://docs.rs/interprocess/2.4.9/interprocess/local_socket/enum.GenericFilePath.html`）。⇒ 跨平台命名要么用 `GenericNamespaced`（Unix 抽象命名空间 / Windows 管道命名空间），要么按平台分叉。
+- **异步**：`local_socket::tokio` 模块，feature `tokio`（默认关闭）。
+
+**已知坑**：
+1. Windows 下每个管道实例只能连一个客户端，必须"accept 后立刻建下一个实例"，否则客户端会收到 `ErrorKind::NotFound`（tokio 官方文档原文：*"we must ensure that at least one server instance is available at all times"*，`https://docs.rs/tokio/latest/tokio/net/windows/named_pipe/struct.NamedPipeServer.html`）。interprocess 在 Windows 上封装了这层，但并发连接数受 `max_instances` 限制。
+2. macOS/Linux 路径型 UDS 受 `sun_path` 长度限制（Linux 108 / macOS 104 字节含结尾 NUL）。`~/.assetiweave/...` 通常安全，但**用户自定义 `ASSETIWEAVE_HOME` 且路径很长时会 bind 失败**——必须用 `GenericNamespaced` 或把 socket 放进短路径（如 `$TMPDIR`）。
+3. 崩溃残留 socket 文件：Unix 上 `bind` 到已存在路径会 `EADDRINUSE`，需要「先尝试 connect，连不上再 unlink」的探活逻辑（这是所有 UDS 方案的共同坑，不是 interprocess 特有）。
+
+### C.2 `tokio::net::UnixListener` + `tokio::net::windows::named_pipe`
+
+- Unix 侧：`tokio::net::UnixListener` 在 `net` feature 下可用，成熟稳定，零额外依赖（tokio 已在依赖里：`desktop/Cargo.toml`、`backend/asset_core/Cargo.toml` 均已启用 `net` 之外的 feature 集，需补 `net`）。
+- Windows 侧：`tokio::net::windows::named_pipe` 仅 **Windows + feature `net`**（`https://docs.rs/tokio/latest/tokio/net/windows/named_pipe/index.html`），需要手写「accept 后立即 `ServerOptions::new().create(name)` 建下一个实例」的循环（见 C.1 坑 1）。
+- **代价**：两份 `#[cfg]` 分叉代码（约 150–250 行），以及两套测试矩阵。相比 `interprocess` 统一接口，多出的工程量主要在 Windows 分支和 CI。
+
+### C.3 Tauri 2 是否自带可用通道
+
+`tauri::ipc::Channel` 的官方定位是 *"An IPC channel, used to stream values from Rust to the frontend"*（`https://docs.rs/tauri/2/tauri/ipc/struct.Channel.html`），走的是 webview 的 `invoke` 通道，生命周期绑定在一个 `#[tauri::command]` 调用上。**它解决的是「Rust 后端 → 前端 JS」的流式回传，与「进程 A ↔ 进程 B」无关**，也无法被 `aiwc` 使用（CLI 里没有 webview）。⇒ **不可用**。
+
+### C.4 「只加 SQLite 参数」能不能解决 80%？
+
+| 参数 | 现状 | 加大后的效果 | 判断 |
+|---|---|---|---|
+| `busy_timeout` 10 s → 30/60 s | `database.rs:68` | 只把「10 s 后死」变成「30 s 后死」。对 CLI 是**体验更差**（卡更久），对后台任务是边际改善 | 单独加长 ❌ |
+| WAL 读并发 | 已开（`database.rs:66`） | 读-读、读-写已经不冲突（`sqlite.org/wal.html` §2.2） | 已用尽 ✅ |
+| `synchronous` | 已 `NORMAL`（`:67`） | 再降 `OFF` 有丢数据风险，收益是写延迟 | 不建议 |
+| `wal_autocheckpoint` / `journal_size_limit` | 未设 | 可减少长读快照下的 WAL 膨胀（当前 `-wal` 实测 36 MB） | 小收益 |
+| **把 `database.rs:126` 的 UPDATE 改成条件写** | 无条件 | **直接消掉「只读命令也必须写锁」这一整类冲突** | ✅ **最高性价比** |
+| `busy_timeout` 分级（CLI 2–3 s 快速失败 / GUI 30 s） | 单一常数 | 让 CLI 从"卡 10 s 再死"变成"卡 2 s 后走降级" | ✅ 配合降级契约必需 |
+
+**结论**：单纯拉长 `busy_timeout` **解决不了**用户感知的问题（实测就是 10 s 后硬失败）；但「一条条件写 + 分级 timeout」能吃掉**绝大多数**真实场景，因为读路径本来就不冲突、写路径本来就有重试。真正剩下的 ~20%（长导入 vs 重建 vs CLI 写命令撞在同一个写事务窗口）才需要队列。
+
+### C.5 方案对照表
+
+| 方案 | 跨平台 | 改造量 | 端点生命周期归属 | GUI 未启动时 | 主要风险 |
+|---|---|---|---|---|---|
+| **A0. 现状 + 修 `database.rs:126` + 分级 busy_timeout** | ✅ 天然 | **~20 行** | 无需端点 | 不变（OneShot） | 无新增风险；不解决长事务互撞 |
+| **A1. A0 + 22 处裸事务收敛到 `begin_immediate_with_retry`** | ✅ | ~150 行（机械替换） | 无需端点 | 不变 | 长事务仍可能超时 |
+| **B. `interprocess` 2.4.9 + NDJSON，写队列（读仍直连）** | ✅（Win/Linux/macOS 官方担保） | 中：传输 ~300 行 + 131 条写命令路由 + 帧协议 + 端点发现 | GUI 进程（ResidentHost）监听；socket 路径 = `~/.assetiweave/run/<hash>.sock`（Win: `\\.\pipe\assetiweave-<hash>`） | **必须降级 OneShot**（否则 CLI 无端点可用） | ①GUI 未启动时契约必须零退化；②GUI 退出瞬间的断连竞态；③stale socket 清理；④**修不掉只读命令的启动写锁**（除非同时改 A0） |
+| **C. `interprocess` + 读写全转发（CLI 变纯客户端）** | ✅ | 大：B + CLI 去掉 bootstrap + 全部 252 条读命令路由 + 流式结果 + 认证 | GUI 进程独占建池与建索引 | OneShot 全量回退（等价今天的代码路径） | ①GUI 变成 CLI 的单点故障；②版本不一致（CLI 0.8 vs GUI 0.7 契约）；③权限（谁都能连 → 需要 `PeerCreds` 校验）；④CI/无人值守场景必须保证纯 OneShot 可用 |
+| **D. `tokio::net::UnixListener` + 手写 Windows named_pipe** | ✅ | 大：B + 两份 cfg 分叉 + Windows accept 循环 | 同 B | 同 B | 同 B + Windows 分支自研 bug 面 |
+| **E. tauri `ipc::Channel`** | — | — | — | — | **不适用**（前端↔后端，非进程间） |
+
+补充：`interprocess` 的 `PeerCreds` 可以用来做本机同用户校验（`local_socket/struct.PeerCreds.html`），这对「任何本地进程都能写你的数据库」是必要的一道门——纯文件权限（0700 目录）也可以，但显式校验更稳。
+
+---
+
+## D. 收益与代价判断
+
+### D.1 只把「写操作」串行化转发，能消掉多少锁冲突？
+
+必须先把冲突分成两类：
+
+- **类 I：长事务互撞**（GUI 后台导入/重建 vs CLI 写命令）。串行化写队列**能消掉**这一类。当前实测量级：8 会话/事务（`common.rs:3`）、25 会话/批（`import_advanced.rs:139`），单事务持锁时间取决于会话大小，最容易撞的是「整代重建（持租约 10 分钟）+ 任意写」。
+- **类 II：启动期写锁**（CLI bootstrap 的 `database.rs:126`）。串行化**消不掉**——因为 CLI 在拿到连接后第一时间就要写，而队列只转发「业务写」，不会转发「启动期维护写」。
+
+因此：**只串行化写 ⇒ 类 I 基本消失，类 II 完全保留**。而用户实际抱怨的 `database is locked` 从 §A.5 的实测看，主要表现就是类 II（CLI 一启动就死，10 s 后报错）。**所以「只转发写」不足以让 Wave 2 的目标达成**，必须同时修 `database.rs:126`。
+
+Tantivy 单写者是否仍需单独解决？——**需要，但不是一个新问题**：
+
+- 现状已用 DB 租约把「GUI 内部并发」串行化（`conversation_search.rs:71`、`:219`）。
+- 剩余暴露面 = 手工 `assetiweave-engine` + 多个 GUI 实例。这两者都不是写队列能覆盖的（它们不走队列）。
+- 且租约 10 分钟不续租是**真实缺陷**：一次冷缓存整代重建（2.5 万文档 → 实测活跃代 288 MB）在慢机上完全可能超过 10 分钟。修法是租约续租（重建循环里每 N 个会话 renew 一次）或改成 `lease_expires_at = NULL` + 心跳。
+- 结论：**Tantivy 需要「续租 + stale-lock 自愈」两件小事，不需要进程级 IPC 队列**。
+
+### D.2 读写全部转发：CLI 冷启动会变成多少？
+
+先纠正一个前提：**「当前 in-process 直连是微秒级」只对「单次函数调用」成立，对「CLI 一次调用」不成立。** 因为每次 `aiwc` 都要跑完整 bootstrap。实测（§A.5）：
+
+| 阶段 | 实测 |
+|---|---|
+| 纯进程启动 + clap（`aiwc --version`，不 bootstrap） | **0.01–0.05 s** |
+| bootstrap 中的只读扫描（sqlite3 只读探针） | turns 全表 37 ms + `parts.attrs_json` GLOB 256 ms + `turns.process` GLOB 165 ms |
+| **完整一次 `aiwc overview`（页缓存热）** | **0.72–0.84 s** |
+| **完整一次 `aiwc overview`（页缓存冷）** | **4.65–5.84 s** |
+
+转发方案下，CLI 冷启动 = `exec` + `connect` + 1 RTT + 渲染：
+
+- `exec` + 动态链接：**10–50 ms**（实测基线）
+- `connect`（UDS 本地）：**< 1 ms**
+- 1 次 RTT（JSON 请求/响应，载荷 ~KB 级）：**< 1 ms**
+- **合计 ≈ 10–55 ms，且与库大小、页缓存状态无关**
+
+⇒ 相比今天：热缓存 **↓ 约 15–80×**，冷缓存 **↓ 约 100×**。**转发是提速，不是拖慢。** 原因很直接：转发把「每次都要跑的 0.7–5 s bootstrap」替换成「0 ms 的 bootstrap」，代价只是一次本地往返。
+
+**代价（真实存在，必须量化）**：
+
+1. **GUI 是单点**。GUI 正在做长写事务（导入 / 整代重建）时，转发的读请求要么排队（CLI 从 50 ms 变成数百 ms 甚至数秒），要么必须设 deadline 后降级 OneShot（而这又要付 0.7–5 s）。所以每个请求必须带**明确的 deadline**，且 deadline 到期要能"优雅地失败并降级"，而不是无限等。
+2. **CLI 二进制可以瘦身**（不再需要 `asset_core` 的 sqlite/tantivy 依赖），但**不能**从包里去掉 OneShot 路径——否则无 GUI 场景失效。真正能省的是启动时的动态库加载与 page cache 压力。
+3. **版本不匹配风险**：GUI 0.7 与 CLI 0.8 的 `contract_version` 不一致时，`transport.rs:187-196` 会返回 `engine_incompatible`，CLI 必须能识别并降级到 OneShot，而不是报错退出。
+
+### D.3 无 GUI 场景的零退化：降级契约草案（可验收）
+
+> 目标：**同一个 `aiwc` 二进制，在有/无 GUI、在端点可用/不可用/半死状态下，行为可预期、结果正确、延迟有上界。**
+
+| # | 契约条款 | 可验收条件（可自动化） |
+|---|---|---|
+| **C1 端点探测不超时预算** | 端点探测（尝试 `connect`）必须在 **≤ 200 ms** 内得出「可用/不可用」结论，且**不重试超过 1 次** | 注入一个"只 listen 不 accept"的假端点，`aiwc` 总耗时 ≤ 启动基线 + 200 ms + 一次命令本身；不得出现 10 s 级别等待 |
+| **C2 端点不可达 ⇒ 当次命令走 OneShot，退出码与直连完全一致** | 无 GUI 时 `aiwc <cmd>` 的 stdout / stderr / exit code 与「抹掉 IPC 代码的构建」逐字节相同（黄金样本对比，覆盖读/写/错误三类命令） | CI 里跑双份二进制 diff：`git stash` 前的 tag 与当前，同一 DB 副本，100 条命令输出哈希一致 |
+| **C3 端点半死（连上但不响应）⇒ 有界失败 + 有界降级** | 单次 RPC 的 deadline 默认 **2 s**（可 `ASSETIWEAVE_IPC_TIMEOUT_MS` 覆盖）；超时后**必须**回退 OneShot，或明确以 `ipc_timeout` 错误码退出（二选一，由 `--no-fallback` 决定），**绝不静默重试超过 1 次** | 注入"accept 后 sleep 10 s"的假端点：`aiwc` 在 ≤ 2 s + 单次 OneShot 时间内完成；日志里恰好 1 条 `ipc_timeout` + 1 条 `fallback_oneshot` |
+| **C4 写命令的语义不因路径而变** | 无论走队列还是 OneShot，写命令都在**同一个** `AppService` 方法里执行（同一校验、同一事件、同一幂等键）；队列只是传输层，不得引入第二条业务路径 | 写命令的 SQL 影响行数、outbox 事件条数、`conversation_search_index_state.source_revision` 增量，两条路径必须逐项相等 |
+| **C5 纯 CLI / CI 环境零 IPC 依赖** | 当 `ASSETIWEAVE_IPC=0`、或 socket 目录不存在、或 `CI=1` 时，**完全不产生任何 IPC 系统调用**（无 `connect`、无 socket 文件创建） | `dtrace`/`strace` 断言：以 `ASSETIWEAVE_IPC=0` 跑 100 条命令，`connect(` 调用数为 0；且不创建 `<home>/run/` 目录 |
+| **C6 端点生命周期自愈** | GUI 崩溃留下的 stale socket，下一次 CLI 启动必须**能自愈**（探测 → 判定 stale → 降级），不得报 `EADDRINUSE` 或卡死；GUI 下次启动必须能重新 bind | 手工 `kill -9` GUI 后立即跑 `aiwc`：成功（走 OneShot），且 stderr 无 panic；随后重启 GUI：`aiwc` 自动回到队列路径（日志有 `ipc_attached`） |
+
+建议把这 6 条写成 `docs/` 下的一份独立 `IPC_DEGRADATION_CONTRACT.md`，并在 `backend/cli/tests/` 里落成 6 个集成测试。**C1/C3/C6 是硬门槛**，任何一条不满足就不该上 UDS。
+
+---
+
+## E. 对 ADR-0004 的演进建议
+
+建议新增 `ADR-0024: 单机写权威与 CLI 端点降级契约`，把 ADR-0004 收敛为两块：
+
+1. **保留（活契约）**：`AppService` 是唯一业务权威；engine 命令注册表 + `contract.json` 是唯一的能力清单与风险分级来源（252 条 / 121 读 / 131 写）。
+2. **显式作废（历史）**：①「Go CLI + stdio engine 进程」这条实现路线；②「禁止 CLI 直连数据库」——改为「**CLI 允许直连，但只允许在 OneShot 角色下直连**；有可用本机权威端点时优先复用，不可用时无感降级」。
+3. **新增不变式**：
+   - **I-1 启动期不得无条件写库**：`bootstrap` 链中任何写语句必须由读判定守卫，读路径（`aiwc overview`/`list`/`search`）在纯 WAL 读快照下必须能完成。
+   - **I-2 单一索引写者**：Tantivy `IndexWriter` 只能由持有 DB 写入租约且租约有效的一方打开；租约必须可续。
+   - **I-3 端点不可达 ⇒ 零退化**：见 §D.3 的 C1–C6。
+
+`assetiweave-engine` 二进制的去留需要一个决定，因为它是**唯一**一个「ADR 已废但仍在发布」的产物：要么把它降级为「UDS 服务端入口」（复用 §B.3 的 70% 代码，正好给 UDS 一个自然的归属），要么从 `bundle-cli.js` 与 `cli_tools.rs` 里摘掉。**现状（打包但不调用）是三种选项里最差的**：白占 25 MB 体积，还留着一个能撞写锁的隐藏入口。
+
+---
+
+## F. 需要主控复核的三个反直觉点
+
+1. **「25 GB 索引」是假象**：DB 里 `conversation_search_index_state` 记录当前 `active_generation` 为 `generation-8e175746-...`，`size_bytes = 301,611,440`（288 MB）、`document_count = 25022`、`health = ready`、`source_revision = indexed_revision = 3658`。同目录下还有 **46 个 `generation-*.tmp`**，合计约 24 GB——`cleanup_old_generations` 显式跳过 `.tmp`（`infrastructure/search/conversation/storage.rs:85` 的 `!name.ends_with(".tmp")`），而 `materialize_index_generation` 只有在 `build_result` 返回 Err 时才清理（`storage.rs:149-153`），**崩溃/取消路径的 `.tmp` 永远不会被回收**。⇒ 一切基于「25 GB 重建很贵」的推理都要重算；真实重建规模是 288 MB / 2.5 万文档。（与 `02-storage.md` §B 互为印证。）
+2. **CLI 失败点在 `user 0.01 s`**：10.57 s 里有 10.5 s 是 busy handler 在睡，几乎没有 CPU 工作 ⇒ 失败发生在**极早期**，不是「读到一半被卡」，也不是「大事务超时」。这直接否定「再加长 busy_timeout 就好」的方案。
+3. **`CREATE TABLE IF NOT EXISTS` 与 `PRAGMA journal_mode=WAL` 可以在别人持写事务时成功**（实测），只有真正的 DML 才会 `SQLITE_BUSY`。所以「把启动期写降级为纯 schema 检查」在技术上是可行的，不存在"SQLite 连 schema 检查都要写锁"的阻碍。
+
+---
+
+## 附录：证据与复现
+
+**关键代码位置索引**
+
+```
+启动/建池
+  backend/asset_core/src/application/system/bootstrap.rs:44      open_migrated_pool
+  backend/asset_core/src/store/database.rs:61-92                  建池 + 修复链
+  backend/asset_core/src/store/database.rs:126                    无条件 UPDATE（根因）
+  backend/asset_core/src/store/database.rs:373-420                normalize_legacy_part_ids
+  backend/asset_core/src/application/system/system.rs:38-49       open_for_engine（CLI 入口）
+  desktop/src/lib.rs:186 / :99 / :690 / :628                      四个 GUI 侧建池点
+
+锁
+  backend/asset_core/src/store/database.rs:42-52                  begin_immediate
+  backend/asset_core/src/store/conversations/conversation_repo/common.rs:342-370  retry + 分类
+  backend/asset_core/src/store/conversations/search_index_repo.rs:160-188         索引写入租约
+
+Tantivy
+  backend/asset_core/src/infrastructure/search/conversation/engine.rs:219/259/319/231/349/401
+  backend/asset_core/src/infrastructure/search/conversation/storage.rs:85/124-138/149-153
+  ~/.cargo/.../tantivy-0.26.1/src/index/index.rs:536-556
+  ~/.cargo/.../tantivy-0.26.1/src/directory/directory_lock.rs:45-49
+  ~/.cargo/.../tantivy-0.26.1/src/directory/directory.rs:56-62/74-87/191-212
+
+IPC 遗产
+  agent-docs/adr/0004-engine-stdio-protocol-and-appservice-authority.md:18-21
+  desktop/src/adapters/engine/transport.rs:91-95/148-154/173-198
+  desktop/src/adapters/engine/protocol.rs:8-9
+  desktop/src/adapters/engine/registry/mod.rs:19-42
+  desktop/src/adapters/cli_tools.rs:28/89
+  scripts/bundle-cli.js:39
+  desktop/tauri.conf.json:31
+```
+
+**实测复现步骤（全部在隔离副本上，不触碰真实库）**
+
+```bash
+# 1) 复制真实库到隔离 home（含 WAL），删掉派生 -shm 让 SQLite 自行恢复
+mkdir -p /tmp/aiwc-bench && cp ~/.assetiweave/app.db ~/.assetiweave/app.db-wal /tmp/aiwc-bench/
+rm -f /tmp/aiwc-bench/app.db-shm
+
+# 2) 基线：完整 bootstrap（热/冷缓存各跑 3 次）
+ASSETIWEAVE_HOME=/tmp/aiwc-bench /usr/bin/time -p target/debug/aiwc overview
+
+# 3) 不 bootstrap 的下界
+/usr/bin/time -p target/debug/aiwc --version
+
+# 4) 写锁竞争复现（另一进程持 BEGIN IMMEDIATE 16 s）
+python3 - <<'PY' &
+import sqlite3, time
+c = sqlite3.connect('/tmp/aiwc-bench/app.db', isolation_level=None, timeout=1)
+c.execute('BEGIN IMMEDIATE'); c.execute("UPDATE app_settings SET settings_json = settings_json")
+time.sleep(16); c.execute('COMMIT')
+PY
+ASSETIWEAVE_HOME=/tmp/aiwc-bench /usr/bin/time -p target/debug/aiwc overview
+# 期望：10.5~10.8 s 后 `(code: 5) database is locked`
+
+# 5) 读快照竞争（应当成功，验证 WAL 读不互斥）
+#    python3: BEGIN; SELECT count(*) FROM conversation_parts; sleep(25);
+```
+
+**官方资料（一手）**
+
+- SQLite WAL 并发模型：<https://www.sqlite.org/wal.html> §2.2（"there can only be one writer at a time"；readers/writers 互不阻塞；§9 列出 WAL 下仍会 `SQLITE_BUSY` 的三种情形：独占锁模式、最后连接清理、崩溃后恢复）
+- SQLite `PRAGMA busy_timeout`：<https://www.sqlite.org/pragma.html#pragma_busy_timeout>
+- `interprocess` 2.4.9 文档与平台分级：<https://docs.rs/interprocess/latest/interprocess/>
+- `interprocess::local_socket`（无自带分帧承诺、按平台映射到 UDS / named pipe）：<https://docs.rs/interprocess/2.4.8/interprocess/local_socket/index.html>
+- `interprocess::local_socket::GenericFilePath`（Windows 只认 `\\.\pipe\`）：<https://docs.rs/interprocess/2.4.9/interprocess/local_socket/enum.GenericFilePath.html>
+- tokio `named_pipe`（Windows + `net` feature）：<https://docs.rs/tokio/latest/tokio/net/windows/named_pipe/index.html>
+- tokio `NamedPipeServer`（一个实例一个客户端，必须持续补实例）：<https://docs.rs/tokio/latest/tokio/net/windows/named_pipe/struct.NamedPipeServer.html>
+- `tauri::ipc::Channel`（仅 Rust→前端流式回传）：<https://docs.rs/tauri/2/tauri/ipc/struct.Channel.html>
+- crates.io `interprocess` 版本元数据：<https://crates.io/api/v1/crates/interprocess>（`max_version=2.4.9`，`updated_at=2026-11-18`）
