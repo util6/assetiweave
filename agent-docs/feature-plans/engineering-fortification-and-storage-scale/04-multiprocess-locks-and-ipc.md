@@ -95,7 +95,10 @@ Tantivy 版本：`0.26.1`（`Cargo.toml` 依赖声明 `tantivy = "0.26.1"`，`Ca
    
    有守卫、无需改的对照：`defaults.rs:95` `ensure_library_source_sqlx` 先 `load_source_sqlx(...).is_some()` 才写。
    实测依据（res-sqlite 在临时库 WAL + 持写锁 + `busy_timeout=800ms` 下逐条验证，见 `03-sqlite.md` §A.6）：`UPDATE`/`INSERT`/`DELETE` **只要执行就开写事务，与 `rows_affected` 是否为 0 无关**；`INSERT OR IGNORE` 零命中同样 `database is locked`；而 `CREATE TABLE IF NOT EXISTS <已存在>` 与纯 `SELECT` 均 0.00 s 通过。
-3. **重试只在 `conversation_repo` 子树里**。`memory_recall_repo/turns.rs:241`、`web_record_repo/import.rs:34/44/81`、`observations.rs:281`、`path_convergence.rs:159` 都是裸 `begin_immediate` / `pool.begin()`，没有重试（另有约 22 处 `DEFERRED` 事务，见 `03-sqlite.md` §A.4）。
+3. **重试只在 `conversation_repo` 子树里**。`memory_recall_repo/turns.rs:241`、`web_record_repo/import.rs:34/44/81`、`observations.rs:281`、`path_convergence.rs:159` 都是裸 `begin_immediate` / `pool.begin()`，没有重试。
+   另有 **8 处「读优先」`DEFERRED` 事务**（清单见 `03-sqlite.md` §A.4），才是 `SQLITE_BUSY_SNAPSHOT (517)` 的真实风险面：`import.rs:108`、`import.rs:183`、`reproject.rs:77`、`memory_recall_repo/turns.rs:112`、`:194`、`pricing_repo_ops.rs:342`、`conversation_turn_identity.rs:99`、`:107`。
+   **判据是「事务内第一条 SQL 是否为读」，不是「事务内有没有读」**——这是本条最容易反复踩的坑：写优先的 DEFERRED 事务（其余 33 处）首条语句即写，本来就要拿写锁，换 `IMMEDIATE` 不改变任何行为。
+   还有一个第三类：`usage_repo.rs:111` 是「读在事务外、写在事务内」（`load_valid_turn_indices_sqlx` 在 `pool.begin()` 之前），**不触发 517**，但会基于陈旧快照写入——这是逻辑风险，修法是把读挪进事务，不是换 `IMMEDIATE`。
 4. **重试语义是「重开事务」，不是「重放事务」**——只对 `BEGIN` 阶段的冲突有效；事务中途遇到 `SQLITE_BUSY` 仍然直接失败。
 5. **`busy_timeout` 是「安静地等 10 秒再死」**，对交互式 CLI 而言 10 秒等待 ≈ 卡死；对 GUI 后台任务而言 10 秒又太短。一个全局常数无法同时满足两种调用方。
 6. **Tantivy 侧零处理**（见 §A.2）。
@@ -251,7 +254,7 @@ Tantivy 版本：`0.26.1`（`Cargo.toml` 依赖声明 `tantivy = "0.26.1"`，`Ca
 | 方案 | 跨平台 | 改造量 | 端点生命周期归属 | GUI 未启动时 | 主要风险 |
 |---|---|---|---|---|---|
 | **A0. 启动链拆「只读 bootstrap / 读写 bootstrap」+ 5 处无条件写改条件写 + 分级 busy_timeout** | ✅ 天然 | **中偏小：5 处守卫 ~60–80 行 + 只读 bootstrap 分支 ~40 行** | 无需端点 | 不变（OneShot） | ①`read_only(true)` 在需要 WAL 恢复时会拿到 `SQLITE_READONLY_RECOVERY`，必须能回退一次读写打开；②`-shm` 不存在且目录不可写时读不开（`sqlite.org/wal.html` §1 第 4 条） |
-| **A1. A0 + 22 处裸事务收敛到 `begin_immediate_with_retry`** | ✅ | ~150 行（机械替换） | 无需端点 | 不变 | 长事务仍可能超时 |
+| **A1. A0 + 8 处「读优先」`DEFERRED` 收敛到 `begin_immediate_with_retry`**（另有 33 处写优先无需动；`usage_repo.rs:111` 另属「读在事务外」的逻辑问题） | ✅ | ~60 行（8 处机械替换 + 1 处把读挪进事务） | 无需端点 | 不变 | 长事务仍可能超时；`517` 只在首条语句为读时发生，判据别用错 |
 | **B. `interprocess` 2.4.9 + NDJSON，写队列（读仍直连）** | ✅（Win/Linux/macOS 官方担保） | 中：传输 ~300 行 + 131 条写命令路由 + 帧协议 + 端点发现 | GUI 进程（ResidentHost）监听；socket 路径 = `~/.assetiweave/run/<hash>.sock`（Win: `\\.\pipe\assetiweave-<hash>`） | **必须降级 OneShot**（否则 CLI 无端点可用） | ①GUI 未启动时契约必须零退化；②GUI 退出瞬间的断连竞态；③stale socket 清理；④**修不掉只读命令的启动写锁**（除非同时改 A0） |
 | **C. `interprocess` + 读写全转发（CLI 变纯客户端）** | ✅ | 大：B + CLI 去掉 bootstrap + 全部 252 条读命令路由 + 流式结果 + 认证 | GUI 进程独占建池与建索引 | OneShot 全量回退（等价今天的代码路径） | ①GUI 变成 CLI 的单点故障；②版本不一致（CLI 0.8 vs GUI 0.7 契约）；③权限（谁都能连 → 需要 `PeerCreds` 校验）；④CI/无人值守场景必须保证纯 OneShot 可用 |
 | **D. `tokio::net::UnixListener` + 手写 Windows named_pipe** | ✅ | 大：B + 两份 cfg 分叉 + Windows accept 循环 | 同 B | 同 B | 同 B + Windows 分支自研 bug 面 |

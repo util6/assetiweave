@@ -5,6 +5,17 @@
 > 全程无写入、无 git 操作、未改动仓库任何文件。
 > 真实库快照时间 2026-11-20；当时存在 36 MB WAL（`app.db-wal`），说明有未 checkpoint 的页。
 
+> **单位约定（跨文档引用前必读）**：本文两种单位都用，**差 4.9%**，请按标签取用，不要跨进制比较。
+> - **MB / KB = 10⁶ / 10³ 字节**：`dbstat` 的 `pgsize`/`payload`/`unused` 逐行值。
+> - **MiB / GiB = 2²⁰ / 2³⁰ 字节**：`page_count × page_size` 汇总值、文件大小。
+> - 同一批数据的两种写法都正确，例：`conversation_parts` payload = **200.20 MB = 190.92 MiB**；该表 `pgsize` = **231.60 MB = 220.88 MiB**。
+> - 历史教训：本轮出现过两次"假矛盾"，都是进制/分母而非算法分歧（`72.5% vs 64%` 的分母问题、`200.2 MB vs 190.9 MiB` 的进制问题）。引用时请连同单位与分母一起搬。
+>
+> **数值来源标记（防止"估计值被下游当实测引用"）**：本文对非直接查询得到的数字标注来源 —
+> `[实测]` = 可由附录命令原样复现；`[推算]` = 由实测值算术推导（如 `freelist_count × page_size`）；
+> `[估计]` = 人工估算，**未经逐处核对，引用前请自行验证**。
+> 未标注的整数/百分比均为 `[实测]`。本轮已发生一次事故：A.4 的"约 22 处 DEFERRED 读优先"是 `[估计]`，被下游直接引用后才发现真实值为 8。
+
 ---
 
 ## 0. 结论速览
@@ -14,7 +25,7 @@
 | 1 | 库文件 1.60 GiB 里有 **77.5% 的页在 freelist**，`VACUUM` 可回收 ≈ **1.24 GiB**（落地后 ≈ **350–388 MiB**，不是精确 370） | `freelist_count=325384 / page_count=420063`；`payload=321.3 MiB`、`unused=44.5 MiB` |
 | 2 | 连接池只设了 4 个参数（FK / WAL / NORMAL / busy_timeout）+ `max_connections(5)`；`cache_size`、`mmap_size`、`temp_store`、`wal_autocheckpoint`、`journal_size_limit`、`auto_vacuum`、`optimize` 全部没设 | `database.rs:62-73` |
 | 3 | **从未跑过 `ANALYZE`/`PRAGMA optimize`**（库里没有 `sqlite_stat1`），查询计划全靠猜 | `sqlite_master` 无 `sqlite_stat%` |
-| 4 | 写事务里 **41 处默认 `DEFERRED`**，只有 **16 处**走 `BEGIN IMMEDIATE`；最热的批量导入 `import.rs:108` 正是"先读后写 + DEFERRED" | 见 A.4 |
+| 4 | 写事务里 **41 处默认 `DEFERRED`**，只有 **16 处**走 `BEGIN IMMEDIATE`；其中**逐处核对后确认只有 8 处是"读优先"**（真正会触发 517），最热的 `import.rs:108` 在内 | 见 A.4（含计数方法与其更正记录） |
 | 5 | 97 个迁移的版本号已全部统一 14 位；但 **6 个迁移里的 `PRAGMA foreign_keys = OFF` 全是空操作**（sqlx 把每个迁移包在事务里，SQLite 文档明确该 pragma 在事务内 no-op） | `sqlx-sqlite/src/migrate.rs` + sqlite.org/pragma |
 | 6 | 启动期有 8 段自愈逻辑，其中 `converge_portable_paths` 每次启动**全表扫 220 MiB 的 `conversation_parts`**，且当前仍命中 110 行、永远收敛不到 0 | `path_convergence.rs:42` |
 | 7 | 索引 106 个（44 命名 + 62 自建），实测可安全删除 **5 个**，其中最干净的一个是 `UNIQUE(tenant_id, model_id)` 的**逐列完全副本** | 见 C.3 |
@@ -106,15 +117,20 @@ let pool = SqlitePoolOptions::new()
 | `memory/memory_recall_repo/turns.rs` | 241 |
 | `store/path_convergence.rs` | 159 |
 
-**DEFERRED 41 处**（`pool.begin()`，全部非测试），按风险分级：
+**DEFERRED 41 处**（`pool.begin()`，全部非测试）。
 
-| 风险 | 原因 | 位置 |
+> **计数方法（先说清，因为这里我改过一次口）**：`517`（`SQLITE_BUSY_SNAPSHOT`）只在"事务内**先读**建立快照、再尝试升级写锁"时触发。所以判据是**事务内第一条 SQL 是读还是写**，而不是"这个事务里有没有读"。
+> 我对全部 41 处做了静态筛查（取 `pool.begin()` 之后 14 行内的第一条 SQL 动词；若是 `*_tx` 辅助函数则追进函数体看首条语句），结论是**只有 8 处是读优先**。
+> 我上一版写的"约 22 处"是**未逐处核对时的估计值，属于错误**，已按实测更正。
+
+| 风险 | 判据 | 位置 |
 |---|---|---|
-| 🔴 高（先读后写，正是 `SDK 517` 的成因，见 `database.rs:37-41` 注释） | 读建立快照后再升级写锁 | `conversation_repo/import.rs:108`（最热）、`import.rs:183`、`conversation_repo/projection.rs:11`、`conversation_repo/triad_update.rs:96`、`conversation_repo/sources.rs:67`、`conversation_repo/adapters.rs:168,210,274`、`conversation_repo/reproject.rs:77,350`、`usage_repo.rs:111`、`pricing_repo.rs:25,450`、`pricing_repo_ops.rs:115,342,442`、`search_index_repo.rs:220,277`、`conversation_turn_identity.rs:99,107`、`conversation_subagent_fold.rs:140,309`、`memory_recall_repo/turns.rs:112,194`、`conversation_maintenance_ops.rs:334` |
-| 🟡 中（启动期批量修复） | 与前台写入并发 | `database.rs:255,389,415` |
-| 🟢 低（纯写，无前置读） | DEFERRED 只在第一条写语句取锁，语义等价 | `mounting/mount_snapshot_repo.rs:26`、`mounting/profile_repo.rs:74`、`mounting/mount_repo.rs:82,96`、`catalog/asset_repo.rs:70`、`catalog/group_repo.rs:108,160`、`system/tenant_repo.rs:16,144`、`system/menu_repo.rs:82`、`system/extension_catalog_releases.rs:151`、`system/agent_installations.rs:101,364` |
+| 🔴 **读优先，8 处**（真正的 517 成因，见 `database.rs:37-41` 注释） | 事务内第一条语句是 SELECT | ① `conversation_repo/import.rs:108`（最热，首调 `conversation_session_is_unchanged_sqlx_tx`）② `conversation_repo/import.rs:183`（`mark_missing_conversation_sessions_sqlx_tx`，`import_prune.rs:12-19` 先 SELECT）③ `conversation_repo/reproject.rs:77`（`load_existing_session_snapshot_sqlx_tx`）④ `memory/memory_recall_repo/turns.rs:112` ⑤ 同文件 `:194` ⑥ `conversations/pricing_repo_ops.rs:342`（`remove_usage_alias_in_tx` 先 SELECT）⑦ `conversation_turn_identity.rs:99`（`rewrite_parent_turn_reference_sqlx_tx` 先 `SELECT process`，`:168-174`）⑧ `conversation_turn_identity.rs:107`（`repoint_parts_sqlx_tx` 先 `SELECT part_index`，`:205-211`） |
+| 🟠 **读在事务外、写在事务内**（不触发 517，但会有逻辑陈旧） | 读用 `pool` 而非 `&mut tx` | `conversations/usage_repo.rs:111`（前一行 `load_valid_turn_indices_sqlx(pool, ...)` 在事务外读，随后 `pool.begin()` 才写） |
+| 🟡 写优先但**在启动期**（会长时间持锁，与前台写入互相阻塞） | 首条语句即 UPDATE | `database.rs:255,389,415` |
+| 🟢 **写优先，其余 32 处**（DEFERRED 无额外风险） | 首条语句即 INSERT/UPDATE/DELETE | `mounting/*`（26/74/82/96）、`catalog/asset_repo.rs:70`、`catalog/group_repo.rs:108,160`、`system/tenant_repo.rs:16,144`、`system/menu_repo.rs:82`、`system/extension_catalog_releases.rs:151`、`system/agent_installations.rs:101,364`、`conversation_repo/adapters.rs:168,210,274`、`conversation_repo/projection.rs:11`、`conversation_repo/triad_update.rs:96`、`conversation_repo/sources.rs:67`、`conversation_repo/reproject.rs:350`、`pricing_repo.rs:25,450`、`pricing_repo_ops.rs:115,442`、`search_index_repo.rs:220,277`、`conversation_subagent_fold.rs:140,309`、`conversation_maintenance_ops.rs:334` |
 
-> 建议：**只改 🔴 那批**（约 22 处）统一换 `begin_immediate_with_retry(pool, 8)`；🟢 保持 DEFERRED，因为 DEFERRED 在纯写场景下不增加任何失败概率，还少一次无谓的锁持有。
+> 建议：**只改 🔴 那 8 处**（不是 22 处）统一换 `begin_immediate_with_retry(pool, 8)`；🟢 保持 DEFERRED —— DEFERRED 在纯写场景下不增加任何失败概率，还少一次多余的锁持有。🟠 那 1 处属于另一类问题（读与写不在同一快照，可能写入基于陈旧判断），改造方式是把读挪进事务，而非换成 IMMEDIATE。
 
 ### A.5 缺失 PRAGMA 的收益排序与安全默认值
 
@@ -370,7 +386,12 @@ res-ipc 实测：另一进程持 `BEGIN IMMEDIATE` 时，`aiwc overview`（纯�
 | 全库 | 60,337 页 / **247.1 MB**（63.75%）· 页内未用 45.2 MB | 33,894 页 / **138.8 MB**（35.80%）· 页内未用仅 0.88 MB | 447 页 / **1.83 MB**（0.47%） |
 | `conversation_parts` | 39,096 页 / **160.1 MB**（69.1%）· 未用 28.8 MB · **payload 129.8 MB** | 17,339 页 / **71.0 MB**（30.7%）· **payload 70.4 MB** | 109 页 / 0.45 MB（0.2%） |
 
-> `parts` 两级 payload 相加 = 129.8 + 70.4 = **200.2 MB**（= 该表 payload 总和），与 `pgsize` 汇总 220 MiB 是两个独立口径，不要混用。
+> **单位与口径（本表数字的精确闭合式，已与 res-storage 逐位对齐）**：
+> - 表内字节数按 **MB = 10⁶**；`pgsize` 汇总按 **MiB = 2²⁰** —— 两者差 4.9%，**都对**。
+> - `parts` payload：`129,832,358 (leaf) + 70,365,098 (overflow) = 200,197,456 B` ⇒ **200.20 MB = 190.92 MiB**，精确闭合。
+> - `parts` pgsize：`231,604,224 B` ⇒ **231.60 MB = 220.88 MiB**。
+> - 非正文 = `200,197,456 − 169,955,233 (content 字节) = 30,242,223 B` ⇒ **30.24 MB = 28.84 MiB**，其中 `turn_id` 13.16 MB 占 **43.5%**。
+> - 我上一轮说"200.2 MB 没能复现"是**拿 MiB 去比 MB** 的错，数据本身一致：同一个数的两种进制。
 
 **这组数纠正了我此前一句错话**：我原先写"`content` 溢出页占大头"——**不对**。溢出链只占该表 30.7%（71.0 MB），69.1%（160.1 MB）仍在 leaf 页。正确表述是"**leaf 页吃掉 69.1%、溢出链吃掉 30.7%，两者都是靶子**"。
 
@@ -396,6 +417,8 @@ res-ipc 实测：另一进程持 `BEGIN IMMEDIATE` 时，`aiwc overview`（纯�
 >
 > 全表里有 **5,717 行是空串**，会把 p50 拉低。字节占比不依赖分母，所以两边恒等——**这是唯一可以不带分母直接引的数**。行数占比必须标分母。
 > （另：`conversation_turns.process` 7,064 行无空串，不存在分母歧义。）
+>
+> **一个已闭合的分歧（保留记录，便于读者确认）**：本轮曾出现过"39.4% 的行正文 >1 KiB"的说法，**已由 res-storage 本人更正** —— 实际是 39,433 行，`39,433 / 154,748 = 25.48%`（分母=非空行），"39.4%" 是把行数误记成了百分数。该错误从未进入 `02-storage.md` 正文。此处保留是为了让拼接决策文档的人看到"分歧已闭合"，而不是一段被擦掉的历史。
 
 其他表行数参考：`conversation_sessions` 2,109 · `assets` 185 · `sources` 13 · `memory_recall_turns` **0**。
 
@@ -558,9 +581,10 @@ let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
 
 风险：`temp_store=MEMORY` 会让大 `ORDER BY` 吃内存（当前最大排序 24k 行，可忽略）；`mmap_size` 在 32 位构建上要降级，需 `cfg` 保护。**建议先灰度：只开 `optimize_on_close` + `journal_size_limit` + `statement_cache_capacity`，观察一周。**
 
-### 第 2 档：把 22 处 🔴 DEFERRED 换成 `begin_immediate_with_retry`
+### 第 2 档：把 8 处 🔴 读优先 DEFERRED 换成 `begin_immediate_with_retry`
 
-单点改动，收益是消掉 `SQLITE_BUSY_SNAPSHOT (517)` 这一类偶发失败（`database.rs:37-41` 已写明该机制）。优先 `import.rs:108`。
+逐处核对后的真实数量是 **8 处**（清单见 A.4；我此前估的"22 处"已作废）。改动量比原估小 2/3，收益仍是消掉 `SQLITE_BUSY_SNAPSHOT (517)` 这一类偶发失败（`database.rs:37-41` 已写明该机制）。优先 `import.rs:108`（最热）与 `import.rs:183`。
+另外 `usage_repo.rs:111` 属另一类（读在事务外），应把读挪进事务，不在本档范围。
 
 ### 第 3 档：空间治理（SQLite 域内收益最大，但需停机窗口）
 

@@ -616,6 +616,8 @@ active_generation = generation-8e175746…
 
 **分期切分点（若 P2 要分多期上线）**——块级模型下各列收益极不均匀：
 
+> 本表是**单列独立测量**（每列各自 4 MB 分块压缩）。**列间可以相加并等于总收益，因为分块是按列做的、无跨列窗口共享**——§C.6 已实测列式（5.031x）与轮级（4.929x）仅差 2%。
+
 | 列 | 块级比 | 省下字节 | 占总收益 |
 |---|---:|---:|---:|
 | **`parts.content`** | 5.382 | **138,378,454** | **64.4%** |
@@ -628,15 +630,20 @@ active_generation = generation-8e175746…
 | `wr_turns.prompt` + `wr_turns.process` | 2.855 / 87.3 | 687,747 | 0.3% |
 | **合计** | **5.241** | **214,959,485（205.0 MiB）** | 100% |
 
-**第一期只做 `parts.content` 就能拿到 64.4% 的收益，且完全不触碰 `turns.process` 的整段覆写风险**（`triad_update.rs:74`）。这是风险最低的切分点，建议作为 P2 的默认分期方式。
+**第一期只做两个 `content` 列就能拿到 68.3% 的收益，且完全不触碰 `turns.process` 的整段覆写风险**（`triad_update.rs:74`）。这是风险最低的切分点，建议作为 P2 的默认分期方式。
+
+**为什么 `wr_parts.content` 归一期（工程理由，已核代码）**：`insert_parts_sqlx_tx`（`snapshots/snapshot.rs:529-580`）用 `RecordTables` 抽象同时服务 `conversation_parts` 和 `web_record_parts`，两者**共用同一个函数、只差一个 `parts_have_attrs` 布尔分支**。所以把两列的 codec 挂点放进同一期，工程侧**只需写一遍 codec 实现**；拆到不同期就要回头再开一次工。这是「按同一列名、同一写入函数、同一风险面归期」的原则。
 
 **三期切分（收益与风险对齐）**
 
 | 期 | 范围 | 收益 | 累计 | 主要风险 |
 |---|---|---:|---:|---|
-| 一期 | `parts.content` | **138,378,454（64.4%）** | 64.4% | 无（无原地 UPDATE） |
-| 二期 | `turns.process` + `parts.attrs_json` | 37,706,559（17.5%） | 81.9% | `triad_update.rs:74` 整段覆写 + `path_convergence.rs` 启动扫 |
-| 三期 | 其余 4 列（`prompt`/`response`/`wr_*`） | 38,874,472（18.1%） | 100% | 无 |
+| **一期** | **`parts.content` + `wr_parts.content`**（同一个 `insert_parts_sqlx_tx`） | **146,831,463（68.31%）** | 68.31% | **无**（两表均无原地 UPDATE） |
+| 二期 | `turns.process` + `parts.attrs_json` | 37,706,559（17.54%） | 85.85% | `triad_update.rs:74` 整段覆写 + `path_convergence.rs` 启动扫 |
+| 三期 | 其余 5 列（`turns.prompt` / `turns.response` / `wr_turns.response` / `wr_turns.prompt` / `wr_turns.process`） | 30,421,463（14.15%） | 100% | 无 |
+| | **合计** | **214,959,485** | **100.00%** | |
+
+> 注：早期草稿曾把 `wr_parts.content`（8.45 MB）放进三期，得到「64.4 / 17.5 / 18.1」。**按工程同路径原则应归一期**，故以本表为准（68.31 / 17.54 / 14.15）。两种切法的**总收益完全相同**，差别只在实现顺序。
 
 ### E.2 25 GB 索引是否才是第一优化目标
 
