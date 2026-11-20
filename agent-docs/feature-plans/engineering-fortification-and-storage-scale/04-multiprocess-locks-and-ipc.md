@@ -137,6 +137,8 @@ Tantivy 版本：`0.26.1`（`Cargo.toml` 依赖声明 `tantivy = "0.26.1"`，`Ca
 | `SELECT count(*) FROM sqlite_master` | ✅ `157` |
 | `INSERT ... ON CONFLICT DO NOTHING` | ❌ `database is locked` |
 
+> 两个失败时延的标定：**0.88 s** 是 res-sqlite 在 `busy_timeout=800 ms` 的临时库上精确定位单条语句的观测点；**10.57 s** 是本报告在默认 `busy_timeout=10 s` 的生产配置下观测整条 bootstrap 的失败时延。两者是**同一机制的两个观测点**，差值恰为 busy_timeout 的差（0.88−0.8≈0.08 s 为进程内开销；10.57−10≈0.57 s 为 bootstrap 前置只读阶段 + 启动开销）。完整探针脚本见文末「附录 B」。
+
 **冲突矩阵（谁挡谁）**：
 
 | 持有方 → / 请求方 ↓ | 无竞争 | 别人持读快照 | 别人持写事务 | 别人持 Tantivy writer |
@@ -347,7 +349,7 @@ Tantivy 单写者是否仍需单独解决？——**需要，但不是一个新�
 
 ---
 
-## 附录：证据与复现
+## 附录 A：证据与复现（本报告实测）
 
 **关键代码位置索引**
 
@@ -410,6 +412,64 @@ ASSETIWEAVE_HOME=/tmp/aiwc-bench /usr/bin/time -p target/debug/aiwc overview
 # 5) 读快照竞争（应当成功，验证 WAL 读不互斥）
 #    python3: BEGIN; SELECT count(*) FROM conversation_parts; sleep(25);
 ```
+
+## 附录 B：语句级精确定位探针（res-sqlite 提供，`busy_timeout=800 ms`）
+
+> 目的：把「整条 bootstrap 10.57 s 失败」拆成「哪一条语句失败、失败多快」。全部在临时库上跑，不触碰真实库。
+
+```python
+# python3 /tmp/lock_probe.py
+import sqlite3, time
+path = "/tmp/pragma-probe/w.db"
+
+c = sqlite3.connect(path, isolation_level=None)
+c.execute("PRAGMA journal_mode=WAL")
+c.execute("CREATE TABLE IF NOT EXISTS t(a INTEGER)"); c.execute("INSERT INTO t VALUES(1)")
+c.execute('''CREATE TABLE IF NOT EXISTS _sqlx_migrations(
+  version BIGINT PRIMARY KEY, description TEXT NOT NULL, installed_on TIMESTAMP,
+  success BOOLEAN NOT NULL, checksum BLOB NOT NULL, execution_time BIGINT NOT NULL)''')
+c.execute("INSERT INTO _sqlx_migrations VALUES(20260618000001,'x','t',1,X'00',-1)")
+c.close()
+
+holder = sqlite3.connect(path, isolation_level=None)
+holder.execute("PRAGMA journal_mode=WAL")
+holder.execute("BEGIN IMMEDIATE")          # 持 RESERVED 写锁，模拟"另一个进程在写"
+holder.execute("INSERT INTO t VALUES(2)")
+
+def probe(label, sql, ms=800):
+    conn = sqlite3.connect(path, timeout=ms/1000, isolation_level=None)
+    conn.execute(f"PRAGMA busy_timeout={ms}")
+    t0 = time.time()
+    try:
+        conn.execute(sql); print(f"{label:46s} OK    {time.time()-t0:.2f}s")
+    except Exception as e:
+        print(f"{label:46s} FAIL  {time.time()-t0:.2f}s  {e}")
+    finally:
+        conn.close()
+
+probe("SELECT", "SELECT count(*) FROM t")
+probe("UPDATE 命中 0 行（database.rs:126 原语句）",
+      "UPDATE _sqlx_migrations SET version=(version/10000)*1000000+(version%10000) "
+      "WHERE version<10000000000000")
+probe("UPDATE ... WHERE 0", "UPDATE _sqlx_migrations SET version=version WHERE 0")
+probe("CREATE TABLE IF NOT EXISTS（已存在）",
+      "CREATE TABLE IF NOT EXISTS _sqlx_migrations(version BIGINT PRIMARY KEY)")
+probe("INSERT OR IGNORE（主键已存在）", "INSERT OR IGNORE INTO t VALUES(1)")
+
+holder.execute("ROLLBACK"); holder.close()
+```
+
+实测输出（SQLite 3.54.0，rollback-journal 与 WAL 两种模式结论一致）：
+
+```
+SELECT                                             OK    0.00s
+UPDATE 命中 0 行（database.rs:126 原语句）           FAIL  0.88s  database is locked
+UPDATE ... WHERE 0                                 FAIL  0.85s  database is locked
+CREATE TABLE IF NOT EXISTS（已存在）                OK    0.00s
+INSERT OR IGNORE（主键已存在）                      FAIL  0.85s  database is locked
+```
+
+**结论**：`UPDATE` / `INSERT` / `DELETE` 只要被**执行**就会开写事务（`OP_Transaction` 带写标志），**与 `rows_affected` 是否为 0 完全无关**；`CREATE TABLE IF NOT EXISTS` 对已存在的表走短路，不取写锁；纯 `SELECT` 不取写锁。这就是「稳态空操作仍然会 `database is locked`」的机制级解释，也是「把 5 处无条件 DML 加读守卫」能生效的前提。
 
 **官方资料（一手）**
 

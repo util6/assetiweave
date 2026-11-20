@@ -121,7 +121,7 @@
 
 | 工单 | 影响 |
 | --- | --- |
-| [#211 拍板正文 Zstd 压缩、BLAKE3 大块去重与 ADR-0008 时间轴分层](https://github.com/util6/assetiweave/issues/211) | 「是否拆 `blobs.db`」已被实测排除（正文仅 265.6 MB，收益 <1%）；BLAKE3 分块去重应降级为「随块级压缩顺带吃掉，或不做」；**一旦采用 ≥1 MB 块级压缩，「阈值分流」这个问题自动消失**（它只在逐行压缩下才成立）；`turns.process` 是 P0 压缩对象、`turns.prompt` 逐行压不动但块级 8.09x |
+| [#211 拍板正文 Zstd 压缩、BLAKE3 大块去重与 ADR-0008 时间轴分层](https://github.com/util6/assetiweave/issues/211) | 「是否拆 `blobs.db`」已被实测排除（正文仅 265.6 MB，收益 <1%）；BLAKE3 分块去重应降级为「随块级压缩顺带吃掉，或不做」；**一旦采用 ≥1 MB 块级压缩，「阈值分流」这个问题自动消失**（它只在逐行压缩下才成立）；`turns.process` 是 P0 压缩对象、`turns.prompt` 逐行压不动但块级 8.09x；另一条被低估的瘦身项是 `parts.turn_id` 改整数引用（**≈25 MiB，需与 `turns.id` 同时改**，量级是 5 个可删索引之和的 5 倍，建议与 baseline 同期） |
 | [#213 拍板 Migration 基线快照与大库性能回归红线](https://github.com/util6/assetiweave/issues/213) | 性能红线必须包含「索引体积 / 段数 / 孤儿代数量」指标，否则泄漏型增长永远测不出来；`repair_legacy_migration_ledger_versions` 应随 baseline 一并条件化或删除 |
 | [#212 拍板多进程消锁与 ADR-0004 演进](https://github.com/util6/assetiweave/issues/212) | 冲突面是**三个进程**（GUI / `aiwc` / `--memory-recall-mcp-stdio` 的 MCP 桥）；但第一根因是启动期无条件 `UPDATE`（`database.rs:126`）而非并发写；Tantivy 已被"单写者 + DB 租约"降解，租约缺陷是 10 分钟 TTL 不续租；ADR-0004 的 engine 协议是**零调用的活契约** |
 | 新增工单 | 索引与库文件的垃圾回收契约（回收触发点、TTL、自报体积口径、VACUUM 时机、备份留存）——见地图 Decisions so far |
