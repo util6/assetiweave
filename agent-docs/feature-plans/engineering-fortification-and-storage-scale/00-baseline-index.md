@@ -42,7 +42,8 @@
 块级路线若要做，按可独立验收的三期切（详见 `01` §9，占比以全库可压缩总量 **214.96 MB（205.0 MiB）** 为分母）：
 
 1. **一期**只做 `content` 两列——`conversation_parts.content` + `web_record_parts.content`，
-   合计 **68.3% / 146.8 MB**。这两个漏斗（`insert_parts_sqlx_tx` 与 web 同构写入）彼此独立，
+   合计 **68.3% / 146.8 MB**（其中 `parts.content` 单列 **64.4% / 138.4 MB**，两个数都对，差在 web 那 8.4 MB）。
+   这两个漏斗（`insert_parts_sqlx_tx` 与 web 同构写入）彼此独立，
    是最安全的切口：不做即失败，做了就有人受益。
 2. **二期**补 `conversation_turns.process`（33.4 MB）+ `attrs_json`，合计 **17.5% / 37.6 MB**。
    `process` 是 P0 对象（33.4 MB → 6.2 MB），但它是结构化 JSON、读写路径最密，必须单独立项。

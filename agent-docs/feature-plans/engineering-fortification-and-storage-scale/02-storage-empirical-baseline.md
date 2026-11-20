@@ -437,7 +437,22 @@ active_generation = generation-8e175746…
 | 合计 | 4 | **7,031 B（6.9 KiB）** |
 
 → 把 7 KB 的列留在逐行模型，等于不付代价地消除了 2 处高频原地 UPDATE。
-剩余痛点是 `triad_update.rs:74`（`process` 整段覆写）和 `path_convergence.rs`（启动期全表扫）。后者可用"收敛过一次就置位"消除；前者可在翻译回填时按"整会话重算 + 整包替换"复用 snapshot 路径来规避。
+剩余痛点是 `triad_update.rs:74`（`process` 整段覆写）和 `path_convergence.rs`（启动期全表扫）。
+
+**后者不需要新设计——仓里已有现成范式可抄**：`conversation_subagent_fold.rs` 用 `app_settings` 做一次性标记（`settings_id = conversation.subagent_session_fold_v1`，常量 `:53`、启动时短路 `:152-160`、完成后 `INSERT … ON CONFLICT DO UPDATE` `:204-222`）。照抄即可：加 `conversation.path_converged_v1`，`converge_portable_paths` 开头查一行、命中即 return。
+
+**关于"标记写入是否必须与收敛完成同事务"（我核过了，结论：不需要）**
+
+- 实测 `conversation_subagent_fold.rs:146-148` 的 `write_fold_marker` 是在 `tx.commit()` **之后**用 `pool` 单独写，**确实不同事务**。
+- 但这套范式之所以安全，不是因为同事务，而是两个设计：
+  1. **标记最后写**（fail-open）：崩溃发生在写入标记之前 → 下次重扫。方向是安全的（多跑一次，不会漏跑）。
+  2. **标记带指纹校验，不是裸 flag**：`FoldMarker.data_generation` = `(session_count, latest_imported_at, source_revisions)`，`fold_already_done`（`:163-178`）要求 **`recorded == current_data_generation(pool)`** 才跳过。
+- 而且 `path_convergence.rs` 本身是**幂等**的：`fold_object_key`（`:142-154`）里 `if folded == current { return false; }` —— 归一化后的值再跑一次不再变化、不产生写入。`write_pending`（`:167-185`）还是 `begin_immediate` 单事务提交。
+
+→ **结论：只要标记最后写、且收敛函数幂等，就不需要把标记并入同一事务。** 现有 subagent_fold 的做法可以直接照抄。
+
+> ⚠️ **但照抄时有一个必须改的地方**：`subagent_fold` 的指纹是"数据代际"，对 path_convergence **无效**——路径收敛的触发条件不是"数据变了"，而是"这个版本的代码有没有跑过"。所以 marker 应该用 **`schema_version`（`app_settings` 已有该列）做版本闸门**，而不是照抄 `data_generation`。
+> 否则将来给扫描列表加一个新列（比如新增 `last_cwd` 归一化），老安装的 v1 标记会让它**永久跳过新列**——这是这套范式里唯一真正的陷阱，而且和事务无关。
 
 **结论：块级的写放大问题是可解的，不是硬阻断。** 只有在"既不接受状态位优化、又要求高频随机单行更新"的前提下，才需要退回逐行模型（损失 49 MiB）。
 
@@ -595,7 +610,7 @@ active_generation = generation-8e175746…
 **两条终点，按写放大约束二选一：**
 - **块级模型（推荐）：1.72 GB → 186 MB（-89.2%，9.2 倍）**，正文压缩 **205.0 MiB**，代码更简单（无阈值、无 frame 头）。
 - **逐行模型（保守）：1.72 GB → 209 MB（-87.8%，8.2 倍）**，无写放大，但每行要挂 frame 头，且需阈值分流。
-- 两者相比，块级多省 23 MB。**写放大不是硬阻断**（见 C.5.1）：主流写入是整会话 DELETE + INSERT，块可按会话边界整体重算；只要把 `translated_text`（实测全库仅 **6.9 KiB**/4 行）留在逐行模型，块级的不良 UPDATE 面就只剩 `triad_update.rs:74` 与 `path_convergence.rs` 两处，且都可用"整会话重算"或"收敛置位"消除。**建议直接上块级。**
+- 两者相比，块级多省 23 MB。**写放大不是硬阻断**（见 C.5.1）：主流写入是整会话 DELETE + INSERT，块可按会话边界整体重算；只要把 `translated_text`（实测全库仅 **6.9 KiB**/4 行）留在逐行模型，块级的不良 UPDATE 面就只剩 `triad_update.rs:74` 与 `path_convergence.rs` 两处，且都可用"整会话重算"或"复用 `app_settings` 一次性标记范式"消除（见 C.5.1）。**建议直接上块级。**
 
 但无论哪条，**1.24 GiB（占总收益的 74%）都来自 `VACUUM` 一行命令**；整个"压缩 + 去重"工程只贡献 163~205 MiB。
 
