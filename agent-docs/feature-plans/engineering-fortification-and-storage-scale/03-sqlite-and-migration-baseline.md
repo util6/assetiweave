@@ -167,24 +167,31 @@ res-ipc 实测：另一进程持 `BEGIN IMMEDIATE` 时，`aiwc overview`（纯�
 - `dirty_version` / `list_applied_migrations` 都是 SELECT；
 - 8 段自愈里 `normalize_legacy_part_ids`（无 `id` 列即 return）、`fold_*`（marker 命中即 return）、`converge_portable_paths`（`write_pending` 在 `pending.is_empty()` 时 return，`path_convergence.rs:155-157`）稳态都是零写。
 
-**但 `open_migrated_pool` 返回之后，`bootstrap.rs:46` 立刻进入 `seed_defaults_with_catalog`，那里还有 ≥4 处无条件写：**
+**但 `open_migrated_pool` 返回之后，`bootstrap.rs:46` 立刻进入 `seed_defaults_with_catalog`，那里还有 **5 处**无条件写（res-ipc 复读源码后补出第 5 处 `normalize_existing_profiles_sqlx`，我原表漏了）：**
 
 | 位置 | 行为 | 是否读守卫 |
 |---|---|---|
-| `store/system/tenant_repo.rs:14-35` `ensure_local_identity_sqlx` | 4 条 UPSERT（principal / tenant / membership / tenant_state）在一个 DEFERRED 事务里 | ❌ **无守卫，每次启动必写** |
+| `store/system/tenant_repo.rs:16-37` `ensure_local_identity_sqlx` | `pool.begin()` + 4 条 UPSERT（principal / tenant / membership / tenant_state） | ❌ **无守卫，且是 `seed_defaults_with_catalog` 的第一件事**（`defaults.rs:26`）→ 修完 126 后它立刻接手 |
 | `application/system/defaults.rs:111-115` `ensure_system_skill_source_sqlx` | 直接 `upsert_source_sqlx` | ❌ 无守卫 |
 | `application/system/defaults.rs:117-122` `normalize_existing_sources_sqlx` | 读出**全部** sources 再逐条 upsert（未变更也写） | ❌ 无差异判断 |
-| `application/system/defaults.rs:132-146` `normalize_all_tenant_paths_sqlx` | 对每个非默认租户重复上面两步 | ❌ 无守卫 |
+| `application/system/defaults.rs:124-129` `normalize_existing_profiles_sqlx` | 读出全部 profiles 再逐条 upsert | ❌ 无差异判断 |
+| `application/system/defaults.rs:132-146` `normalize_all_tenant_paths_sqlx` | 对每个非默认租户重复上面 `sources` + `profiles` 两步 | ❌ 无守卫 |
 | `defaults.rs:95-109` `ensure_library_source_sqlx` | 先 `load_source_sqlx(...).is_some()` 再写 | ✅ 有守卫 |
 | `store/system/menu_repo.rs:25+` / `shortcut_repo.rs:42+` | 先读现有集合再补缺 | ✅ 有守卫 |
 
 → **所以只改 `database.rs:126`，只读命令会在 `tenant_repo.rs:16` 的 `pool.begin()` + 第一条 UPSERT 上再死一次**（同样是 10 s 后 `code: 5`）。
+
+**「零写」的前提要写全（res-ipc 补的边界）**：仅当"库已迁移**且**账本 checksum 与源文件一致"时成立。一旦 checksum 对不上，sqlx 会直接 `VersionMismatch` 报错（这也是 `database.rs:136/194/239` 三处 checksum 自愈存在的原因）——那不是稳态，不在"零写"承诺范围内。
 
 **正确排序（替换我 D 节原第 1 档之前的位置）**
 
 - **第 0 档（根因）**：只读命令**不复用** `bootstrap_runtime`。`aiwc overview/list` 这类命令应当走"只读启动"：
   用 `SqliteConnectOptions::new().filename(..).read_only(true)` 建池 + 跳过 `seed_defaults_with_catalog` / `migrate_legacy_*` / 适配器播种。
   这是唯一能保证"别人持写锁时只读命令仍 100% 可用"的方案；否则无论怎么优化写点，只要有 1 处写就可能被锁住。
+  **但 `read_only(true)` 不是免费的，必须带两条回退约束（res-ipc 依 sqlite.org/wal.html §1 第 4 条提出）**：
+  - **R1**：只读 WAL 连接**无法执行崩溃恢复**，遇到未恢复的 `-wal` 会返回 `SQLITE_READONLY_RECOVERY` ⇒ 捕获后**回退一次读写打开**（此时允许短暂取写锁做恢复，之后再降级）。
+  - **R2**：只读 WAL 需要 `-shm` 已存在或可创建；都不可用时回退 `immutable=1`，且**仅在确认没有其它 GUI 实例在跑时**才允许（`immutable=1` 会忽略 `-wal`，读到旧快照）。
+  - 正面证据（res-ipc 实测）：另一进程只持**读**快照时 `aiwc overview` **成功**（4.65 s 冷缓存 / 0.72 s 热），说明 WAL 读路径本就不与写互斥 ⇒ "只读命令不该被写锁连坐"是机制上可实现的，不是奢望。
 - **第 0.5 档（低成本，收益大）**：把上述 5 处无条件写改成"状态签名不变则不写"：
   `database.rs:126` 改成先 `SELECT MIN(version) FROM _sqlx_migrations` 判定；`ensure_local_identity_sqlx` 包一层 `EXISTS`；
   `normalize_existing_*` 改成逐行比较后再写。目标是**稳态启动零写事务**。
@@ -499,8 +506,8 @@ let snapshot_result = vacuum_into(db_path, &temp_path).or_else(|vacuum_error| {
 
 两条一起做，无迁移、可回滚（详见 A.6）：
 
-1. **根因**：只读 CLI 不走 `bootstrap_runtime` 的写链（`bootstrap.rs:44-52`），改用 `read_only(true)` 池并跳过 `seed_defaults_with_catalog`。否则只要链上剩 1 处写，就仍会 10 s 后 `code: 5`。
-2. **稳态零写**：`database.rs:126` 的零命中 `UPDATE` 先加 `SELECT MIN(version)` 判定；`tenant_repo.rs:14-35`、`defaults.rs:111,117,132` 共 4 处无条件 upsert 加存在性/差异判断。实测证明 `UPDATE`/`INSERT OR IGNORE` 零命中也抢写锁，而 `SELECT` 与已存在的 `CREATE TABLE IF NOT EXISTS` 不抢。
+1. **根因**：只读 CLI 不走 `bootstrap_runtime` 的写链（`bootstrap.rs:44-52`），改用 `read_only(true)` 池并跳过 `seed_defaults_with_catalog`。否则只要链上剩 1 处写，就仍会 10 s 后 `code: 5`。**必须带 R1/R2 回退**（只读无法做 WAL 崩溃恢复 → 回退一次读写打开；`-shm` 不可用 → 仅无 GUI 时用 `immutable=1`），详见 A.6。
+2. **稳态零写**：`database.rs:126` 的零命中 `UPDATE` 先加 `SELECT MIN(version)` 判定；`tenant_repo.rs:16-37`、`defaults.rs:111/117/124/132` 共 **5 处**无条件 upsert 加存在性/差异判断。实测证明 `UPDATE`/`INSERT OR IGNORE` 零命中也抢写锁，而 `SELECT` 与已存在的 `CREATE TABLE IF NOT EXISTS` 不抢。前提：库已迁移**且** checksum 一致（不一致时 sqlx 直接报 `VersionMismatch`，不属稳态）。
 
 > 不要靠调大 `busy_timeout` 解决——那只是把 10 s 失败变成 30 s 失败。
 
@@ -573,4 +580,59 @@ sqlite3 -readonly "file:$HOME/.assetiweave/app.db?mode=ro" \
           round(sum(unused)/1048576.0,1)  unused_mib,
           round(100.0*sum(payload)/sum(pgsize),1) util_pct
      from dbstat;"
+
+# 页类型拆分（leaf / overflow / internal）
+sqlite3 -readonly "file:$HOME/.assetiweave/app.db?mode=ro" \
+  "select pagetype, count(*) pages, sum(pgsize) bytes, sum(unused) unused
+     from dbstat group by pagetype order by bytes desc;"
 ```
+
+---
+
+## 附录 B：写锁竞争探针（A.6 用，res-ipc 交叉引用）
+
+在**临时库**上跑，不碰真实库。结论：`UPDATE`（即使 0 行）与 `INSERT OR IGNORE`（即使主键已存在）都会抢写锁；`SELECT` 与"已存在的 `CREATE TABLE IF NOT EXISTS`"不会。
+
+```python
+# python3 /tmp/lock_probe.py
+import sqlite3, time
+path = "/tmp/pragma-probe/w.db"
+
+c = sqlite3.connect(path, isolation_level=None)
+c.execute("PRAGMA journal_mode=WAL")
+c.execute("CREATE TABLE IF NOT EXISTS t(a INTEGER)"); c.execute("INSERT INTO t VALUES(1)")
+c.execute("""CREATE TABLE IF NOT EXISTS _sqlx_migrations(
+  version BIGINT PRIMARY KEY, description TEXT NOT NULL, installed_on TIMESTAMP,
+  success BOOLEAN NOT NULL, checksum BLOB NOT NULL, execution_time BIGINT NOT NULL)""")
+c.execute("INSERT INTO _sqlx_migrations VALUES(20260618000001,'x','t',1,X'00',-1)")
+c.close()
+
+holder = sqlite3.connect(path, isolation_level=None)
+holder.execute("PRAGMA journal_mode=WAL")
+holder.execute("BEGIN IMMEDIATE")          # 持 RESERVED 写锁，模拟"另一个进程在写"
+holder.execute("INSERT INTO t VALUES(2)")
+
+def probe(label, sql, ms=800):
+    conn = sqlite3.connect(path, timeout=ms/1000, isolation_level=None)
+    conn.execute(f"PRAGMA busy_timeout={ms}")
+    t0 = time.time()
+    try:
+        conn.execute(sql); print(f"{label:46s} OK    {time.time()-t0:.2f}s")
+    except Exception as e:
+        print(f"{label:46s} FAIL  {time.time()-t0:.2f}s  {e}")
+    finally:
+        conn.close()
+
+probe("SELECT", "SELECT count(*) FROM t")
+probe("UPDATE 命中 0 行（database.rs:126 原语句）",
+      "UPDATE _sqlx_migrations SET version=(version/10000)*1000000+(version%10000) "
+      "WHERE version<10000000000000")
+probe("UPDATE ... WHERE 0", "UPDATE _sqlx_migrations SET version=version WHERE 0")
+probe("CREATE TABLE IF NOT EXISTS（已存在）",
+      "CREATE TABLE IF NOT EXISTS _sqlx_migrations(version BIGINT PRIMARY KEY)")
+probe("INSERT OR IGNORE（主键已存在）", "INSERT OR IGNORE INTO t VALUES(1)")
+
+holder.execute("ROLLBACK"); holder.close()
+```
+
+预期输出（SQLite 3.54.0 实测）：`SELECT` 与 `CREATE TABLE IF NOT EXISTS` 为 `OK 0.00s`，其余三条为 `FAIL ~0.88s database is locked`（0.88 s ≈ busy_timeout 800 ms + 连接开销）。

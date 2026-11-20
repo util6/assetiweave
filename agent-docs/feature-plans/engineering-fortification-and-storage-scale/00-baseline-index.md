@@ -48,8 +48,9 @@
 
 → 若走批量/列式压缩，去重没有增量价值；若走逐行压缩，**整行内容哈希**就够了，不需要 CDC 分块。
 → 去重必须是**全局作用域**（跨会话重复占 77.8%），按会话去重只能拿到 22%。
-→ 但别再给 `prompt` 列设计压缩：`turns.prompt` 中位数仅 152 B、`zstd(-3)` 压不过原始大小，
-  而它的去重率高达 **36.73%**（同一段提示词跨 turn 反复记录）——这一列只该去重，不该压。
+→ `turns.prompt` 最能说明问题：p50 只有 152 B，**逐行压缩压不过原始大小**（帧头吃掉收益），
+  但在 4 MB 块内压比高达 **8.09x**。所以结论不是"给 prompt 单独设计去重"，而是**别做逐行、统一块级**——
+  块级压缩顺带解决了小行问题，也顺手吃掉了那 11% 的重复。
 
 ### 3. 压缩的硬约束不在写入侧，在 11 处「把正文当 SQL 参数用」的地方
 
@@ -120,7 +121,7 @@
 
 | 工单 | 影响 |
 | --- | --- |
-| [#211 拍板正文 Zstd 压缩、BLAKE3 大块去重与 ADR-0008 时间轴分层](https://github.com/util6/assetiweave/issues/211) | 「是否拆 `blobs.db`」已被实测排除（正文仅 253 MiB，收益 <1%）；BLAKE3 分块去重应降级为「整行哈希去重或不做」；**一旦采用 ≥1 MB 块级压缩，「阈值分流」这个问题自动消失**（它只在逐行压缩下才成立）；`prompt` 列只去重不压缩 |
+| [#211 拍板正文 Zstd 压缩、BLAKE3 大块去重与 ADR-0008 时间轴分层](https://github.com/util6/assetiweave/issues/211) | 「是否拆 `blobs.db`」已被实测排除（正文仅 265.6 MB，收益 <1%）；BLAKE3 分块去重应降级为「随块级压缩顺带吃掉，或不做」；**一旦采用 ≥1 MB 块级压缩，「阈值分流」这个问题自动消失**（它只在逐行压缩下才成立）；`turns.process` 是 P0 压缩对象、`turns.prompt` 逐行压不动但块级 8.09x |
 | [#213 拍板 Migration 基线快照与大库性能回归红线](https://github.com/util6/assetiweave/issues/213) | 性能红线必须包含「索引体积 / 段数 / 孤儿代数量」指标，否则泄漏型增长永远测不出来；`repair_legacy_migration_ledger_versions` 应随 baseline 一并条件化或删除 |
 | [#212 拍板多进程消锁与 ADR-0004 演进](https://github.com/util6/assetiweave/issues/212) | 冲突面是**三个进程**（GUI / `aiwc` / `--memory-recall-mcp-stdio` 的 MCP 桥）；但第一根因是启动期无条件 `UPDATE`（`database.rs:126`）而非并发写；Tantivy 已被"单写者 + DB 租约"降解，租约缺陷是 10 分钟 TTL 不续租；ADR-0004 的 engine 协议是**零调用的活契约** |
 | 新增工单 | 索引与库文件的垃圾回收契约（回收触发点、TTL、自报体积口径、VACUUM 时机、备份留存）——见地图 Decisions so far |
